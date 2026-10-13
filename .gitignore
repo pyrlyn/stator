@@ -39,3 +39,6 @@ packages/tests/.asan-last-green.json
 site/dist/
 site/node_modules/
 site/.astro/
+# Local files (pyrlyn template).
+.env
+.env.local
