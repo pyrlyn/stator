@@ -77,10 +77,12 @@ jobs:
     timeout-minutes: 120
     steps:
       - &checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - &setup
         uses: ./.github/actions/setup
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: packages/tests/test262/corpus
           key: test262-${{ hashFiles('packages/tests/test262/pin.json') }}
@@ -90,7 +92,7 @@ jobs:
       - name: Run Test262
         # STATOR_TEST_JOBS left unset: pool width defaults to os.availableParallelism() on the runner.
         run: pnpm run test262 -- --shard=${{ matrix.shard }}/8
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: test262-shard-${{ matrix.shard }}
           path: packages/tests/test262/results-${{ matrix.shard }}-of-8.json
@@ -102,6 +104,7 @@ jobs:
   test262-report:
     name: test262 conformance
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     needs: test262
     # `needs` alone would skip this job when a shard fails, and a skipped gate reports nothing --
     # the dishonest version of a conformance heartbeat (§9's opening paragraph). Run it whenever the
@@ -111,7 +114,7 @@ jobs:
       - *checkout
       - *setup
       - *pnpm-install
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: test262-shard-*
           path: shards
@@ -132,6 +135,7 @@ jobs:
   static:
     name: static analysis
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - *checkout
       - *setup
@@ -149,10 +153,11 @@ jobs:
   frontend-coverage:
     name: frontend (linux/x64)
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - *checkout
       - &setup-just
-        uses: extractions/setup-just@v4
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
         with:
           just-version: '1.58.0'
       - *setup
@@ -172,7 +177,7 @@ jobs:
         run: pnpm run test:coverage
       - name: Upload coverage
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage-lcov
           path: coverage/lcov.info
@@ -191,9 +196,10 @@ jobs:
         include:
           - { platform: linux, arch: arm64, os: ubuntu-24.04-arm }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps: &frontend-steps
       - *checkout
-      - uses: extractions/setup-just@v4
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
         if: runner.os != 'Windows'
         with:
           just-version: '1.58.0'
@@ -224,6 +230,7 @@ jobs:
           - { platform: windows, arch: x64, os: windows-2025 }
           - { platform: windows, arch: arm64, os: windows-11-arm }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps: *frontend-steps
 
   # The C runtime and everything that links it. Unix only: the runtime's just/clang toolchain is
@@ -240,6 +247,7 @@ jobs:
           - { platform: linux, arch: x64, os: ubuntu-24.04 }
           - { platform: linux, arch: arm64, os: ubuntu-24.04-arm }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps: &runtime-steps
       - *checkout
       - *setup-just
@@ -278,6 +286,7 @@ jobs:
         include:
           - { platform: macos, arch: arm64, os: macos-14 }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps: *runtime-steps
 
   # Its own job rather than the tail of `runtime`: an ASan build is a second full compile of the
@@ -287,6 +296,7 @@ jobs:
     name: asan (${{ matrix.platform }}/${{ matrix.arch }})
     strategy: *linux-strategy
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps: &asan-steps
       - *checkout
       - *setup-just
@@ -302,6 +312,7 @@ jobs:
     needs: [static, frontend-coverage]
     strategy: *macos-strategy
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps: *asan-steps
 
   # The ICU FEATURE build (plan.md Task 4.4), which the default archive must stay byte-identical
@@ -310,6 +321,7 @@ jobs:
     name: intl (${{ matrix.platform }}/${{ matrix.arch }})
     strategy: *linux-strategy
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps: &intl-steps
       - *checkout
       - *setup-just
@@ -333,6 +345,7 @@ jobs:
     needs: [static, frontend-coverage]
     strategy: *macos-strategy
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps: *intl-steps
 
   # Its own job rather than the tail of `runtime`: FFI failures (link plumbing, boundary
@@ -343,6 +356,7 @@ jobs:
     name: ffi (${{ matrix.platform }}/${{ matrix.arch }})
     strategy: *linux-strategy
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps: &ffi-steps
       - *checkout
       - *setup-just
@@ -387,6 +401,7 @@ jobs:
     needs: [static, frontend-coverage]
     strategy: *macos-strategy
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps: *ffi-steps
 
   revert-on-failure:
@@ -412,10 +427,11 @@ jobs:
       && github.ref == 'refs/heads/main'
       && contains(join(needs.*.result, ','), 'failure')
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - name: Revert commits from this push

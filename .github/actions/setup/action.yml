@@ -3,15 +3,15 @@ description: Install the repository-pinned pnpm, Node and (Unix) Zig toolchain
 runs:
   using: composite
   steps:
-    - uses: pnpm/action-setup@v6
-    - uses: actions/setup-node@v7
+    - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
       with:
         node-version-file: .node-version
         cache: pnpm
     # The runtime's memory core is Zig (plan-notes 238, T9.1): every job that
     # builds libjsrt.a needs it. Windows never builds the runtime, so it skips
     # the download. Version matches the mise pin in mise.toml.
-    - uses: mlugg/setup-zig@v2
+    - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
       if: runner.os != 'Windows'
       with:
         version: 0.16.0
