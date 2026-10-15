@@ -12956,3 +12956,36 @@ shared workflow sets tools up with mise (`mise-install-args`), not with `pnpm/ac
 GitHub Actions is enabled on this repository (2026-10-08), so the change can be checked on its
 own pull request.
 
+## 359. T15: the four root docs match the manifests, and every package is already tested (2026-10-15)
+
+**What was already true.** Commit `f7feebc` (#117) added `todo.md`, `roadmap.md`, `ideas.md` and
+`toolchain.md` and left T15 at 70% because the execution plan said not to claim the task done
+without a test run. The Done-when clause does not require a new test: it requires the four files
+filled from `plan.md`, the manifests and `docs/TOOLCHAIN.md`, plus either a new test or a recorded
+reason that every package under `packages/` is already covered.
+
+**Decision.** Close T15 at 100%. The 70% line was that earlier session's stop condition, and it
+contradicted the Done-when once the audit reason is written down. The execution plan is removed
+from `plan.md` with the task body; leaving "leave readiness at 70%" next to a closed task would
+reopen it. `todo-js` and `todo-ts` are not in the tree, so "leave them in place" is a no-op. No
+new test is added.
+
+**The files.** `toolchain.md` still named `memfs`, which plan-notes 353 removed, and it omitted
+the manifest versions. `docs/TOOLCHAIN.md` lagged the manifests on typebox (1.3.34 → 1.3.36),
+`@types/node` (26.4.0 → 26.6.3), oxlint (1.82.0 → 1.86.0), oxlint-tsgolint (7.0.2001 → 7.0.2003),
+oxfmt (0.67.0 → 0.71.0), cpd (5.3.0 → 5.4.0), vite (8.3.2 → 8.3.3) and astro (`^7.3.3` → `^7.3.5`).
+The root file and `docs/TOOLCHAIN.md` now use the manifest pins. Vite's peer stays `^8.3.2`; the
+devDependency 8.3.3 is #141. `docs/BUNDLER.md` states that installed pin. The measurements in that
+section stay the 8.3.1 / 8.3.2 record; they were not re-run for 8.3.3.
+
+**Package audit.** Coverage means the directory name already appears under `packages/tests`:
+
+| Package | Where the name appears |
+| --- | --- |
+| `packages/compiler` | `packages/tests/golden/asan-gate.ts`, `packages/tests/selfhost/targets.json` |
+| `packages/runtime` | `packages/tests/golden/asan-gate.ts`, `packages/tests/selfhost/targets.json` |
+| `packages/std` | `packages/tests/golden/asan-gate.ts`, `packages/tests/selfhost/targets.json` |
+| `packages/node` | `packages/tests/selfhost/targets.json`, `packages/tests/unit/node-platform.test.ts` |
+| `packages/tests` | the harness paths themselves (`packages/tests/ffi/run.ts` and the other runners) |
+| `packages/vite-stator` | `packages/tests/unit/vite-stator.test.ts`, `packages/tests/selfhost/targets.json` |
+

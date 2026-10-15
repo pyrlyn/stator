@@ -1,2 +1,1 @@
-- T15. Required root docs
 - T20. Tests for the runtime edges found by the audit
