@@ -1,0 +1,19 @@
+# Configuration for pyrlyn/ci's ci.yml, called from pipeline.yml (docs/config.md in
+# pyrlyn/ci). Replaces the former pipeline.yml call and sonarcloud.yml; language CI stays in ci.yml.
+version: 1
+
+codeql:
+  # TypeScript/JavaScript and the C runtime.
+  languages: [actions, c-cpp, javascript-typescript]
+
+snyk:
+  enabled: true
+
+# Replaces sonarcloud.yml: sonar-project.properties holds the project key; mise.toml
+# installs node, pnpm, just, clang and zig. Coverage is the ci.yml linux/x64 coverage script.
+sonarcloud:
+  enabled: true
+  setup-command: |
+    pnpm install --frozen-lockfile
+    pnpm run runtime || true
+  coverage-command: pnpm run test:coverage || true

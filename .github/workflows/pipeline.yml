@@ -1,7 +1,8 @@
-# Gated scan pipeline from pyrlyn/ci: CodeQL, Semgrep and Snyk in parallel behind
-# `pipeline / gate`. Rust CI is off (`rust: false`): stator has no Rust; its CI
-# stays in ci.yml.
-# Inputs, secrets and permissions: pyrlyn/ci docs/reusable-workflows.md.
+# Gated pipeline: pyrlyn/ci's config-driven ci.yml (configured in .github/infra.yml) runs
+# CodeQL, Semgrep, Snyk and SonarCloud behind `pipeline / gate`. TypeScript/C/Zig CI stays in ci.yml.
+# Draft pull requests skip every job, the gate included, until marked ready. Secrets are passed
+# explicitly.
+# Shared workflows: https://github.com/pyrlyn/ci/blob/main/docs/reusable-workflows.md
 name: pipeline
 
 on:
@@ -23,14 +24,14 @@ permissions:
 
 jobs:
   pipeline:
-    uses: pyrlyn/ci/.github/workflows/pipeline.yml@c875cd763ad0c4abbd936e480be5752330d3b66b # main 2026-10-07
+    uses: pyrlyn/ci/.github/workflows/ci.yml@9748fe1e5a2007d695e4e1a1d9b16492660dd8bc # main
+    # The union every nested job asks for, validated up front even for disabled checks.
     permissions:
       contents: read
       security-events: write
-      actions: write # cancel-run on failure, required by pyrlyn/ci pipeline.yml
-    with:
-      rust: false
-      # TypeScript/JavaScript and the C runtime; no other CodeQL languages.
-      codeql-languages: '["actions", "c-cpp", "javascript-typescript"]'
+      pull-requests: read
+      actions: write
+      issues: write # pyrlyn/ci main-failure job
     secrets:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
