@@ -6,23 +6,16 @@ An ahead-of-time compiler from TypeScript and JavaScript to native binaries.
 
 | # | Status | Priority | Complexity | Readiness | Agent |
 | --- | --- | --- | --- | --- | --- |
-| T15 | in progress | P2 | 1 | 70% | Cursor / grok 4.7 |
+| T15 | done | P2 | 1 | 100% | Cursor / grok 4.7 |
 | T16 | done | P0 | 3 | 100% | Cursor / grok 4.7 |
 | T17 | done | P1 | 1 | 100% | Cursor / grok 4.7 |
 | T18 | done | P1 | 3 | 100% | Cursor / grok 4.7 |
 | T19 | todo | P3 | 1 | 0% | |
 | T20 | done | P2 | 2 | 100% | Cursor / grok 4.7 |
 
-### T15. Required root docs
+### ~~T15. Required root docs~~
 
-`todo.md`, `roadmap.md`, `ideas.md`, and `toolchain.md` were missing from the repo root. Done when those four files exist and are filled from this plan, the manifests, and `docs/TOOLCHAIN.md`, and when the package audit has either a new test or a recorded reason that every package under `packages/` is already covered.
-
-Execution plan:
-
-1. Read `plan.md`, `package.json`, `mise.toml`, `docs/TOOLCHAIN.md`, and `README.md`.
-2. Add the four root files in English from those sources. Leave `todo-js` and `todo-ts` in place.
-3. Audit `packages/`: a package is covered when its name already appears in `packages/tests`. Every package is covered, so add no tests.
-4. Leave readiness at 70% because tests were not run.
+Done — evidence in `done.md`.
 
 ### ~~T16. Systemic `jsrt_shape_key` leak on every dynamic property read/write~~
 

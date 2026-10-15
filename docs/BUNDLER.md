@@ -152,10 +152,9 @@ table leaves open:
 - `inputs` are the chunk's absolute module ids, less the virtual entry. A build that answers
   more than one chunk, or no map, is an error, so `STA0015`.
 
-The pin is Vite **8.3.2** (npm registry `https://registry.npmjs.org/vite`, published
-2026-10-01T10:17:44.767Z, `dist-tags.latest` checked 2026-10-02), bumped from 8.3.1 with the
-creator's permission; vitest's own `vite` moved with it (plan-notes 321 item 2). The measurements
-in this section were taken on 8.3.1; the unit tests and goldens re-ran green on 8.3.2.
+The installed devDependency is Vite **8.3.3** (`packages/vite-stator` and `examples/vite`; peer
+`^8.3.2`). The creator approved the bump to 8.3.2 (plan-notes 321 item 2); 8.3.3 landed in #141.
+The measurements in this section were taken on 8.3.1; the unit tests and goldens re-ran green on 8.3.2.
 
 **The `stator()` plugin** (`src/plugin.ts`) makes `vite build` produce the binary:
 
