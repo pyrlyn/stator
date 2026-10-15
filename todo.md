@@ -1,3 +1,2 @@
-- T15. Required root docs
 - T19. Small runtime fixes: RegExp NULL-capture and `replace_impl` double scan
 - T20. Tests for the runtime edges found by the audit
