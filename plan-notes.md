@@ -12989,3 +12989,27 @@ section stay the 8.3.1 / 8.3.2 record; they were not re-run for 8.3.3.
 | `packages/tests` | the harness paths themselves (`packages/tests/ffi/run.ts` and the other runners) |
 | `packages/vite-stator` | `packages/tests/unit/vite-stator.test.ts`, `packages/tests/selfhost/targets.json` |
 
+## 360. T20: non-SDK rank and a dependency hash on the program cache (2026-10-15)
+
+**Plan:** the audit task T20 at the top of `plan.md` (not the cloud-review row that reuses the
+id for a CI trigger). `plan.md` edited in the same change: the task is a stub, evidence in
+`done.md`. T15 landed in parallel and removed its execution plan; this note does not put it back.
+
+**`compareSdkNames`.** A non-match used to become version 0.0 because `[]` destructured with
+defaults of 0, so `MacOSXbad.sdk` tied `MacOSX0.0.sdk` and could be the newest fallback.
+`versionedSdkRank` returns `undefined` for that shape. Non-matches rank below every versioned
+SDK and compare with each other lexicographically. `pickFallbackSdk` drops names that do not
+parse, so the only-garbage case reports the original link failure instead of retrying against
+a directory that is not an SDK. The helper does not call `Number.isNaN` (STA1214, and `\d+`
+cannot parse as NaN) and drops the old `match[1] ?? ''`, so the compiler's self-host
+`STA1214` count shrinks 1845 → 1844. The baseline records the shrink.
+
+**Program cache.** The key was entry path + mode + platform + entry sha256 + overlay key. A
+local import edit did not change any of those, which a watch mode would have cached through.
+The stored entry now also keeps the sorted paths of every other on-disk source file (default
+libs and overlay files excluded) and the sha256 of `path + bytes` for each. A lookup re-reads
+those paths; a missing file is a miss and is not stored. Overlay bytes stay the overlay key:
+the vendor module is not on disk, and hashing it would make every bundled program uncacheable.
+This is the dependency-hash key the task allowed in place of a TODO. Watch mode is not
+implemented here; when it is, it keeps this key.
+
