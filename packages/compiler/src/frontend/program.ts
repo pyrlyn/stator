@@ -505,7 +505,8 @@ export const BOTH_MODES_RUNTIME_CODES: ReadonlySet<number> = new Set([
 /** Source text the program reads instead of the disk (plan.md §11d T12.1 step 3): the vendor
  * bundle as one virtual module, and the project files whose package imports were rewritten to
  * name it. `key` is the sha256 of the bundle's code, so the program cache (Task 6.9, T12.1 step 6)
- * misses when a dependency changed even though the entry did not. */
+ * misses when a bundle changed even though the entry did not. On-disk imports are a separate
+ * hash (T20): an edit to a local dependency misses too. */
 export interface ProgramOverlay {
   readonly files: ReadonlyMap<string, string>;
   readonly key: string;
@@ -524,12 +525,14 @@ export function sha256(data: string | Buffer): string {
 /** Last in-process `createProgram` results for an unchanged entry.
  *
  * Keyed by absolute entry path + mode + platform + entry CONTENT hash + the overlay's key (the
- * vendor bundle's sha256, empty without one). v0 invalidates on bytes, not mtime:
- * test262 stages thousands of tests through a handful of slot-reused temp paths, so (path, mtime)
- * can repeat for different contents on a coarse-tick filesystem and serve a stale program under
- * the wrong test's name (plan-notes 245). A dep edit without an entry touch still does not bust
- * the cache — no runner does that mid-run; a watch daemon with a full dependency set is the
- * follow-up. Custom `host` (in-memory CompilerHost tests) always bypasses the cache.
+ * vendor bundle's sha256, empty without one) + a hash of every other on-disk source file the
+ * program loaded. v0 invalidates on bytes, not mtime: test262 stages thousands of tests through
+ * a handful of slot-reused temp paths, so (path, mtime) can repeat for different contents on a
+ * coarse-tick filesystem and serve a stale program under the wrong test's name (plan-notes 245).
+ * A dependency edit misses even when the entry is untouched. That dependency hash is the key a
+ * later watch mode must keep using; default libs are omitted (they are the compiler's, not the
+ * program's) and overlay files are omitted (their bytes are the overlay key, and a vendor module
+ * is not on disk). Custom `host` (in-memory CompilerHost tests) always bypasses the cache.
  *
  * Two slots: a graph that imports a package loads twice per build — once to find the imports,
  * once over the bundle — and one slot would evict each with the other. */
@@ -539,6 +542,9 @@ interface ProgramCacheEntry {
   readonly node: boolean;
   readonly contentHash: string;
   readonly overlayKey: string;
+  /** On-disk source files folded into `dependencyHash`, entry and overlay files excluded. */
+  readonly dependencyPaths: readonly string[];
+  readonly dependencyHash: string;
   readonly result: LoadedProgram;
 }
 
@@ -577,6 +583,56 @@ function diagnosticKey(diag: ts.Diagnostic): string {
   return `${diag.file?.fileName ?? ''}:${String(diag.start ?? -1)}:${String(diag.code)}`;
 }
 
+/** Absolute forward-slash path, the form TypeScript stores on `SourceFile.fileName`. */
+function cachePath(name: string): string {
+  return resolve(name).replace(/\\/g, '/');
+}
+
+/** True when `overlay` already supplies this file's text, so its disk bytes are not a key. */
+function coveredByOverlay(fileName: string, overlay: ProgramOverlay | undefined): boolean {
+  if (overlay === undefined) {
+    return false;
+  }
+  return overlay.files.has(fileName) || overlay.files.has(cachePath(fileName));
+}
+
+/** Source files whose bytes must participate in the cache key: everything the program loaded
+ * except the entry (its own hash), default libs, and overlay files. Sorted so the hash does
+ * not depend on compiler iteration order. */
+function dependencyPathsOf(
+  program: ts.Program,
+  absEntry: string,
+  overlay: ProgramOverlay | undefined,
+): readonly string[] {
+  const paths: string[] = [];
+  for (const file of program.getSourceFiles()) {
+    if (program.isSourceFileDefaultLibrary(file)) {
+      continue;
+    }
+    const name = cachePath(file.fileName);
+    if (name === absEntry || coveredByOverlay(file.fileName, overlay)) {
+      continue;
+    }
+    paths.push(name);
+  }
+  paths.sort();
+  return paths;
+}
+
+/** sha256 of `path + content` for each path, or `undefined` when any file cannot be read
+ * (a deleted dependency is a cache miss, never a stale hit). */
+function hashDependencyFiles(paths: readonly string[]): string | undefined {
+  const parts: string[] = [];
+  for (const path of paths) {
+    try {
+      parts.push(`${path}\0${sha256(readFileSync(path))}`);
+    } catch {
+      return undefined;
+    }
+  }
+  return sha256(parts.join('\n'));
+}
+
 const PROGRAM_CACHE_SLOTS = 2;
 let programCache: ProgramCacheEntry[] = [];
 
@@ -598,7 +654,7 @@ export function clearProgramCache(): void {
  * (`./node.ts`). Like the mode, it is a frontend policy nothing below the gate reads.
  *
  * Unchanged re-builds of the same absolute entry+mode+platform+overlay reuse the previous `ts.Program`
- * when the entry's bytes are unchanged (see `clearProgramCache`). */
+ * when the entry's bytes and every on-disk dependency's bytes are unchanged (see `clearProgramCache`). */
 export function createProgram(
   entryFile: string,
   mode: Mode,
@@ -608,7 +664,7 @@ export function createProgram(
 ): LoadedProgram {
   // Custom hosts (in-memory) have no meaningful disk mtime; never cache those.
   if (host === undefined) {
-    const absEntry = resolve(entryFile).replace(/\\/g, '/');
+    const absEntry = cachePath(entryFile);
     const overlayKey = overlay?.key ?? '';
     // Hash, not mtime: one small-file read is noise against a ~380 ms frontend, and it closes
     // the stale-hit hole for slot-reused temp paths airtightly instead of by timestamp luck.
@@ -624,17 +680,33 @@ export function createProgram(
         entry.mode === mode &&
         entry.node === node &&
         entry.contentHash === contentHash &&
-        entry.overlayKey === overlayKey,
+        entry.overlayKey === overlayKey &&
+        hashDependencyFiles(entry.dependencyPaths) === entry.dependencyHash,
     );
     if (contentHash !== undefined && hit !== undefined) {
       return hit.result;
     }
     const result = createProgramUncached(entryFile, mode, host, overlay, node);
     if (contentHash !== undefined) {
-      programCache = [
-        { absEntry, mode, node, contentHash, overlayKey, result },
-        ...programCache,
-      ].slice(0, PROGRAM_CACHE_SLOTS);
+      const dependencyPaths = dependencyPathsOf(result.program, absEntry, overlay);
+      const dependencyHash = hashDependencyFiles(dependencyPaths);
+      // An unreadable dependency is not cached: the next call rebuilds rather than replaying
+      // a program whose graph we could not re-check.
+      if (dependencyHash !== undefined) {
+        programCache = [
+          {
+            absEntry,
+            mode,
+            node,
+            contentHash,
+            overlayKey,
+            dependencyPaths,
+            dependencyHash,
+            result,
+          },
+          ...programCache,
+        ].slice(0, PROGRAM_CACHE_SLOTS);
+      }
     }
     return result;
   }
