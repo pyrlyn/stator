@@ -35,12 +35,11 @@ function versionedSdkRank(name: string): readonly [number, number] | undefined {
   if (majorText === undefined) {
     return undefined;
   }
+  // Both groups are `\d+` when present, so parseInt cannot return NaN. `Number.isNaN` is
+  // outside the subset (STA1214) and is not needed to reject a non-match: that is `null`.
   const major = Number.parseInt(majorText, 10);
   const minorText = match[2];
   const minor = minorText === undefined ? -1 : Number.parseInt(minorText, 10);
-  if (Number.isNaN(major) || Number.isNaN(minor)) {
-    return undefined;
-  }
   return [major, minor];
 }
 

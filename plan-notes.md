@@ -12968,7 +12968,9 @@ defaults of 0, so `MacOSXbad.sdk` tied `MacOSX0.0.sdk` and could be the newest f
 `versionedSdkRank` returns `undefined` for that shape. Non-matches rank below every versioned
 SDK and compare with each other lexicographically. `pickFallbackSdk` drops names that do not
 parse, so the only-garbage case reports the original link failure instead of retrying against
-a directory that is not an SDK.
+a directory that is not an SDK. The helper does not call `Number.isNaN` (STA1214, and `\d+`
+cannot parse as NaN) and drops the old `match[1] ?? ''`, so the compiler's self-host
+`STA1214` count shrinks 1845 → 1844. The baseline records the shrink.
 
 **Program cache.** The key was entry path + mode + platform + entry sha256 + overlay key. A
 local import edit did not change any of those, which a watch mode would have cached through.
