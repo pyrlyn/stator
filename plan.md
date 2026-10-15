@@ -10,7 +10,7 @@ An ahead-of-time compiler from TypeScript and JavaScript to native binaries.
 | T16 | done | P0 | 3 | 100% | Cursor / grok 4.7 |
 | T17 | done | P1 | 1 | 100% | Cursor / grok 4.7 |
 | T18 | done | P1 | 3 | 100% | Cursor / grok 4.7 |
-| T19 | todo | P3 | 1 | 0% | |
+| T19 | done | P3 | 1 | 100% | Cursor / grok 4.7 |
 | T20 | todo | P2 | 2 | 0% | |
 
 ### T15. Required root docs
@@ -29,9 +29,9 @@ Done — evidence in `done.md`.
 
 Done — evidence in `done.md`.
 
-### T19. Small runtime fixes: RegExp NULL-capture and `replace_impl` double scan
+### ~~T19. Small runtime fixes: RegExp NULL-capture and `replace_impl` double scan~~
 
-`jsrt_regexp.c:514-515` passes a possibly-NULL `capture` to `exec_at` while `jsrt_regexp_search` (`:627`) guards it — align the two (or drop both with a comment). `jsrt_string_ops.c:507-508,523,537`: `replace_impl` calls `index_of_from` twice per match — hoist the result.
+Done — evidence in `done.md`.
 
 ### T20. Tests for the runtime edges found by the audit
 

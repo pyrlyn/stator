@@ -454,12 +454,15 @@ jsrt_value jsrt_regexp_construct(jsrt_value pattern, jsrt_value flags) {
  * `capture` must hold `lre_get_alloc_count` pointers, NOT twice the capture count: the executor
  * spills its own registers into the same array, and sizing it by the group count overruns the heap
  * on any pattern that uses one (upstream says so in a comment, having fixed exactly that bug).
+ * A NULL buffer is a miss, not a crash: `lre_exec` writes `capture[i]` before it reads the
+ * subject, and `capture_buffer` returns NULL when the header claims no captures and no registers.
+ * `test` used to pass that pointer through while `search` refused it; both come through here.
  *
  * The subject needs no conversion: our strings ARE UTF-16 code units, which is what `cbuf_type` 1
  * means to the engine. It promotes that to 2 (pair surrogates) by itself for a unicode pattern. */
 static bool exec_at(const JSRTRegExp *re, const JSString *subject, uint32_t start,
                     uint8_t **capture) {
-  if (start > subject->length) {
+  if (start > subject->length || capture == NULL) {
     return false;
   }
   const int rc = lre_exec(capture, re->bytecode, (const uint8_t *)subject->data, (int)start,
@@ -625,7 +628,8 @@ jsrt_value jsrt_regexp_search(jsrt_value re_value, jsrt_value str) {
   const uint32_t saved = re->last_index;
   re->last_index = 0;
   uint8_t **capture = capture_buffer(re);
-  const bool hit = capture != NULL && exec_at(re, s, 0, capture);
+  /* NULL is a miss inside `exec_at` (it is the only caller of `lre_exec`), same as `test`. */
+  const bool hit = exec_at(re, s, 0, capture);
   const double at = hit ? (double)((const uint16_t *)capture[0] - s->data) : -1;
   free(capture);
   re->last_index = saved;

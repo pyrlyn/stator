@@ -516,12 +516,35 @@ static jsrt_value replace_impl(jsrt_value s, jsrt_value pattern, jsrt_value repl
    * max(1, patLen)), which is also what stops the scan from standing still. */
   uint32_t advance = pat->length > 0 ? pat->length : 1;
 
+  /* One search per match. The old counting loop called `index_of_from` in the condition and
+   * again for the hit, then the length and emit passes searched from the start a third and
+   * fourth time. Positions are plain integers -- no `jsrt_value` -- so the list is malloc'd and
+   * freed before the result is boxed. */
   uint32_t matches = 0;
+  uint32_t cap = 0;
+  uint32_t *hits = NULL;
   uint32_t scan = 0;
-  while (scan <= hay->length && index_of_from(hay, pat, scan) >= 0) {
-    int64_t hit = index_of_from(hay, pat, scan);
-    matches++;
-    scan = (uint32_t)hit + advance;
+  while (scan <= hay->length) {
+    int64_t found = index_of_from(hay, pat, scan);
+    if (found < 0) {
+      break;
+    }
+    if (matches == cap) {
+      if (cap > (UINT32_MAX / 2u)) {
+        free(hits);
+        jsrt_panic("out of memory: string replace");
+      }
+      uint32_t next = cap == 0 ? 4u : cap * 2u;
+      uint32_t *grown = (uint32_t *)realloc(hits, (size_t)next * sizeof(uint32_t));
+      if (grown == NULL) {
+        free(hits);
+        jsrt_panic("out of memory: string replace");
+      }
+      hits = grown;
+      cap = next;
+    }
+    hits[matches++] = (uint32_t)found;
+    scan = (uint32_t)found + advance;
     if (!all) {
       break;
     }
@@ -532,29 +555,26 @@ static jsrt_value replace_impl(jsrt_value s, jsrt_value pattern, jsrt_value repl
 
   uint32_t total = 0;
   uint32_t tail_start = 0;
-  scan = 0;
   for (uint32_t m = 0; m < matches; m++) {
-    int64_t hit = index_of_from(hay, pat, scan);
+    uint32_t hit = hits[m];
     uint32_t sub_len;
-    substitution_length(rep, hay, pat, (uint32_t)hit, &sub_len);
-    total += ((uint32_t)hit - tail_start) + sub_len;
-    tail_start = (uint32_t)hit + pat->length;
-    scan = (uint32_t)hit + advance;
+    substitution_length(rep, hay, pat, hit, &sub_len);
+    total += (hit - tail_start) + sub_len;
+    tail_start = hit + pat->length;
   }
   total += hay->length - tail_start;
 
   JSString *out = alloc_str(total);
   uint32_t at = 0;
   tail_start = 0;
-  scan = 0;
   for (uint32_t m = 0; m < matches; m++) {
-    int64_t hit = index_of_from(hay, pat, scan);
-    at = emit_units(out->data, at, hay->data + tail_start, (uint32_t)hit - tail_start);
-    at = substitution_emit(out->data, at, rep, hay, pat, (uint32_t)hit);
-    tail_start = (uint32_t)hit + pat->length;
-    scan = (uint32_t)hit + advance;
+    uint32_t hit = hits[m];
+    at = emit_units(out->data, at, hay->data + tail_start, hit - tail_start);
+    at = substitution_emit(out->data, at, rep, hay, pat, hit);
+    tail_start = hit + pat->length;
   }
   emit_units(out->data, at, hay->data + tail_start, hay->length - tail_start);
+  free(hits);
   return box_str(out);
 }
 
