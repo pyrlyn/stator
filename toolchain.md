@@ -1,6 +1,6 @@
 # Toolchain
 
-Pins below are the ones in `mise.toml` and the package manifests. `docs/TOOLCHAIN.md` is the longer note (CI stages, environment variables, vendored C, Boehm, ICU). A few rows there lag the manifests (`oxlint`, `oxfmt`, `@types/node`); the manifests win.
+Pins below are the ones in `mise.toml` and the package manifests. `docs/TOOLCHAIN.md` is the longer note (CI stages, environment variables, vendored C, Boehm, ICU) and matches these pins (plan-notes 359).
 
 ## Programs
 
@@ -17,28 +17,29 @@ Pins below are the ones in `mise.toml` and the package manifests. `docs/TOOLCHAI
 
 | Package | Where | Source | Why here |
 | --- | --- | --- | --- |
-| typescript | local (`packages/compiler`, also a devDependency of the other packages) | https://www.npmjs.com/package/typescript | In-process parse and check; pinned to 6.0.3, not the 7.x Go port |
-| typebox | local (`packages/compiler`) | https://www.npmjs.com/package/typebox | `stator.config.json` schema and validation |
-| jsonc-parser | local (`packages/compiler`) | https://www.npmjs.com/package/jsonc-parser | Locates a syntax error in `stator.config.json` |
-| dotenv | local (`packages/compiler`) | https://www.npmjs.com/package/dotenv | Loads the project `.env` for the CLI |
-| ink | local (`packages/compiler`) | https://www.npmjs.com/package/ink | CLI rendering |
-| react | local (`packages/compiler`) | https://www.npmjs.com/package/react | Ink's renderer |
-| @types/react | local (root devDependency) | https://www.npmjs.com/package/@types/react | Types for the Ink UI |
-| @opentelemetry/api | local (`packages/compiler`) | https://www.npmjs.com/package/@opentelemetry/api | Opt-in tracing (`STATOR_OTEL`) |
-| @opentelemetry/exporter-trace-otlp-http | local (`packages/compiler`) | https://www.npmjs.com/package/@opentelemetry/exporter-trace-otlp-http | OTLP HTTP export |
-| @opentelemetry/resources | local (`packages/compiler`) | https://www.npmjs.com/package/@opentelemetry/resources | Trace resource attributes |
-| @opentelemetry/sdk-trace-node | local (`packages/compiler`) | https://www.npmjs.com/package/@opentelemetry/sdk-trace-node | Node trace SDK |
-| vite | local (`packages/vite-stator`, `examples/vite`) | https://www.npmjs.com/package/vite | Default bundler; `stator()` plugin |
-| vitest | local (root and `packages/tests`) | https://www.npmjs.com/package/vitest | Unit tests (`pnpm run test`) |
-| @types/node | local (root devDependency) | https://www.npmjs.com/package/@types/node | Node types for the compiler and harnesses |
-| oxlint | local (root devDependency) | https://www.npmjs.com/package/oxlint | Lint |
-| oxlint-tsgolint | local (root devDependency) | https://www.npmjs.com/package/oxlint-tsgolint | Type-aware oxlint backend |
-| oxfmt | local (root devDependency) | https://www.npmjs.com/package/oxfmt | Format check |
-| c8 | local (root devDependency) | https://www.npmjs.com/package/c8 | V8 coverage for `pnpm run test:coverage` |
-| cpd | local (root devDependency) | https://www.npmjs.com/package/cpd | Copy-paste check (`pnpm run dupes`) |
-| execa | local (root devDependency and `packages/tests`) | https://www.npmjs.com/package/execa | Spawns the CLI from unit tests |
-| memfs | local (root devDependency and `packages/tests`) | https://www.npmjs.com/package/memfs | In-memory filesystem for harnesses |
-| astro | local (`site/`) | https://www.npmjs.com/package/astro | Landing page; own lockfile, not `pnpm run ci` |
-| @fontsource/ibm-plex-sans | local (`site/`) | https://www.npmjs.com/package/@fontsource/ibm-plex-sans | Self-hosted sans face |
-| @fontsource/ibm-plex-mono | local (`site/`) | https://www.npmjs.com/package/@fontsource/ibm-plex-mono | Self-hosted mono face |
-| playwright-core | local (`site/` devDependency) | https://www.npmjs.com/package/playwright-core | Browser check of the built site |
+| typescript 6.0.3 | `packages/compiler` dependency; devDependency of the other TypeScript packages and the root | https://www.npmjs.com/package/typescript | In-process parse and check; pinned to 6.0.3, not the 7.x Go port |
+| typebox 1.3.36 | `packages/compiler` | https://www.npmjs.com/package/typebox | `stator.config.json` schema and validation |
+| jsonc-parser 3.3.1 | `packages/compiler` | https://www.npmjs.com/package/jsonc-parser | Locates a syntax error in `stator.config.json` |
+| dotenv 18.0.6 | `packages/compiler` | https://www.npmjs.com/package/dotenv | Loads the project `.env` for the CLI |
+| ink 8.0.0 | `packages/compiler` | https://www.npmjs.com/package/ink | CLI rendering |
+| react 19.3.0 | `packages/compiler` | https://www.npmjs.com/package/react | Ink's renderer |
+| @types/react 19.3.0 | root devDependency | https://www.npmjs.com/package/@types/react | Types for the Ink UI |
+| @opentelemetry/api 1.9.1 | `packages/compiler` | https://www.npmjs.com/package/@opentelemetry/api | Opt-in tracing (`STATOR_OTEL`) |
+| @opentelemetry/exporter-trace-otlp-http 0.222.0 | `packages/compiler` | https://www.npmjs.com/package/@opentelemetry/exporter-trace-otlp-http | OTLP HTTP export |
+| @opentelemetry/resources 2.11.0 | `packages/compiler` | https://www.npmjs.com/package/@opentelemetry/resources | Trace resource attributes |
+| @opentelemetry/sdk-trace-node 2.11.0 | `packages/compiler` | https://www.npmjs.com/package/@opentelemetry/sdk-trace-node | Node trace SDK |
+| vite 8.3.3 | `packages/vite-stator` and `examples/vite` devDependencies; peer `^8.3.2` | https://www.npmjs.com/package/vite | Default bundler; `stator()` plugin |
+| vitest 5.0.3 | root and `packages/tests` | https://www.npmjs.com/package/vitest | Unit tests (`pnpm run test`) |
+| @types/node 26.6.3 | root devDependency | https://www.npmjs.com/package/@types/node | Node types for the compiler and harnesses |
+| oxlint 1.86.0 | root devDependency | https://www.npmjs.com/package/oxlint | Lint |
+| oxlint-tsgolint 7.0.2003 | root devDependency | https://www.npmjs.com/package/oxlint-tsgolint | Type-aware oxlint backend |
+| oxfmt 0.71.0 | root devDependency | https://www.npmjs.com/package/oxfmt | Format check |
+| c8 12.0.0 | root devDependency | https://www.npmjs.com/package/c8 | V8 coverage for `pnpm run test:coverage` |
+| cpd 5.4.0 | root devDependency | https://www.npmjs.com/package/cpd | Copy-paste check (`pnpm run dupes`) |
+| execa 10.0.1 | root devDependency and `packages/tests` | https://www.npmjs.com/package/execa | Spawns the CLI from unit tests |
+| astro ^7.3.5 | `site/` | https://www.npmjs.com/package/astro | Landing page; own lockfile, not `pnpm run ci` |
+| @fontsource/ibm-plex-sans 5.3.0 | `site/` | https://www.npmjs.com/package/@fontsource/ibm-plex-sans | Self-hosted sans face |
+| @fontsource/ibm-plex-mono 5.3.0 | `site/` | https://www.npmjs.com/package/@fontsource/ibm-plex-mono | Self-hosted mono face |
+| playwright-core 1.63.0 | `site/` devDependency | https://www.npmjs.com/package/playwright-core | Browser check of the built site |
+
+`memfs` is not a dependency. It was removed from the root and `packages/tests` manifests (plan-notes 353).
