@@ -4531,6 +4531,23 @@ Left to other cards: `esmExternalRequirePlugin` in `vite-stator` (T12.2) and the
 through the default adapter (T12.3). The CJS cycle and `module.exports` replacement goldens moved
 to T12.3 earlier.
 
+### T15. Required root docs
+
+`todo.md`, `roadmap.md`, `ideas.md` and `toolchain.md` exist at the repo root and are filled from `plan.md`, the manifests and `docs/TOOLCHAIN.md` (plan-notes 359). `todo.md` lists the open audit rows. `roadmap.md` points at the open phases already in `plan.md` and holds nothing that is waiting to be scheduled. `ideas.md` is the unapproved inbox and is empty. `toolchain.md` lists the mise and npm pins; `docs/TOOLCHAIN.md` and `docs/BUNDLER.md` were brought up to those pins in the same change (typebox 1.3.36, `@types/node` 26.6.3, oxlint 1.86.0, oxlint-tsgolint 7.0.2003, oxfmt 0.71.0, cpd 5.4.0, vite 8.3.3, astro `^7.3.5`). `toolchain.md` records that `memfs` is not a dependency: it left the manifests in plan-notes 353. `todo-js` and `todo-ts` are not in the tree, so there was nothing to leave in place.
+
+Package audit: a package is covered when its directory name already appears in `packages/tests`. No new test was added.
+
+Check:
+
+```
+test -f todo.md -a -f roadmap.md -a -f ideas.md -a -f toolchain.md
+for p in compiler runtime std node tests vite-stator; do
+  rg -l --glob '!**/node_modules/**' "packages/$p" packages/tests >/dev/null && echo "$p covered"
+done
+```
+
+Observed 2026-10-15: all four files exist, and each package printed `covered` (`compiler` in `packages/tests/golden/asan-gate.ts` and `selfhost/targets.json`; `runtime` and `std` in the same two; `node` in `selfhost/targets.json` and `unit/node-platform.test.ts`; `tests` in the harness paths; `vite-stator` in `unit/vite-stator.test.ts` and `selfhost/targets.json`).
+
 ### T16. Compare-only shape keys are freed; stores still intern
 
 `jsrt_shape_key` interned every UTF-8 conversion. A second lookup of the same bytes was freed (plan-notes 353), but a miss never stores the pointer, so each distinct computed read, `in`, `delete`, `Object.hasOwn`, array-index check, print/`JSON.stringify` get, and error-message rendering kept `3·len+1` bytes plus an intern node for the life of the process. A named-group `exec` malloc'd the group name and passed it to `jsrt_set_prop`; the second match reused the existing transition and leaked that malloc. Reproduced before the call-site change: `print_shapes` reported `compare-only key lookup interned 32 keys`.
@@ -4551,6 +4568,26 @@ Check: `moon run tests:golden -- --filter string_range_error` — both fixtures'
 
 Check: `just -f packages/runtime/justfile -d packages/runtime runtime-test` — print corpus matches Node, then `packages/runtime/tests/roots.c` prints `roots ok` (compare, loose equality, default sort, user sort, promise adoption whose inner-promise finalizer stays quiet), under `jsrt_gc_stress`. Observed 2026-10-09: that command printed `roots ok` then `runtime: print corpus matches Node`.
 
+### T19. Small runtime fixes: RegExp NULL-capture and `replace_impl` double scan
+
+`jsrt_regexp_test` passed `capture_buffer`'s NULL (bytecode whose header claims no captures and no registers) straight into `exec_at`, and `lre_exec` writes `capture[i]` before it reads the subject. `jsrt_regexp_search` already treated that NULL as a miss. The refusal now lives in `exec_at`, so `test`, `search` and `scan` share it; `search` no longer keeps a second copy of the check.
+
+`replace_impl` called `index_of_from` in the counting loop's condition and again for the same hit, then the length pass and the emit pass each searched from the start again (the three sites at the old `jsrt_string_ops.c` lines 507–508, 523 and 537). One scan records the positions — plain `uint32_t`s, malloc'd, freed before the result is boxed — and both later passes read that list. An empty pattern still advances by one and still measures the match as zero units.
+
+Model: Cursor / grok 4.7 · Status: done 2026-10-15 · Priority: P3 · Complexity: 1 · Files: `packages/runtime/src/jsrt_regexp.c`, `packages/runtime/src/jsrt_string_ops.c`
+
+Check: `just -f packages/runtime/justfile -d packages/runtime runtime-test` — `roots ok` then `runtime: print corpus matches Node` (plain malloc, no LTO). `node packages/tests/golden/run.ts --filter string_builtins` — `golden: 2 fixtures — 2 passed, 0 failed`. The same runner with `--filter primitive_methods` and `--filter regexp_strings` — 2 passed each. Observed 2026-10-15.
+
 ### T23. Builtin-constructor comparison follows the startup snapshot
 
 `unit/to-primitive.test.ts` compared `BUILTIN_CONSTRUCTOR_NAMES` with the host `util.format` set and skipped `win32`/`arm64`, so main's `frontend (windows/arm64)` was green while any branch without the skip failed (PR #61, PR #114). The official win-arm64 Node 26.7.0 is cross-compiled from win-x64, so `node_use_node_snapshot` is false and `inspect.js` records seven later globals. The runtime list stays the snapshot set. The test now branches on that flag and fails unless a no-snapshot build differs by exactly those seven names (plan-notes 354).
+
+### T20. Non-SDK names have an explicit rank, and the program cache hashes dependencies
+
+The empty-receiver `repeat` fixtures and the computed-key leak row were already T17 (`string_range_error`) and T16 (`keys.js`). The two notes still open were `compareSdkNames` and the program-cache key (plan-notes 357).
+
+`compareSdkNames` parsed a non-matching name as `[]` and then filled both components with `0` via destructuring defaults, so `MacOSXbad.sdk` compared equal to `MacOSX0.0.sdk` and could sort as the newest fallback. A name that is not `MacOSX<major>[.<minor>].sdk` now has no version. It ranks below every versioned SDK, and two such names compare lexicographically. `pickFallbackSdk` only considers names that parse, so a garbage directory is never the chosen sysroot.
+
+The program cache keyed on the entry's sha256 and the overlay key. An edit to an on-disk import left the entry hash unchanged, so a later watch mode would have served a stale `ts.Program`. The key now also hashes every other on-disk source file the program loaded. Default libs are omitted. Overlay files are omitted, because their bytes are the overlay key and a vendor module is not on disk. A dependency that cannot be re-read is a miss. That hash is the invalidation a watch mode must keep using (`docs/BUNDLER.md` §7).
+
+Check: `pnpm exec vitest run --config packages/tests/vitest.config.ts packages/tests/unit/toolchain-sdk.test.ts packages/tests/unit/program-cache.test.ts packages/tests/unit/graph.test.ts` — `Test Files  3 passed (3)`, `Tests  15 passed (15)` (the new rows are the non-SDK rank and a transitive leaf edit that must miss). `pnpm exec tsc --noEmit -p packages/compiler/tsconfig.json` and `-p packages/tests/tsconfig.json` were clean. `pnpm exec oxlint --deny-warnings` on the touched sources was clean. `pnpm run dupes` reported 180 clones and exited 0 (no new clone). `stator explain` of `packages/compiler` reports `1844 × STA1214` (was 1845): the old `match[1] ?? ''` was one not-yet nullish coalescing, and the rank helper does not need it. The baseline records that shrink.

@@ -2,7 +2,7 @@
 
 How stator is specified. [`plan.md`](../plan.md) is the authority for what is still open; these files operationalize it.
 
-**Getting started:** [project README](../README.md) → [`HOW-IT-WORKS.md`](HOW-IT-WORKS.md). **Contributing:** [`CONTRIBUTING.md`](../CONTRIBUTING.md).
+**Getting started:** [project README](../README.md) → [`HOW-IT-WORKS.md`](HOW-IT-WORKS.md). **Contributing:** [`CONTRIBUTING.md`](../CONTRIBUTING.md), [`DEVELOPMENT.md`](DEVELOPMENT.md).
 
 | File | What it is |
 |---|---|

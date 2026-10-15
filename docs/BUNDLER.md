@@ -152,10 +152,9 @@ table leaves open:
 - `inputs` are the chunk's absolute module ids, less the virtual entry. A build that answers
   more than one chunk, or no map, is an error, so `STA0015`.
 
-The pin is Vite **8.3.2** (npm registry `https://registry.npmjs.org/vite`, published
-2026-10-01T10:17:44.767Z, `dist-tags.latest` checked 2026-10-02), bumped from 8.3.1 with the
-creator's permission; vitest's own `vite` moved with it (plan-notes 321 item 2). The measurements
-in this section were taken on 8.3.1; the unit tests and goldens re-ran green on 8.3.2.
+The installed devDependency is Vite **8.3.3** (`packages/vite-stator` and `examples/vite`; peer
+`^8.3.2`). The creator approved the bump to 8.3.2 (plan-notes 321 item 2); 8.3.3 landed in #141.
+The measurements in this section were taken on 8.3.1; the unit tests and goldens re-ran green on 8.3.2.
 
 **The `stator()` plugin** (`src/plugin.ts`) makes `vite build` produce the binary:
 
@@ -449,10 +448,14 @@ clang. The bundle step is about 1–3% of a build.
 only for watch mode (rolldown 1.2.12 typings). So T12.1 does not cache the bundle step. It
 reruns, cheaply, and only for graphs with package imports.
 
-**Program cache (Task 6.9).** Today's key is (absolute entry, mode, sha256 of the entry bytes),
-held in-process for one entry, and skipped for custom hosts. T12.1 adds the sha256 of the
-vendor bundle's `code` to the key. A changed dependency then misses the cache even when the
-entry did not change. `compile` over an in-memory bundle keys on content, not on a path.
+**Program cache (Task 6.9, T20).** The in-process key is (absolute entry, mode, platform,
+sha256 of the entry bytes, sha256 of every other on-disk source file the program loaded, and
+the overlay key), two slots deep, and skipped for custom hosts. Default library files are not
+part of the dependency hash. Overlay files are not read back from disk; their bytes are the
+overlay key, which is the sha256 of the vendor bundle's `code` together with the rewritten
+project files (T12.1). A changed local import or a changed bundle misses even when the entry
+did not. `compile` over an in-memory bundle keys on content, not on a path. A later watch mode
+keeps this key; it does not grow a second invalidation scheme for file edits.
 
 **moon.** A task that builds a binary declares as `inputs`:
 
