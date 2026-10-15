@@ -81,6 +81,24 @@ test('plain arm64e does not disqualify an SDK', () => {
   );
 });
 
+test('a non-SDK name ranks below version 0, and is never the fallback', () => {
+  // A destructuring default of 0 used to rank these equal to MacOSX0.0.sdk, so a garbage
+  // directory could sort as the newest SDK and be handed to -isysroot.
+  assert.ok(compareSdkNames('MacOSXbad.sdk', 'MacOSX0.0.sdk') < 0);
+  assert.ok(compareSdkNames('MacOSXbad.sdk', 'MacOSX0.sdk') < 0);
+  assert.ok(compareSdkNames('notes.txt', 'MacOSX0.0.sdk') < 0);
+  assert.ok(compareSdkNames('notes.txt', 'zzz.txt') < 0);
+  assert.equal(compareSdkNames('notes.txt', 'notes.txt'), 0);
+  assert.equal(
+    pickFallbackSdk('/sdks', [
+      { name: 'MacOSXbad.sdk', tbdText: OLD_TBD },
+      { name: 'MacOSX0.0.sdk', tbdText: OLD_TBD },
+    ]),
+    join('/sdks', 'MacOSX0.0.sdk'),
+  );
+  assert.equal(pickFallbackSdk('/sdks', [{ name: 'MacOSXbad.sdk', tbdText: OLD_TBD }]), undefined);
+});
+
 test('SDK versions order numerically, not lexicographically', () => {
   // 'MacOSX26.sdk' sorts AFTER 'MacOSX26.5.sdk' lexicographically ('s' > '5') while
   // predating it — the pick must be newest-first by version, or a working fallback loses

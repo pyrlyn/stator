@@ -21,23 +21,48 @@ import { join } from 'node:path';
 /** Where `xcode-select --install` puts versioned SDKs (`MacOSX26.5.sdk`, …). */
 export const CLT_SDK_ROOT = '/Library/Developer/CommandLineTools/SDKs';
 
+/** `MacOSX<major>[.<minor>].sdk` as numbers, or `undefined` when `name` is not that shape.
+ * A missing minor is -1, so `MacOSX26.sdk` is older than `MacOSX26.0.sdk`. A name that does
+ * not match is `undefined` rather than version 0.0: the old destructuring default ranked
+ * `notes.txt` and `MacOSXbad.sdk` equal to `MacOSX0.0.sdk`, so a garbage directory could
+ * sort as the newest fallback. */
+function versionedSdkRank(name: string): readonly [number, number] | undefined {
+  const match = /^MacOSX(\d+)(?:\.(\d+))?\.sdk$/.exec(name);
+  if (match === null) {
+    return undefined;
+  }
+  const majorText = match[1];
+  if (majorText === undefined) {
+    return undefined;
+  }
+  const major = Number.parseInt(majorText, 10);
+  const minorText = match[2];
+  const minor = minorText === undefined ? -1 : Number.parseInt(minorText, 10);
+  if (Number.isNaN(major) || Number.isNaN(minor)) {
+    return undefined;
+  }
+  return [major, minor];
+}
+
 /** Version order for `MacOSX<major>[.<minor>].sdk` names. Lexicographic order lies:
  * `"MacOSX26.sdk"` sorts after `"MacOSX26.5.sdk"` (`'s' > '5'`), while 26.0 predates 26.5 —
  * and picking the older SDK is how a working fallback lost to a broken one. Numeric
- * components compare numerically; a missing minor is older than any present one. */
+ * components compare numerically; a missing minor is older than any present one. A name
+ * that is not a versioned SDK ranks below every versioned one, and two such names compare
+ * lexicographically, so malformed input stays visible in the order. */
 export function compareSdkNames(first: string, second: string): number {
-  const parse = (name: string): readonly number[] => {
-    const match = /^MacOSX(\d+)(?:\.(\d+))?\.sdk$/.exec(name);
-    if (match === null) {
-      return [];
+  const a = versionedSdkRank(first);
+  const b = versionedSdkRank(second);
+  if (a === undefined || b === undefined) {
+    if (a === undefined && b === undefined) {
+      if (first < second) return -1;
+      if (first > second) return 1;
+      return 0;
     }
-    const major = Number.parseInt(match[1] ?? '', 10);
-    const minor = match[2] === undefined ? -1 : Number.parseInt(match[2], 10);
-    return [major, minor];
-  };
-  const [aMajor = 0, aMinor = 0] = parse(first);
-  const [bMajor = 0, bMinor = 0] = parse(second);
-  return aMajor - bMajor !== 0 ? aMajor - bMajor : aMinor - bMinor;
+    return a === undefined ? -1 : 1;
+  }
+  const majorDelta = a[0] - b[0];
+  return majorDelta !== 0 ? majorDelta : a[1] - b[1];
 }
 
 /** The `.tbd` whose format decides whether the bundled linker can use an SDK. */
@@ -65,11 +90,10 @@ export interface SdkCandidate {
   readonly tbdText: string | undefined;
 }
 
-/** Pure selection: newest versioned `MacOSX*.sdk` under `sdkRoot` (bare `MacOSX.sdk` is
- * the default sysroot that just failed, never a fallback) whose `.tbd` carries no new-arch
- * token. Lexicographic order is version order for Apple's `MacOSX<major>[.<minor>].sdk`
- * names. `undefined` when no candidate qualifies — the caller then reports the original
- * failure with a hint. */
+/** Pure selection: newest versioned `MacOSX<major>[.<minor>].sdk` under `sdkRoot` (bare
+ * `MacOSX.sdk`, and any name that is not that shape, is never a fallback) whose `.tbd`
+ * carries no new-arch token. `undefined` when no candidate qualifies — the caller then
+ * reports the original failure with a hint. */
 export function pickFallbackSdk(
   sdkRoot: string,
   candidates: readonly SdkCandidate[],
@@ -77,9 +101,7 @@ export function pickFallbackSdk(
   const usable = candidates
     .filter(
       (candidate) =>
-        candidate.name !== 'MacOSX.sdk' &&
-        candidate.name.startsWith('MacOSX') &&
-        candidate.name.endsWith('.sdk') &&
+        versionedSdkRank(candidate.name) !== undefined &&
         candidate.tbdText !== undefined &&
         !NEW_ARCH_TOKEN.test(candidate.tbdText),
     )

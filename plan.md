@@ -11,11 +11,18 @@ An ahead-of-time compiler from TypeScript and JavaScript to native binaries.
 | T17 | done | P1 | 1 | 100% | Cursor / grok 4.7 |
 | T18 | done | P1 | 3 | 100% | Cursor / grok 4.7 |
 | T19 | todo | P3 | 1 | 0% | |
-| T20 | todo | P2 | 2 | 0% | |
+| T20 | done | P2 | 2 | 100% | Cursor / grok 4.7 |
 
 ### T15. Required root docs
 
 `todo.md`, `roadmap.md`, `ideas.md`, and `toolchain.md` were missing from the repo root. Done when those four files exist and are filled from this plan, the manifests, and `docs/TOOLCHAIN.md`, and when the package audit has either a new test or a recorded reason that every package under `packages/` is already covered.
+
+Execution plan:
+
+1. Read `plan.md`, `package.json`, `mise.toml`, `docs/TOOLCHAIN.md`, and `README.md`.
+2. Add the four root files in English from those sources. Leave `todo-js` and `todo-ts` in place.
+3. Audit `packages/`: a package is covered when its name already appears in `packages/tests`. Every package is covered, so add no tests.
+4. Leave readiness at 70% because tests were not run.
 
 ### ~~T16. Systemic `jsrt_shape_key` leak on every dynamic property read/write~~
 
@@ -33,16 +40,9 @@ Done — evidence in `done.md`.
 
 `jsrt_regexp.c:514-515` passes a possibly-NULL `capture` to `exec_at` while `jsrt_regexp_search` (`:627`) guards it — align the two (or drop both with a comment). `jsrt_string_ops.c:507-508,523,537`: `replace_impl` calls `index_of_from` twice per match — hoist the result.
 
-### T20. Tests for the runtime edges found by the audit
+### ~~T20. Tests for the runtime edges found by the audit~~
 
-The empty-receiver `repeat` fixtures landed with T17 (`string_range_error`) and the computed-key leak row with T16 (`keys.js`). Still open: `compareSdkNames` (`toolchain.ts:38-40`) silently ranks non-SDK names as 0.0 via destructuring defaults — an explicit rank for non-matching names would surface malformed input — and the program cache (`program.ts:578-608`) keys on entry hash only, which deserves a dependency-hash key or a documented TODO before any watch mode. Done means: those two notes are addressed.
-
-Execution plan:
-
-1. Read `plan.md`, `package.json`, `mise.toml`, `docs/TOOLCHAIN.md`, and `README.md`.
-2. Add the four root files in English from those sources. Leave `todo-js` and `todo-ts` in place.
-3. Audit `packages/`: a package is covered when its name already appears in `packages/tests`. Every package is covered, so add no tests.
-4. Leave readiness at 70% because tests were not run.
+Done — evidence in `done.md`.
 
 > **Audience:** AI agents (and humans) executing this project. This file is self-contained: read it top to bottom before doing any task. Every task has numbered **Steps** and a **Check** — do not mark a task done until its Check passes. Findings that contradict this plan go into `plan-notes.md` (repo root), not silently into code. Operational conventions (commands, coding standards, workflow) live in `AGENTS.md`; this file is the roadmap and the spec.
 >

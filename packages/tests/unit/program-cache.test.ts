@@ -44,3 +44,32 @@ test('the program cache keys on content, not mtime', () => {
     rmSync(work, { recursive: true, force: true });
   }
 });
+
+test('the program cache misses when a transitive import changes', () => {
+  const work = mkdtempSync(join(tmpdir(), 'stator-program-cache-dep-'));
+  try {
+    clearProgramCache();
+    const entry = join(work, 'entry.ts');
+    const mid = join(work, 'mid.ts');
+    const leaf = join(work, 'leaf.ts');
+    writeFileSync(leaf, 'export const n: number = 1;\n');
+    writeFileSync(mid, 'import { n } from "./leaf.ts";\nexport const m: number = n;\n');
+    writeFileSync(entry, 'import { m } from "./mid.ts";\nconsole.log(m);\n');
+    const first = createProgram(entry, 'ts');
+    const again = createProgram(entry, 'ts');
+    assert.equal(again.program, first.program, 'unchanged dependencies must hit');
+
+    writeFileSync(leaf, 'export const n: number = 2;\n');
+    const third = createProgram(entry, 'ts');
+    assert.notEqual(
+      third.program,
+      first.program,
+      'a leaf edit must miss even though the entry did not',
+    );
+    const leafFile = third.program.getSourceFile(resolve(leaf).replace(/\\/g, '/'));
+    assert.ok(leafFile !== undefined);
+    assert.match(leafFile.getFullText(), /export const n: number = 2/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
