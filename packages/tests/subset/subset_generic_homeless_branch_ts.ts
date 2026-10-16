@@ -8,4 +8,7 @@
 function run(f: (x: number) => number, v: number): number {
   return f(v);
 }
-console.log(run(1 > 0 ? <T,>(x: T): T => x : (x: number) => x + 1, 1));
+function pick(generic: boolean): number {
+  return run(generic ? <T,>(x: T): T => x : (x: number) => x + 1, 1);
+}
+console.log(pick(true));
