@@ -99,7 +99,7 @@ Gallery + captions: `docs/ARCHITECTURE.md`. Shared theme: `docs/architecture/the
 ## Commands
 
 Dev runs TS directly on the pinned Node (≥24, see `.node-version`) — no build step needed.
-`mise install` provides that Node, pnpm, just, moon, LLVM clang 21.1.8, and Zig 0.16.0 (Unix; required for the runtime once T9.1 lands).
+`mise install` provides that Node, pnpm, just, moon, LLVM clang 21.1.8, Zig 0.16.0 (Unix; required for the runtime once T9.1 lands), and jactionlint, hk and shellcheck for the workflow lint.
 If bare `node --version` disagrees with `.node-version` (on some hosts PATH puts mise's
 `node/lts` ahead of the shims, so bare `node` answers 24), prefix commands with
 `mise exec node --` — `pnpm run ci` refuses to start otherwise (plan.md Task 6.2a).
@@ -138,6 +138,9 @@ just -f packages/std/justfile -d packages/std std                  # the std/* b
 pnpm run test:intl              # the intl_* golden fixtures against that build (not part of `ci`)
 pnpm run ci                     # all of the above, in order — run before claiming any task done
 moon run tests:ci               # same gate through moon (dependency graph + caching); wraps the above
+mise x -- jactionlint           # lint workflows, composite actions, dependabot.yml (CI: `static analysis`; not part of `ci`)
+mise x -- jactionlint --baseline-write  # refresh .github/jactionlint-baseline.json after fixing findings
+mise x -- hk install --mise     # install the pre-push hook (hk.pkl runs jactionlint) once per clone
 node packages/compiler/src/cli/main.ts build file.ts -o app [--mode=ts|js] [--node] [--emit=c] [--keep-c]
 node packages/compiler/src/cli/main.ts explain file.ts --json   # per-construct verdicts (decision tests use this)
 node packages/compiler/src/cli/main.ts build                   # entry, -o, mode, … from ./stator.config.json (docs/CONFIG.md); flags override it
