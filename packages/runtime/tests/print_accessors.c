@@ -17,8 +17,10 @@
 #include <assert.h>
 #include <stdio.h>
 
-/* An accessor body is an ordinary function unit with the receiver as parameter zero, which is what
- * lets the runtime invoke it with the plain closure ABI (docs/VALUE.md §4.5). */
+/* An accessor body is an ordinary function unit with the receiver as parameter zero (docs/VALUE.md
+ * §4.5), so its closure declares one (`has_receiver`, arity without it): the runtime calls it
+ * through jsrt_call_method_at, which passes the receiver only to a closure that declares it
+ * (plan-notes 319). */
 static jsrt_value get_double(uint32_t argc, const jsrt_value *argv, JSRTEnv *env) {
   (void)env;
   const jsrt_value self = jsrt_arg(argc, argv, 0);
@@ -63,8 +65,8 @@ int main(void) {
   jsrt_value obj = jsrt_dynobj_new();
   JSRT_LOCAL(0) = obj;
   jsrt_set_prop(obj, "val", num(21), NULL);
-  jsrt_define_accessor(obj, "double", jsrt_closure_new(get_double, 1, "double", NULL, false),
-                       jsrt_closure_new(set_double, 2, "double", NULL, false));
+  jsrt_define_accessor(obj, "double", jsrt_closure_new(get_double, 0, "double", NULL, true),
+                       jsrt_closure_new(set_double, 1, "double", NULL, true));
   jsrt_print(jsrt_get_prop(obj, "double", NULL)); /* 42 — the getter ran */
   jsrt_print(obj);                                /* [Getter/Setter] — it did NOT */
   jsrt_set_prop(obj, "double", num(100), NULL);   /* the setter ran, not a slot store */
@@ -77,8 +79,8 @@ int main(void) {
   /* Get-only and set-only halves print as Node's two other markers. */
   jsrt_value halves = jsrt_dynobj_new();
   JSRT_LOCAL(1) = halves;
-  jsrt_define_accessor(halves, "g", jsrt_closure_new(get_double, 1, "g", NULL, false), JSRT_UNDEFINED);
-  jsrt_define_accessor(halves, "s", JSRT_UNDEFINED, jsrt_closure_new(set_double, 2, "s", NULL, false));
+  jsrt_define_accessor(halves, "g", jsrt_closure_new(get_double, 0, "g", NULL, true), JSRT_UNDEFINED);
+  jsrt_define_accessor(halves, "s", JSRT_UNDEFINED, jsrt_closure_new(set_double, 1, "s", NULL, true));
   jsrt_set_prop(halves, "val", num(3), NULL);
   jsrt_print(halves);
   jsrt_print(jsrt_get_prop(halves, "s", NULL)); /* undefined: no getter */

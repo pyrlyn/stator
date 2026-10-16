@@ -11493,6 +11493,76 @@ files also need `path.win32`. `expectations.json` names all three blockers per f
 expected-fail, 2 skipped` and `Tests  15 passed | 2 skipped (17)`. The pinned Node still passes
 all 15 with the changed harness (the host half of every test). The pass count is unchanged at 0.
 
+## 319. A call with a receiver says so; the runtime no longer guesses it from argc (2026-10-02)
+
+**The bug.** Since plan-notes 230, `jsrt_call_at` decided whether argv[0] was the receiver by
+comparing the argument count with the closure's arity. For a closure with `has_receiver`, it read
+`argc == arity + 1` as "receiver passed" and any other count as a bare method value, which it
+shifted. That count cannot tell the two apart:
+
+- `o.m("x")` on `m(a: string, b?: string)` passes the receiver plus one argument, so argc is 2,
+  which equals the arity. The runtime shifted it and bound `this = undefined`, `a = o`, `b = "x"`.
+  The same happened to `new K("x")` on `constructor(a, b?)`, because a constructor body is
+  called with its instance as receiver. That case crashed (exit 139) on the first `this.a = a`.
+- `[7].map(g)` on a two-parameter method value passes three arguments, which is `arity + 1`. The
+  runtime read it as a receiver call and bound `this = 7`. A bare `g(1, 2, 3)` was misread the
+  same way, as was any runtime callback (`then`, `forEach`, `sort`) whose argument count matched.
+
+Found while landing `node:process`: `process.stdout.write("x")` on
+`write(chunk, encoding?)` reached `std/io.writeBytes` with the stream object, and the call
+failed with `STA2001 expected Uint8Array, got object`.
+
+**Measured.** Old build: main c353c49, runtime rebuilt from it. Reference: the pinned Node
+v26.7.0.
+
+- A class whose `m4(chunk: string, e?: string)` prints `typeof chunk` and `e`. For `w.m4("x")`
+  the old build printed `m4 object x`; Node prints `m4 string undefined`.
+- `golden/ts/method_call_receiver.ts`: the old binary exits 139 at the first
+  `new Pair("p")` (a segfault); Node exits 0.
+- `golden/js/method_call_receiver.js`: the old binary stops at the first `o.m("x")` with
+  `Uncaught TypeError … reading 'tag'`, because `this` is `undefined`; Node prints `o x undefined`.
+
+The extra-argument case (`[7, 8].map(show)`) follows from the same rule: 3 == 2 + 1 reads as
+"receiver passed". The golden runs it after the lines above, so the old binary never reaches it.
+
+**Fix.** The CALLER says whether it has a receiver; the count never does.
+
+- New runtime entry `jsrt_call_method_at(callee, argc, argv, loc)`. argv[0] is always the
+  receiver. A closure that declares one gets argv unchanged, and `jsrt_arg` pads an omitted
+  tail. Any other callee is `jsrt_call_at` on the arguments after it, with the same panic and
+  TypeError.
+- `jsrt_call` and `jsrt_call_at` never carry a receiver. A `has_receiver` closure gets
+  `undefined` in slot zero with every argument after it, extras included, so a rest parameter
+  still sees them.
+- Callers that have a receiver now use the new entry:
+  - the codegen's `method-call` (direct and virtual, accessors, `super.m`);
+  - `dyn-method-call` and `field-call`, where it replaces the `has_receiver ? … : …` ternary
+    with one call;
+  - class construction (`new K(…)`, `super(…)`);
+  - the runtime's getter and setter calls (`jsrt_shape.c`, instance and static);
+  - `[Symbol.iterator]()` (`jsrt_iterator.c`).
+
+  `jsrt_call_spread_at` already named its receiver and is unchanged.
+
+One hand-written caller relied on the guess. `runtime/tests/print_accessors.c` built its
+accessor closures without `has_receiver`, with the receiver counted in the arity. Its closures
+now declare the receiver, as the codegen's closures always did.
+
+Recorded in `docs/VALUE.md` §4.16 and §4.18 and in `jsrt_value.h`.
+
+**Proof.** Goldens `method_call_receiver` (ts, js) cover:
+
+- a direct call omitting one or two optional arguments;
+- a constructor and `super(…)` omitting one;
+- a getter;
+- a static method;
+- a virtual call through the base type;
+- a class-field arrow;
+- an object literal's method on the dynamic path, with fewer, equal and more arguments;
+- method values called by `map` and bare with extra arguments.
+
+Both match Node byte for byte.
+
 ## 320. T12.1 lands: the bundler API, and the decisions the card left open (2026-10-02)
 
 **What landed.** `js` mode sends package imports and CommonJS project files to one bundler

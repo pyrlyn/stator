@@ -90,6 +90,18 @@ void jsrt_init(void) {
 
 /* ----------------------------------------------------------------- calls */
 
+/* Runs `c` with `receiver` at argv[0] and the arguments after it: the receiver slot filled,
+ * `jsrt_arg` padding the rest. The caller keeps `receiver` rooted. */
+static jsrt_value call_with_receiver(const JSRTClosure *c, jsrt_value receiver, uint32_t argc,
+                                     const jsrt_value *argv) {
+  jsrt_value call_argv[argc + 1U];
+  call_argv[0] = receiver;
+  for (uint32_t i = 0; i < argc; i++) {
+    call_argv[i + 1U] = argv[i];
+  }
+  return c->fn(argc + 1U, call_argv, c->env);
+}
+
 jsrt_value jsrt_call_at(jsrt_value callee, uint32_t argc, const jsrt_value *argv, const char *loc) {
   if (!jsrt_is(callee, JSRT_TAG_CLOSURE)) {
     if (loc != NULL) {
@@ -112,19 +124,12 @@ jsrt_value jsrt_call_at(jsrt_value callee, uint32_t argc, const jsrt_value *argv
   /* `env` is NULL for a non-capturing function; the callee takes the parameter either way, so
    * dispatch here does not have to know which kind it is holding. */
   if (c->has_receiver) {
-    /* A method's parameter zero is `this`. A direct call passes it (`o.m(a)` -> argc == arity + 1);
-     * a method value does not (`g(a)` -> argc == arity), so slot zero is filled with `undefined`
-     * and the user arguments keep their positions (docs/VALUE.md §4.16, plan-notes 208). */
-    const uint32_t js_arity = c->arity;
-    const uint32_t internal = js_arity + 1U;
-    const bool with_receiver = argc == internal;
-    jsrt_value shifted[internal > 0U ? internal : 1U];
-    shifted[0] = with_receiver ? argv[0] : JSRT_UNDEFINED;
-    for (uint32_t i = 0; i < js_arity; i++) {
-      shifted[i + 1U] =
-          jsrt_arg(with_receiver ? argc - 1U : argc, with_receiver ? argv + 1 : argv, i);
-    }
-    return c->fn(internal, shifted, c->env);
+    /* A method's parameter zero is `this`, and a plain call passes none (`g(a)` on a method
+     * value), so slot zero is `undefined` and the arguments keep their positions (docs/VALUE.md
+     * §4.16, plan-notes 208). A call that HAS a receiver says so through jsrt_call_method_at:
+     * guessing it from argc against the arity read `o.m(a)` on `m(a, b?)` and `g(a, b, c)` on a
+     * two-parameter method value backwards (plan-notes 319). */
+    return call_with_receiver(c, JSRT_UNDEFINED, argc, argv);
   }
   return c->fn(argc, argv, c->env);
 }
@@ -133,24 +138,24 @@ jsrt_value jsrt_call(jsrt_value callee, uint32_t argc, const jsrt_value *argv) {
   return jsrt_call_at(callee, argc, argv, NULL);
 }
 
-/* Runs `c` with `receiver` at argv[0] and the arguments after it. No arity guessing here, unlike
- * jsrt_call's shift -- the callee is dynamic, so the convention is "receiver slot filled,
- * `jsrt_arg` pads the rest" and no argc is ambiguous. The caller keeps `receiver` rooted. */
-static jsrt_value call_with_receiver(const JSRTClosure *c, jsrt_value receiver, uint32_t argc,
-                                     const jsrt_value *argv) {
-  jsrt_value call_argv[argc + 1U];
-  call_argv[0] = receiver;
-  for (uint32_t i = 0; i < argc; i++) {
-    call_argv[i + 1U] = argv[i];
+/* `o.m(a)`, `new K(a)`, a getter or setter: argv[0] is the receiver, always (plan-notes 319). A
+ * closure that declares one gets argv as it is, `jsrt_arg` padding an omitted tail; anything else
+ * is jsrt_call_at's call on the arguments after it, panic and TypeError included. */
+jsrt_value jsrt_call_method_at(jsrt_value callee, uint32_t argc, const jsrt_value *argv,
+                               const char *loc) {
+  if (!jsrt_is(callee, JSRT_TAG_CLOSURE) || jsrt_as_closure(callee)->klass != NULL ||
+      !jsrt_as_closure(callee)->has_receiver) {
+    return jsrt_call_at(callee, argc - 1U, argv + 1, loc);
   }
-  return c->fn(argc + 1U, call_argv, c->env);
+  const JSRTClosure *c = jsrt_as_closure(callee);
+  return c->fn(argc, argv, c->env);
 }
 
 /* `f(...xs)` and `o.m(a, ...xs)` (plan.md §11c T11.4 step 5): `args` is every argument, spreads
- * expanded, as one array the caller keeps rooted. jsrt_call_at's receiver test reads argc against
- * the arity, which a spread's count cannot answer, so a method call names its receiver here
- * instead: a closure that declares one gets `*receiver` (or `undefined` when there is none) and
- * every argument after it; anything else is jsrt_call_at's call, panic and TypeError included. */
+ * expanded, as one array the caller keeps rooted. A method call names its receiver here, as
+ * jsrt_call_method_at's callers do: a closure that declares one gets `*receiver` (or `undefined`
+ * when there is none) and every argument after it; anything else is jsrt_call_at's call, panic
+ * and TypeError included. */
 jsrt_value jsrt_call_spread_at(jsrt_value callee, const jsrt_value *receiver, jsrt_value args,
                                const char *loc) {
   const JSRTArray *list = jsrt_as_array(args);

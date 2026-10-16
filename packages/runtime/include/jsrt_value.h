@@ -1545,6 +1545,12 @@ jsrt_value jsrt_call(jsrt_value callee, uint32_t argc, const jsrt_value *argv);
 /* Same as jsrt_call, with a `file:line` baked in so a non-function callee names the site
  * (STA2006). `loc` may be NULL, which keeps the unlocated TypeError for builtin-internal calls. */
 jsrt_value jsrt_call_at(jsrt_value callee, uint32_t argc, const jsrt_value *argv, const char *loc);
+/* A call WITH a receiver -- `o.m(a)`, a constructor, a getter or setter: argv[0] is the receiver
+ * and argc counts it (argc >= 1). jsrt_call and jsrt_call_at never pass one: a closure that
+ * declares a receiver gets `undefined` there and every argument after it. Which entry a caller
+ * uses is the only thing that says whether argv[0] is `this`; argc never does (plan-notes 319). */
+jsrt_value jsrt_call_method_at(jsrt_value callee, uint32_t argc, const jsrt_value *argv,
+                               const char *loc);
 /* A call whose arguments include a spread: `args` is the array of all of them. `receiver` is the
  * method call's receiver, passed to a closure that declares one, or NULL for a plain call. */
 jsrt_value jsrt_call_spread_at(jsrt_value callee, const jsrt_value *receiver, jsrt_value args,

@@ -266,7 +266,7 @@ jsrt_value jsrt_get_iterator(jsrt_value value) {
       jsrt_throw_not_iterable(value);
       return JSRT_UNDEFINED;
     }
-    jsrt_value iterator = jsrt_call(method, 1, &value);
+    jsrt_value iterator = jsrt_call_method_at(method, 1, &value, NULL);
     if (jsrt_pending()) {
       return JSRT_UNDEFINED;
     }

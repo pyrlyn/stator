@@ -2765,7 +2765,7 @@ class Emitter {
           );
         });
         parts.push(
-          `jsrt_call(${this.closureValue(ctor.fn)}, ${1 + stmt.args.length}, &${this.slotAt(base)})`,
+          `jsrt_call_method_at(${this.closureValue(ctor.fn)}, ${1 + stmt.args.length}, &${this.slotAt(base)}, NULL)`,
         );
         this.flushParts(parts, stmt.span);
         this.emitPendingCheck(stmt.span);
@@ -4245,7 +4245,7 @@ class Emitter {
         }
         return this.finishStatement(
           parts,
-          `jsrt_call(${this.closureValue(cls.ctor.fn)}, ${1 + expr.args.length}, &${object})`,
+          `jsrt_call_method_at(${this.closureValue(cls.ctor.fn)}, ${1 + expr.args.length}, &${object}, NULL)`,
           object,
           expr.span,
         );
@@ -4285,7 +4285,7 @@ class Emitter {
             : this.methodCallee(expr, this.slotAt(base));
         return this.finishStatement(
           parts,
-          `${this.slotAt(base)} = jsrt_call(${callee}, ${1 + expr.args.length}, &${this.slotAt(base)})`,
+          `${this.slotAt(base)} = jsrt_call_method_at(${callee}, ${1 + expr.args.length}, &${this.slotAt(base)}, NULL)`,
           this.slotAt(base),
           expr.span,
         );
@@ -4295,8 +4295,8 @@ class Emitter {
       // the arguments contiguously after it, and the loaded method lands past them, keeping the
       // receiver-plus-arguments run contiguous for both call shapes below. One load through the
       // site's own cache (`jsrt_get_prop` -- which may run a getter, hence the pending check
-      // before the call), then the call passes the receiver as argument zero when -- and only
-      // when -- the loaded closure declares one (`has_receiver`, docs/VALUE.md §4.16). A
+      // before the call), then `jsrt_call_method_at` passes the receiver as argument zero when --
+      // and only when -- the loaded closure declares one (`has_receiver`, docs/VALUE.md §4.16). A
       // non-function callee panics exactly as an ordinary `call` does (`STA2006` with the site's
       // `file:line`).
       // A field call is the same call with the callee loaded from its slot rather than through
@@ -4319,7 +4319,6 @@ class Emitter {
         if (expr.kind === 'dyn-method-call') {
           this.emitPendingCheck(expr.span);
         }
-        const argv = expr.args.length === 0 ? 'NULL' : `&${this.slotAt(base + 1)}`;
         const loc = this.callLocation(expr.span);
         if (expr.kind === 'dyn-method-call' && expr.spread === true) {
           return this.finishStatement(
@@ -4329,11 +4328,9 @@ class Emitter {
             expr.span,
           );
         }
-        const withReceiver = `jsrt_call_at(${method}, ${String(1 + expr.args.length)}, &${this.slotAt(base)}, ${loc})`;
-        const withoutReceiver = `jsrt_call_at(${method}, ${String(expr.args.length)}, ${argv}, ${loc})`;
         return this.finishStatement(
           [],
-          `${this.slotAt(base)} = (jsrt_is(${method}, JSRT_TAG_CLOSURE) && jsrt_as_closure(${method})->has_receiver) ? ${withReceiver} : ${withoutReceiver}`,
+          `${this.slotAt(base)} = jsrt_call_method_at(${method}, ${String(1 + expr.args.length)}, &${this.slotAt(base)}, ${loc})`,
           this.slotAt(base),
           expr.span,
         );

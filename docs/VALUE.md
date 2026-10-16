@@ -1193,7 +1193,8 @@ Three things this decision has to pay for, none of them a representation:
   `Function.prototype.length` is not in the subset yet, so nothing observes it today — which is
   exactly why it is cheap to get right now and a bug to inherit later. **Landed 2026-09-12**
   (plan-notes 230): `closureMeta` subtracts the receiver and `jsrt_call` shifts when it is
-  omitted.
+  omitted (always, since plan-notes 319: a call with a receiver uses `jsrt_call_method_at`,
+  §4.18).
 - **A virtual method's value is the receiver's entry, not the statically named one.** Where a
   subclass overrides, `o.m` in value position loads `jsrt_method(recv, slot)` — the same choice
   `method-call` already makes between direct and virtual dispatch, made at the same place. The
@@ -1265,13 +1266,22 @@ The call (`dyn-method-call` in HIR, only ever built for an Unknown receiver) eva
 receiver, the arguments, then the name through the site's own cache, in that order. The
 receiver occupies the call's slot zero with the arguments contiguously after it — the same
 layout a direct method call passes — and the emitted site calls with the receiver when, and
-only when, the loaded value is a closure that declares one:
+only when, the loaded value is a closure that declares one. That test lives in the runtime's
+receiver entry, which every call that has a receiver goes through:
 
 ```c
-slot = (jsrt_is(m, JSRT_TAG_CLOSURE) && jsrt_as_closure(m)->has_receiver)
-  ? jsrt_call_at(m, 1 + argc, &slot_recv, loc)
-  : jsrt_call_at(m, argc, &slot_recv + 1, loc);
+slot = jsrt_call_method_at(m, 1 + argc, &slot_recv, loc);
+/* = has_receiver ? m->fn(1 + argc, &slot_recv) : jsrt_call_at(m, argc, &slot_recv + 1, loc) */
 ```
+
+**Which entry a call uses is the only thing that says whether argv[0] is `this` (plan-notes
+319).** `jsrt_call_method_at` is the call WITH a receiver: a direct, virtual or dynamic method
+call, a field call, a constructor (`new K(a)`, `super(a)`), a getter or setter, `[Symbol.iterator]`.
+`jsrt_call` / `jsrt_call_at` never carry one: a closure that declares a receiver gets `undefined`
+in slot zero and every argument after it. Until 2026-10-02 `jsrt_call_at` guessed instead,
+reading `argc == arity + 1` as "receiver passed"; that read `o.m(a)` on `m(a, b?)` (argc equals
+the arity) as a bare call and shifted every argument, and `g(a, b, c)` on a two-parameter
+method value the other way.
 
 A plain closure is therefore called as-is (`this` is `undefined`, as for a method value
 called bare, §4.16), and a non-function callee panics exactly as an ordinary call does
