@@ -788,7 +788,9 @@ export interface StringStaticCall extends Node {
  * Two rows are not identifiers, so no global name reaches them: `Array.from(items)` with one
  * argument (§23.1.2.1), and `...`, the operand of a spread that is not statically an array
  * (`[...map.keys()]`, `f(...args)` with `args` Unknown), which the lowering wraps so the array
- * concat that builds the list receives an array (step 5; docs/VALUE.md §4.23). */
+ * concat that builds the list receives an array (step 5; docs/VALUE.md §4.23). The four `new`
+ * rows are a Map or a Set built from an iterable (§24.1.1.1, §24.2.2.1, step 6): a constructor
+ * with no argument stays a `collection-new`, which allocates and runs nothing. */
 export const GLOBAL_CALLS = {
   parseInt: { arity: 2, fn: 'jsrt_global_parse_int', result: 'number', throws: false },
   parseFloat: { arity: 1, fn: 'jsrt_global_parse_float', result: 'number', throws: false },
@@ -798,12 +800,16 @@ export const GLOBAL_CALLS = {
   Array: { arity: 1, fn: 'jsrt_array_construct', result: 'array', throws: true },
   'Array.from': { arity: 1, fn: 'jsrt_array_from', result: 'array', throws: true },
   '...': { arity: 1, fn: 'jsrt_spread_operand', result: 'array', throws: true },
+  'new Map': { arity: 1, fn: 'jsrt_map_from', result: 'map', throws: true },
+  'new Set': { arity: 1, fn: 'jsrt_set_from', result: 'set', throws: true },
+  'new WeakMap': { arity: 1, fn: 'jsrt_weakmap_from', result: 'map', throws: true },
+  'new WeakSet': { arity: 1, fn: 'jsrt_weakset_from', result: 'set', throws: true },
 } as const satisfies Record<
   string,
   {
     readonly arity: number;
     readonly fn: string;
-    readonly result: 'number' | 'boolean' | 'regexp' | 'array';
+    readonly result: 'number' | 'boolean' | 'regexp' | 'array' | 'map' | 'set';
     readonly throws: boolean;
   }
 >;

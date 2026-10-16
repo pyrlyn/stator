@@ -5209,12 +5209,17 @@ function gateNew(node: ts.NewExpression, checker: ts.TypeChecker, mode: Mode): G
   // carries, rather than asking for the generic instantiation the rejection is about.
   const collection = collectionOf(node, checker);
   if (collection !== undefined) {
-    // An argument is an ITERABLE of entries -- `new Map([['a', 1]])` -- and iterating one is the
-    // Symbol.iterator protocol, not a constructor detail.
-    return node.arguments === undefined || node.arguments.length === 0
+    // An argument is an ITERABLE -- of entries for a Map, `new Map([['a', 1]])` -- which the
+    // runtime drains through the iterator protocol, as a spread does (docs/VALUE.md §4.25). One
+    // fixed-arity row, so a spread and a second argument (evaluated, then ignored) are refused.
+    const args = node.arguments ?? [];
+    if (args.length === 0) {
+      return { kind: 'accept' };
+    }
+    return args.length === 1 && !args.some((argument) => ts.isSpreadElement(argument))
       ? { kind: 'accept' }
       : notYet(
-          `constructing a ${collectionName(collection)} from an iterable is not yet supported`,
+          `constructing a ${collectionName(collection)} from more than one argument is not yet supported`,
           5,
         );
   }

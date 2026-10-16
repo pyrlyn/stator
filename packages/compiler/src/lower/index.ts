@@ -5956,12 +5956,21 @@ function lowerExpression(
     // A Map and a Set are allocated, not constructed: there is no descriptor to name and no
     // constructor to run, so the node carries which of the two it is and nothing else.
     if (type.kind === 'map' || type.kind === 'set') {
+      const weak = isWeakCollection(node, checker);
+      // `new Map(entries)`: the gate admitted exactly one argument, which the runtime iterates.
+      if (node.arguments !== undefined && node.arguments.length > 0) {
+        const prologue = lowerGlobalCall(node, sourceFile, checker, bindings, diagnostics);
+        const row = type.kind === 'map' ? 'Map' : 'Set';
+        return prologue === null
+          ? null
+          : globalFunctionNode(weak ? `new Weak${row}` : `new ${row}`, prologue, type);
+      }
       const created: CollectionNew = {
         kind: 'collection-new',
         type,
         span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
         collection: type.kind,
-        weak: isWeakCollection(node, checker),
+        weak,
       };
       return created;
     }
@@ -11031,6 +11040,11 @@ function globalFunctionNode(
       );
     case 'RegExp':
       return globalCallNode(name, args, H_REGEXP, span);
+    case 'new Map':
+    case 'new Set':
+    case 'new WeakMap':
+    case 'new WeakSet':
+      return globalCallNode(name, args, created, span);
     case 'parseInt':
     case 'parseFloat':
       return globalCallNode(name, args, H_NUMBER, span);

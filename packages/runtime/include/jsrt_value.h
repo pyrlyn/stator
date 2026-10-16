@@ -974,6 +974,13 @@ void jsrt_iterator_close(jsrt_value it);
 /* `m.set(k, v)` and `s.add(v)` both RETURN THE COLLECTION, which is what makes them chainable. */
 jsrt_value jsrt_map_set(jsrt_value map, jsrt_value key, jsrt_value value);
 jsrt_value jsrt_set_add(jsrt_value set, jsrt_value key);
+/* `new Map(iterable)` / `new Set(iterable)` and the weak twins (jsrt_typed.zig, docs/VALUE.md
+ * §4.25): nullish is empty, anything else is iterated in order; a Map entry that is not an object
+ * leaves V8's TypeError pending and closes the iterator. */
+jsrt_value jsrt_map_from(jsrt_value source);
+jsrt_value jsrt_set_from(jsrt_value source);
+jsrt_value jsrt_weakmap_from(jsrt_value source);
+jsrt_value jsrt_weakset_from(jsrt_value source);
 
 bool jsrt_map_has(jsrt_value map, jsrt_value key);
 /* `true` when the key was there, `false` when it was not -- the value JavaScript's delete returns. */

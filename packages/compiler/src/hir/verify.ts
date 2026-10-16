@@ -2164,10 +2164,11 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
         verifyExpression(arg, problems, bindings);
       }
       const row = GLOBAL_CALLS[expr.name];
-      // An `Array(n)` result is whatever array the checker typed the call as; the rest are fixed.
+      // An `Array(n)` result is whatever array the checker typed the call as, a `new Map(xs)` whatever
+      // Map (and so on); the rest are fixed.
       const typed =
-        row.result === 'array'
-          ? expr.type.kind === 'array'
+        row.result === 'array' || row.result === 'map' || row.result === 'set'
+          ? expr.type.kind === row.result
           : hTypeEquals(
               expr.type,
               row.result === 'number' ? H_NUMBER : row.result === 'boolean' ? H_BOOLEAN : H_REGEXP,

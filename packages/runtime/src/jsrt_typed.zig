@@ -389,6 +389,73 @@ export fn jsrt_array_from(source: Value) Value {
     return f.slots[0];
 }
 
+/// `new Map(iterable)`, `new Set(iterable)` and their weak twins with one argument (§24.1.1.1,
+/// §24.2.2.1, §24.3.1.1, §24.4.1.1; docs/VALUE.md §4.25). Nullish builds an empty collection; any
+/// other value is iterated as a spread is, and each value is added in order -- for a Map, each
+/// value must be an object whose `0` and `1` are the key and the value, or the walk throws V8's
+/// TypeError and closes the iterator. The weak twins' key check is the collection's own `set`/`add`.
+fn collectionFrom(target: Value, source: Value, entries: bool) Value {
+    if (c.jsrt_is_nullish(source)) return target;
+    // slots: 0 the collection, 1 the iterator, 2 the value in flight, 3 an entry's key.
+    var f: Frame(4) = .{};
+    f.push();
+    defer f.pop();
+    f.slots[0] = target;
+    f.slots[1] = c.jsrt_get_iterator(source);
+    if (c.jsrt_pending()) return undefined_value;
+    while (c.jsrt_iterator_step(f.slots[1], &f.slots[2])) {
+        if (!entries) {
+            _ = c.jsrt_set_add(f.slots[0], f.slots[2]);
+        } else if (!c.jsrt_is_object(f.slots[2])) {
+            throwNotEntry(f.slots[2]);
+        } else {
+            f.slots[3] = c.jsrt_array_get(f.slots[2], c.jsrt_number(0));
+            if (!c.jsrt_pending()) {
+                const value = c.jsrt_array_get(f.slots[2], c.jsrt_number(1));
+                if (!c.jsrt_pending()) _ = c.jsrt_map_set(f.slots[0], f.slots[3], value);
+            }
+        }
+        if (c.jsrt_pending()) {
+            // IteratorClose on an abrupt completion: a generator's `finally` runs. The close's own
+            // throw, if any, loses to the one already pending, as §7.4.11 orders it.
+            f.slots[2] = c.jsrt_take_exception();
+            c.jsrt_iterator_close(f.slots[1]);
+            if (c.jsrt_pending()) _ = c.jsrt_take_exception();
+            c.jsrt_throw(f.slots[2]);
+            return undefined_value;
+        }
+    }
+    if (c.jsrt_pending()) return undefined_value;
+    return f.slots[0];
+}
+
+/// V8's `Iterator value X is not an entry object`, with X the value's string form.
+fn throwNotEntry(value: Value) void {
+    @branchHint(.cold);
+    const text = c.jsrt_to_string(value);
+    if (c.jsrt_pending()) return;
+    var name: [96]u8 = undefined;
+    const len = @min(c.jsrt_string_length(text), name.len);
+    for (0..len) |i| name[i] = @truncate(c.jsrt_string_char(text, @intCast(i)));
+    throwFmt(&c.jsrt_class_type_error, "Iterator value {s} is not an entry object", .{name[0..len]});
+}
+
+export fn jsrt_map_from(source: Value) Value {
+    return collectionFrom(c.jsrt_map_new(), source, true);
+}
+
+export fn jsrt_set_from(source: Value) Value {
+    return collectionFrom(c.jsrt_set_new(), source, false);
+}
+
+export fn jsrt_weakmap_from(source: Value) Value {
+    return collectionFrom(c.jsrt_weak_collection_new(true), source, true);
+}
+
+export fn jsrt_weakset_from(source: Value) Value {
+    return collectionFrom(c.jsrt_weak_collection_new(false), source, false);
+}
+
 fn overBuffer(buffer: *Buffer, offset: Value, length: Value) Value {
     const off = toIndex(offset) orelse return undefined_value;
     if (!off.ok) {
