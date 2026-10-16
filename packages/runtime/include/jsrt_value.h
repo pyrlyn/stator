@@ -463,15 +463,34 @@ jsrt_value jsrt_null_proto_new(void);
  * third field in the IC. */
 typedef struct JSRTAccessorCell {
   const JSRTClass *cls; /* &jsrt_class_accessor -- prefix-shared with JSRTObject */
-  jsrt_value get;       /* JSRT_UNDEFINED for a set-only accessor */
+  jsrt_value get;       /* JSRT_UNDEFINED for a set-only accessor; a DATA cell's value */
   jsrt_value set;       /* JSRT_UNDEFINED for a get-only accessor */
+  uint32_t flags;       /* JSRT_CELL_*; 0 for every accessor a literal or class installs */
 } JSRTAccessorCell;
+
+/* The attributes `Object.defineProperty` can spell and an ordinary assignment cannot (plan.md
+ * §11c T11.4 step 8a, docs/VALUE.md §4.15). A property with every attribute at its default --
+ * enumerable, writable, configurable, no accessor -- stays a bare slot value; only one that
+ * differs pays for a cell. DATA marks a cell that holds a value (in `get`) rather than a getter
+ * and setter, which is how a non-enumerable or read-only data property is represented. */
+enum {
+  JSRT_CELL_DATA = 1U << 0,     /* a data property: the value is `get`, `set` is unused */
+  JSRT_CELL_HIDDEN = 1U << 1,   /* [[Enumerable]] false: every own-key walk skips it */
+  JSRT_CELL_READONLY = 1U << 2, /* [[Writable]] false (DATA only): an assignment throws */
+  JSRT_CELL_FIXED = 1U << 3,    /* [[Configurable]] false: `delete` throws */
+};
 
 extern const JSRTClass jsrt_class_accessor;
 
 static inline bool jsrt_is_accessor_cell(jsrt_value v) {
   return jsrt_is(v, JSRT_TAG_OBJECT) &&
          ((const JSRTObject *)jsrt_ptr(v))->cls == &jsrt_class_accessor;
+}
+
+/* A slot an own-key walk must skip: a non-enumerable cell. */
+static inline bool jsrt_is_hidden_slot(jsrt_value v) {
+  return jsrt_is_accessor_cell(v) &&
+         (((const JSRTAccessorCell *)jsrt_ptr(v))->flags & JSRT_CELL_HIDDEN) != 0U;
 }
 
 /* Installs the pair under `key`, replacing whatever the key held. Either half may be
@@ -485,6 +504,12 @@ void jsrt_define_accessor(jsrt_value obj, const char *key, jsrt_value get, jsrt_
  * not GC values, and is therefore safe to hold outside a JSRT_FRAME. */
 uint32_t jsrt_shape_property_count(const JSRTShape *shape);
 const JSRTShape **jsrt_shape_property_order(const JSRTShape *shape, uint32_t count);
+/* The enumerable half of the two above: the keys whose slot is not a hidden cell, in the same
+ * order. `slots` is the object's slot array (NULL with a NULL shape). The order is malloc'd and
+ * the caller frees it; `*count` is its length. */
+uint32_t jsrt_shape_visible_count(const JSRTShape *shape, const jsrt_value *slots);
+const JSRTShape **jsrt_shape_visible_order(const JSRTShape *shape, const jsrt_value *slots,
+                                           uint32_t *count);
 /* The array-index half of the same rule, over a NUL-terminated UTF-8 key: true with `*value` the
  * numeric value when the spelling round-trips through ToUint32 and is not 2^32-1 (so "01",
  * "+1" and "-0" are ordinary strings). Shared by the shape walk above and fixed-shape
