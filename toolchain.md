@@ -12,6 +12,9 @@ Pins below are the ones in `mise.toml` and the package manifests. `docs/TOOLCHAI
 | just | mise (`mise.toml`, 1.58.0) | Builds `libjsrt.a` and `libjsrt_std.a` | https://github.com/casey/just |
 | clang, llvm | mise (`conda:clang` and `conda:llvm`, 21.1.8, Linux and macOS) | Compiles the runtime and the emitted C | https://github.com/llvm/llvm-project |
 | zig | mise (`mise.toml`, 0.16.0, Linux and macOS) | Memory core in `libjsrt.a` and the `std/*` backings | https://github.com/ziglang/zig |
+| jactionlint | mise (`mise.toml` pins `github:jdx/jactionlint` 2.0.2) | Lint the workflows and composite actions (`static analysis` job, the pre-push hook and `mise x -- jactionlint`) | https://github.com/jdx/jactionlint |
+| hk | mise (`mise.toml` pins 2.5.0) | Runs jactionlint as a pre-push hook (`hk.pkl`) | https://github.com/jdx/hk |
+| shellcheck | mise (`mise.toml` pins 0.11.0; CI uses the runner image's copy) | Checks `run:` scripts inside jactionlint | https://github.com/koalaman/shellcheck |
 
 ## pnpm
 
