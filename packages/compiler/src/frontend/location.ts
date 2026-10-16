@@ -1,4 +1,5 @@
-/* Module locations under `--node` (plan.md §11c T11.5, docs/MODES.md §6, plan-notes 312, 316).
+/* Module locations and the global `process` under `--node` (plan.md §11c T11.5, T11.6,
+ * docs/MODES.md §6, plan-notes 312, 316, 319).
  *
  * A native binary has no source files, so every read of where a module is becomes a call that
  * answers it at run time, relative to the executable: `import.meta.url`, `import.meta.filename`
@@ -9,7 +10,13 @@
  * module itself for a read with no mapping (a bundler helper). The helpers live in
  * `packages/node/src/internal/location.ts`, so no build-machine path reaches the binary.
  *
- * The rewrite is text, like the vendor rewrite (`vendor.ts`): one import joins the file's first
+ * The same rewrite gives a file that reads the global `process` (any project file, and the vendor
+ * module) `import process from "node:process"`, so the global is the `node:process` module's
+ * default export, resolved by the same `paths` entries as every other built-in (`node.ts`); the
+ * type comes from `packages/node/src/globals.d.ts`, which is why a read that only a declaration
+ * file declares still counts as free.
+ *
+ * The rewrite is text, like the vendor rewrite (`vendor.ts`): the imports join the file's first
  * line (after a shebang) and each read is replaced in place, so no line moves; only columns after
  * a rewritten read on its own line do.
  *
@@ -68,6 +75,21 @@ function nodePathRead(node: ts.Node, checker: ts.TypeChecker): Read | undefined 
   return undefined;
 }
 
+/** Whether `file` reads a `process` it does not bind itself. */
+function readsProcess(file: ts.SourceFile, checker: ts.TypeChecker): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(node) && isFreeCommonJsName(node, 'process', checker)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
 function sitesOf(
   file: ts.SourceFile,
   checker: ts.TypeChecker,
@@ -103,10 +125,12 @@ function importOffset(text: string): number {
   return end === -1 ? text.length : text.indexOf('\n', end) + 1;
 }
 
-function rewrite(file: ts.SourceFile, sites: readonly Site[]): string {
+function rewrite(file: ts.SourceFile, sites: readonly Site[], process: boolean): string {
   const used = [...new Set(sites.map((site) => HELPERS[site.read]))].sort();
   const specifier = relativeSpecifier(dirname(file.fileName), nodeLocationFile());
-  const header = `import { ${used.join(', ')} } from ${JSON.stringify(specifier)}; `;
+  const header =
+    (process ? 'import process from "node:process"; ' : '') +
+    (used.length === 0 ? '' : `import { ${used.join(', ')} } from ${JSON.stringify(specifier)}; `);
   const at = importOffset(file.text);
   let out = file.text.slice(0, at) + header;
   let from = at;
@@ -118,8 +142,8 @@ function rewrite(file: ts.SourceFile, sites: readonly Site[]): string {
   return out + file.text.slice(from);
 }
 
-/** The rewritten text of every file that reads its location, by file name; empty when none does.
- * Call it under `--node` only: without the flag there is no `packages/node` to answer. */
+/** The rewritten text of every file that reads its location or `process`, by file name; empty
+ * when none does. Call it under `--node` only: without the flag there is no `packages/node`. */
 export function locationRewrites(
   program: ts.Program,
   entryFile: ts.SourceFile,
@@ -132,7 +156,8 @@ export function locationRewrites(
     const isVendor = vendor !== undefined && file.fileName === vendor.path;
     if (!isVendor && (!isProjectFile(program, file) || isNodeSourceFile(file.fileName))) continue;
     const sites = sitesOf(file, checker, entryDir, vendor);
-    if (sites.length > 0) rewrites.set(file.fileName, rewrite(file, sites));
+    const process = readsProcess(file, checker);
+    if (sites.length > 0 || process) rewrites.set(file.fileName, rewrite(file, sites, process));
   }
   return rewrites;
 }

@@ -240,8 +240,12 @@ function inlineCall(expr: Expression, candidates: ReadonlyMap<string, Candidate>
   }
 
   // The body is substituted, never the surrounding tree: only identifiers naming a parameter are
-  // replaced, and condition 2 guarantees there are no others.
+  // replaced, and condition 2 guarantees there are no others. Every other node is COPIED, so each
+  // call site owns its tree: the emitter keys a call's frame slots by node identity, and a body
+  // node shared with the function itself (or another site) took whichever slot was counted last,
+  // in the wrong frame -- a module's top level wrote a callee's local slot into a live global
+  // (plan-notes 324).
   return rewriteExpression(candidate.result, {
-    expression: (e) => (e.kind === 'identifier' ? (substitution.get(e.name) ?? e) : e),
+    expression: (e) => (e.kind === 'identifier' ? (substitution.get(e.name) ?? { ...e }) : { ...e }),
   });
 }

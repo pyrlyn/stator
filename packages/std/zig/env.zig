@@ -41,3 +41,26 @@ export fn jsrt_std_env_cwd() f64 {
     root.setResult(path);
     return 0;
 }
+
+/// libc's own vector, so a `setenv` is in it the moment it returns.
+extern "c" var environ: [*:null]?[*:0]u8;
+
+/// How many variables the environment holds, for `jsrt_std_env_name` to index.
+export fn jsrt_std_env_count() f64 {
+    var n: usize = 0;
+    while (environ[n] != null) : (n += 1) {}
+    return @floatFromInt(n);
+}
+
+/// The name of variable `index` in the environment's own order (the text before its first `=`),
+/// parked for `jsrtStdResult`. An index past the end is EINVAL.
+export fn jsrt_std_env_name(index: f64) f64 {
+    const wanted: usize = @intCast(root.intIn(index, 0, std.math.maxInt(c_int)) orelse return root.fail("EINVAL"));
+    var n: usize = 0;
+    while (n < wanted and environ[n] != null) : (n += 1) {}
+    const entry = environ[n] orelse return root.fail("EINVAL");
+    const text = std.mem.span(entry);
+    const end = std.mem.indexOfScalar(u8, text, '=') orelse text.len;
+    root.setResult(root.allocator.dupeZ(u8, text[0..end]) catch |err| return root.failWith(err));
+    return 0;
+}

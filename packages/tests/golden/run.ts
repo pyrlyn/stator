@@ -19,7 +19,7 @@
  * included (Ryu shortest-round-trip). A mismatch is a semantics bug: never loosen the
  * comparison to make it pass.
  */
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -186,6 +186,18 @@ function onNodePlatform(fixture: Fixture): boolean {
   return fixture.name.startsWith('node_');
 }
 
+/** A fixture's `// @args: a b` line: the arguments both runs get after the program, split on
+ * spaces (`process.argv.slice(2)` reads them; docs/MODES.md §6). None when the line is absent. */
+function programArgs(fixture: Fixture): string[] {
+  const line = /^\/\/ @args:(.*)$/m.exec(readFileSync(fixture.path, 'utf8'));
+  return (
+    line?.[1]
+      ?.trim()
+      .split(/\s+/)
+      .filter((arg) => arg !== '') ?? []
+  );
+}
+
 async function runCompiled(fixture: Fixture): Promise<FixtureStreams> {
   const { path, mode } = fixture;
   const work = mkdtempSync(join(tmpdir(), 'stator-golden-'));
@@ -200,7 +212,7 @@ async function runCompiled(fixture: Fixture): Promise<FixtureStreams> {
       node: onNodePlatform(fixture),
       ...(BUNDLER_NONE ? { bundler: { kind: 'none' } } : {}),
     });
-    const exec = await runProcess(out, [], { env: PINNED_ENV });
+    const exec = await runProcess(out, programArgs(fixture), { env: PINNED_ENV });
     if (exec.status !== 0) {
       throw new Error(`compiled binary exited ${String(exec.status)}: ${exec.stderr.trim()}`);
     }
@@ -229,7 +241,7 @@ async function check(fixture: Fixture): Promise<string | undefined> {
   try {
     const [actual, expected] = await Promise.all([
       runCompiled(fixture),
-      runNodeOracle(fixture.path, PINNED_ENV),
+      runNodeOracle(fixture.path, PINNED_ENV, programArgs(fixture)),
     ]);
     if (actual.stdout === expected.stdout && actual.stderr === expected.stderr) {
       return undefined;

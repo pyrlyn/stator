@@ -259,7 +259,8 @@ static jsrt_value accessor_read(jsrt_value slot, jsrt_value recv) {
     return slot;
   }
   const JSRTAccessorCell *cell = (const JSRTAccessorCell *)jsrt_ptr(slot);
-  return cell->get == JSRT_UNDEFINED ? JSRT_UNDEFINED : jsrt_call(cell->get, 1, &recv);
+  return cell->get == JSRT_UNDEFINED ? JSRT_UNDEFINED
+                                      : jsrt_call_method_at(cell->get, 1, &recv, NULL);
 }
 
 /* Answers whether the write was an accessor's, so the caller knows not to store. A setter-less
@@ -278,7 +279,7 @@ static bool accessor_write(jsrt_value slot, const char *key, jsrt_value recv, js
     return true;
   }
   jsrt_value args[2] = {recv, value};
-  jsrt_call(cell->set, 2, args);
+  jsrt_call_method_at(cell->set, 2, args, NULL);
   return true;
 }
 
@@ -453,7 +454,7 @@ jsrt_value jsrt_get_prop(jsrt_value obj, const char *key, JSRTIC *ic) {
     const JSRTStaticEntry *entry = class_static_find(c, key, false);
     if (entry != NULL) {
       if (entry->kind == JSRT_STATIC_GETTER) {
-        return jsrt_call(*entry->slot, 1, &obj);
+        return jsrt_call_method_at(*entry->slot, 1, &obj, NULL);
       }
       return *entry->slot;
     }
@@ -678,7 +679,7 @@ static void store_prop(jsrt_value obj, const char *key, jsrt_value value, JSRTIC
     if (entry != NULL) {
       if (entry->kind == JSRT_STATIC_SETTER) {
         jsrt_value args[2] = {obj, value};
-        (void)jsrt_call(*entry->slot, 2, args);
+        (void)jsrt_call_method_at(*entry->slot, 2, args, NULL);
         return;
       }
       *entry->slot = value;
