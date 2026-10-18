@@ -112,7 +112,7 @@ from the last build rebuilds every object (`packages/runtime/build*/cflags.txt`)
 CI runs in two stages (plan-notes 292):
 
 1. **Stage 1, Linux only:** `static analysis` (typecheck, `lint` = oxlint `--deny-warnings` + oxfmt
-   check, `dupes`) and `frontend (linux/x64)` (subset tests, runtime archive, unit tests **with
+   check, `dupes`, then jactionlint 2.0.2 over the workflows against `.github/jactionlint-baseline.json`) and `frontend (linux/x64)` (subset tests, runtime archive, unit tests **with
    coverage**; uploads the `coverage-lcov` artifact). This is the only job that collects coverage.
 2. **Stage 2, Windows and macOS:** `frontend-desktop` (macOS and Windows, plain `pnpm run test`),
    plus the `-macos` twins of `runtime`, `asan`, `intl` and `ffi`. Each has
