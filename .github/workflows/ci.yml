@@ -62,6 +62,20 @@ permissions:
   contents: read
 
 jobs:
+  # Which runner the macOS jobs use: pyrlyn/ci's macos-runner action reads the MACOS_RUNNER
+  # variable (unset or `hosted` = the hosted label, `xcode-27-local` = the dedicated Mac).
+  macos-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      value: ${{ steps.r.outputs.value }}
+    steps:
+      - id: r
+        uses: pyrlyn/ci/.github/actions/macos-runner@4b5b5470544893cd515b88c751e92728341c6daa # main
+        with:
+          runner: ${{ vars.MACOS_RUNNER }}
+          value: '["macos-14"]'
+
   # Test262 is intentionally separate from pnpm run ci: a missing corpus must not make the local
   # offline gate lie, while this job makes the pinned conformance number visible on every commit.
   # The full pinned corpus is ~54k tests. Pre-speedup wall-clock was 2-3.5h on one runner (plan-notes
@@ -244,7 +258,9 @@ jobs:
         include:
           - { platform: linux, arch: x64, os: ubuntu-24.04 }
           - { platform: linux, arch: arm64, os: ubuntu-24.04-arm }
-    runs-on: ${{ matrix.os }}
+    needs: macos-runner
+    # MACOS_RUNNER (pyrlyn/ci macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
+    runs-on: ${{ startsWith(matrix.os, 'macos') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(needs.macos-runner.outputs.value)[0] || matrix.os }}
     timeout-minutes: 60
     steps: &runtime-steps
       - *checkout
@@ -277,7 +293,7 @@ jobs:
 
   runtime-macos:
     name: runtime (${{ matrix.platform }}/${{ matrix.arch }})
-    needs: [static, frontend-coverage]
+    needs: [static, frontend-coverage, macos-runner]
     strategy: &macos-strategy
       fail-fast: false
       matrix:
@@ -285,7 +301,8 @@ jobs:
           - { platform: macos, arch: arm64, os: macos-14 }
     # Org variable MACOS_CI_DISABLED=true skips this macOS job.
     if: vars.MACOS_CI_DISABLED != 'true'
-    runs-on: ${{ matrix.os }}
+    # MACOS_RUNNER (pyrlyn/ci macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
+    runs-on: ${{ startsWith(matrix.os, 'macos') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(needs.macos-runner.outputs.value)[0] || matrix.os }}
     timeout-minutes: 60
     steps: *runtime-steps
 
@@ -309,11 +326,12 @@ jobs:
 
   asan-macos:
     name: asan (${{ matrix.platform }}/${{ matrix.arch }})
-    needs: [static, frontend-coverage]
+    needs: [static, frontend-coverage, macos-runner]
     strategy: *macos-strategy
     # Org variable MACOS_CI_DISABLED=true skips this macOS job.
     if: vars.MACOS_CI_DISABLED != 'true'
-    runs-on: ${{ matrix.os }}
+    # MACOS_RUNNER (pyrlyn/ci macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
+    runs-on: ${{ startsWith(matrix.os, 'macos') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(needs.macos-runner.outputs.value)[0] || matrix.os }}
     timeout-minutes: 60
     steps: *asan-steps
 
@@ -344,11 +362,12 @@ jobs:
 
   intl-macos:
     name: intl (${{ matrix.platform }}/${{ matrix.arch }})
-    needs: [static, frontend-coverage]
+    needs: [static, frontend-coverage, macos-runner]
     strategy: *macos-strategy
     # Org variable MACOS_CI_DISABLED=true skips this macOS job.
     if: vars.MACOS_CI_DISABLED != 'true'
-    runs-on: ${{ matrix.os }}
+    # MACOS_RUNNER (pyrlyn/ci macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
+    runs-on: ${{ startsWith(matrix.os, 'macos') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(needs.macos-runner.outputs.value)[0] || matrix.os }}
     timeout-minutes: 60
     steps: *intl-steps
 
@@ -402,11 +421,12 @@ jobs:
 
   ffi-macos:
     name: ffi (${{ matrix.platform }}/${{ matrix.arch }})
-    needs: [static, frontend-coverage]
+    needs: [static, frontend-coverage, macos-runner]
     strategy: *macos-strategy
     # Org variable MACOS_CI_DISABLED=true skips this macOS job.
     if: vars.MACOS_CI_DISABLED != 'true'
-    runs-on: ${{ matrix.os }}
+    # MACOS_RUNNER (pyrlyn/ci macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
+    runs-on: ${{ startsWith(matrix.os, 'macos') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(needs.macos-runner.outputs.value)[0] || matrix.os }}
     timeout-minutes: 60
     steps: *ffi-steps
 
