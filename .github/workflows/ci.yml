@@ -225,10 +225,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { platform: macos, arch: arm64, os: macos-14 }
-          - { platform: windows, arch: x64, os: windows-2025 }
-          - { platform: windows, arch: arm64, os: windows-11-arm }
+        include: ${{ fromJSON(vars.MACOS_CI_DISABLED == 'true' && '[{" platform": "windows", "arch": "x64", "os": "windows-2025 "}, {" platform": "windows", "arch": "arm64", "os": "windows-11-arm "}]' || '[{" platform": "macos", "arch": "arm64", "os": "macos-14 "}, {" platform": "windows", "arch": "x64", "os": "windows-2025 "}, {" platform": "windows", "arch": "arm64", "os": "windows-11-arm "}]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps: *frontend-steps
@@ -285,6 +282,8 @@ jobs:
       matrix:
         include:
           - { platform: macos, arch: arm64, os: macos-14 }
+    # Org variable MACOS_CI_DISABLED=true skips this macOS job.
+    if: vars.MACOS_CI_DISABLED != 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps: *runtime-steps
@@ -311,6 +310,8 @@ jobs:
     name: asan (${{ matrix.platform }}/${{ matrix.arch }})
     needs: [static, frontend-coverage]
     strategy: *macos-strategy
+    # Org variable MACOS_CI_DISABLED=true skips this macOS job.
+    if: vars.MACOS_CI_DISABLED != 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps: *asan-steps
@@ -344,6 +345,8 @@ jobs:
     name: intl (${{ matrix.platform }}/${{ matrix.arch }})
     needs: [static, frontend-coverage]
     strategy: *macos-strategy
+    # Org variable MACOS_CI_DISABLED=true skips this macOS job.
+    if: vars.MACOS_CI_DISABLED != 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps: *intl-steps
@@ -400,6 +403,8 @@ jobs:
     name: ffi (${{ matrix.platform }}/${{ matrix.arch }})
     needs: [static, frontend-coverage]
     strategy: *macos-strategy
+    # Org variable MACOS_CI_DISABLED=true skips this macOS job.
+    if: vars.MACOS_CI_DISABLED != 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps: *ffi-steps
