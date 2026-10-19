@@ -1384,7 +1384,8 @@ without before/after numbers on the same machine.
 compile and run; one golden shows `spawn` + `await join` interleaving with `Promise` reactions;
 `stator build` on a multi-file fixture is ≥1.5× faster wall-clock with `STATOR_COMPILE_JOBS>1`
 than with `=1` on a quiet machine (or the note explains why the floor was not met and which
-step remains). `pnpm run ci` green.
+step remains). T10.3's fixture met that bar (1.63× at 4 jobs, plan-notes 361). What this check
+still waits on is T10.2: `docs/THREADS.md` and the spawn/join golden. `pnpm run ci` green.
 
 ---
 
@@ -1413,23 +1414,9 @@ Steps:
 **Check:** goldens byte-stable where Node has an analogue (Promise side); thread-only fixtures
 use Stator's own oracle. Multi-thread GC stress does not crash under ASan.
 
-### T10.3. Threaded / parallel host compiler — **[D4]**
+### ~~T10.3. Threaded / parallel host compiler~~ — **[D4]**
 
-Independent of T10.1/T10.2. Host Node only.
-
-Steps:
-
-1. Baseline: wall time of `stator build` on a fixed multi-file fixture at `STATOR_COMPILE_JOBS=1`
-   with spans (frontend / lower / verify / emit / clang / link).
-2. C1 — parallel clang; keep if ≥1.3× on that fixture.
-3. C2 — parallel emit if emit shows in the profile.
-4. C3 — sharded lower/verify via process pool if typecheck/HIR dominate; document the Program
-   isolation choice.
-5. CI: one job runs `STATOR_COMPILE_JOBS=2` smoke so races fail the build; default CI may stay
-   serial for log readability.
-
-**Check:** documented before/after numbers in plan-notes; `STATOR_COMPILE_JOBS=1` preserves
-byte-identical emitted C for the fixture; CI green.
+Done — evidence in `done.md` (plan-notes 361).
 
 ---
 
@@ -2495,3 +2482,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.78** (2026-10-04): **Task 6.30 lands: the Windows frontend legs are green again** (plan-notes 352). Diagnostics and `VendorEntry.resolveDir` leave the compiler in the platform's form (`\` on Windows). Internal names and the generated C keep the checker's forward slashes. docs/BUNDLER.md §5 "Paths" states which form is used where. A `--node` program whose project sits on another Windows drive than the compiler now compiles, because the location helper is imported by its absolute path where no relative one exists. `.gitattributes` keeps every checkout LF, so the selfhost baseline matches its `--update` form on Windows.
 - **v4.79** (2026-10-03): **Task 7.4 lands: a self-contained static library for C consumers** (plan-notes 341–343). `stator build --emit=lib -o lib<name>.a --emit-header=<h>` prelinks the unit with a private runtime (`cc -r`; Mach-O `-exported_symbols_list`, ELF `objcopy --keep-global-symbols`), archives it deterministically and writes a relocatable `lib<name>.pc` from the binary link's own flag list, so `cc main.c $(pkg-config --cflags --libs lib<name>)` builds with no Stator checkout. Two libraries share one Boehm through a weak shared object kind and chained roots hooks; `jsrt_gc_init` is idempotent, which also fixes two `--emit-header` objects sharing one `libjsrt.a`. New codes STA0020, STA1219 (Windows) and STA1220 (`jsrt_value` surface). About 200 KB of runtime per extra library.
 - **v4.80** (2026-10-08): **Task 6.31 added: SonarCloud through the shared pyrlyn/ci workflow** (plan-notes 358). `sonarcloud.yml` is a copy of pyrlyn/ci's reusable `sonarcloud.yml`; the card moves it to a thin caller pinned by SHA, with the toolchain from mise.toml and the same soft-fail behavior.
+- **v4.81** (2026-10-19): **T10.3 lands: parallel clang via `STATOR_COMPILE_JOBS`** (plan-notes 361). Unset uses the host's parallelism but stays one translation unit under 8 functions or 40,000 characters of C. An explicit value above 1 splits at two functions. `1` is the old single clang line, and the emitted C does not change. A bad value is `STA0021`. On the clang-heavy fixture, 4 jobs were 1.63× the serial wall (clang itself 3.4×). Emit and verify were too small to shard; typecheck did not dominate that fixture, so there is no process pool. The CI smoke is `packages/tests/unit/compile-jobs.test.ts` in the existing frontend jobs.

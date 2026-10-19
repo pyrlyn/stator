@@ -10,12 +10,74 @@
  * and no tracing, because the compiler's output correctness never depends on its observability.
  */
 
-import { SpanStatusCode, type Tracer, trace } from '@opentelemetry/api';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { performance } from 'node:perf_hooks';
+import { SpanStatusCode, type Span, trace } from '@opentelemetry/api';
 
 let provider: { shutdown(): Promise<void> } | null = null;
 
-function tracer(): Tracer {
+/** Wall time per span name, present only while `STATOR_COMPILE_TIMING` is set.
+ * Concurrent builds stay isolated: the store is the async context, not a global. */
+const stageTimings = new AsyncLocalStorage<Map<string, number>>();
+
+function noteStage(name: string, start: number, stages: Map<string, number> | undefined): void {
+  if (stages === undefined) {
+    return;
+  }
+  stages.set(name, (stages.get(name) ?? 0) + (performance.now() - start));
+}
+
+/** Run `fn` with stage timing and print one `stator: timing` line on the way out,
+ * including when `fn` throws — a failed build's profile is the evidence. */
+export async function runStageTimings<T>(fn: () => Promise<T>): Promise<T> {
+  const stages = new Map<string, number>();
+  try {
+    return await stageTimings.run(stages, fn);
+  } finally {
+    if (stages.size > 0) {
+      const parts: string[] = [];
+      for (const [name, ms] of stages) {
+        parts.push(`${name}=${ms.toFixed(1)}ms`);
+      }
+      process.stderr.write(`stator: timing ${parts.join(' ')}\n`);
+    }
+  }
+}
+
+/** Add time that is not itself a `withSpan` (the parallel clang pool's compile
+ * versus the final link). No-op outside `runStageTimings`. */
+export function addStageTime(name: string, ms: number): void {
+  const stages = stageTimings.getStore();
+  if (stages === undefined) {
+    return;
+  }
+  stages.set(name, (stages.get(name) ?? 0) + ms);
+}
+
+function tracer(): ReturnType<typeof trace.getTracer> {
   return trace.getTracer('stator');
+}
+
+interface Stage {
+  readonly span: Span;
+  readonly stages: Map<string, number> | undefined;
+  readonly start: number;
+}
+
+function startStage(name: string, attributes: Record<string, string>): Stage {
+  const stages = stageTimings.getStore();
+  return {
+    span: tracer().startSpan(name, { attributes }),
+    stages,
+    start: stages === undefined ? 0 : performance.now(),
+  };
+}
+
+function failStage(stage: Stage, error: unknown): never {
+  stage.span.recordException(error instanceof Error ? error : String(error));
+  stage.span.setStatus({ code: SpanStatusCode.ERROR });
+  stage.span.end();
+  throw error;
 }
 
 /** Registers the global provider when enabled; a no-op otherwise. Dynamic imports keep cold
@@ -51,37 +113,36 @@ export async function telemetryShutdown(): Promise<void> {
 /** Sync span wrapper: the pipeline is synchronous, and an async envelope would cost every caller
  * its `await` chain for observability's sake alone. A throw is recorded on the span, rethrown,
  * and the span status goes ERROR — a failed stage is a span fact, not a swallowed exception. */
-/** `withSpan` for an async body. Needed because the sync form ends the span the moment `fn`
- * RETURNS, which for an async function is the moment it hands back a pending promise — the span
- * would time argument parsing and record none of the command's own exceptions. */
+export function withSpan<T>(name: string, attributes: Record<string, string>, fn: () => T): T {
+  const stage = startStage(name, attributes);
+  try {
+    const result = fn();
+    stage.span.end();
+    return result;
+  } catch (error) {
+    throw failStage(stage, error);
+  } finally {
+    noteStage(name, stage.start, stage.stages);
+  }
+}
+
+/** `withSpan` for an async body. The sync form ends the span when `fn` returns, which for an
+ * async function is the moment it hands back a pending promise — so this one awaits, and records
+ * the rejection, before the span ends. */
 export async function withSpanAsync<T>(
   name: string,
   attributes: Record<string, string>,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const span = tracer().startSpan(name, { attributes });
+  const stage = startStage(name, attributes);
+  let result: T;
   try {
-    const result = await fn();
-    span.end();
-    return result;
+    result = await fn();
   } catch (error) {
-    span.recordException(error instanceof Error ? error : String(error));
-    span.setStatus({ code: SpanStatusCode.ERROR });
-    span.end();
-    throw error;
+    noteStage(name, stage.start, stage.stages);
+    throw failStage(stage, error);
   }
-}
-
-export function withSpan<T>(name: string, attributes: Record<string, string>, fn: () => T): T {
-  const span = tracer().startSpan(name, { attributes });
-  try {
-    const result = fn();
-    span.end();
-    return result;
-  } catch (error) {
-    span.recordException(error instanceof Error ? error : String(error));
-    span.setStatus({ code: SpanStatusCode.ERROR });
-    span.end();
-    throw error;
-  }
+  stage.span.end();
+  noteStage(name, stage.start, stage.stages);
+  return result;
 }

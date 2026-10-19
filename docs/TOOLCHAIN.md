@@ -137,6 +137,34 @@ and the message names the environment variable, since no `--opt` is on the comma
 compiled as thin-LTO bitcode too when the archive was. Full PGO / a custom LLVM backend remains
 §12 rung 6 and needs the Task 6.3 measurement gate before it is scheduled.
 
+## Parallel clang (`STATOR_COMPILE_JOBS`)
+
+How many processes compile the generated C. This is a host knob, not a config key and not a
+flag: a project `.env` may not set it (it is a `STATOR_*` name outside the allowlist, so the
+file's line is ignored and the real environment decides).
+
+| Value | What a build does |
+| --- | --- |
+| unset or empty | the host's parallelism (`os.availableParallelism()`), but a small program stays one translation unit |
+| `1` | one clang invocation, the same line `linkArguments` has always built. Emitted C is unchanged |
+| `2` and up | file-scope functions are split into that many units, compiled together, then linked once |
+| anything else | `STA0021` |
+
+An explicit value above 1 splits as soon as the program has two functions, which is the CI
+smoke (`packages/tests/unit/compile-jobs.test.ts`, run by every frontend job). The unset
+default splits only when the generated C has at least 8 functions and 40,000 characters:
+below that, a second process costs more than it returns (plan-notes 361). `--emit=c` writes
+the one canonical C either way. `--emit-header` and `--emit=lib` stay one object.
+
+```
+STATOR_COMPILE_JOBS=1 node packages/compiler/src/cli/main.ts build file.ts -o app
+STATOR_COMPILE_JOBS=2 node packages/compiler/src/cli/main.ts build file.ts -o app
+STATOR_COMPILE_TIMING=1 node packages/compiler/src/cli/main.ts build file.ts -o app
+```
+
+`STATOR_COMPILE_TIMING=1` prints one `stator: timing` line on stderr (span name to
+milliseconds). It is also not a `.env` key.
+
 ## Environment variables and `.env`
 
 `stator build` and `stator explain` read these from the environment:
@@ -146,6 +174,8 @@ compiled as thin-LTO bitcode too when the archive was. Full PGO / a custom LLVM 
 | `STATOR_OPT` | clang `-O` level (above) | yes |
 | `STATOR_RUNTIME` | runtime flavor: `asan` or `intl` archive, and the builtins the gate admits | yes |
 | `STATOR_OTEL` | turns tracing on (plan-notes 187) | yes |
+| `STATOR_COMPILE_JOBS` | how many processes compile the generated C (above) | **no** |
+| `STATOR_COMPILE_TIMING` | print per-stage wall time on stderr | **no** |
 | `CC` | the C compiler Stator runs | **no** |
 | `STATOR_RUNTIME_ROOT` (and `STATOR_STD_ROOT`, `STATOR_NODE_ROOT`) | where the runtime headers and archives live | **no** |
 | `OTEL_*` (`OTEL_EXPORTER_OTLP_ENDPOINT`, `_HEADERS`, `OTEL_SERVICE_NAME`, …) | where trace data goes | **no** |

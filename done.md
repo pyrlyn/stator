@@ -4591,3 +4591,35 @@ The empty-receiver `repeat` fixtures and the computed-key leak row were already 
 The program cache keyed on the entry's sha256 and the overlay key. An edit to an on-disk import left the entry hash unchanged, so a later watch mode would have served a stale `ts.Program`. The key now also hashes every other on-disk source file the program loaded. Default libs are omitted. Overlay files are omitted, because their bytes are the overlay key and a vendor module is not on disk. A dependency that cannot be re-read is a miss. That hash is the invalidation a watch mode must keep using (`docs/BUNDLER.md` §7).
 
 Check: `pnpm exec vitest run --config packages/tests/vitest.config.ts packages/tests/unit/toolchain-sdk.test.ts packages/tests/unit/program-cache.test.ts packages/tests/unit/graph.test.ts` — `Test Files  3 passed (3)`, `Tests  15 passed (15)` (the new rows are the non-SDK rank and a transitive leaf edit that must miss). `pnpm exec tsc --noEmit -p packages/compiler/tsconfig.json` and `-p packages/tests/tsconfig.json` were clean. `pnpm exec oxlint --deny-warnings` on the touched sources was clean. `pnpm run dupes` reported 180 clones and exited 0 (no new clone). `stator explain` of `packages/compiler` reports `1844 × STA1214` (was 1845): the old `match[1] ?? ''` was one not-yet nullish coalescing, and the rank helper does not need it. The baseline records that shrink.
+
+## Phase 10 — T10.3 parallel host compiler ✅ (2026-10-19)
+
+**Landed 2026-10-19** (plan-notes 361). `STATOR_COMPILE_JOBS` compiles the generated C as several translation units when it is worth a process. `1` is the single clang invocation `linkArguments` already built, and the emitter does not read the knob, so `--emit=c` is byte-identical. Unset means `os.availableParallelism()`, but a program stays one unit under 8 functions or 40,000 characters. An explicit value above 1 splits at two functions. A value that is not an integer ≥ 1 is `STA0021`. A project `.env` cannot set the knob. `--emit-header` and `--emit=lib` stay one object.
+
+C1 is kept. On the clang-heavy fixture, 4 jobs were 1.63× the serial wall and the clang span itself was 3.4×. C2 is not done: emit was 14 ms. C3 is not done: on that fixture clang dominated typecheck, and `hir/verify` was 4 ms, so there is no process pool and the one `typescript.Program` stays on the compiling thread. The CI smoke is `packages/tests/unit/compile-jobs.test.ts`, which the existing frontend jobs already run. No workflow and no runner label changed.
+
+The card as it stood in plan.md:
+
+### T10.3. Threaded / parallel host compiler — **[D4]**
+
+Independent of T10.1/T10.2. Host Node only.
+
+Steps:
+
+1. Baseline: wall time of `stator build` on a fixed multi-file fixture at `STATOR_COMPILE_JOBS=1`
+   with spans (frontend / lower / verify / emit / clang / link).
+2. C1 — parallel clang; keep if ≥1.3× on that fixture.
+3. C2 — parallel emit if emit shows in the profile.
+4. C3 — sharded lower/verify via process pool if typecheck/HIR dominate; document the Program
+   isolation choice.
+5. CI: one job runs `STATOR_COMPILE_JOBS=2` smoke so races fail the build; default CI may stay
+   serial for log readability.
+
+**Check:** documented before/after numbers in plan-notes; `STATOR_COMPILE_JOBS=1` preserves
+byte-identical emitted C for the fixture; CI green.
+
+**Check evidence:** plan-notes 361 (the numbers). `packages/tests/unit/compile-jobs.test.ts`:
+9 passed, including the golden-corpus partition and the jobs=1 / jobs=2 stdout match. Goldens
+whose C clears the default threshold, built with the unset knob (so they take the parallel
+path) and compared to Node: capstone, builtin_constructors, typed_arrays, array_callbacks,
+to_primitive, promise_ordering, async_await, property_errors, maps — 16 passed, 0 failed.

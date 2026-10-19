@@ -706,7 +706,9 @@ because link order is load-bearing for static archives, and grouping flags
 (`-Wl,--start-group` … `--end-group`, `--link=` only) cross untouched for the
 rare circular one. A link that fails with extern flags on the line reports STA0009 naming the
 flags: a missing library is a configuration error, not a compiler bug, and the
-message says where to look first.
+message says where to look first. When `STATOR_COMPILE_JOBS` compiles several units, the final
+link keeps that flag order; each `-c` takes the compile-time half (the section flags, and
+`-flto` when the recorded flags carry it).
 
 `libm` needs no plumbing: `-lm` already rides every link inside the recorded
 `link-flags.txt` (the justfile's `SYS_LIBS`), so the `extern_libm` golden calls

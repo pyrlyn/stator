@@ -13013,3 +13013,59 @@ the vendor module is not on disk, and hashing it would make every bundled progra
 This is the dependency-hash key the task allowed in place of a TODO. Watch mode is not
 implemented here; when it is, it keeps this key.
 
+## 361. T10.3: parallel clang, measured, and the steps that did not qualify (2026-10-19)
+
+**Plan:** §11b T10.3, and the phase-level wall-clock sentence in the same section. `plan.md`
+edited in the same change: T10.3 is a stub, the phase check records that this fixture met
+1.63×, and the threads half of that check stays with T10.2.
+
+**Host.** Linux x64, 4 cores, Node 26.7.0, Ubuntu clang 18.1.3. The runtime archive is the
+plain-malloc build with LTO off (the justfile printed `plain malloc (no collection), no LTO`).
+No Boehm. Wall times are `time` around `node packages/compiler/src/cli/main.ts build`, second
+run unless noted. Spans are the `STATOR_COMPILE_TIMING=1` line. `codegen/emit-c` includes the
+nested `frontend/link-flags` span. About 0.4 s of each wall time is outside the spans (process
+startup and the gaps between them).
+
+**Fixture kept (C1).** Eight modules `m0.ts`–`m7.ts` plus `main.ts`. Each module exports six
+functions. A function sets `a` from its argument and then, for `k` in `0..79`, applies
+`a = a + ((k % 9) + 1) - (n % ((k % 7) + 2))`, `a = a * 2 + k` and `a = a % ((k % 11) + 13)`.
+`main` prints the sum of `f_{f}_0(f + 1)`. The optimizer left 9 C functions. The C text is
+633,598 bytes. Both builds printed `73`.
+
+| | wall | spans |
+| --- | --- | --- |
+| `STATOR_COMPILE_JOBS=1` cold | 4.086 s | program 431, gate 543, graph 6, lower 291, optimize 19, verify 5, emit 16, clang 2258 |
+| `=1` warm | 3.928 s | program 340, gate 554, graph 6, lower 270, optimize 16, verify 4, emit 14, clang 2297 |
+| `=4` | 2.415 s | program 384, gate 550, graph 6, lower 268, optimize 16, verify 4, emit 15, compile 632, ld 43, clang 675 |
+
+Wall speedup `3.928 / 2.415 = 1.63×` (the 1.3× keep bar, and the phase's 1.5× bar, on this
+fixture). The clang span is `2297 / 675 = 3.4×`. Unset `STATOR_COMPILE_JOBS` on this host
+(4 cores) took the parallel path: `link/compile=623 ms`, `link/clang=663 ms`.
+
+**Fixture that stays serial.** Twelve modules, ten functions each, a 24-iteration `while`.
+C text 31,423 bytes. Warm wall `0.843 s` at jobs=1 (`link/clang=152 ms`) and `0.851 s` at
+jobs=4 (`link/compile=91`, `link/ld=37`). That is not a win. The unset default therefore
+requires 8 functions and 40,000 characters, which this program misses on size.
+
+**A medium point, for the threshold.** Twenty modules, forty functions, C text 166,141 bytes.
+Warm wall `1.917 s` at jobs=1 (`link/clang=389`) and `1.686 s` at jobs=4 (`link/compile=166`,
+`link/ld=40`): `1.14×`. Both `--keep-c` outputs were byte-identical (166,141 bytes) and both
+binaries printed `12144`. Above 40,000 characters, so the default splits it. The keep decision
+uses the clang-heavy fixture, where the bar is actually cleared.
+
+**C2, not taken.** Emit on the kept fixture is 14 ms of a 3.9 s build. The emitter is one
+mutable object over the merged module. Parallel emit does not show in the profile.
+
+**C3, not taken.** On the kept fixture clang is 2.3 s and frontend plus lower is about 1.2 s.
+`hir/verify` is 4 ms. Typecheck does not dominate, so there is no process pool. The isolation
+choice, if a later profile flips: one `typescript.Program` per worker process, never a checker
+shared across threads. This card does not build that pool.
+
+**CI.** `packages/tests/unit/compile-jobs.test.ts` is the `STATOR_COMPILE_JOBS=2` smoke (an
+in-process `compileJobs: 2`, which is the same explicit split). It runs in every frontend job
+via `pnpm run test`. No workflow file and no runner label changed. Default CI builds stay one
+clang process unless the generated C clears both thresholds.
+
+**Identity.** The emitter never reads the job count. `--emit=c` at compile jobs 1 and 4 is
+locked by the unit test. `STA0021` is the bad-value diagnostic; `STA0002` is unchanged.
+
