@@ -31,4 +31,4 @@ just -f packages/runtime/justfile -d packages/runtime runtime-asan        # ASan
 just -f packages/std/justfile -d packages/std std                         # libjsrt_std.a, the std/* backings (Zig)
 ```
 
-Dev runs TypeScript directly on the pinned Node — no `pnpm run build` step for the CLI. GitHub Actions runs `pnpm run ci` plus a Test262 heartbeat on every push; nightly fuzz and weekly benches are `.github/workflows/nightly.yml`.
+Dev runs TypeScript directly on the pinned Node — no `pnpm run build` step for the CLI. GitHub Actions runs `pnpm run ci` plus a Test262 heartbeat on every push; nightly fuzz and weekly benches are `.github/workflows/nightly.yml`. Pushes to `main` and that nightly workflow also run `pnpm run test:impact:record` and upload `.cache/impact/impact-map.json`. A pull request downloads the newest `main` map and runs `pnpm run test:impact`, falling back to the full run (and saying why) when the map is missing or not an ancestor.

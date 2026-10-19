@@ -61,3 +61,34 @@ jobs:
           name: benchmark-${{ github.run_number }}
           path: packages/tests/bench/results
           if-no-files-found: error
+
+  # Task 6.17 step 4. Separate from `evidence`: that job is a 60-minute differential
+  # or bench, and the recording is a full instrumented run. Same artifact name as
+  # ci.yml so a pull request can take whichever main map is newer.
+  impact-record:
+    name: impact record
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 2 * * *' || github.event.schedule == '0 3 * * 0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.58.0'
+      - uses: ./.github/actions/setup
+      - name: Install runtime dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgc-dev clang llvm binutils
+      - run: pnpm install --frozen-lockfile
+      - name: Record impact map
+        run: pnpm run test:impact:record
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: impact-map
+          path: .cache/impact/impact-map.json
+          if-no-files-found: error
+          retention-days: 14

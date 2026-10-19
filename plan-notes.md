@@ -13013,3 +13013,34 @@ the vendor module is not on disk, and hashing it would make every bundled progra
 This is the dependency-hash key the task allowed in place of a TODO. Watch mode is not
 implemented here; when it is, it keeps this key.
 
+## 362. Task 6.17 step 4: CI records the impact map on main and selects on pull requests (2026-10-19)
+
+**Number.** 362, not 361: the open Task 6.15 change already takes 361.
+
+**What was open.** Steps 1–3 and 5 of Task 6.17 are in `done.md`. Step 4 was still the
+paragraph under the struck heading: `main` and the nightly run `pnpm run test:impact:record`
+and upload `.cache/impact/impact-map.json`; a pull request downloads the newest `main` map
+and runs `pnpm run test:impact`. The task stays open until a pull request log shows a
+selection made from a `main` map. This change wires the jobs. It does not strike the task,
+because no `main` artifact exists until the recording job has run on `main`.
+
+**Jobs.** `ci.yml` `impact-record` runs on a push to `main` (and `workflow_dispatch` of that
+workflow on `main`) on `ubuntu-24.04`, so the map's `platform` is `linux-x64` and its Node is
+the pin in `.node-version`. `nightly.yml` has the same job on the evidence schedules, separate
+from the 60-minute differential. Both upload an artifact named `impact-map`, kept 14 days.
+`ci.yml` `impact` runs on `pull_request` only, with `actions: read`, `fetch-depth: 0` (a
+depth-1 checkout fails the ancestor check for every map), and `python3 scripts/impact-ci.py`.
+The script lists artifacts named `impact-map`, keeps the newest non-expired one whose
+workflow run has `head_branch` `main`, and extracts the zip member ending in
+`impact-map.json`. No token, no artifact, or an API error exits 0 and leaves the file
+absent, so `test:impact` prints `FULL RUN` and the reason. The token is never printed.
+`static analysis` runs `python3 scripts/impact-ci.py --self-test`. The existing full jobs
+stay; `pnpm run ci` stays the local gate. `impact-record` is not a `revert-on-failure`
+dependency: those jobs already revert a red push, and a recorder-only failure must not.
+
+**Closeout.** The first pull request's `impact` job falls back, because `main` has not
+uploaded a map yet. After that job is green on `main`, a later pull request whose diff the
+selector can trust is what strikes step 4. `.github/**` and `scripts/**` are whole-run
+triggers, so that closeout diff has to be something the selector treats as a real selection
+(a markdown edit is a no-op and prints `N of M selected`).
+

@@ -139,6 +139,8 @@ pnpm run test:selfhost   # Stator explains (and builds) its own packages; per-co
 pnpm run ci              # full local gate before claiming work done
 ```
 
+Pull requests run `pnpm run test:impact` against the newest `main` impact map. `main` and the nightly workflow record that map. `pnpm run ci` remains the local gate.
+
 ## Example: todo (both modes, one shared core)
 
 Path: [`examples/todo/`](../examples/todo/). `shared.ts` is a small typed task

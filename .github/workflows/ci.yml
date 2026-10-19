@@ -40,6 +40,9 @@ concurrency:
 #   test:leak   -> runtime
 #   test:asan   -> asan (STATOR_ASAN_FORCE=1 in CI: always the full pass, never the hash skip)
 #   test:ffi    -> ffi
+#   test:impact:record -> impact-record (push to main; nightly.yml records the same artifact)
+#   test:impact        -> impact (pull requests download the newest main map; a missing or
+#                         non-ancestor map falls back to the full run and says why)
 #
 # Two stages (owner request): stage 1 is Linux-only and cheap to fail -- `static` (lint, format,
 # typecheck, dupes) plus `frontend (linux/x64)` (subset + unit tests WITH coverage, the lcov owner).
@@ -160,6 +163,9 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run lint
       - run: pnpm run dupes
+      # Task 6.17: the artifact selector is pure. This does not download anything.
+      - name: Impact artifact selector
+        run: python3 scripts/impact-ci.py --self-test
       # Workflow lint, not part of `pnpm run ci`: jactionlint with .github/jactionlint.yaml and its
       # baseline, the check the pre-push hook (hk.pkl) runs. Last, so mise's PATH never shadows the
       # Node above; install_args installs only jactionlint (version as in mise.toml), and
@@ -437,6 +443,65 @@ jobs:
     runs-on: ${{ startsWith(matrix.os, 'macos') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(needs.macos-runner.outputs.value)[0] || matrix.os }}
     timeout-minutes: 60
     steps: *ffi-steps
+
+  # Task 6.17 step 4. Records on ubuntu-24.04 so `platform` is `linux-x64`, the same
+  # value the pull-request job below reports. Not in revert-on-failure: the other jobs
+  # already revert a red push, and a recorder-only failure must not revert main.
+  impact-record:
+    name: impact record
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - *checkout
+      - *setup-just
+      - *setup
+      - *install-boehm
+      - name: Install nm
+        run: sudo apt-get install -y binutils
+      - *pnpm-install
+      - name: Record impact map
+        run: pnpm run test:impact:record
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: impact-map
+          path: .cache/impact/impact-map.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # Pull requests only. fetch-depth 0 so `git merge-base --is-ancestor` can see the
+  # map commit; a depth-1 checkout would reject every map. actions:read lists artifacts
+  # from the main workflow runs. A miss exits 0 and test:impact prints the fallback.
+  impact:
+    name: impact
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - *setup-just
+      - *setup
+      - *install-boehm
+      - name: Install nm
+        run: sudo apt-get install -y binutils
+      - *pnpm-install
+      - name: Download the newest main impact map
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/impact-ci.py
+      - name: Run the impacted tests
+        run: pnpm run test:impact
 
   revert-on-failure:
     name: revert-on-failure
