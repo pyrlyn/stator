@@ -13013,3 +13013,32 @@ the vendor module is not on disk, and hashing it would make every bundled progra
 This is the dependency-hash key the task allowed in place of a TODO. Watch mode is not
 implemented here; when it is, it keeps this key.
 
+## 364. Cloud-review rows T20, T22, T25 and T26 were already fixed (2026-10-19)
+
+**Plan:** the cloud-review table at the top of `plan.md` (not the audit task T20, which
+plan-notes 360 already closed). `plan.md` edited in the same change: those four rows are
+struck, the way T23 was. They were never given Steps and a Check, so there is no record to
+move to `done.md`. T21 and T24 stay open.
+
+**T20.** `ci.yml` starts with `push: branches: [main]`. The comment above it says a merge to
+main would otherwise have no test gate, and the revert job is `github.event_name == 'push'`.
+plan-notes 353 added that trigger. Re-checked on `9767c85`.
+
+**T22.** `pipeline.yml` calls `uses: pyrlyn/ci/.github/workflows/ci.yml@main`. plan-notes 353
+replaced the private `listepo/infra` caller (run 37694735601 failed in 0s). PR #158
+(`e825724`, merged 2026-10-18) then moved the reference from a SHA to `@main`, because
+pyrlyn/ci's `no-pinned-ci` job fails a pull request that pins that caller. `@main` is the
+reference on purpose.
+
+**T25.** `AGENTS.md`'s repo map lists `vendor/` as QuickJS-NG libregexp only. `docs/TOOLCHAIN.md`
+says Ryū is not vendored and that fetching it stays on §12. plan-notes 353 corrected the map.
+The golden-rule sentence that says "vendor Ryū" is the standing instruction for when that
+ladder rung is taken, not a claim that the code is in the tree.
+
+**T26.** `memfs` is absent from the root `package.json`, from `packages/tests/package.json`,
+and from `packages/compiler/src/frontend/program.ts`. The custom-host comments say
+"in-memory CompilerHost". plan-notes 353 removed the dependency.
+
+**Left open.** T21 is a required-check / ruleset change, and this session does not edit
+rulesets. T24 is still one file: `packages/compiler/src/codegen/index.ts`.
+
