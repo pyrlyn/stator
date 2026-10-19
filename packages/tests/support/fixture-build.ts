@@ -120,10 +120,21 @@ const NODE_SHIMS = ['node_shim.ts', 'node_shim.mjs'];
  * fixtures cannot run under Node as written — an ambient `declare function` erases to nothing), loaded via `--import`
  * before the entry and invisible to Stator, which never imports it. Every run also loads
  * `golden/std-oracle.ts`, the resolve hook that answers `std/*` imports Node-side. `env` is the caller's
- * pinned environment (TZ=UTC on both sides), kept per-caller so this helper owns no clock. */
-export async function runNodeOracle(path: string, env: NodeJS.ProcessEnv): Promise<FixtureStreams> {
+ * pinned environment (TZ=UTC on both sides), kept per-caller so this helper owns no clock.
+ * `programArgs` follow the entry, where the program reads them from `process.argv[2]` on. */
+export async function runNodeOracle(
+  path: string,
+  env: NodeJS.ProcessEnv,
+  programArgs: readonly string[] = [],
+): Promise<FixtureStreams> {
   const shim = NODE_SHIMS.map((name) => join(dirname(path), name)).find((file) => existsSync(file));
-  const args = ['--import', STD_ORACLE, ...(shim !== undefined ? ['--import', shim] : []), path];
+  const args = [
+    '--import',
+    STD_ORACLE,
+    ...(shim !== undefined ? ['--import', shim] : []),
+    path,
+    ...programArgs,
+  ];
   const result = await runProcess(nodePath(), args, { env });
   if (result.status !== 0) {
     throw new Error(`node exited ${String(result.status)}: ${result.stderr.trim()}`);

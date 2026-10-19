@@ -13013,3 +13013,38 @@ the vendor module is not on disk, and hashing it would make every bundled progra
 This is the dependency-hash key the task allowed in place of a TODO. Watch mode is not
 implemented here; when it is, it keeps this key.
 
+## 361. T11.6: `node:process` is the global `process` (2026-10-19)
+
+**Slice, not the Check.** `packages/node/src/process.ts` is the members `tsc` reads, over
+`std/process`, `std/env`, `std/os` and `std/io`. The Check (`tsc --version` / `tsc -p`
+byte-for-byte, N1 at 100%) stays open: `node:os`, `Buffer`, `crypto.createHash`,
+`perf_hooks.performance`, timers and the N2 `fs` watchers are still unlanded, and compiling the
+`tsc` bundle still waits on T11.4. `plan.md` records the slice and does not strike the task.
+
+**Global.** A free `process` under `--node` is not a runtime global. `frontend/location.ts`
+inserts `import process from "node:process"` into every project file and the vendor module that
+reads one it does not bind, the same text rewrite as `import.meta`. `packages/node/src/globals.d.ts`
+declares the type with a type-only import, so a program that never reads `process` does not link
+it. Without the flag the name is `STA0012`.
+
+**What the binary answers.** `argv` is Node's single-executable shape (`execPath`, the invoked
+program, then the user's arguments from index 2); `execArgv` is empty. `env` is a startup
+snapshot from new `std/env.names()` (`jsrt_std_env_count` / `jsrt_std_env_name` walk libc's
+`environ`); writes and `delete` update the object and not the OS, because a forwarding object
+would be a `Proxy`. `exitCode` starts `undefined`, and assigning it sets `std/process`'s status.
+`nextTick` is `Promise.resolve(0).then`, so it shares the microtask queue instead of running
+ahead of it. `memoryUsage()` reports `rss` and zeroes the four heap fields. `stdout.write` /
+`stderr.write` are synchronous and return `true`; `isTTY` is `true` or `undefined`.
+
+**Spread into `unknown`.** `nextTick` calls its callback with `task(...args)`. In js mode a
+spread into an annotated parameter is `STA1214`, because the edge check has no position to
+stand on. A parameter annotated `unknown`, or a rest parameter annotated `unknown[]`, claims
+nothing that check could reject, so `claimsNothing` lets that spread through. A `number`
+annotation stays refused (`subset_spread_annotated_callee_js`).
+
+**Proof.** Goldens `ts/node_process` and `js/node_process` print shapes (absolute, `> 0`,
+`TZ === "UTC"`), never a path, a pid, an argv element before index 2, or an environment value
+other than the runner's `TZ` pin. `// @args:` is the argument list both runs get. `require('process')`
+is the same object as the default export. Coverage claims are in `node_coverage.json`;
+`docs/NODE.md` regenerates in the same change.
+

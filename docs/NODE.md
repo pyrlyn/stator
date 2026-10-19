@@ -15,8 +15,8 @@ for the module and expected to pass under Stator, from
 `packages/tests/node-suite/expectations.json`, which `pnpm run test:node-suite` holds to the
 truth (plan.md §11c T11.7).
 
-**Total: 57 / 2364 members covered (2%) across 58 modules.**
-**Slice N1 (`tsc`): 15 / 37 (41%).**
+**Total: 73 / 2368 members covered (3%) across 58 modules.**
+**Slice N1 (`tsc`): 25 / 37 (68%).**
 **Node tests: 0 / 17 selected files pass.**
 
 | Module | Covered | Members | % | Corpus uses | tsc members | Node tests |
@@ -28,7 +28,7 @@ truth (plan.md §11c T11.7).
 | [`node:child_process`](#nodechild_process) | 0 | 12 | 0% | 17 | 0 |  |
 | [`node:cluster`](#nodecluster) | 0 | 19 | 0% | 0 | 0 |  |
 | [`node:console`](#nodeconsole) | 0 | 44 | 0% | 3 | 0 |  |
-| [`node:constants`](#nodeconstants) | 0 | 231 | 0% | 0 | 0 |  |
+| [`node:constants`](#nodeconstants) | 0 | 235 | 0% | 0 | 0 |  |
 | [`node:crypto`](#nodecrypto) | 0 | 148 | 0% | 17 | 1 |  |
 | [`node:dgram`](#nodedgram) | 0 | 29 | 0% | 0 | 0 |  |
 | [`node:diagnostics_channel`](#nodediagnostics_channel) | 0 | 21 | 0% | 0 | 0 |  |
@@ -50,7 +50,7 @@ truth (plan.md §11c T11.7).
 | [`node:path/posix`](#nodepathposix) | 14 | 16 | 88% | 0 | 0 | 0 / 2 |
 | [`node:path/win32`](#nodepathwin32) | 0 | 16 | 0% | 2 | 0 | 0 / 2 |
 | [`node:perf_hooks`](#nodeperf_hooks) | 0 | 69 | 0% | 61 | 1 |  |
-| [`node:process`](#nodeprocess) | 0 | 68 | 0% | 822 | 10 |  |
+| [`node:process`](#nodeprocess) | 16 | 68 | 24% | 822 | 10 |  |
 | [`node:punycode`](#nodepunycode) | 0 | 6 | 0% | 0 | 0 |  |
 | [`node:querystring`](#nodequerystring) | 0 | 7 | 0% | 1 | 0 |  |
 | [`node:readline`](#nodereadline) | 0 | 9 | 0% | 9 | 0 |  |
@@ -445,7 +445,7 @@ truth (plan.md §11c T11.7).
 
 ### node:constants
 
-<details><summary><code>node:constants</code> — 0 / 231 (0%)</summary>
+<details><summary><code>node:constants</code> — 0 / 235 (0%)</summary>
 
 | Member | Kind | Covered | Corpus | tsc |
 | --- | --- | --- | --- | --- |
@@ -550,15 +550,16 @@ truth (plan.md §11c T11.7).
 | `OPENSSL_VERSION_NUMBER` | value | — |  |  |
 | `O_APPEND` | value | — |  |  |
 | `O_CREAT` | value | — |  |  |
+| `O_DIRECT` | value | — |  |  |
 | `O_DIRECTORY` | value | — |  |  |
 | `O_DSYNC` | value | — |  |  |
 | `O_EXCL` | value | — |  |  |
+| `O_NOATIME` | value | — |  |  |
 | `O_NOCTTY` | value | — |  |  |
 | `O_NOFOLLOW` | value | — |  |  |
 | `O_NONBLOCK` | value | — |  |  |
 | `O_RDONLY` | value | — |  |  |
 | `O_RDWR` | value | — |  |  |
-| `O_SYMLINK` | value | — |  |  |
 | `O_SYNC` | value | — |  |  |
 | `O_TRUNC` | value | — |  |  |
 | `O_WRONLY` | value | — |  |  |
@@ -580,6 +581,7 @@ truth (plan.md §11c T11.7).
 | `RSA_PSS_SALTLEN_MAX_SIGN` | value | — |  |  |
 | `RSA_SSLV23_PADDING` | value | — |  |  |
 | `RSA_X931_PADDING` | value | — |  |  |
+| `RTLD_DEEPBIND` | value | — |  |  |
 | `RTLD_GLOBAL` | value | — |  |  |
 | `RTLD_LAZY` | value | — |  |  |
 | `RTLD_LOCAL` | value | — |  |  |
@@ -593,15 +595,17 @@ truth (plan.md §11c T11.7).
 | `SIGFPE` | value | — |  |  |
 | `SIGHUP` | value | — |  |  |
 | `SIGILL` | value | — |  |  |
-| `SIGINFO` | value | — |  |  |
 | `SIGINT` | value | — |  |  |
 | `SIGIO` | value | — |  |  |
 | `SIGIOT` | value | — |  |  |
 | `SIGKILL` | value | — |  |  |
 | `SIGPIPE` | value | — |  |  |
+| `SIGPOLL` | value | — |  |  |
 | `SIGPROF` | value | — |  |  |
+| `SIGPWR` | value | — |  |  |
 | `SIGQUIT` | value | — |  |  |
 | `SIGSEGV` | value | — |  |  |
+| `SIGSTKFLT` | value | — |  |  |
 | `SIGSTOP` | value | — |  |  |
 | `SIGSYS` | value | — |  |  |
 | `SIGTERM` | value | — |  |  |
@@ -1199,8 +1203,8 @@ truth (plan.md §11c T11.7).
 | `futimesSync` | function | — |  |  |
 | `glob` | function | — |  |  |
 | `globSync` | function | — |  |  |
-| `lchmod` | function | — |  |  |
-| `lchmodSync` | function | — |  |  |
+| `lchmod` | value | — |  |  |
+| `lchmodSync` | value | — |  |  |
 | `lchown` | function | — |  |  |
 | `lchownSync` | function | — |  |  |
 | `link` | function | — |  |  |
@@ -1868,33 +1872,33 @@ truth (plan.md §11c T11.7).
 
 ### node:process
 
-<details><summary><code>node:process</code> — 0 / 68 (0%)</summary>
+<details><summary><code>node:process</code> — 16 / 68 (24%)</summary>
 
 | Member | Kind | Covered | Corpus | tsc |
 | --- | --- | --- | --- | --- |
 | `abort` | function | — |  |  |
 | `addUncaughtExceptionCaptureCallback` | function | — |  |  |
 | `allowedNodeEnvironmentFlags` | getter | — |  |  |
-| `arch` | value | — | 29 |  |
-| `argv` | value | — | 19 | ✓ |
-| `argv0` | value | — |  |  |
+| `arch` | value | ✅ | 29 |  |
+| `argv` | value | ✅ | 19 | ✓ |
+| `argv0` | value | ✅ |  |  |
 | `availableMemory` | function | — |  |  |
 | `binding` | function | — |  |  |
 | `chdir` | function | — | 4 |  |
 | `config` | value | — | 6 |  |
 | `constrainedMemory` | function | — | 1 |  |
 | `cpuUsage` | function | — |  |  |
-| `cwd` | function | — | 80 | ✓ |
+| `cwd` | function | ✅ | 80 | ✓ |
 | `debugPort` | value | — |  |  |
 | `dlopen` | function | — |  |  |
 | `domain` | getter | — |  |  |
 | `emitWarning` | function | — | 7 |  |
-| `env` | value | — | 274 | ✓ |
-| `execArgv` | value | — | 9 | ✓ |
-| `execPath` | value | — | 6 |  |
+| `env` | value | ✅ | 274 | ✓ |
+| `execArgv` | value | ✅ | 9 | ✓ |
+| `execPath` | value | ✅ | 6 |  |
 | `execve` | function | — |  |  |
-| `exit` | function | — | 35 | ✓ |
-| `exitCode` | getter | — | 35 |  |
+| `exit` | function | ✅ | 35 | ✓ |
+| `exitCode` | getter | ✅ | 35 |  |
 | `features` | value | — | 1 |  |
 | `finalization` | getter | — |  |  |
 | `getActiveResourcesInfo` | function | — |  |  |
@@ -1909,14 +1913,14 @@ truth (plan.md §11c T11.7).
 | `initgroups` | function | — |  |  |
 | `kill` | function | — | 9 |  |
 | `loadEnvFile` | function | — |  |  |
-| `memoryUsage` | function | — | 6 | ✓ |
+| `memoryUsage` | function | ✅ | 6 | ✓ |
 | `moduleLoadList` | value | — |  |  |
-| `nextTick` | function | — | 44 | ✓ |
+| `nextTick` | function | ✅ | 44 | ✓ |
 | `noDeprecation` | value | — | 3 |  |
 | `openStdin` | function | — |  |  |
-| `pid` | value | — | 12 | ✓ |
-| `platform` | value | — | 73 | ✓ |
-| `ppid` | value | — | 1 |  |
+| `pid` | value | ✅ | 12 | ✓ |
+| `platform` | value | ✅ | 73 | ✓ |
+| `ppid` | value | ✅ | 1 |  |
 | `reallyExit` | function | — | 2 |  |
 | `ref` | function | — |  |  |
 | `release` | value | — |  |  |
@@ -1930,9 +1934,9 @@ truth (plan.md §11c T11.7).
 | `setgroups` | function | — |  |  |
 | `setuid` | function | — |  |  |
 | `sourceMapsEnabled` | getter | — | 1 |  |
-| `stderr` | getter | — | 27 |  |
+| `stderr` | getter | ✅ | 27 |  |
 | `stdin` | getter | — | 18 |  |
-| `stdout` | getter | — | 66 | ✓ |
+| `stdout` | getter | ✅ | 66 | ✓ |
 | `threadCpuUsage` | function | — |  |  |
 | `title` | value | — |  |  |
 | `umask` | function | — |  |  |

@@ -36,6 +36,29 @@ export fn jsrt_std_env_unset(name: [*:0]const u8) f64 {
     return if (unsetenv(name) == 0) 0 else root.fail("EINVAL");
 }
 
+// POSIX `environ`. Windows CI does not build this archive (docs/STD.md §4). A `setenv` is visible
+// here the moment it returns, because this is libc's own vector.
+extern "c" var environ: [*:null]?[*:0]u8;
+
+export fn jsrt_std_env_count() f64 {
+    var n: usize = 0;
+    while (environ[n] != null) : (n += 1) {}
+    return @floatFromInt(n);
+}
+
+// Name of variable `index` (text before the first `=`), parked for `jsrtStdResult`. Past the end
+// is EINVAL.
+export fn jsrt_std_env_name(index: f64) f64 {
+    const wanted: usize = @intCast(root.intIn(index, 0, std.math.maxInt(c_int)) orelse return root.fail("EINVAL"));
+    var n: usize = 0;
+    while (n < wanted and environ[n] != null) : (n += 1) {}
+    const entry = environ[n] orelse return root.fail("EINVAL");
+    const text = std.mem.span(entry);
+    const end = std.mem.indexOfScalar(u8, text, '=') orelse text.len;
+    root.setResult(root.allocator.dupeZ(u8, text[0..end]) catch |err| return root.failWith(err));
+    return 0;
+}
+
 export fn jsrt_std_env_cwd() f64 {
     const path = std.process.currentPathAlloc(root.io(), root.allocator) catch |err| return root.failWith(err);
     root.setResult(path);

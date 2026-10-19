@@ -1619,10 +1619,16 @@ it). **Second slice landed** (plan-notes 317): the `node:fs` sync subset, 12 of 
 functions `tsc` calls (`closeSync`, `existsSync`, `mkdirSync`, `openSync`, `readFileSync`,
 `readdirSync`, `realpathSync`, `statSync`, `unlinkSync`, `utimesSync`, `writeFileSync`,
 `writeSync`) plus `rmdirSync`, with Node's `SystemError` shape. `watch`, `watchFile` and
-`unwatchFile` wait on the event loop (N2) and stay `STA1214`. **Next**, in the order `tsc` needs
-them: `process`, `node:os`, `Buffer.from`/`toString` (then `readFileSync` without an encoding
-answers a `Buffer`), `crypto.createHash`, `perf_hooks.performance`, timers; `path.win32` is its
-own slice (13 of T11.7's `path` tests need it).
+`unwatchFile` wait on the event loop (N2) and stay `STA1214`. **Third slice landed**
+(plan-notes 361): `node:process`, the members `tsc` reads (`argv`, `cwd`, `env`, `execArgv`,
+`exit`, `memoryUsage`, `nextTick`, `pid`, `platform`, `stdout`) plus `argv0`, `execPath`,
+`exitCode`, `arch`, `ppid` and `stderr`. The global `process` is that module's default export.
+The task stays open: N1 is not 100% (`node:os`, `Buffer`, `crypto.createHash`,
+`perf_hooks.performance`, timers, and the N2 `fs` watchers), and the Check below needs T11.4's
+remaining `tsc` coverage. **Next**, in the order `tsc` needs them: `node:os`,
+`Buffer.from`/`toString` (then `readFileSync` without an encoding answers a `Buffer`),
+`crypto.createHash`, `perf_hooks.performance`, timers; `path.win32` is its own slice (13 of
+T11.7's `path` tests need it).
 
 **Check:** `tsc --version` and `tsc -p` on a small fixture project, compiled by Stator, print
 byte-for-byte what `node _tsc.js` prints on Node 26.7.0; `docs/NODE.md` slice N1 at 100%.
@@ -2495,3 +2501,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.78** (2026-10-04): **Task 6.30 lands: the Windows frontend legs are green again** (plan-notes 352). Diagnostics and `VendorEntry.resolveDir` leave the compiler in the platform's form (`\` on Windows). Internal names and the generated C keep the checker's forward slashes. docs/BUNDLER.md §5 "Paths" states which form is used where. A `--node` program whose project sits on another Windows drive than the compiler now compiles, because the location helper is imported by its absolute path where no relative one exists. `.gitattributes` keeps every checkout LF, so the selfhost baseline matches its `--update` form on Windows.
 - **v4.79** (2026-10-03): **Task 7.4 lands: a self-contained static library for C consumers** (plan-notes 341–343). `stator build --emit=lib -o lib<name>.a --emit-header=<h>` prelinks the unit with a private runtime (`cc -r`; Mach-O `-exported_symbols_list`, ELF `objcopy --keep-global-symbols`), archives it deterministically and writes a relocatable `lib<name>.pc` from the binary link's own flag list, so `cc main.c $(pkg-config --cflags --libs lib<name>)` builds with no Stator checkout. Two libraries share one Boehm through a weak shared object kind and chained roots hooks; `jsrt_gc_init` is idempotent, which also fixes two `--emit-header` objects sharing one `libjsrt.a`. New codes STA0020, STA1219 (Windows) and STA1220 (`jsrt_value` surface). About 200 KB of runtime per extra library.
 - **v4.80** (2026-10-08): **Task 6.31 added: SonarCloud through the shared pyrlyn/ci workflow** (plan-notes 358). `sonarcloud.yml` is a copy of pyrlyn/ci's reusable `sonarcloud.yml`; the card moves it to a thin caller pinned by SHA, with the toolchain from mise.toml and the same soft-fail behavior.
+- **v4.81** (2026-10-19): **T11.6, third slice: `node:process`** (plan-notes 361). The members `tsc` reads (`argv`, `cwd`, `env`, `execArgv`, `exit`, `memoryUsage`, `nextTick`, `pid`, `platform`, `stdout`) plus `argv0`, `execPath`, `exitCode`, `arch`, `ppid` and `stderr`. A free `process` under `--node` is rewritten to `import process from "node:process"`. `std/env.names()` lists libc's `environ`. A js-mode spread into `unknown` or rest `unknown[]` is accepted. Slice N1 is 25 / 37 (68%). The Check stays open.
