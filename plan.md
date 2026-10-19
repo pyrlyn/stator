@@ -78,7 +78,7 @@ Not added: exposing `ffi-gen` as a `stator ffi-gen` subcommand is optional, and 
 7. **Allocation dominates, not dispatch.** Boa's Cranelift JIT experiment proved it: 10× on numeric loops, <5% on allocation-bound benchmarks; GC tracing 10–16% of time, dispatch only ~13%. This ordering drives the optimization ladder (§12).
 8. **One pipeline, two modes.** A mode is a *policy layer* (which files are accepted, which constructs are errors, how untyped code is typed) over one shared pipeline. If a feature seems to require forking the pipeline per mode, the design is wrong — stop and fix the design (usually: the feature belongs to the dynamic representation or the Phase-8 tier).
 9. **The compiler itself is strict TypeScript.** Locked `tsconfig` (§4 Task 1.0), no `any` in compiler source, vitest for unit tests (dev-only, run on Node's own type stripping — plan-notes 285), runtime dependency budget: the `typescript` package only — **owner-directed exception (2026-09-04, plan-notes 187):** `src/cli/` may use ink + react (human-facing rendering plus per-command help, long-form flags) and dotenv (environment loading), and `typebox` + `jsonc-parser` for `stator.config.json` (`src/cli/config.ts` only, plan-notes 303), and OpenTelemetry tracing (`@opentelemetry/*`, opt-in via `STATOR_OTEL`, standard OTLP env config — works with Maple and any OTLP backend) is wired through `src/support/telemetry.ts`; execa is dev-only for `tests/unit/cli.test.ts`. The budget still rules everything else: no pass, lowering, or codegen code may depend on these. The compiler must always pass its own `ts` mode's *philosophy*: fully typed, no dynamic escape hatches.
-10. **No JavaScript in the project's own source** (creator's direction 2026-10-02, plan-notes 289). The compiler, runtime, `std`, the `node:*` wrappers, test harnesses, oracle shims and scripts are strict TypeScript, C or Zig. `.js` / `.mjs` / `.cjs` files exist only as: `js`-mode test inputs and examples (the thing under test), vendored upstream code, generated output, and assets a browser loads as-is (`site/public/`). The existing harness `.mjs` files migrate under §9 Task 6.15.
+10. **No JavaScript in the project's own source** (creator's direction 2026-10-02, plan-notes 289). The compiler, runtime, `std`, the `node:*` wrappers, test harnesses, oracle shims and scripts are strict TypeScript, C or Zig. `.js` / `.mjs` / `.cjs` files exist only as: `js`-mode test inputs and examples (the thing under test), vendored upstream code, generated output, and assets a browser loads as-is (`site/public/`). Tracked files outside that set fail `scripts/check-js-sources.ts`, which `pnpm run ci` runs (Task 6.15, plan-notes 361).
 
 **Non-goals (v1):** npm-ecosystem compatibility (Phase 11 targets Node *programs* such as `tsc`, not the npm ecosystem at large); `eval`/`new Function` (never in `ts` mode; `js` mode not before Phase 8); `Proxy`; `with`; prototype mutation after construction; decorators; full Intl; Node API emulation outside Phase 11's `--node` platform (§11c); Windows (POSIX + clang first); self-hosting the compiler.
 
@@ -802,15 +802,7 @@ one people learn to ignore — which costs more than having no gate at all.
 
 ~~**Task 6.14 — A checker stack overflow must fail its test, never its shard.**~~ ✅ **landed 2026-09-14** — evidence in [done.md](done.md) → Phase 6 Task 6.14 (plan-notes 254).
 
-**Task 6.15 — No JavaScript in our own source (§0.10, plan-notes 289).** Port to strict TS (Node
-runs them through type stripping, as it runs every harness today): the oracle shims
-(`packages/tests/golden/*/*/node_shim.mjs`, `examples/ffi/*/node_shim.mjs`), the runtime print
-corpus (`packages/runtime/tests/print_*.mjs`), `scripts/check-node.mjs`,
-`packages/runtime/vendor/update.mjs`, `packages/runtime/vendor/fdlibm/port.mjs` and
-`site/astro.config.mjs`. Exempt: `js`-mode test inputs and examples, vendored upstream code,
-generated output, `site/public/` assets. **Check:** `git ls-files '*.js' '*.mjs' '*.cjs'` lists only
-exempt paths; a lint step (a few lines in `scripts/`) enforces that list in `ci`; `pnpm run ci`
-green.
+~~**Task 6.15 — No JavaScript in our own source (§0.10, plan-notes 289).**~~ ✅ **landed 2026-10-19** — evidence in [done.md](done.md) → Phase 6 Task 6.15 (plan-notes 361).
 
 **Task 6.16 — Work the clone baseline to zero (AGENTS.md golden rule 10).** `.jscpd-baseline.json`
 records 224 clones (identifier-insensitive, tests/vendor/docs excluded — 4.6% of our source, of
@@ -1181,7 +1173,7 @@ two things that must exist before implementation is allowed to start:
    at link time, not a merge conflict a compiler will catch. Vendor `quickjs.c`/`quickjs.h` at the
    **same commit**, extend the existing `VENDOR.md` rather than starting a second one, and check who
    supplies the `lre_*` embedder callbacks once both halves are present. Acquisition is
-   `node runtime/vendor/update.mjs quickjs-ng` (`pnpm run vendor:update`) with `quickjs.c`/
+   `node packages/runtime/vendor/update.ts quickjs-ng` (`pnpm run vendor:update`) with `quickjs.c`/
    `quickjs.h` added to that manifest — the same route the existing drop took, and it reaches the
    network (plan-notes 188 corrects the stale no-network constraint). The commit, not the transport,
    is the constraint.

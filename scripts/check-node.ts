@@ -16,13 +16,13 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-function exactOf(version) {
+function exactOf(version: string): string {
   return version.trim().replace(/^v/, '');
 }
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
-let pinnedRaw;
+let pinnedRaw: string;
 try {
   pinnedRaw = readFileSync(join(root, '.node-version'), 'utf8');
 } catch {

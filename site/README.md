@@ -43,7 +43,7 @@ shows without JS. The site workflow runs it after every build.
 
 IBM Plex Sans and Mono (OFL-1.1) are self-hosted from `@fontsource/ibm-plex-*`: the build copies
 the woff2 files into `dist/`, so a visit requests nothing from a third party. Every page carries a
-`<meta http-equiv="content-security-policy">` from `security.csp` in `astro.config.mjs`
+`<meta http-equiv="content-security-policy">` from `security.csp` in `astro.config.ts`
 (`default-src 'self'`). Astro hashes the scripts and styles it bundles; the inline theme boot
 script is not one of them, so its source lives in `src/scripts/theme-boot.ts` and the config adds
 its hash. Edit the boot script there, never inline. Astro puts the CSP meta at the end of
@@ -51,7 +51,7 @@ its hash. Edit the boot script there, never inline. Astro puts the CSP meta at t
 
 ## Base path (GitHub Pages)
 
-`astro.config.mjs` sets `base: '/stator/'` for project Pages (`https://listepo.github.io/stator/`).
+`astro.config.ts` sets `base: '/stator/'` for project Pages (`https://listepo.github.io/stator/`).
 
 Local preview **without** the `/stator/` prefix:
 

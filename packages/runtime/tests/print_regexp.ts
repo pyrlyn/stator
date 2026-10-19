@@ -1,4 +1,4 @@
-// print_regexp.mjs — the ground truth for print_regexp.c. Same patterns, same order, console.log.
+// print_regexp.ts — the ground truth for print_regexp.c. Same patterns, same order, console.log.
 // If these two files drift apart the diff is meaningless, so edit them together.
 
 const showTest = (re, subject) => {

@@ -191,7 +191,7 @@ function dynamicProgram(random: XorShift32): string {
 // C call; under Node the ambient declaration erases and the call throws ReferenceError. The
 // catch dispatches on `instanceof ReferenceError` (a working instanceof in both modes,
 // docs/SUBSET.md): the ReferenceError branch re-spells the call in JS (`Math.sqrt`, `%`,
-// `Math.log` — bit-exact mirrors of libm on IEEE doubles, the same claim `node_shim.mjs`
+// `Math.log` — bit-exact mirrors of libm on IEEE doubles, the same claim `node_shim.ts`
 // makes) INCLUDING the convention check and its exact message, while the `Error` branch
 // prints Stator's own `caught: <message>`. One try per call, so a firing convention cannot
 // skip the later calls on either side. Both directions stay differentially sensitive: a

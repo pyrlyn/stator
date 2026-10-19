@@ -126,7 +126,9 @@ globalThis.sqlite3ColumnDouble = (stmtHandle, col) => {
 
 globalThis.sqlite3ColumnText = (stmtHandle, col) => {
   const v = columnAt(stmtHandle, col);
-  return v === null || v === undefined ? null : String(v);
+  // The cast erases. String() is what the oracle has always done, including a typed-array
+  // cell's comma-joined bytes; the annotation only tells the linter the value is scalar.
+  return v === null || v === undefined ? null : String(v as string | number | bigint);
 };
 
 globalThis.sqlite3Finalize = (stmtHandle) => {

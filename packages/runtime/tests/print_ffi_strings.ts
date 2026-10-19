@@ -1,4 +1,4 @@
-// print_ffi_strings.mjs — the ground truth for print_ffi_strings.c. Same lines, same order.
+// print_ffi_strings.ts — the ground truth for print_ffi_strings.c. Same lines, same order.
 // If these two files drift apart the diff is meaningless, so edit them together.
 //
 // OUT lines ask Buffer what Node decodes the same bytes to; IN lines log the text whose

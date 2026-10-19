@@ -30,3 +30,10 @@ tasks:
     toolchain: 'system'
     options:
       runFromWorkspaceRoot: true
+  # Task 6.15. Dependency-free, so it does not wait on node_modules; `pnpm run ci` runs the same
+  # script ahead of typecheck.
+  js-sources:
+    script: 'node scripts/check-js-sources.ts'
+    toolchain: 'system'
+    options:
+      runFromWorkspaceRoot: true

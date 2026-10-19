@@ -1,6 +1,6 @@
 /* print_ffi_strings.c — the FFI string conversions, both directions (docs/FFI.md §3).
  *
- * Ground truth is Node, not a table written here: runtime/tests/print_ffi_strings.mjs
+ * Ground truth is Node, not a table written here: runtime/tests/print_ffi_strings.ts
  * prints the same lines and `just runtime-test` diffs the two byte-for-byte. Keep the two
  * corpora in the same order or the diff means nothing.
  *
