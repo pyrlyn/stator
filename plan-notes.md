@@ -13013,3 +13013,32 @@ the vendor module is not on disk, and hashing it would make every bundled progra
 This is the dependency-hash key the task allowed in place of a TODO. Watch mode is not
 implemented here; when it is, it keeps this key.
 
+## 365. Task 6.17 step 4: CI records the impact map; the close waits on a main artifact (2026-10-19)
+
+**Plan:** §9 Task 6.17 step 4. `plan.md` edited in the same change: the step stays open.
+Numbers 361–364 are taken on unmerged branches (Task 6.31, Task 6.15, the cloud-review
+closeout). This note is 365 so those can land without a renumber.
+
+**What landed.** `ci.yml` job `impact map` runs `pnpm run test:impact:record` on a push to
+`main` and uploads `.cache/impact/impact-map.json` (`impact-map`, 14 days). `nightly.yml`
+does the same at 02:00 UTC, in its own job, because the differential already uses the
+evidence job's 60 minutes. `ci.yml` job `test impact` runs on pull requests: full git
+history (the selector requires the map commit to be an ancestor), then the newest
+non-expired `impact-map` artifact whose workflow run has `head_branch == main`, then
+`pnpm run test:impact`. No artifact means the driver prints the fallback and runs the full
+suite. The job is not in `revert-on-failure`'s needs and does not gate stage 2. `pnpm run
+test` stays the unit gate (AGENTS.md).
+
+**Why it is not done.** The done line is a pull request log that shows a selection made
+from a `main` map. This pull request is the one that creates the upload, so `main` has no
+such artifact yet and its own `test impact` log is the fallback. Close the step on a later
+pull request, after a green `impact map` job on `main`, when that log has no `FULL RUN`
+line.
+
+**jactionlint.** `test impact` declares `actions: read`, so Dependabot's `workflow_call`
+must grant it or `workflow-call-permissions` fails. The two `unpinned-uses` findings on
+`pyrlyn/ci` `@main` (pipeline.yml, sync-docs.yml) already fail `static analysis` on `main`
+(run 39159865395). The durable ignores are the same ones Task 6.31 records in plan-notes
+362: pinning those callers fails pyrlyn/ci `no-pinned-ci`. They are repeated here so this
+pull request's static job can pass before that one merges.
+

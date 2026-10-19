@@ -54,6 +54,12 @@ concurrency:
 # default, plan.md Task 4.4) and therefore had no coverage at all until this job existed.
 # Same for `test:ffi`: it needs clang and the built archive, so it lives in its own job and in
 # `moon run tests:ci`, not in the serial gate — which stays offline-runnable.
+#
+# Task 6.17 step 4: `impact-record` (push to main) and the nightly workflow record
+# `.cache/impact/impact-map.json` and upload it. `impact` (pull requests) downloads the
+# newest map whose run was on `main` and runs `pnpm run test:impact`. That run is not the
+# gate — `pnpm run test` and `pnpm run ci` stay — and it does not gate stage 2. With no
+# usable map the driver prints why and runs the full suite.
 
 # Build and test jobs need only to read the repository; a job that needs more
 # (revert-on-failure) declares its own. This also caps these jobs when
@@ -437,6 +443,124 @@ jobs:
     runs-on: ${{ startsWith(matrix.os, 'macos') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(needs.macos-runner.outputs.value)[0] || matrix.os }}
     timeout-minutes: 60
     steps: *ffi-steps
+
+  # Task 6.17 step 4. A push to main records the map the next pull request selects from.
+  # Not in `revert-on-failure`'s needs: a red recording must not revert the compiler, and
+  # the job is not the test gate.
+  impact-record:
+    name: impact map
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.58.0'
+      - uses: ./.github/actions/setup
+      - name: Install Boehm GC
+        run: sudo apt-get update && sudo apt-get install -y libgc-dev clang llvm
+      - run: pnpm install --frozen-lockfile
+      - name: Record impact map
+        run: pnpm run test:impact:record
+      - name: Upload impact map
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: impact-map
+          path: .cache/impact/impact-map.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # Task 6.17 step 4. Downloads the newest `impact-map` artifact from a run on main.
+  # `actions: read` is this job's own token scope: listing another run's artifacts is
+  # not covered by the workflow's `contents: read`.
+  impact:
+    name: test impact
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          # The selector trusts the map only when its commit is an ancestor of HEAD.
+          fetch-depth: 0
+      - name: Download the newest main impact map
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          raw = subprocess.check_output(
+              ["gh", "api", f"repos/{repo}/actions/artifacts?name=impact-map&per_page=100"],
+              text=True,
+          )
+          artifacts = json.loads(raw).get("artifacts", [])
+          candidates = []
+          for artifact in artifacts:
+              run = artifact.get("workflow_run") or {}
+              if artifact.get("expired") is True:
+                  continue
+              if run.get("head_branch") != "main":
+                  continue
+              if run.get("id") is None:
+                  continue
+              candidates.append(artifact)
+          dest = Path(".cache/impact")
+          dest.mkdir(parents=True, exist_ok=True)
+          if len(candidates) == 0:
+              print("impact: no main map artifact; test:impact will fall back to the full run")
+              sys.exit(0)
+          candidates.sort(key=lambda artifact: str(artifact.get("created_at") or ""))
+          chosen = candidates[-1]
+          run_info = chosen["workflow_run"]
+          subprocess.check_call(
+              [
+                  "gh",
+                  "run",
+                  "download",
+                  str(run_info["id"]),
+                  "-R",
+                  repo,
+                  "-n",
+                  "impact-map",
+                  "-D",
+                  str(dest),
+              ]
+          )
+          path = dest / "impact-map.json"
+          if not path.is_file():
+              found = list(dest.rglob("impact-map.json"))
+              if len(found) != 1:
+                  sys.exit(f"impact: expected one impact-map.json under {dest}, found {found}")
+              found[0].replace(path)
+          sha = str(run_info.get("head_sha") or "")
+          print(
+              f"impact: downloaded main map {sha} created {chosen.get('created_at')} from run {run_info['id']}"
+          )
+          PY
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.58.0'
+      - uses: ./.github/actions/setup
+      - name: Install Boehm GC
+        run: sudo apt-get update && sudo apt-get install -y libgc-dev clang llvm
+      - run: pnpm install --frozen-lockfile
+      - name: Run test impact
+        run: pnpm run test:impact
 
   revert-on-failure:
     name: revert-on-failure

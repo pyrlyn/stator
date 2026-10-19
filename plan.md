@@ -821,11 +821,13 @@ then runs with no baseline at all.
 
 ~~**Task 6.17 — Test impact: build and run only what a change reaches.**~~ ✅ **landed 2026-10-02**
 (steps 1–3 and 5; Check (a)–(e) passed) — evidence in [done.md](done.md) → Phase 6 Task 6.17
-(plan-notes 293). **Still open — step 4, CI:** after PR #45's staged pipeline, `main` and the
-nightly run `pnpm run test:impact:record` and upload `.cache/impact/impact-map.json` as an
-artifact; pull requests download the newest `main` map and run `pnpm run test:impact` (it falls
-back to the full run, saying why, when that map is missing or not an ancestor). Done when a pull
-request's CI log shows a selection made from a `main` map.
+(plan-notes 293). **Still open — step 4, CI** (plan-notes 365): `ci.yml` records the map on a
+push to `main` (`impact map`) and `nightly.yml` records it at 02:00; both upload
+`.cache/impact/impact-map.json`. A pull request (`test impact`) downloads the newest of those
+artifacts whose run was on `main` and runs `pnpm run test:impact` (full run, with the reason,
+when that map is missing or not an ancestor). Done when a pull request's CI log shows a
+selection made from a `main` map — the pull request that adds the upload cannot, until `main`
+has published one.
 
 ~~**Task 6.18 — `stator.config.json`: every CLI option in one validated file.**~~ ✅ **landed 2026-10-02** — evidence in [done.md](done.md) → Phase 6 Task 6.18 (plan-notes 303; `docs/CONFIG.md`).
 
@@ -2495,3 +2497,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.78** (2026-10-04): **Task 6.30 lands: the Windows frontend legs are green again** (plan-notes 352). Diagnostics and `VendorEntry.resolveDir` leave the compiler in the platform's form (`\` on Windows). Internal names and the generated C keep the checker's forward slashes. docs/BUNDLER.md §5 "Paths" states which form is used where. A `--node` program whose project sits on another Windows drive than the compiler now compiles, because the location helper is imported by its absolute path where no relative one exists. `.gitattributes` keeps every checkout LF, so the selfhost baseline matches its `--update` form on Windows.
 - **v4.79** (2026-10-03): **Task 7.4 lands: a self-contained static library for C consumers** (plan-notes 341–343). `stator build --emit=lib -o lib<name>.a --emit-header=<h>` prelinks the unit with a private runtime (`cc -r`; Mach-O `-exported_symbols_list`, ELF `objcopy --keep-global-symbols`), archives it deterministically and writes a relocatable `lib<name>.pc` from the binary link's own flag list, so `cc main.c $(pkg-config --cflags --libs lib<name>)` builds with no Stator checkout. Two libraries share one Boehm through a weak shared object kind and chained roots hooks; `jsrt_gc_init` is idempotent, which also fixes two `--emit-header` objects sharing one `libjsrt.a`. New codes STA0020, STA1219 (Windows) and STA1220 (`jsrt_value` surface). About 200 KB of runtime per extra library.
 - **v4.80** (2026-10-08): **Task 6.31 added: SonarCloud through the shared pyrlyn/ci workflow** (plan-notes 358). `sonarcloud.yml` is a copy of pyrlyn/ci's reusable `sonarcloud.yml`; the card moves it to a thin caller pinned by SHA, with the toolchain from mise.toml and the same soft-fail behavior.
+- **v4.83** (2026-10-19): **Task 6.17 step 4 is wired, and stays open** (plan-notes 365). Pushes to `main` and the 02:00 nightly record the impact map and upload it. Pull requests download the newest `main` artifact and run `pnpm run test:impact` beside the gate. The card closes when a pull request log shows a selection from a map `main` published.

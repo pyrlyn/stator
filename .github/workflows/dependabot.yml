@@ -44,6 +44,8 @@ jobs:
     # workflow-level `permissions` still caps its build and test jobs.
     permissions:
       contents: write
+      # ci.yml's `test impact` job lists another run's artifacts (Task 6.17 step 4).
+      actions: read
 
   automerge:
     name: Merge patch update

@@ -112,7 +112,9 @@ from the last build rebuilds every object (`packages/runtime/build*/cflags.txt`)
 CI runs in two stages (plan-notes 292):
 
 1. **Stage 1, Linux only:** `static analysis` (typecheck, `lint` = oxlint `--deny-warnings` + oxfmt
-   check, `dupes`, then jactionlint 2.0.2 over the workflows against `.github/jactionlint-baseline.json`) and `frontend (linux/x64)` (subset tests, runtime archive, unit tests **with
+   check, `dupes`, then jactionlint 2.0.2 over the workflows against `.github/jactionlint-baseline.json`
+   and the durable `unpinned-uses` ignores in `.github/jactionlint.yaml` for the two `pyrlyn/ci`
+   `@main` callers) and `frontend (linux/x64)` (subset tests, runtime archive, unit tests **with
    coverage**; uploads the `coverage-lcov` artifact). This is the only job that collects coverage.
 2. **Stage 2, Windows and macOS:** `frontend-desktop` (macOS and Windows, plain `pnpm run test`),
    plus the `-macos` twins of `runtime`, `asan`, `intl` and `ffi`. Each has
@@ -120,6 +122,14 @@ CI runs in two stages (plan-notes 292):
 
 Other Linux jobs (`test262`, Linux arm64 `frontend`, Linux `runtime`/`asan`/`intl`/`ffi`) belong to
 neither stage and run ungated, in parallel with stage 1.
+
+Task 6.17 step 4 adds two more, and neither is the gate. A push to `main` runs `impact map`
+(`pnpm run test:impact:record`) and uploads `.cache/impact/impact-map.json` for 14 days. The
+nightly workflow's 02:00 job uploads the same artifact name. A pull request runs `test impact`:
+it downloads the newest of those artifacts whose run was on `main` and runs `pnpm run test:impact`.
+The selector still falls back to the full suite, and says why, when that map is missing, from
+another Node or platform, dirty, or not an ancestor of the pull request. `pnpm run test` on the
+frontend jobs stays the unit gate.
 
 ## Compile-time opt level (`STATOR_OPT` / `--opt`)
 
