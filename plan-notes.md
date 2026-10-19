@@ -13013,3 +13013,35 @@ the vendor module is not on disk, and hashing it would make every bundled progra
 This is the dependency-hash key the task allowed in place of a TODO. Watch mode is not
 implemented here; when it is, it keeps this key.
 
+## 361. Task 6.31: the SHA-pinned sonarcloud.yml caller is forbidden (2026-10-19)
+
+**What the card assumed.** plan-notes 358 (2026-10-08) measured stator's own
+`.github/workflows/sonarcloud.yml` as a copy of pyrlyn/ci's reusable workflow at
+`c875cd763ad0c4abbd936e480be5752330d3b66b`, and Task 6.31 said to replace it with a thin
+caller pinned to a 40-character SHA, never `@main`.
+
+**What landed first.** #138 (`f6276ff`, 2026-10-13) deleted that file. SonarCloud now runs
+as `pipeline / sonarcloud` inside `pyrlyn/ci/.github/workflows/ci.yml`, configured by
+`.github/infra.yml`. #158 (`e825724`, 2026-10-18) points `pipeline.yml` at `@main` on
+purpose. pyrlyn/ci `main` at `3fa4275e525269297a4d193c427f965ad9dd7544` runs a
+`no-pinned-ci` job whose comment is "Callers reference pyrlyn/ci as `@main`, never a SHA
+or a tag", and the workflow fails a pull request that pins `uses: pyrlyn/ci/...@<sha>`.
+Restoring the card's caller would fail that check. The Check in plan.md is edited to the
+durable fact: no `sonarcloud.yml` in this repo, `@main` on the pipeline caller, and the
+commands in `infra.yml`.
+
+**Commands.** `infra.yml` had `pnpm run runtime || true` and
+`pnpm run test:coverage || true`. The shared workflow already sets `continue-on-error` on
+coverage and the scan when `soft-fail` is true (the default), and it does **not** set it
+on setup. The `|| true` made a runtime failure look like success, so coverage still ran.
+Setup is now `pnpm install --frozen-lockfile && pnpm run runtime`. A runtime failure ends
+the job before coverage and, because `cancel-run-on-failure` defaults to true, cancels the
+rest of that pipeline run. Coverage stays soft-fail.
+
+**Toolchain.** The card's `mise-install-args` said `npm:pnpm`. #138 changed `mise.toml`
+from `"npm:pnpm"` to `pnpm` because the npm backend left pnpm 12's placeholder script and
+the scan crashed with `SyntaxError`. The args are
+`node pnpm just zig conda:clang conda:llvm`: the runtime recipe is clang plus the Zig
+memory core (`pnpm run runtime` builds `libjsrt.a` and `libjsrt_std.a`). Time cost is the
+pull request's Setup step, not a local guess.
+

@@ -320,14 +320,6 @@
       "context": "3f71db7d61a8bdd8",
       "occurrence": 0,
       "message": "action \"actions/deploy-pages@v5\" must be pinned to a full-length commit SHA like \"{owner}/{repo}@{sha}\" because the \"unpinned-uses\" rule is enabled"
-    },
-    {
-      "file": ".github/workflows/sonarcloud.yml",
-      "rule": "artipacked",
-      "fingerprint": "64c3296ee18d19b6",
-      "context": "09430a77d17bfbf0",
-      "occurrence": 0,
-      "message": "actions/checkout leaves the GITHUB_TOKEN in the git config of the workspace, where a later step such as an artifact upload can publish it. set \"persist-credentials: false\" under \"with:\" unless a later step needs to push"
     }
   ]
 }
