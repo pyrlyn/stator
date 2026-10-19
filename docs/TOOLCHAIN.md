@@ -121,6 +121,17 @@ CI runs in two stages (plan-notes 292):
 Other Linux jobs (`test262`, Linux arm64 `frontend`, Linux `runtime`/`asan`/`intl`/`ffi`) belong to
 neither stage and run ungated, in parallel with stage 1.
 
+**Impact map (Task 6.17 step 4).** A push to `main` (`impact map (main)`) and the nightly
+workflow (`impact map`) each run `pnpm run test:impact:record` on linux/x64 and upload
+`.cache/impact/impact-map.json` as the `impact-map` artifact (kept 30 days). A pull request
+(`impact (pull request)`) downloads the newest such artifact whose run is on `main` and runs
+`pnpm run test:impact`. The selector prints the selection and why. It prints `FULL RUN` and
+runs every harness when that map is missing from the checkout, unreadable, recorded on another
+Node or platform, dirty, or not an ancestor of `HEAD`. When main has not published an artifact
+yet, the pull request records one at its base commit instead, and the log says so. The existing
+jobs stay: they are the full run on `main` and the gate's check names on a pull request.
+`pnpm run ci` locally is unchanged.
+
 ## Compile-time opt level (`STATOR_OPT` / `--opt`)
 
 The final clang link of generated C defaults to `-O2` (non-asan). Override per build:

@@ -61,3 +61,20 @@ jobs:
           name: benchmark-${{ github.run_number }}
           path: packages/tests/bench/results
           if-no-files-found: error
+
+  # Task 6.17 step 4. The same artifact `ci.yml` uploads on a push to main, so a day
+  # with no push still leaves pull requests a map. Its own job: the evidence job above
+  # already spends its hour on the fuzzer.
+  impact-record:
+    name: impact map
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.58.0'
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/record-impact

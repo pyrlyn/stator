@@ -132,7 +132,7 @@ Useful local gates (not a product feature list — just what the repo runs):
 
 ```sh
 pnpm run test            # unit (vitest)
-pnpm run test:impact     # tests your changes reach (per-test coverage map)
+pnpm run test:impact     # tests your changes reach (per-test coverage map; CI does this on a pull request)
 pnpm run test:subset     # feature × mode decision matrix
 pnpm run test:golden     # compile + run vs pinned Node, byte-for-byte
 pnpm run test:selfhost   # Stator explains (and builds) its own packages; per-code counts may only shrink

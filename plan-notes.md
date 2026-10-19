@@ -13013,3 +13013,46 @@ the vendor module is not on disk, and hashing it would make every bundled progra
 This is the dependency-hash key the task allowed in place of a TODO. Watch mode is not
 implemented here; when it is, it keeps this key.
 
+## 361. Task 6.17 step 4: CI records the impact map on main and selects on pull requests (2026-10-19)
+
+**Plan:** §9 Task 6.17 step 4 stays open until a pull request's `impact (pull request)` log shows
+a selection made from a `main` map. The sentence in the step is edited in this change for the
+one deviation below. `docs/TOOLCHAIN.md` (CI stages), `docs/DEVELOPMENT.md` and `AGENTS.md`'s
+testing rule say what the jobs do.
+
+**What runs where.** Creator's direction in note 293: pull requests select, `main` and the nightly
+run in full. The full run on `main` is the existing jobs. On top of them:
+
+- `ci.yml` job `impact map (main)` — `push` to `main` only — runs `pnpm run test:impact:record`
+  on `ubuntu-24.04` (linux/x64, the pin's Node) and uploads `.cache/impact/impact-map.json` as
+  artifact `impact-map`, kept 30 days.
+- `nightly.yml` job `impact map` does the same, so a day with no push still leaves a map.
+- `ci.yml` job `impact (pull request)` downloads the newest non-expired `impact-map` whose
+  workflow run has `head_branch: main` (`scripts/impact_map.py`) and runs `pnpm run test:impact`.
+  Checkout is full history so `merge-base --is-ancestor` and `git diff <map commit>` can see that
+  commit. The job asks for `actions: read` (the artifacts API of another run). `dependabot.yml`
+  grants that when it calls `ci.yml`; GitHub checks the caller's grants against every called job.
+
+The record job is not in `revert-on-failure`. A recorder failure must not revert a push whose
+test jobs passed; with no artifact, the next pull request takes the path below.
+
+**Deviation from "missing map → full run" inside the job.** The selector's fallback is unchanged
+and already proved (Check (d), `done.md`). The job does not call it for a missing *artifact*:
+`ensure` records a map at `pull_request.base.sha` in a detached worktree. That commit is `main`,
+the tree is clean, and it is an ancestor of the merge commit the runner checks out, so the
+selector can print a selection on the first pull request — the Check, which otherwise cannot pass
+before `main` has uploaded anything. Once an artifact exists, a map the selector will not trust
+(other Node, other platform, dirty, not an ancestor) still prints `FULL RUN` and runs every
+harness. A change under `.github/` is a whole-run trigger, so the pull request that adds these
+jobs selects every harness and runs them.
+
+**Not a replacement for the other jobs.** Their check names are what the staged pipeline reports.
+`pnpm run ci` locally is still the gate a human runs before claiming a task done.
+
+**`static analysis` was already red on `main` (`9767c85`, run 39159865395).** jactionlint 2.0.2
+reports that its baseline matches nothing, and the only live findings are the two reusable
+workflow calls pinned to `@main` (`pipeline.yml`, `sync-docs.yml`). Both are now pinned to
+pyrlyn/ci `3fa4275e525269297a4d193c427f965ad9dd7544`. The baseline file is left as it is: stale
+entries do not fail `jactionlint --color`, and rewriting it would hide nothing that is still
+reported.
+

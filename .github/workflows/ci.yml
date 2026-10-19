@@ -40,6 +40,8 @@ concurrency:
 #   test:leak   -> runtime
 #   test:asan   -> asan (STATOR_ASAN_FORCE=1 in CI: always the full pass, never the hash skip)
 #   test:ffi    -> ffi
+#   test:impact:record -> impact-record (push to main only; artifact `impact-map`)
+#   test:impact -> impact (pull requests: newest main map, else a map recorded at the base)
 #
 # Two stages (owner request): stage 1 is Linux-only and cheap to fail -- `static` (lint, format,
 # typecheck, dupes) plus `frontend (linux/x64)` (subset + unit tests WITH coverage, the lcov owner).
@@ -160,6 +162,7 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run lint
       - run: pnpm run dupes
+      - run: python3 scripts/impact_map.py self-test
       # Workflow lint, not part of `pnpm run ci`: jactionlint with .github/jactionlint.yaml and its
       # baseline, the check the pre-push hook (hk.pkl) runs. Last, so mise's PATH never shadows the
       # Node above; install_args installs only jactionlint (version as in mise.toml), and
@@ -437,6 +440,50 @@ jobs:
     runs-on: ${{ startsWith(matrix.os, 'macos') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(needs.macos-runner.outputs.value)[0] || matrix.os }}
     timeout-minutes: 60
     steps: *ffi-steps
+
+  # Task 6.17 step 4. A push to main records the map the selector trusts (same Node,
+  # same linux/x64). Not part of revert-on-failure: a recorder failure must not revert
+  # a push whose test jobs passed. With no artifact, the pull request job records at its base.
+  impact-record:
+    name: impact map (main)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - *checkout
+      - *setup-just
+      - *setup
+      - uses: ./.github/actions/record-impact
+
+  # Task 6.17 step 4. Downloads the newest `impact-map` artifact from a main run and
+  # runs the selection. `actions: read` is what the artifacts API of another run needs;
+  # dependabot.yml grants the same when it calls this workflow. A missing artifact is
+  # recorded at the pull request base (that commit is main) so the log can show a
+  # selection; the selector still prints FULL RUN when the map it receives is unusable.
+  impact:
+    name: impact (pull request)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - *setup-just
+      - *setup
+      - name: Install native test dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgc-dev clang llvm binutils
+      - run: pnpm install --frozen-lockfile
+      - name: Place the main impact map
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/impact_map.py ensure "${{ github.event.pull_request.base.sha }}"
+      - name: Run the selected tests
+        run: pnpm run test:impact
 
   revert-on-failure:
     name: revert-on-failure

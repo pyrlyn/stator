@@ -823,9 +823,12 @@ then runs with no baseline at all.
 (steps 1–3 and 5; Check (a)–(e) passed) — evidence in [done.md](done.md) → Phase 6 Task 6.17
 (plan-notes 293). **Still open — step 4, CI:** after PR #45's staged pipeline, `main` and the
 nightly run `pnpm run test:impact:record` and upload `.cache/impact/impact-map.json` as an
-artifact; pull requests download the newest `main` map and run `pnpm run test:impact` (it falls
-back to the full run, saying why, when that map is missing or not an ancestor). Done when a pull
-request's CI log shows a selection made from a `main` map.
+artifact; pull requests download the newest `main` map and run `pnpm run test:impact`. When main
+has not published an artifact yet, the pull request records one at its base commit (that commit
+is `main`) so a selection is still possible (plan-notes 361). The selector falls back to the full
+run, saying why, when the map it was given is missing, unreadable, from another Node or platform,
+dirty, or not an ancestor. Done when a pull request's CI log shows a selection made from a `main`
+map.
 
 ~~**Task 6.18 — `stator.config.json`: every CLI option in one validated file.**~~ ✅ **landed 2026-10-02** — evidence in [done.md](done.md) → Phase 6 Task 6.18 (plan-notes 303; `docs/CONFIG.md`).
 

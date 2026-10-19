@@ -1,0 +1,25 @@
+name: Record the impact map
+description: |
+  Record .cache/impact/impact-map.json on a clean checkout and upload it as the
+  `impact-map` artifact (plan.md §9 Task 6.17 step 4). The caller checks out the
+  commit, installs just, and runs ./.github/actions/setup first. Linux only: the
+  recorder links the runtime.
+runs:
+  using: composite
+  steps:
+    - name: Install native test dependencies
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y libgc-dev clang llvm binutils
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile
+    - name: Record the impact map
+      shell: bash
+      run: pnpm run test:impact:record
+    - name: Upload the impact map
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: impact-map
+        path: .cache/impact/impact-map.json
+        if-no-files-found: error
+        retention-days: 30
