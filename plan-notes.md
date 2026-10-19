@@ -13037,6 +13037,13 @@ absent, so `test:impact` prints `FULL RUN` and the reason. The token is never pr
 `static analysis` runs `python3 scripts/impact-ci.py --self-test`. The existing full jobs
 stay; `pnpm run ci` stays the local gate. `impact-record` is not a `revert-on-failure`
 dependency: those jobs already revert a red push, and a recorder-only failure must not.
+The record job keeps the workflow's `contents: read` (the same permission the other
+artifact uploads use), so Dependabot's caller does not have to grant `actions: write`.
+The pull-request job needs `actions: read`, and `dependabot.yml` grants that on the
+`workflow_call`. `jactionlint`'s `unpinned-uses` findings on the two `pyrlyn/ci` `@main`
+callers are ignored in `.github/jactionlint.yaml`: pinning them fails pyrlyn/ci's
+`no-pinned-ci` job. The baseline's 41 entries match nothing and are left as they are;
+`jactionlint` notes that and does not fail on it.
 
 **Closeout.** The first pull request's `impact` job falls back, because `main` has not
 uploaded a map yet. After that job is green on `main`, a later pull request whose diff the
