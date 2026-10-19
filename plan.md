@@ -885,34 +885,8 @@ prints different bytes while `explain` says `static`, so 6.27 comes first.
 
 ~~**Task 6.30 — The Windows frontend legs are green again (plan-notes 349).**~~ ✅ **landed 2026-10-04** — evidence in [done.md](done.md) → Phase 6 Task 6.30 (plan-notes 352).
 
-**Task 6.31 — SonarCloud through the shared pyrlyn/ci workflow (plan-notes 358, 361).**
-The hand-copied `.github/workflows/sonarcloud.yml` is already gone (#138): `pipeline.yml` calls
-`pyrlyn/ci/.github/workflows/ci.yml@main`, and `.github/infra.yml` configures its `sonarcloud`
-job. A thin caller pinned by SHA is no longer the mechanism. pyrlyn/ci's `no-pinned-ci` job
-fails a pull request that pins `pyrlyn/ci` to a commit, and #158 made `@main` the reference on
-purpose. What this card still changes is the job's commands and the docs.
-
-1. `sonarcloud.setup-command` is `pnpm install --frozen-lockfile && pnpm run runtime`. A failing
-   runtime build ends the job before coverage. `coverage-command` is `pnpm run test:coverage`
-   (writes `coverage/lcov.info`). `soft-fail` stays at its default `true`, so coverage and the
-   scan do not fail the job. `|| true` is not how that softness is spelled: it hid a runtime
-   failure inside a command the shared workflow treats as a hard step.
-2. `mise-install-args` is `node pnpm just zig conda:clang conda:llvm`. The runtime build needs
-   clang and zig. The id is `pnpm`, not the task's original `npm:pnpm`: #138 switched the
-   mise pin because the npm backend left a placeholder script that crashed the scan.
-3. `SONAR_TOKEN` stays an explicit secret on the `pipeline` job. Organization and project key
-   stay in `sonar-project.properties`. Drafts stay skipped (`skip-drafts`).
-4. `docs/sonarcloud-setup.md` describes this caller and names `soft-fail: false` as the
-   blocking switch.
-
-**Check:** `test ! -e .github/workflows/sonarcloud.yml`; `.github/workflows/pipeline.yml`
-calls `pyrlyn/ci/.github/workflows/ci.yml@main` and passes `SONAR_TOKEN` explicitly;
-`.github/infra.yml` has `sonarcloud.enabled: true`, `setup-command` equal to
-`pnpm install --frozen-lockfile && pnpm run runtime`, and `coverage-command` equal to
-`pnpm run test:coverage`; `docs/sonarcloud-setup.md` names `pipeline / sonarcloud` and
-`soft-fail: false`. On a non-draft pull request, `pipeline / sonarcloud / sonarcloud` runs
-its Setup step and, when `SONAR_TOKEN` is set, its Coverage step writes `coverage/lcov.info`.
-A draft pull request skips the job.
+~~**Task 6.31 — SonarCloud through the shared pyrlyn/ci workflow (plan-notes 358, 361).**~~ ✅
+**landed 2026-10-19** — evidence in [done.md](done.md) → Phase 6 Task 6.31 (plan-notes 361, 362, 363).
 
 **Standing decision — Bun is not a test runner (2026-09-14, plan-notes 241).** Measured on this host (Bun 1.3.14 vs pinned Node 26.x): subset −5%, spawn-heavy unit −37%, in-process parity — while adopting it silently redefines the oracle (`process.execPath`), breaks the lcov pipeline (Node-only flags), and weakens the `erasableSyntaxOnly` runtime guard (Bun transpiles what Node type-stripping refuses). Reopen only with new measured evidence per §15.4. Task 6.5 is the prerequisite that keeps the question askable.
 
@@ -2491,3 +2465,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.79** (2026-10-03): **Task 7.4 lands: a self-contained static library for C consumers** (plan-notes 341–343). `stator build --emit=lib -o lib<name>.a --emit-header=<h>` prelinks the unit with a private runtime (`cc -r`; Mach-O `-exported_symbols_list`, ELF `objcopy --keep-global-symbols`), archives it deterministically and writes a relocatable `lib<name>.pc` from the binary link's own flag list, so `cc main.c $(pkg-config --cflags --libs lib<name>)` builds with no Stator checkout. Two libraries share one Boehm through a weak shared object kind and chained roots hooks; `jsrt_gc_init` is idempotent, which also fixes two `--emit-header` objects sharing one `libjsrt.a`. New codes STA0020, STA1219 (Windows) and STA1220 (`jsrt_value` surface). About 200 KB of runtime per extra library.
 - **v4.80** (2026-10-08): **Task 6.31 added: SonarCloud through the shared pyrlyn/ci workflow** (plan-notes 358). `sonarcloud.yml` is a copy of pyrlyn/ci's reusable `sonarcloud.yml`; the card moves it to a thin caller pinned by SHA, with the toolchain from mise.toml and the same soft-fail behavior.
 - **v4.81** (2026-10-19): **Task 6.31's caller changed under it** (plan-notes 361). #138 deleted `sonarcloud.yml` and #158 requires `pyrlyn/ci` at `@main` (`no-pinned-ci` rejects a SHA). The card now sets the `infra.yml` commands and the setup doc; it does not add a pinned workflow.
+- **v4.84** (2026-10-19): **Task 6.31 lands** (plan-notes 363). `pipeline / sonarcloud / sonarcloud` on run 39297920890 ran Setup and, with `SONAR_TOKEN` set, Coverage; the scanner read `coverage/lcov.info`. The card moves to done.md.

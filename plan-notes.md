@@ -13063,3 +13063,18 @@ them hide a current finding.
 matched on the exact `@main` ref. `jactionlint --baseline-write` then records zero entries.
 A new unpinned action is a failure again; the dead fingerprints are not.
 
+## 363. Task 6.31: the shared sonarcloud job ran Setup and wrote coverage (2026-10-19)
+
+**Plan:** §9 Task 6.31. `plan.md` edited in the same change: the task is a stub, evidence
+in `done.md`. The next free note after 362 on this branch is 363. Notes 364 and 365 are
+taken on other unmerged branches.
+
+**The run.** Non-draft PR #161, pipeline run 39297920890, job
+`pipeline / sonarcloud / sonarcloud` (118222865144), head `889f434`. `Skip SonarCloud (no
+token)` was skipped, so `SONAR_TOKEN` was set; the log prints the value as `***`. `Setup`
+succeeded with `pnpm install --frozen-lockfile && pnpm run runtime`. `Coverage` succeeded
+with `pnpm run test:coverage`. The scanner then logged `Analysing
+[/home/runner/work/stator/stator/coverage/lcov.info]` and uploaded the report. That is the
+Check's CI half. The file half is the commands in `infra.yml` and the absent
+`sonarcloud.yml`, unchanged by the commit that moves the card.
+
