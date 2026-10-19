@@ -1,4 +1,4 @@
-/* print_numbers.mjs — the ground truth for runtime/tests/print_numbers.c.
+/* print_numbers.ts — the ground truth for runtime/tests/print_numbers.c.
  *
  * Same corpus, same order, console.log. `just runtime-test` diffs this against the C
  * program's stdout byte-for-byte. Edit both files together or the diff is meaningless.
@@ -78,8 +78,8 @@ console.log(Boolean('0'));
 console.log(null == undefined);
 console.log(undefined == null);
 console.log(null == 0);
-console.log('' == 0);
-console.log('0x10' == 16);
+console.log(('' as unknown as number) == 0);
+console.log(('0x10' as unknown as number) == 16);
 
 // SameValue (Object.is) tests (NUMERIC.md §5.2)
 console.log(Object.is(NaN, NaN));
@@ -87,7 +87,7 @@ console.log(Object.is(-0, 0));
 
 // String equality and comparison tests (Phase 3 rung 2 — strings)
 console.log('ab' === 'ab'); // identical content, different allocations
-console.log('a' === 'b'); // different
+console.log(('a' as string) === ('b' as string)); // different
 console.log('ab' < 'b'); // "ab" < "b" lexicographically
 console.log('b' < 'ab'); // "b" < "ab" is false
 console.log('10' < '9'); // "10" < "9" is true (string compare: '1' < '9')
@@ -102,8 +102,8 @@ console.log(1 + 2); // 1 + 2 -> 3 (numeric)
 console.log('a' + 'b'); // "a" + "b" -> "ab" (string)
 
 // Relational comparison with mixed types (must convert to number, not string)
-console.log('10' < 9); // "10" < 9 is false (numeric: 10 < 9)
-console.log(10 < '9'); // 10 < "9" is false (numeric: 10 < 9)
+console.log(('10' as unknown as number) < 9); // "10" < 9 is false (numeric: 10 < 9)
+console.log(10 < ('9' as unknown as number)); // 10 < "9" is false (numeric: 10 < 9)
 
 // NaN relational behavior: all four operators return false for NaN
 console.log(NaN < 1); // NaN < 1 is false

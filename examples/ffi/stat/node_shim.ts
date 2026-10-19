@@ -5,14 +5,17 @@
 // file is -1 on both — data, not a throw.
 import { statSync } from 'node:fs';
 
-globalThis.statSize = (path) => {
+type Bindings = Record<string, unknown>;
+const bindings = globalThis as unknown as Bindings;
+
+bindings['statSize'] = (path: string): number => {
   try {
     return statSync(path).size;
   } catch {
     return -1;
   }
 };
-globalThis.statMtime = (path) => {
+bindings['statMtime'] = (path: string): number => {
   try {
     return Math.floor(statSync(path).mtimeMs / 1000);
   } catch {

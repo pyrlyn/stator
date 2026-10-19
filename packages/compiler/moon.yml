@@ -9,7 +9,7 @@ language: 'typescript'
 # node_modules/.bin binaries and packages/* paths resolve.
 tasks:
   typecheck:
-    script: './node_modules/.bin/tsc --noEmit -p packages/compiler/tsconfig.json'
+    script: './node_modules/.bin/tsc --noEmit -p packages/compiler/tsconfig.json && ./node_modules/.bin/tsc --noEmit -p scripts/tsconfig.json && ./node_modules/.bin/tsc --noEmit -p tsconfig.oracle.json'
     toolchain: 'system'
     options:
       runFromWorkspaceRoot: true
@@ -21,7 +21,7 @@ tasks:
     outputs:
       - 'dist'
   lint:
-    script: './node_modules/.bin/oxlint --deny-warnings . && ./node_modules/.bin/oxfmt --check "**/*.{ts,tsx,js,mjs,cjs,json,jsonc}"'
+    script: './node_modules/.bin/oxlint --deny-warnings . && ./node_modules/.bin/oxfmt --check "**/*.{ts,tsx,js,mjs,cjs,json,jsonc}" && node scripts/check-sources.ts'
     toolchain: 'system'
     options:
       runFromWorkspaceRoot: true

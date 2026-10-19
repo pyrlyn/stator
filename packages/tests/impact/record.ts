@@ -414,7 +414,7 @@ async function main(): Promise<void> {
           break;
         }
         case 'runtime':
-          // `just runtime-test`: C and the .mjs oracles, no TypeScript — the whole runtime.
+          // `just runtime-test`: C and the print_*.ts oracles — the whole runtime.
           builder.test('runtime').native.add('*');
           break;
         default: {

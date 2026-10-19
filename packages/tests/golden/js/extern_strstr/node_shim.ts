@@ -6,12 +6,14 @@
 // throw, a different message — still fails the diff. A miss never reaches the plain
 // binding: C returns NULL there, which the boundary asserts on instead of converting, so
 // the shim throws rather than invent a value for an unrepresentable path.
-globalThis.strstr2 = (haystack, needle) => {
+type Bindings = Record<string, unknown>;
+const bindings = globalThis as unknown as Bindings;
+bindings['strstr2'] = (haystack: string, needle: string): string => {
   const at = haystack.indexOf(needle);
   if (at === -1) throw new Error('strstr2 shim: miss is unrepresentable — C returns NULL');
   return haystack.slice(at);
 };
-globalThis.strstrChecked = (haystack, needle) => {
+bindings['strstrChecked'] = (haystack: string, needle: string): string => {
   const at = haystack.indexOf(needle);
   if (at === -1) throw new Error("extern call 'strstrChecked' failed: NULL return");
   return haystack.slice(at);

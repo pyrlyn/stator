@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2023",
+    "lib": ["es2023"],
+    "types": ["node"],
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "packages/runtime/tests/print_*.ts",
+    "packages/runtime/vendor/update.ts",
+    "packages/runtime/vendor/fdlibm/port.ts",
+    "packages/tests/golden/js/extern_libm/node_shim.ts",
+    "packages/tests/golden/js/extern_strstr/node_shim.ts",
+    "packages/tests/golden/ts/extern_bytes/node_shim.ts",
+    "packages/tests/golden/ts/extern_libm/node_shim.ts",
+    "packages/tests/golden/ts/extern_ptr/node_shim.ts",
+    "packages/tests/golden/ts/extern_strstr/node_shim.ts",
+    "examples/ffi/libm/node_shim.ts",
+    "examples/ffi/stat/node_shim.ts",
+    "examples/ffi/sqlite/node_shim.ts"
+  ]
+}

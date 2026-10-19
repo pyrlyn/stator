@@ -1,14 +1,14 @@
 // The Node half of print_shapes.c — the same objects, in the same order.
-const empty = {};
+const empty: Record<string, unknown> = {};
 console.log(empty);
 
-const box = {};
+const box: Record<string, unknown> = {};
 box.a = 1;
 box.b = "two";
 box.c = true;
 box.d = null;
 box.e = 2.5;
-const inner = {};
+const inner: Record<string, unknown> = {};
 inner.deep = "in";
 box.f = inner;
 console.log(box);
@@ -19,10 +19,10 @@ console.log(box);
 console.log(box.nope);
 console.log(box.a);
 
-const first = {};
+const first: Record<string, number> = {};
 first.x = 10;
 first.y = 20;
-const second = {};
+const second: Record<string, number> = {};
 second.x = 30;
 second.y = 40;
 console.log(first.x);
@@ -31,12 +31,12 @@ second.z = 50;
 console.log(second.x);
 console.log(second);
 
-const other = {};
+const other: Record<string, number> = {};
 other.y = 9;
 other.x = 8;
 console.log(other);
 
-const quoted = {};
+const quoted: Record<string, number> = {};
 quoted["a-b"] = 1;
 quoted.ok = 2;
 quoted["1x"] = 3;

@@ -1,11 +1,11 @@
-/* print_arrays.mjs — the ground truth for runtime/tests/print_arrays.c.
+/* print_arrays.ts — the ground truth for runtime/tests/print_arrays.c.
  *
  * Same arrays, same order, console.log. `just runtime-test` diffs this against the C program's
  * stdout byte-for-byte. Edit both files together or the diff is meaningless.
  */
 
-const repeated = (n, fill) => Array.from({ length: n }, () => fill);
-const counted = (n) => Array.from({ length: n }, (_, i) => i);
+const repeated = <T>(n: number, fill: T): T[] => Array.from({ length: n }, () => fill);
+const counted = (n: number): number[] => Array.from({ length: n }, (_, i: number) => i);
 
 console.log([]);
 console.log([1]);

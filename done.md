@@ -2377,6 +2377,10 @@ Check evidence: synthetic mini-corpus dies raw without the guard, reports `0 pas
 1 failed` with it; full shard 1 completes (305 passed, 6000 skipped, 393 failed of 6698,
 exit 0) where it deterministically died before; `--shard=1/200` shape unchanged (13/238/17).
 
+### Task 6.15 — No JavaScript in our own source ✅ (landed 2026-10-19)
+
+Oracle shims (`packages/tests/golden/*/*/node_shim.ts`, `examples/ffi/*/node_shim.ts`), the runtime print corpus (`packages/runtime/tests/print_*.ts`), `scripts/check-node.ts`, `packages/runtime/vendor/update.ts`, `packages/runtime/vendor/fdlibm/port.ts`, and `site/astro.config.ts` are strict TypeScript. Node type-strips them; the print corpus stdout matches the previous `.mjs` programs byte for byte. `scripts/check-sources.ts` runs from `pnpm run lint` (and therefore `pnpm run ci`) and fails when `git ls-files '*.js' '*.mjs' '*.cjs'` contains a path outside the exempt list. Exempt: `js`-mode inputs and examples, vendored upstream (not `update.ts` / `port.ts`), generated output, `site/public/`, `packages/tests/leak/keys.js`, and `packages/tests/test262/harness/done.js` (concatenated into Test262 programs). `fdlibm.c`'s generator usage line names `port.ts`; the algorithm bytes are unchanged (plan-notes 361). The libm and stat example runners share `expectExampleOutputs` and `exampleRuntimePaths`. `.jscpd-baseline.json` lost the two fingerprints that extraction removed and gained none.
+
 ### Task 6.11 — The duplication gate is green, and sees the differential harness ✅ (landed 2026-09-14)
 
 Code top-3 extracted (`checkMethodReceiver`, call-shape emitter helpers,

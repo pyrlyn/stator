@@ -9,7 +9,7 @@
  * suite hostage to whichever libm happened to build the runtime.
  *
  * GENERATED — DO NOT HAND-EDIT (AGENTS.md, Don'ts). Regenerate with:
- *   node port.mjs <upstream ieee754.cc> fdlibm.c
+ *   node port.ts <upstream ieee754.cc> fdlibm.c
  * Every rewrite that script performs is mechanical (namespaces, casts,
  * bit_cast, digit separators, entry-point renaming). No algorithm, polynomial
  * constant, or branch was changed.

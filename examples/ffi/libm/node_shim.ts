@@ -3,8 +3,10 @@
 // doubles (sqrt; fmod IS `%` — both truncated remainders); pow/fabs map to their
 // Math names; floor is floor. NaN propagates on both sides, so the domain-error
 // line agrees by construction.
-globalThis.libmSqrt = Math.sqrt;
-globalThis.libmFmod = (x, y) => x % y;
-globalThis.libmPow = Math.pow;
-globalThis.libmFabs = Math.abs;
-globalThis.libmFloor = Math.floor;
+type Bindings = Record<string, unknown>;
+const bindings = globalThis as unknown as Bindings;
+bindings['libmSqrt'] = Math.sqrt;
+bindings['libmFmod'] = (x: number, y: number): number => x % y;
+bindings['libmPow'] = Math.pow;
+bindings['libmFabs'] = Math.abs;
+bindings['libmFloor'] = Math.floor;

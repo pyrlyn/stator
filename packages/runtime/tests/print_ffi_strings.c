@@ -1,6 +1,6 @@
 /* print_ffi_strings.c — the FFI string conversions, both directions (docs/FFI.md §3).
  *
- * Ground truth is Node, not a table written here: runtime/tests/print_ffi_strings.mjs
+ * Ground truth is Node, not a table written here: runtime/tests/print_ffi_strings.ts
  * prints the same lines and `just runtime-test` diffs the two byte-for-byte. Keep the two
  * corpora in the same order or the diff means nothing.
  *
@@ -8,7 +8,7 @@
  * input copies through, and every ill-formed maximal subsequence is one U+FFFD — overlongs,
  * surrogate-range bytes, past-U+10FFFF and truncations alike. IN (`jsrt_string_to_cstr`)
  * is pinned the same way: the C side prints the bytes it produced with printf, and the
- * `.mjs` side logs the text those bytes encode. An embedded U+0000 truncates, and a lone
+ * `.ts` side logs the text those bytes encode. An embedded U+0000 truncates, and a lone
  * surrogate encodes as U+FFFD (UTF-8 at the boundary, never WTF-8).
  *
  * Every `to_cstr` buffer is freed after printing: the borrow half of the contract, where

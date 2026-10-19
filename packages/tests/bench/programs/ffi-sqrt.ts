@@ -29,10 +29,10 @@
 // fixtures: the `/// <reference>` (extern_libm/main.ts), the direct call
 // (subset_extern_direct_ts.ts, extern_libm/main.ts), try/catch with `instanceof`
 // (extern_libm/main.ts), the `.name` read (subset_reference_error_js.js), the
-// rethrow (golden/ts/exceptions.ts), and `Math.sqrt` (nbody.ts, node_shim.mjs).
+// rethrow (golden/ts/exceptions.ts), and `Math.sqrt` (nbody.ts, node_shim.ts).
 //
 // Bit-identity. `Math.sqrt` mirrors libm `sqrt` bit for bit on IEEE doubles
-// (extern_libm/node_shim.mjs), so the Node fallback prints byte-identical stdout
+// (extern_libm/node_shim.ts), so the Node fallback prints byte-identical stdout
 // and the `record.ts` oracle holds on both paths.
 //
 // Owed follow-up (NOT in this file): the sibling `ffi-sqrt.d.ts` carrying the

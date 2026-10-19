@@ -1,11 +1,11 @@
-// print_dates.mjs — the ground truth for print_dates.c. Same dates, same order, console.log.
+// print_dates.ts — the ground truth for print_dates.c. Same dates, same order, console.log.
 // If these two files drift apart the diff is meaningless, so edit them together.
 
-const show = (v) => {
+const show = (v: unknown): void => {
   console.log(v);
 };
-const at = (ms) => new Date(ms);
-const fields = (d) => {
+const at = (ms: number): Date => new Date(ms);
+const fields = (d: Date): void => {
   show(d.getUTCFullYear());
   show(d.getUTCMonth());
   show(d.getUTCDate());

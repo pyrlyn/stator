@@ -1,6 +1,6 @@
 /* print_regexp.c — the regexp engine and its printing, checked against Node.
  *
- * Ground truth is Node, not a table written here: runtime/tests/print_regexp.mjs builds the SAME
+ * Ground truth is Node, not a table written here: runtime/tests/print_regexp.ts builds the SAME
  * patterns in the same order and prints the same answers with console.log; `just runtime-test`
  * diffs the two byte-for-byte. Keep the two corpora in the same order or the diff means nothing.
  *

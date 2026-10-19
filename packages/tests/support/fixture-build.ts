@@ -110,8 +110,9 @@ export async function compileFixtureC(entry: string, work: string): Promise<stri
   return objects;
 }
 
-/* A new shim is TypeScript (golden rule 9: no JS in our source); the `.mjs` spelling is the older
- * fixtures', still loaded so they need no churn. The pinned Node strips the types on `--import`. */
+/* A shim is TypeScript (golden rule 9: no JS in our source). The `.mjs` spelling stays as a
+ * fallback for an untracked leftover; every tracked shim is `node_shim.ts`. The pinned Node
+ * strips the types on `--import`. */
 const NODE_SHIMS = ['node_shim.ts', 'node_shim.mjs'];
 
 /* The oracle, never the host: the compiler runs in-process on this host while ground truth

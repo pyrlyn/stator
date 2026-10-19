@@ -1,6 +1,6 @@
 // The Node half of print_classes.c — the same classes, printed in the same order.
 class S { static v = 5; }
-class T extends S { static v = 10; }
+class T extends S { static override v = 10; }
 class U extends T {}
 class E {}
 class F extends E {
@@ -23,7 +23,12 @@ class Narrow {
   static alpha = 'aaaaaaaaaaaaaaaaaaaa';
   static beta = 'bbbbbbbbbbbbbbbb';
 }
-class H { constructor(k) { this.k = k; } }
+class H {
+  k: unknown;
+  constructor(k: unknown) {
+    this.k = k;
+  }
+}
 
 console.log(S);
 console.log(T);
@@ -40,6 +45,10 @@ console.log(new H(new H(new H(S))));
 console.log(new H(new H(new H(E))));
 console.log(typeof S);
 console.log(S === S);
-try { T(); } catch (e) { console.log(e.message); }
+try {
+  (T as unknown as () => void)();
+} catch (e) {
+  console.log((e as Error).message);
+}
 S.v = 6;
 console.log(S);

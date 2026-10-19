@@ -13013,3 +13013,33 @@ the vendor module is not on disk, and hashing it would make every bundled progra
 This is the dependency-hash key the task allowed in place of a TODO. Watch mode is not
 implemented here; when it is, it keeps this key.
 
+## 361. Task 6.15: harness JavaScript is strict TypeScript (2026-10-19)
+
+**Plan:** §0.10 and §9 Task 6.15. `plan.md` edited in the same change: the task is a stub,
+evidence in `done.md`. §0.10 names `scripts/check-sources.ts` and the one harness file that
+stays JavaScript.
+
+**What moved.** Oracle shims, `packages/runtime/tests/print_*.ts`, `scripts/check-node.ts`,
+`packages/runtime/vendor/update.ts`, `packages/runtime/vendor/fdlibm/port.ts`, and
+`site/astro.config.ts`. Types are erased by Node's type stripper. The print-corpus stdout
+was diffed against the previous `.mjs` programs and matched, including stderr. Class fields
+that exist only so the constructor assignment typechecks print the same as an assignment-only
+field (measured with `util.inspect` before the port). `static override` strips back to
+`static`.
+
+**Exempt, and why two paths are named.** `js`-mode fixtures and examples, vendored upstream,
+generated output, and `site/public/` are the §0.10 list. `packages/tests/leak/keys.js` is a
+`js`-mode fixture (`--mode=js`). `packages/tests/test262/harness/done.js` is concatenated into
+Test262 programs; Node never type-strips it, so it cannot be `.ts`. The re-vendor tools live
+under `packages/runtime/vendor/` but they are ours: a `.js`/`.mjs`/`.cjs` spelling of
+`update` or `fdlibm/port` fails the check.
+
+**`fdlibm.c`.** The generated preamble's usage line now says `node port.ts`, matching
+`port.ts`'s `PREAMBLE`. No other byte of `fdlibm.c` changed. That comment is the generator's
+text, so the next re-vendor run stays a no-op on the algorithm.
+
+**Clones.** Pointing both example runners at `node_shim.ts` re-fingerprinted two baseline
+clones in `examples/ffi/libm/run.ts` and `stat/run.ts`. `expectExampleOutputs` and
+`exampleRuntimePaths` in `packages/tests/support/c-runner.ts` own that shared text.
+`pnpm run dupes:baseline` removed 2 fingerprints and added 0.
+

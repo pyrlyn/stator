@@ -1,7 +1,7 @@
-// print_regexp.mjs — the ground truth for print_regexp.c. Same patterns, same order, console.log.
+// print_regexp.ts — the ground truth for print_regexp.c. Same patterns, same order, console.log.
 // If these two files drift apart the diff is meaningless, so edit them together.
 
-const showTest = (re, subject) => {
+const showTest = (re: RegExp, subject: string): void => {
   console.log(re.test(subject));
 };
 
@@ -69,7 +69,7 @@ const optional = /a(x)?(b)/;
 console.log(optional.exec('ab'));
 const named = /(?<year>\d{4})-(?<month>\d{2})/;
 console.log(named.exec('2026-09'));
-console.log(named.exec('2026-09').index);
+console.log((named.exec('2026-09') as RegExpExecArray).index);
 const walker = /a/g;
 console.log(walker.exec('aab'));
 console.log(walker.exec('aab'));

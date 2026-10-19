@@ -9,6 +9,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { staleLdRetryArgs } from '../../compiler/src/support/toolchain.ts';
 
 export type Fail = (message: string) => never;
@@ -19,6 +20,47 @@ export function makeFail(prefix: string): Fail {
   return (message: string): never => {
     process.stderr.write(`${prefix}: FAIL ${message}\n`);
     process.exit(1);
+  };
+}
+
+/** Byte-compare a built example and its Node oracle (`node_shim.ts` beside `main.ts`)
+ * to one expected string. The libm and stat runners share this; each passes its own
+ * `spawn` so a cwd or a fail-wired `run` stays at the call site. */
+export function expectExampleOutputs(
+  fail: Fail,
+  here: string,
+  app: string,
+  expected: string,
+  spawn: (command: string, args: readonly string[], what: string) => string,
+  okLine: string,
+): void {
+  const statorOut = spawn(app, [], 'example app');
+  if (statorOut !== expected) {
+    fail(
+      `stator output differs\n  actual:   ${JSON.stringify(statorOut)}\n  expected: ${JSON.stringify(expected)}`,
+    );
+  }
+  const nodeOut = spawn(
+    process.execPath,
+    ['--import', join(here, 'node_shim.ts'), join(here, 'main.ts')],
+    'node oracle',
+  );
+  if (nodeOut !== expected) {
+    fail(
+      `node output differs\n  actual:   ${JSON.stringify(nodeOut)}\n  expected: ${JSON.stringify(expected)}`,
+    );
+  }
+  process.stdout.write(okLine);
+}
+
+/** CLI entry and runtime archive for an `examples/ffi/<demo>` directory. */
+export function exampleRuntimePaths(here: string): {
+  readonly cli: string;
+  readonly runtimeArchive: string;
+} {
+  return {
+    cli: join(here, '..', '..', '..', 'packages', 'compiler', 'src', 'cli', 'main.ts'),
+    runtimeArchive: join(here, '..', '..', '..', 'packages', 'runtime', 'build', 'libjsrt.a'),
   };
 }
 

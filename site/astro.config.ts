@@ -1,4 +1,3 @@
-// @ts-check
 import { createHash } from 'node:crypto';
 import { defineConfig } from 'astro/config';
 import { THEME_BOOT } from './src/scripts/theme-boot.ts';

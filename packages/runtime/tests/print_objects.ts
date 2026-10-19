@@ -9,31 +9,37 @@
 class Empty {}
 
 class P {
-  constructor(x, y) {
+  x: unknown;
+  y: unknown;
+  constructor(x: unknown, y: unknown) {
     this.x = x;
     this.y = y;
   }
 }
 
 class Deep {
-  constructor(v) {
+  v: unknown;
+  constructor(v: unknown) {
     this.v = v;
   }
 }
 
 class S {
-  constructor(v) {
+  v: unknown;
+  constructor(v: unknown) {
     this.v = v;
   }
 }
 
 class AVeryLongClassNameIndeed {
-  constructor(v) {
+  v: unknown;
+  constructor(v: unknown) {
     this.v = v;
   }
 }
 
 class Wide {
+  [key: string]: number;
   constructor() {
     for (let i = 0; i < 8; i++) {
       this[`field${i}`] = i;
@@ -42,14 +48,18 @@ class Wide {
 }
 
 class Long {
-  constructor(a, b) {
+  averyveryverylongfieldname: unknown;
+  another: unknown;
+  constructor(a: unknown, b: unknown) {
     this.averyveryverylongfieldname = a;
     this.another = b;
   }
 }
 
 class N {
-  constructor(arr, o) {
+  arr: unknown;
+  o: unknown;
+  constructor(arr: unknown, o: unknown) {
     this.arr = arr;
     this.o = o;
   }
@@ -79,19 +89,23 @@ console.log(new S(payload));
 console.log(new AVeryLongClassNameIndeed(payload));
 
 class Priv {
-  #hidden;
-  constructor(hidden, shown) {
+  #hidden: unknown;
+  shown: unknown;
+  constructor(hidden: unknown, shown: unknown) {
     this.#hidden = hidden;
     this.shown = shown;
+    void this.#hidden;
   }
 }
 
 class AllPriv {
-  #a;
-  #b;
-  constructor(a, b) {
+  #a: unknown;
+  #b: unknown;
+  constructor(a: unknown, b: unknown) {
     this.#a = a;
     this.#b = b;
+    void this.#a;
+    void this.#b;
   }
 }
 
