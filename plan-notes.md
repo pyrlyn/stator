@@ -13040,5 +13040,7 @@ must grant it or `workflow-call-permissions` fails. The two `unpinned-uses` find
 `pyrlyn/ci` `@main` (pipeline.yml, sync-docs.yml) already fail `static analysis` on `main`
 (run 39159865395). The durable ignores are the same ones Task 6.31 records in plan-notes
 362: pinning those callers fails pyrlyn/ci `no-pinned-ci`. They are repeated here so this
-pull request's static job can pass before that one merges.
+pull request's static job can pass before that one merges. The baseline's 41 entries
+matched nothing (`jactionlint` said so and hid zero findings), so `--baseline-write`
+recorded an empty baseline, the same refresh that note describes.
 
