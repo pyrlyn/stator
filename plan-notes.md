@@ -13045,3 +13045,21 @@ the scan crashed with `SyntaxError`. The args are
 memory core (`pnpm run runtime` builds `libjsrt.a` and `libjsrt_std.a`). Time cost is the
 pull request's Setup step, not a local guess.
 
+## 362. jactionlint's baseline matched nothing; `@main` stays a durable ignore (2026-10-19)
+
+**Symptom.** `static analysis` failed on main (run 39159865395, job on the #150 push) and
+on the Task 6.31 pull request. jactionlint 2.0.2 reported two `unpinned-uses` findings and
+the note `0 finding(s) are hidden by the baseline; 41 baseline entr(ies) match nothing any
+more` (40 after the deleted `sonarcloud.yml` entry). `--no-baseline` prints only:
+
+- `.github/workflows/pipeline.yml` → `pyrlyn/ci/.github/workflows/ci.yml@main`
+- `.github/workflows/sync-docs.yml` → `pyrlyn/ci/.github/workflows/sync-docs.yml@main`
+
+Every fingerprint in the baseline was an action ref that is already a full SHA, so none of
+them hide a current finding.
+
+**Why not pin.** Pinning either caller to a SHA fails pyrlyn/ci's `no-pinned-ci` job
+(plan-notes 361). The acceptance is two `ignores` entries in `.github/jactionlint.yaml`,
+matched on the exact `@main` ref. `jactionlint --baseline-write` then records zero entries.
+A new unpinned action is a failure again; the dead fingerprints are not.
+
