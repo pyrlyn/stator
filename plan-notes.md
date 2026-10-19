@@ -13013,3 +13013,40 @@ the vendor module is not on disk, and hashing it would make every bundled progra
 This is the dependency-hash key the task allowed in place of a TODO. Watch mode is not
 implemented here; when it is, it keeps this key.
 
+## 361. T24: the C emitter is one module per HIR family (2026-10-19)
+
+**Plan.** Cloud-review T24. `packages/compiler/src/codegen/index.ts` was 6,276 lines and the
+only file in `codegen/`. It is now the `emitC` entry. Emitter state and `emit` stay in
+`emitter.ts`. Each family is a free function that takes the emitter as `self`:
+
+- `support.ts` — pure C-rendering helpers, no emitter state
+- `expr.ts` — expressions
+- `stmt.ts` — statements
+- `classes.ts` — shapes, methods, vtables
+- `closures.ts` — function units, async, generators
+- `runtime-calls.ts` — extern, console, collections, call sites
+- `library.ts` — `--emit-header` init and export stubs
+- `module.ts` — `main` and the async module driver
+- `sequence.ts` — slots, frames, argument order
+
+A call into another family goes through that family's namespace (`cgExpr`, `cgStmt`, `cgSeq`,
+and the rest). A call in the same file is direct. There is no explicit `this` parameter: the
+gate refuses that as STA1214, and the self-host count must not grow. The class does not keep
+a forwarding method per function. Those wrappers were consecutive and identical under jscpd's
+identifier-insensitive scan, which would have been a new clone the baseline is not allowed
+to absorb.
+
+`closeBody` (the shared C-function epilogue) and `emitCapturedArm` (one indented arm of a
+branched value) are the two helpers that let the clone count shrink. A spread source written
+twice in the object-literal walk is `resolveSpread`. `.jscpd-baseline.json` went from 180
+fingerprints to 179: 16 added, 17 removed. The 16 are the codegen clones that were already
+baselined, re-fingerprinted because `this.method(` became `self` plus a namespace call.
+Nothing outside `codegen/` was added.
+
+**Check.** `pnpm exec tsc --noEmit` for `packages/compiler` and `packages/tests` was clean.
+`pnpm exec oxlint --deny-warnings` on the touched sources was clean. `pnpm run dupes` reported
+179 clones and exited 0. Emitting C for 455 golden fixtures (`--emit=c --bundler=none`,
+`--node` on `node_*`, skipping `intl_*` and the bundler-only package fixtures) matched the
+pre-split emitter byte for byte: 0 mismatches. The codegen, control-flow, property-error,
+frame, class-member, and export-stub unit tests were `6` files, `116` tests, all passed.
+

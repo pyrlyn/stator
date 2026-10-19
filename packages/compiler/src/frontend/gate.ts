@@ -420,7 +420,7 @@ function gateConstruct(
       // A constructor's `return e` makes `new` yield `e` when it is an object (Node:
       // `new C()` answers the returned `{...}`, not the instance), and this subset's `new`
       // yields the allocated object and ignores what a constructor returns
-      // (`codegen/index.ts`), so accepting one would compile a program that silently
+      // (`codegen/expr.ts`), so accepting one would compile a program that silently
       // answers differently. A bare `return;` returns no value and is ruled on by the
       // constructor-super coverage rule instead.
       if (returned !== undefined && enclosingFunctionIsConstructor(node)) {

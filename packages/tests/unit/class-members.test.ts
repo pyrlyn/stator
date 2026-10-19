@@ -803,7 +803,7 @@ test('a return that completes a path before the call stays not-yet', () => {
 test('a return after the call is accepted; a value return stays not-yet', () => {
   // A bare return past the call retires its path with the base initialized. A VALUE return
   // cannot land at all: `new` yields the allocated object and ignores what a constructor
-  // returns (codegen/index.ts), where Node substitutes the returned object (plan.md §8
+  // returns (codegen/expr.ts), where Node substitutes the returned object (plan.md §8
   // step 12(d)). A nested arrow's return completes the arrow and is nobody else's.
   const bare = `${LATE_SUPER}class D extends B {
     constructor(n: number) {
