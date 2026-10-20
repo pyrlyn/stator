@@ -13013,7 +13013,72 @@ the vendor module is not on disk, and hashing it would make every bundled progra
 This is the dependency-hash key the task allowed in place of a TODO. Watch mode is not
 implemented here; when it is, it keeps this key.
 
-## 361. Task 6.17 step 4: CI records the impact map on main and selects on pull requests (2026-10-19)
+## 361. Task 6.31: the SHA-pinned sonarcloud.yml caller is forbidden (2026-10-19)
+
+**What the card assumed.** plan-notes 358 (2026-10-08) measured stator's own
+`.github/workflows/sonarcloud.yml` as a copy of pyrlyn/ci's reusable workflow at
+`c875cd763ad0c4abbd936e480be5752330d3b66b`, and Task 6.31 said to replace it with a thin
+caller pinned to a 40-character SHA, never `@main`.
+
+**What landed first.** #138 (`f6276ff`, 2026-10-13) deleted that file. SonarCloud now runs
+as `pipeline / sonarcloud` inside `pyrlyn/ci/.github/workflows/ci.yml`, configured by
+`.github/infra.yml`. #158 (`e825724`, 2026-10-18) points `pipeline.yml` at `@main` on
+purpose. pyrlyn/ci `main` at `3fa4275e525269297a4d193c427f965ad9dd7544` runs a
+`no-pinned-ci` job whose comment is "Callers reference pyrlyn/ci as `@main`, never a SHA
+or a tag", and the workflow fails a pull request that pins `uses: pyrlyn/ci/...@<sha>`.
+Restoring the card's caller would fail that check. The Check in plan.md is edited to the
+durable fact: no `sonarcloud.yml` in this repo, `@main` on the pipeline caller, and the
+commands in `infra.yml`.
+
+**Commands.** `infra.yml` had `pnpm run runtime || true` and
+`pnpm run test:coverage || true`. The shared workflow already sets `continue-on-error` on
+coverage and the scan when `soft-fail` is true (the default), and it does **not** set it
+on setup. The `|| true` made a runtime failure look like success, so coverage still ran.
+Setup is now `pnpm install --frozen-lockfile && pnpm run runtime`. A runtime failure ends
+the job before coverage and, because `cancel-run-on-failure` defaults to true, cancels the
+rest of that pipeline run. Coverage stays soft-fail.
+
+**Toolchain.** The card's `mise-install-args` said `npm:pnpm`. #138 changed `mise.toml`
+from `"npm:pnpm"` to `pnpm` because the npm backend left pnpm 12's placeholder script and
+the scan crashed with `SyntaxError`. The args are
+`node pnpm just zig conda:clang conda:llvm`: the runtime recipe is clang plus the Zig
+memory core (`pnpm run runtime` builds `libjsrt.a` and `libjsrt_std.a`). Time cost is the
+pull request's Setup step, not a local guess.
+
+## 362. jactionlint's baseline matched nothing; `@main` stays a durable ignore (2026-10-19)
+
+**Symptom.** `static analysis` failed on main (run 39159865395, job on the #150 push) and
+on the Task 6.31 pull request. jactionlint 2.0.2 reported two `unpinned-uses` findings and
+the note `0 finding(s) are hidden by the baseline; 41 baseline entr(ies) match nothing any
+more` (40 after the deleted `sonarcloud.yml` entry). `--no-baseline` prints only:
+
+- `.github/workflows/pipeline.yml` → `pyrlyn/ci/.github/workflows/ci.yml@main`
+- `.github/workflows/sync-docs.yml` → `pyrlyn/ci/.github/workflows/sync-docs.yml@main`
+
+Every fingerprint in the baseline was an action ref that is already a full SHA, so none of
+them hide a current finding.
+
+**Why not pin.** Pinning either caller to a SHA fails pyrlyn/ci's `no-pinned-ci` job
+(plan-notes 361). The acceptance is two `ignores` entries in `.github/jactionlint.yaml`,
+matched on the exact `@main` ref. `jactionlint --baseline-write` then records zero entries.
+A new unpinned action is a failure again; the dead fingerprints are not.
+
+## 363. Task 6.31: the shared sonarcloud job ran Setup and wrote coverage (2026-10-19)
+
+**Plan:** §9 Task 6.31. `plan.md` edited in the same change: the task is a stub, evidence
+in `done.md`. The next free note after 362 on this branch is 363. Notes 364 and 365 are
+taken on other unmerged branches.
+
+**The run.** Non-draft PR #161, pipeline run 39297920890, job
+`pipeline / sonarcloud / sonarcloud` (118222865144), head `889f434`. `Skip SonarCloud (no
+token)` was skipped, so `SONAR_TOKEN` was set; the log prints the value as `***`. `Setup`
+succeeded with `pnpm install --frozen-lockfile && pnpm run runtime`. `Coverage` succeeded
+with `pnpm run test:coverage`. The scanner then logged `Analysing
+[/home/runner/work/stator/stator/coverage/lcov.info]` and uploaded the report. That is the
+Check's CI half. The file half is the commands in `infra.yml` and the absent
+`sonarcloud.yml`, unchanged by the commit that moves the card.
+
+## 366. Task 6.17 step 4: CI records the impact map on main and selects on pull requests (2026-10-19)
 
 **Plan:** §9 Task 6.17 step 4 stays open until a pull request's `impact (pull request)` log shows
 a selection made from a `main` map. The sentence in the step is edited in this change for the
@@ -13049,11 +13114,7 @@ jobs selects every harness and runs them.
 **Not a replacement for the other jobs.** Their check names are what the staged pipeline reports.
 `pnpm run ci` locally is still the gate a human runs before claiming a task done.
 
-**`static analysis` was already red on `main` (`9767c85`, run 39159865395).** jactionlint 2.0.2
-reports that its baseline matches nothing, and the only live findings are the two reusable
-workflow calls at `@main` (`pipeline.yml`, `sync-docs.yml`). Pinning them is not the fix:
-pyrlyn/ci's `no-pinned-ci` job fails a pull request that pins a `pyrlyn/ci` caller to a SHA, so
-`@main` is required. `.github/jactionlint.yaml` ignores those two `unpinned-uses` findings and
-names that job. The baseline file is left as it is: stale entries do not fail `jactionlint
---color`.
+**`static analysis`.** The two `@main` callers stay unpinned. Note 362 records why:
+`no-pinned-ci` rejects a SHA, and the ignores live in `.github/jactionlint.yaml`. The baseline
+on this branch is the empty file from Task 6.31.
 
