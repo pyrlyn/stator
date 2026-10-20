@@ -3303,6 +3303,62 @@ Check evidence (PR #110, head `f9a5e72`, CI run 37155782218):
 >
 > **Check:** `frontend (windows/x64)` and `frontend (windows/arm64)` green on a PR.
 
+### Task 6.31 — SonarCloud through the shared pyrlyn/ci workflow ✅ (landed 2026-10-19)
+
+#138 deleted the hand-copied `.github/workflows/sonarcloud.yml`. SonarCloud runs as
+`pipeline / sonarcloud / sonarcloud` inside `pyrlyn/ci/.github/workflows/ci.yml@main`,
+configured by `.github/infra.yml`. A SHA-pinned caller is forbidden: pyrlyn/ci's
+`no-pinned-ci` job fails a pull request that pins that `uses` (plan-notes 361). #158
+made `@main` the reference.
+
+What this card changed:
+
+- `setup-command` is `pnpm install --frozen-lockfile && pnpm run runtime`, with no
+  `|| true`. Setup is a hard step in the shared workflow; coverage and the scan stay
+  soft-fail (the default).
+- `coverage-command` is `pnpm run test:coverage`.
+- `mise-install-args` is `node pnpm just zig conda:clang conda:llvm`. The id is `pnpm`,
+  not `npm:pnpm` (plan-notes 361).
+- `docs/sonarcloud-setup.md` describes that caller and names `soft-fail: false` as the
+  blocking switch.
+- jactionlint accepts the two `@main` callers through durable ignores, and the baseline
+  is empty (plan-notes 362). `static analysis` on the pull request passed after that.
+
+File Check, re-run on the branch:
+
+- `test ! -e .github/workflows/sonarcloud.yml`
+- `pipeline.yml` calls `pyrlyn/ci/.github/workflows/ci.yml@main` and passes `SONAR_TOKEN`
+- `infra.yml`: `sonarcloud.enabled: true`, the two commands above, no `|| true`
+- `docs/sonarcloud-setup.md` names `pipeline / sonarcloud` and `soft-fail: false`
+
+CI evidence (PR #161, head `889f434`, pipeline run
+[39297920890](https://github.com/pyrlyn/stator/actions/runs/39297920890), job
+118222865144):
+
+- `Skip SonarCloud (no token)` was skipped, so `SONAR_TOKEN` was set. The log redacts
+  the value.
+- `Setup` succeeded. The step's command was
+  `pnpm install --frozen-lockfile && pnpm run runtime`.
+- `Coverage` succeeded. The step's command was `pnpm run test:coverage`.
+- The scanner logged `Analysing [/home/runner/work/stator/stator/coverage/lcov.info]`
+  and uploaded the analysis report.
+
+> **Task 6.31 — SonarCloud through the shared pyrlyn/ci workflow (plan-notes 358, 361).**
+> The hand-copied `.github/workflows/sonarcloud.yml` is already gone (#138): `pipeline.yml` calls
+> `pyrlyn/ci/.github/workflows/ci.yml@main`, and `.github/infra.yml` configures its `sonarcloud`
+> job. A thin caller pinned by SHA is no longer the mechanism. pyrlyn/ci's `no-pinned-ci` job
+> fails a pull request that pins `pyrlyn/ci` to a commit, and #158 made `@main` the reference on
+> purpose. What this card still changes is the job's commands and the docs.
+>
+> **Check:** `test ! -e .github/workflows/sonarcloud.yml`; `.github/workflows/pipeline.yml`
+> calls `pyrlyn/ci/.github/workflows/ci.yml@main` and passes `SONAR_TOKEN` explicitly;
+> `.github/infra.yml` has `sonarcloud.enabled: true`, `setup-command` equal to
+> `pnpm install --frozen-lockfile && pnpm run runtime`, and `coverage-command` equal to
+> `pnpm run test:coverage`; `docs/sonarcloud-setup.md` names `pipeline / sonarcloud` and
+> `soft-fail: false`. On a non-draft pull request, `pipeline / sonarcloud / sonarcloud` runs
+> its Setup step and, when `SONAR_TOKEN` is set, its Coverage step writes `coverage/lcov.info`.
+> A draft pull request skips the job.
+
 ## Phase 7 — FFI ✅ COMPLETE (2026-09-16)
 
 **Check — PASSED.** *An example that statically links SQLite, queries it from TS, and is
@@ -4594,7 +4650,7 @@ Check: `pnpm exec vitest run --config packages/tests/vitest.config.ts packages/t
 
 ## Phase 10 — T10.3 parallel host compiler ✅ (2026-10-19)
 
-**Landed 2026-10-19** (plan-notes 361). `STATOR_COMPILE_JOBS` compiles the generated C as several translation units when it is worth a process. `1` is the single clang invocation `linkArguments` already built, and the emitter does not read the knob, so `--emit=c` is byte-identical. Unset means `os.availableParallelism()`, but a program stays one unit under 8 functions or 40,000 characters. An explicit value above 1 splits at two functions. A value that is not an integer ≥ 1 is `STA0021`. A project `.env` cannot set the knob. `--emit-header` and `--emit=lib` stay one object.
+**Landed 2026-10-19** (plan-notes 368). `STATOR_COMPILE_JOBS` compiles the generated C as several translation units when it is worth a process. `1` is the single clang invocation `linkArguments` already built, and the emitter does not read the knob, so `--emit=c` is byte-identical. Unset means `os.availableParallelism()`, but a program stays one unit under 8 functions or 40,000 characters. An explicit value above 1 splits at two functions. A value that is not an integer ≥ 1 is `STA0021`. A project `.env` cannot set the knob. `--emit-header` and `--emit=lib` stay one object.
 
 C1 is kept. On the clang-heavy fixture, 4 jobs were 1.63× the serial wall and the clang span itself was 3.4×. C2 is not done: emit was 14 ms. C3 is not done: on that fixture clang dominated typecheck, and `hir/verify` was 4 ms, so there is no process pool and the one `typescript.Program` stays on the compiling thread. The CI smoke is `packages/tests/unit/compile-jobs.test.ts`, which the existing frontend jobs already run. No workflow and no runner label changed.
 
@@ -4618,7 +4674,7 @@ Steps:
 **Check:** documented before/after numbers in plan-notes; `STATOR_COMPILE_JOBS=1` preserves
 byte-identical emitted C for the fixture; CI green.
 
-**Check evidence:** plan-notes 361 (the numbers). `packages/tests/unit/compile-jobs.test.ts`:
+**Check evidence:** plan-notes 368 (the numbers). `packages/tests/unit/compile-jobs.test.ts`:
 9 passed, including the golden-corpus partition and the jobs=1 / jobs=2 stdout match. Goldens
 whose C clears the default threshold, built with the unset knob (so they take the parallel
 path) and compared to Node: capstone, builtin_constructors, typed_arrays, array_callbacks,

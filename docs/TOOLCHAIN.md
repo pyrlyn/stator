@@ -112,8 +112,10 @@ from the last build rebuilds every object (`packages/runtime/build*/cflags.txt`)
 CI runs in two stages (plan-notes 292):
 
 1. **Stage 1, Linux only:** `static analysis` (typecheck, `lint` = oxlint `--deny-warnings` + oxfmt
-   check, `dupes`, then jactionlint 2.0.2 over the workflows against `.github/jactionlint-baseline.json`) and `frontend (linux/x64)` (subset tests, runtime archive, unit tests **with
+   check, `dupes`, then jactionlint 2.0.2 over the workflows against `.github/jactionlint-baseline.json`
+   and the durable ignores in `.github/jactionlint.yaml`) and `frontend (linux/x64)` (subset tests, runtime archive, unit tests **with
    coverage**; uploads the `coverage-lcov` artifact). This is the only job that collects coverage.
+   The two `pyrlyn/ci` `@main` callers stay unpinned: pinning them fails `no-pinned-ci` (plan-notes 362).
 2. **Stage 2, Windows and macOS:** `frontend-desktop` (macOS and Windows, plain `pnpm run test`),
    plus the `-macos` twins of `runtime`, `asan`, `intl` and `ffi`. Each has
    `needs: [static, frontend-coverage]`, so none starts unless every stage-1 job passed.
@@ -153,7 +155,7 @@ file's line is ignored and the real environment decides).
 An explicit value above 1 splits as soon as the program has two functions, which is the CI
 smoke (`packages/tests/unit/compile-jobs.test.ts`, run by every frontend job). The unset
 default splits only when the generated C has at least 8 functions and 40,000 characters:
-below that, a second process costs more than it returns (plan-notes 361). `--emit=c` writes
+below that, a second process costs more than it returns (plan-notes 368). `--emit=c` writes
 the one canonical C either way. `--emit-header` and `--emit=lib` stay one object.
 
 ```

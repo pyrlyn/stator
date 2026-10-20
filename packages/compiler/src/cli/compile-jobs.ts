@@ -13,7 +13,7 @@
 import { availableParallelism } from 'node:os';
 
 /** Unset `STATOR_COMPILE_JOBS` splits only at or above both of these.
- * Tuned against the T10.3 fixtures in plan-notes 361: a 31KB program did not
+ * Tuned against the T10.3 fixtures in plan-notes 368: a 31KB program did not
  * get faster, and the clang-heavy program that did is well above both. */
 export const PARALLEL_MIN_FUNCTIONS = 8;
 export const PARALLEL_MIN_CHARS = 40_000;
