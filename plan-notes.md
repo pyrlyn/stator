@@ -13051,8 +13051,9 @@ jobs selects every harness and runs them.
 
 **`static analysis` was already red on `main` (`9767c85`, run 39159865395).** jactionlint 2.0.2
 reports that its baseline matches nothing, and the only live findings are the two reusable
-workflow calls pinned to `@main` (`pipeline.yml`, `sync-docs.yml`). Both are now pinned to
-pyrlyn/ci `3fa4275e525269297a4d193c427f965ad9dd7544`. The baseline file is left as it is: stale
-entries do not fail `jactionlint --color`, and rewriting it would hide nothing that is still
-reported.
+workflow calls at `@main` (`pipeline.yml`, `sync-docs.yml`). Pinning them is not the fix:
+pyrlyn/ci's `no-pinned-ci` job fails a pull request that pins a `pyrlyn/ci` caller to a SHA, so
+`@main` is required. `.github/jactionlint.yaml` ignores those two `unpinned-uses` findings and
+names that job. The baseline file is left as it is: stale entries do not fail `jactionlint
+--color`.
 
