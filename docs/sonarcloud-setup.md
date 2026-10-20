@@ -1,7 +1,12 @@
 # SonarCloud OSS setup (stator)
 
-Maintainer guide for the SonarCloud workflow in `.github/workflows/sonarcloud.yml` and the scanner
-configuration in `sonar-project.properties`.
+Maintainer guide for the SonarCloud analysis and the scanner configuration in
+`sonar-project.properties`.
+
+The analysis is not a workflow in this repository. `.github/workflows/pipeline.yml` calls
+`pyrlyn/ci/.github/workflows/ci.yml@main`, and that workflow's `sonarcloud` job reads
+`.github/infra.yml`. The check name is `pipeline / sonarcloud / sonarcloud`. Callers reference
+pyrlyn/ci as `@main`; a SHA pin fails the shared `no-pinned-ci` check (plan-notes 361).
 
 The `sonar.organization` / `sonar.projectKey` values (`listepo` / `listepo_stator`) are
 **placeholders** until they match the SonarCloud UI after you import the project.
@@ -21,9 +26,10 @@ GitHub account) on first import.
 
 ## 2. Turn Automatic Analysis off
 
-This project is analyzed by CI (`SonarSource/sonarqube-scan-action`), so SonarCloud's
-**Automatic Analysis** must be **off**. With both enabled, the CI scan fails with an
-error about Automatic Analysis being enabled.
+This project is analyzed by CI (pyrlyn/ci's `sonarcloud` job runs
+`SonarSource/sonarqube-scan-action`), so SonarCloud's **Automatic Analysis** must be
+**off**. With both enabled, the CI scan fails with an error about Automatic Analysis
+being enabled.
 
 In the SonarCloud project: **Administration → Analysis Method → Automatic Analysis → off**.
 
@@ -36,44 +42,52 @@ In the SonarCloud project: **Administration → Analysis Method → Automatic An
 
 ## 4. Add the `SONAR_TOKEN` secret
 
-On **listepo/stator**: **Settings → Secrets and variables → Actions → New repository secret**
+On **pyrlyn/stator**: **Settings → Secrets and variables → Actions → New repository secret**
 
 - Name: `SONAR_TOKEN`
 - Value: the token from step 3
 
-Never commit the token. Without the secret (fork pull requests, or before it is added)
-every step in the workflow soft-skips with a notice, so the check stays green; a green
-run in that state does **not** mean an analysis happened.
+Never commit the token. Fork pull requests do not receive it; what the job does then
+is in section 5.
 
 ## 5. When the analysis runs
 
-- On pull requests targeting `main` (draft pull requests are skipped until they are
-  marked ready for review). Pull request decoration needs the SonarCloud GitHub App,
-  which the import in step 1 installs.
-- On every push to `main`.
-- Manually via **Actions → sonarcloud → Run workflow**.
+`pipeline.yml` starts on a pull request to `main` (`opened`, `synchronize`, `reopened`,
+`ready_for_review`), on a push to `main`, on a Monday schedule, and on
+**Actions → pipeline → Run workflow**. The SonarCloud job itself runs only for `push`,
+`pull_request` and `workflow_dispatch` (pyrlyn/ci's default `sonarcloud.events`), so the
+Monday schedule does not scan. A draft pull request skips every pipeline job, this one
+included, until it is marked ready. Pull request decoration needs the SonarCloud GitHub
+App, which the import in step 1 installs.
+
+Without `SONAR_TOKEN` every step of the job skips with a notice and the check stays green.
+A green run in that state does **not** mean an analysis happened.
 
 ## 6. Soft-fail for now, blocking later
 
-The workflow does not fail the build yet: the coverage and scan steps use
-`continue-on-error: true`, and the Quality Gate is not awaited. To make it blocking
-once the dashboard looks sane:
+Coverage and the scan use the shared workflow's `soft-fail` (default `true`): those two
+steps are `continue-on-error`, and the Quality Gate is not awaited. The setup command is
+not soft-fail. `pnpm run runtime` failing ends the job before coverage, and a failed job
+cancels the rest of that pipeline run.
 
-1. Remove `continue-on-error: true` from the scan (and, if wanted, coverage) steps.
+To make the analysis blocking once the dashboard looks sane:
+
+1. Set `soft-fail: false` under `sonarcloud:` in `.github/infra.yml`.
 2. Add `sonar.qualitygate.wait=true` to `sonar-project.properties` so the scan step
    fails when the Quality Gate fails.
-3. Optionally mark the `sonarcloud` check as required in the branch protection rules
-   for `main`.
+3. Optionally mark `pipeline / sonarcloud / sonarcloud` as required in the branch
+   protection rules for `main`.
 
 ## 7. Coverage
 
-Coverage **is wired**: the workflow runs the existing
-`pnpm run test:coverage` script (vitest under c8, which collects V8 coverage from the test
-workers and every CLI subprocess the tests spawn; plan-notes 285), the same one the ci.yml
-`frontend (linux/x64)` job (`frontend-coverage`, stage 1) runs. It writes `coverage/lcov.info`, which Sonar reads via
-**`sonar.javascript.lcov.reportPaths`**. Before that the workflow builds the runtime
-archive (`pnpm run runtime`), because a few unit tests compile and run native binaries.
-Both steps are best effort: if they fail, the scan still runs.
+Coverage **is wired**: `coverage-command` is `pnpm run test:coverage` (vitest under c8,
+which collects V8 coverage from the test workers and every CLI subprocess the tests spawn;
+plan-notes 285), the same script the ci.yml `frontend (linux/x64)` job
+(`frontend-coverage`, stage 1) runs. It writes `coverage/lcov.info`, which Sonar reads via
+**`sonar.javascript.lcov.reportPaths`**. Before that, `setup-command` installs dependencies
+and builds the runtime archive (`pnpm run runtime`), because a few unit tests compile and
+run native binaries. A coverage failure is best effort while `soft-fail` is true, so the
+scan still runs. A runtime failure is not.
 
 Scope: the compiler (`packages/compiler/src`) is the analyzed source; `packages/tests` is
 test code. Golden programs, the Test262 corpus, benchmark programs, differential-test
@@ -98,6 +112,8 @@ token into the repository.
 
 ## References
 
-- Workflow: `.github/workflows/sonarcloud.yml`
+- Caller: `.github/workflows/pipeline.yml` (`pyrlyn/ci/.github/workflows/ci.yml@main`)
+- Job config: `.github/infra.yml` (`sonarcloud`)
 - Scanner configuration: `sonar-project.properties`
+- Shared workflow: [pyrlyn/ci `docs/reusable-workflows.md`](https://github.com/pyrlyn/ci/blob/main/docs/reusable-workflows.md) (`sonarcloud.yml`)
 - [SonarQube Cloud documentation](https://docs.sonarsource.com/sonarqube-cloud/)
