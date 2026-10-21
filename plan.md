@@ -53,13 +53,13 @@ New bugs, dead code and moves from a read-only Cursor cloud review of `main` at 
 
 | ID | Priority | Kind | Status | Where | Fix |
 | --- | --- | --- | --- | --- | --- |
-| T20 | P0 | bug | confirmed | `.github/workflows/ci.yml:3-10`; comment `:1-2`; `revert-on-failure` at `:406-410` | `ci.yml` runs only on `pull_request`, `workflow_dispatch` and `workflow_call`, not on `push` to `main`, so `main` has no test workflow and `revert-on-failure` never runs. Add `push: branches: [main]`, or make those checks required on `main`. |
+| ~~T20~~ | P0 | bug | fixed | plan-notes 353, 364 | `ci.yml` runs on `push` to `main`, so a merge has a test workflow and `revert-on-failure` can fire. |
 | T21 | P0 | bug | confirmed | PR CI run 37692965170 vs `ccf9818` on `main` | T17 was merged with red CI (`pipeline` failed in 0 s, `frontend (windows/arm64)` failed), so required checks are missing or bypassable. Require `static`, `frontend-coverage` and the Windows/macOS jobs (or a smaller set you actually enforce); do not merge on SonarCloud green alone. |
-| T22 | P0 | move | confirmed | `.github/workflows/pipeline.yml:26` (`uses: listepo/infra/…`) → the `pyrlyn/ci` reusable workflow | A public repo cannot call a private `listepo/infra` workflow; every pipeline run fails in 0 s (main run 37694735601). Merge PR #61, which repoints it. |
+| ~~T22~~ | P0 | move | fixed | plan-notes 353, 364; #158 | `pipeline.yml` calls `pyrlyn/ci/.github/workflows/ci.yml@main`. A SHA pin of that caller fails `no-pinned-ci`. |
 | ~~T23~~ | P1 | bug | fixed | plan-notes 354 | The official win-arm64 Node is cross-compiled without a startup snapshot, so `util.format` sees seven later globals. The test follows `node_use_node_snapshot` and still fails on any other difference. |
 | T24 | P1 | move | confirmed | `packages/compiler/src/codegen/index.ts` (6,276 lines, the only file in `codegen/`) → files under `packages/compiler/src/codegen/` | Split the C emitter by HIR family (expressions, statements, classes, closures, runtime calls); it is the merge bottleneck. |
-| T25 | P2 | bug | confirmed | `AGENTS.md` repo map; `packages/runtime/src/jsrt_print.c:42-46`, `:50-80`; `packages/runtime/vendor/` | The repo map says Ryū is vendored, but `vendor/` holds only `quickjs-ng/` and `fdlibm/`, and `shortest_digits` is a hand-written float printer. Fix the repo map now; vendoring Ryū stays with §12, where it is already scheduled. |
-| T26 | P2 | dead code | confirmed | root `package.json:53`; `packages/tests/package.json:10`; comments only in `packages/compiler/src/frontend/program.ts:532`, `:592`, `:608` | `memfs` is never imported. Remove it from both `package.json` files, or add the memfs host the comments describe. |
+| ~~T25~~ | P2 | bug | fixed | plan-notes 353, 364 | The repo map names QuickJS-NG only. `docs/TOOLCHAIN.md` says Ryū is not vendored; fetching it stays on §12. |
+| ~~T26~~ | P2 | dead code | fixed | plan-notes 353, 364 | `memfs` is gone from both package manifests. The custom-host comments say "in-memory CompilerHost". |
 
 Already tracked here, not added again: moving number printing to the vendored Ryū C code (the review's move M3) is in §12, "Ryū rides here too".
 
@@ -2458,3 +2458,5 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.80** (2026-10-08): **Task 6.31 added: SonarCloud through the shared pyrlyn/ci workflow** (plan-notes 358). `sonarcloud.yml` is a copy of pyrlyn/ci's reusable `sonarcloud.yml`; the card moves it to a thin caller pinned by SHA, with the toolchain from mise.toml and the same soft-fail behavior.
 - **v4.81** (2026-10-19): **Task 6.31's caller changed under it** (plan-notes 361). #138 deleted `sonarcloud.yml` and #158 requires `pyrlyn/ci` at `@main` (`no-pinned-ci` rejects a SHA). The card now sets the `infra.yml` commands and the setup doc; it does not add a pinned workflow.
 - **v4.84** (2026-10-19): **Task 6.31 lands** (plan-notes 363). `pipeline / sonarcloud / sonarcloud` on run 39297920890 ran Setup and, with `SONAR_TOKEN` set, Coverage; the scanner read `coverage/lcov.info`. The card moves to done.md.
+
+- **v4.82** (2026-10-19): **Cloud-review rows T20, T22, T25 and T26 were already fixed** (plan-notes 364). The table still said confirmed. `ci.yml` pushes `main`, `pipeline.yml` calls `pyrlyn/ci` at `@main` (#158), the repo map no longer lists Ryū as vendored, and `memfs` is gone. T21 (required checks) and T24 (split the C emitter) stay open. These rows were never given Steps and a Check, so they are struck in the table the way T23 was, not moved to `done.md`.
