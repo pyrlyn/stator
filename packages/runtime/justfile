@@ -300,7 +300,7 @@ _runtime-test flavor:
 
     for corpus in "${CORPORA[@]}"; do
       link_one "tests/${corpus}.c" "${DIR}/${corpus}"
-      ${NODE} "tests/${corpus}.mjs" > "${DIR}/${corpus}.expected.txt"
+      ${NODE} "tests/${corpus}.ts" > "${DIR}/${corpus}.expected.txt"
       "./${DIR}/${corpus}" > "${DIR}/${corpus}.actual.txt"
       diff -u "${DIR}/${corpus}.expected.txt" "${DIR}/${corpus}.actual.txt"
     done

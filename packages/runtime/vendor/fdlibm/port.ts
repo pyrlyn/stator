@@ -1,7 +1,7 @@
 // Re-vendor tool: mechanically convert V8's src/base/ieee754.cc (C++) to the C11
 // fdlibm.c that sits next to this file. plan.md §7 Task 4.2; plan-notes 117.
 //
-//   node port.mjs <path-to-v8-ieee754.cc> fdlibm.c
+//   node port.ts <path-to-v8-ieee754.cc> fdlibm.c
 //
 // This exists so a version bump is "re-download upstream, re-run this script",
 // never a hand-edit — AGENTS.md forbids hand-editing runtime/vendor/, and this
@@ -10,8 +10,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const [src, out] = process.argv.slice(2);
-if (!src || !out) {
-  process.stderr.write('usage: node port.mjs <v8 ieee754.cc> <out.c>\n');
+if (src === undefined || out === undefined || src === '' || out === '') {
+  process.stderr.write('usage: node port.ts <v8 ieee754.cc> <out.c>\n');
   process.exit(2);
 }
 
@@ -27,8 +27,9 @@ const ENTRIES = [
 let text = readFileSync(src, 'utf8');
 
 // --- Line-level: drop V8 includes, namespace scaffolding, and the libm-trig arm.
-const kept = [];
-let mode = null;
+const kept: string[] = [];
+type DropMode = 'drop-if' | 'drop-endif' | 'drop-all' | null;
+let mode: DropMode = null;
 for (const line of text.split('\n')) {
   const s = line.trim();
   if (s.startsWith('#include "src/base/')) continue;
@@ -60,8 +61,11 @@ text = text.replaceAll('std::numeric_limits<double>::infinity()', '((double)INFI
 // V8's overflowing-math helpers: arithmetic with defined int32 wraparound.
 text = text.replace(/NegateWithWraparound<int32_t>\(([A-Za-z0-9_]+)\)/g,
   (_m, a) => `((int32_t)(0u - (uint32_t)(${a})))`);
+// An unexpected op interpolates the word "undefined", matching the untyped script.
+const WRAP: Readonly<Record<string, string | undefined>> = { Add: '+', Sub: '-', Mul: '*' };
 text = text.replace(/(Add|Sub|Mul)WithWraparound(?:<int32_t>)?\(([A-Za-z0-9_]+), ([A-Za-zx0-9_]+)\)/g,
-  (_m, op, a, b) => `((int32_t)((uint32_t)(${a}) ${{ Add: '+', Sub: '-', Mul: '*' }[op]} (uint32_t)(${b})))`);
+  (_m: string, op: string, a: string, b: string) =>
+    `((int32_t)((uint32_t)(${a}) ${WRAP[op]} (uint32_t)(${b})))`);
 // base::Divide is plain IEEE division; V8 wraps it only to dodge an MSVC warning.
 text = text.replace(/base::Divide\(([^,]+), ([^)]+)\)/g, '(($1) / ($2))');
 // The kernels are file-local upstream (anonymous namespace); their forward
@@ -87,7 +91,7 @@ const PREAMBLE = `/* fdlibm, as ported by V8 (src/base/ieee754.cc) and mechanica
  * suite hostage to whichever libm happened to build the runtime.
  *
  * GENERATED — DO NOT HAND-EDIT (AGENTS.md, Don'ts). Regenerate with:
- *   node port.mjs <upstream ieee754.cc> fdlibm.c
+ *   node port.ts <upstream ieee754.cc> fdlibm.c
  * Every rewrite that script performs is mechanical (namespaces, casts,
  * bit_cast, digit separators, entry-point renaming). No algorithm, polynomial
  * constant, or branch was changed.

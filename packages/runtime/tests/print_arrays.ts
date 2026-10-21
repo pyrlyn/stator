@@ -1,4 +1,4 @@
-/* print_arrays.mjs — the ground truth for runtime/tests/print_arrays.c.
+/* print_arrays.ts — the ground truth for runtime/tests/print_arrays.c.
  *
  * Same arrays, same order, console.log. `just runtime-test` diffs this against the C program's
  * stdout byte-for-byte. Edit both files together or the diff is meaningless.

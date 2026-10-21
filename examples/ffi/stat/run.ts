@@ -4,7 +4,7 @@
  * builds `main.ts` with stator (the shim object rides `--link=`; the header
  * rides the `@statorLink` pragma in `stat_shim.d.ts`), prepares `data.bin`
  * with fixed bytes AND a fixed mtime, and byte-compares the binary AND this
- * host's Node (via `node_shim.mjs`) against `expected.txt`. Deterministic,
+ * host's Node (via `node_shim.ts`) against `expected.txt`. Deterministic,
  * offline, no new dependencies.
  */
 import { spawnSync } from 'node:child_process';
@@ -78,7 +78,7 @@ function main(): void {
     }
     const nodeOut = run(
       process.execPath,
-      ['--import', join(HERE, 'node_shim.mjs'), join(HERE, 'main.ts')],
+      ['--import', join(HERE, 'node_shim.ts'), join(HERE, 'main.ts')],
       'node oracle',
       work,
     );

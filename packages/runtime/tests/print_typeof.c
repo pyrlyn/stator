@@ -1,6 +1,6 @@
 /* print_typeof.c — prints `typeof` for one value of every shape the runtime has.
  *
- * Ground truth is Node, not a table written here: runtime/tests/print_typeof.mjs asks the same
+ * Ground truth is Node, not a table written here: runtime/tests/print_typeof.ts asks the same
  * questions in the same order and prints the answers with console.log; `just runtime-test` diffs
  * the two byte-for-byte. Keep the two corpora in the same order or the diff means nothing.
  *
