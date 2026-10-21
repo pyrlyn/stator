@@ -14,7 +14,7 @@ import { chromium } from 'playwright-core';
 import type { Browser, BrowserContextOptions, Page } from 'playwright-core';
 
 const DIST = fileURLToPath(new URL('../dist/', import.meta.url));
-// Must match the base the build used (astro.config.mjs).
+// Must match the base the build used (astro.config.ts).
 const BASE = process.env['ASTRO_BASE'] ?? '/stator/';
 
 const TYPES: Readonly<Record<string, string>> = {

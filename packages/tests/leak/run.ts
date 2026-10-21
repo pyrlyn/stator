@@ -42,7 +42,7 @@ interface LeakFixture {
   readonly label: string;
   /** Extra Node arguments ahead of the entry for the oracle run. The strings loop calls an
    * extern the Stator side lowers to a direct C call; under Node that name needs its JS mirror
-   * preloaded — the golden runner's `--import node_shim.mjs` pattern, pointed at the landed shim
+   * preloaded — the golden runner's `--import node_shim.ts` pattern, pointed at the landed shim
    * whose bindings the fixture's declarations already match. */
   readonly nodeArgs: readonly string[];
   /** Extra `stator build` arguments after `-o`. A `.js` entry needs `--mode=js`. */
@@ -54,7 +54,7 @@ const FIXTURES: readonly LeakFixture[] = [
   {
     file: 'strings.ts',
     label: '10M FFI strings',
-    nodeArgs: ['--import', join(HERE, '..', 'golden', 'ts', 'extern_strstr', 'node_shim.mjs')],
+    nodeArgs: ['--import', join(HERE, '..', 'golden', 'ts', 'extern_strstr', 'node_shim.ts')],
   },
   { file: 'keys.js', label: '2M computed-key reads', nodeArgs: [], buildArgs: ['--mode=js'] },
 ];

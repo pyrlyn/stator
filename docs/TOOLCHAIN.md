@@ -185,7 +185,7 @@ Intl is a separate object directory rather than a flag on the default build.
 
 Vendored code compiles with `-Wall` alone rather than the runtime's `-Wall -Wextra -Werror`
 (plan-notes 101) and is never hand-edited. A version bump is `pnpm run vendor:update <name> [ref]`
-(`packages/runtime/vendor/update.mjs`): it refetches the manifest's files at that ref — re-running `port.mjs`
+(`packages/runtime/vendor/update.ts`): it refetches the manifest's files at that ref — re-running `port.ts`
 over upstream's `ieee754.cc` for fdlibm — and prints the provenance rows for the directory's
 `VENDOR.md`. `--check` validates the manifests offline. Re-vendoring at the pinned ref reproduces
 the tree byte-for-byte, so `git status` after a run is the diff the bump actually introduces.

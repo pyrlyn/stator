@@ -13078,3 +13078,31 @@ with `pnpm run test:coverage`. The scanner then logged `Analysing
 Check's CI half. The file half is the commands in `infra.yml` and the absent
 `sonarcloud.yml`, unchanged by the commit that moves the card.
 
+## 369. Task 6.15: own-source JavaScript is TypeScript, and the exempt set is checked (2026-10-19)
+
+**Plan:** §0.10 and §9 Task 6.15. `plan.md` edited in the same change: the task is a stub,
+evidence in `done.md`. §0.10 names `scripts/check-js-sources.ts`. Phase 8 step 3's re-vendor
+command is `node packages/runtime/vendor/update.ts quickjs-ng`.
+
+**What moved.** Oracle shims, the print corpus, `scripts/check-node.ts`,
+`packages/runtime/vendor/update.ts`, `packages/runtime/vendor/fdlibm/port.ts`,
+`site/astro.config.ts`, and `packages/tests/test262/harness/done.ts`. Node 26 type-strips them.
+`done.ts` is concatenated raw into Test262 sources, so it has no type annotations and is excluded
+from `packages/tests/tsconfig.json`. `packages/tests/leak/keys.js` stays: it is a `js`-mode
+fixture (`--mode=js`), not our source.
+
+**The gate.** `scripts/check-js-sources.ts` runs `git ls-files '*.js' '*.mjs' '*.cjs'` and fails
+unless every path is a `js`-mode input or example, vendored upstream code, generated output, or
+`site/public/`. `node_shim.js` / `.mjs` / `.cjs` and the two vendor scripts are never exempt.
+`pnpm run ci` runs the script before typecheck; the static job runs it after `dupes`; `moon run
+tests:ci` depends on `compiler:js-sources`.
+
+**fdlibm.c.** The generated preamble's regenerate line now says `node port.ts`. The C body was
+not regenerated: a regen fetches upstream and must stay byte-identical apart from that comment,
+and this change does not bump the pin. The next `pnpm run vendor:update fdlibm` rewrites the
+preamble from `port.ts` and leaves the algorithm alone.
+
+**Clone baseline.** The libm and stat example runners already shared a clone. Replacing
+`node_shim.mjs` with `node_shim.ts` in both changed that clone's fingerprint. `.jscpd-baseline.json`
+swaps one fingerprint for one (`964d0cad4424ce0b` → `4aecb478f234e5bf`) and stays at 180.
+

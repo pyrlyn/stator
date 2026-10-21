@@ -1,4 +1,4 @@
-// print_dates.mjs — the ground truth for print_dates.c. Same dates, same order, console.log.
+// print_dates.ts — the ground truth for print_dates.c. Same dates, same order, console.log.
 // If these two files drift apart the diff is meaningless, so edit them together.
 
 const show = (v) => {
