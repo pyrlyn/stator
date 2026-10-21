@@ -1,4 +1,4 @@
-// print_maps.mjs — the ground truth for print_maps.c. Same collections, same order, console.log.
+// print_maps.ts — the ground truth for print_maps.c. Same collections, same order, console.log.
 // If these two files drift apart the diff is meaningless, so edit them together.
 
 class P {

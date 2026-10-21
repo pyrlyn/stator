@@ -279,7 +279,7 @@ function harnessSource(root: string, path: string, metadata: Test262Frontmatter)
   const files = [
     join(root, 'harness', 'assert.js'),
     join(root, 'harness', 'sta.js'),
-    join(HERE, 'harness', 'done.js'),
+    join(HERE, 'harness', 'done.ts'),
     ...metadata.includes.map((name) => join(root, 'harness', name)),
   ];
   const missing = files.find((file) => !existsSync(file));

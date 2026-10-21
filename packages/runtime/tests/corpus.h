@@ -2,7 +2,7 @@
  *
  * Each `print_*.c` builds a fixed list of values and prints them, and each one needs a number and a
  * string from a C literal. They live here rather than three times over so that "what a corpus value
- * is" has one definition: a corpus is only ground truth while the C side and the `.mjs` side build
+ * is" has one definition: a corpus is only ground truth while the C side and the `.ts` side build
  * the SAME values, and a helper that drifted in one file would break that quietly.
  */
 

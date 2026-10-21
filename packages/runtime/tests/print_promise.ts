@@ -1,4 +1,4 @@
-// print_promise.mjs — the ground truth for print_promise.c. Same promises, same subscriptions, same
+// print_promise.ts — the ground truth for print_promise.c. Same promises, same subscriptions, same
 // order. If these two files drift apart the diff is meaningless, so edit them together.
 //
 // `.then` is how JavaScript spells "subscribe a reaction", which is what the C side does natively;

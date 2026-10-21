@@ -1,6 +1,6 @@
 /* print_accessors.c — accessor properties on dynamic objects (docs/VALUE.md §4.15).
  *
- * Ground truth is Node: print_accessors.mjs builds the SAME objects with object-literal get/set
+ * Ground truth is Node: print_accessors.ts builds the SAME objects with object-literal get/set
  * members and the same reads and writes, in the same order; `just runtime-test` diffs the two
  * byte-for-byte.
  *

@@ -3359,6 +3359,36 @@ CI evidence (PR #161, head `889f434`, pipeline run
 > its Setup step and, when `SONAR_TOKEN` is set, its Coverage step writes `coverage/lcov.info`.
 > A draft pull request skips the job.
 
+### Task 6.15 — No JavaScript in our own source ✅ (landed 2026-10-19)
+
+Port to strict TypeScript, which Node runs through type stripping the way it already runs every
+harness: the oracle shims (`packages/tests/golden/*/*/node_shim.ts`, `examples/ffi/*/node_shim.ts`),
+the runtime print corpus (`packages/runtime/tests/print_*.ts`), `scripts/check-node.ts`,
+`packages/runtime/vendor/update.ts`, `packages/runtime/vendor/fdlibm/port.ts`,
+`site/astro.config.ts`, and the Test262 host adapter `packages/tests/test262/harness/done.ts`.
+`done.ts` is concatenated raw into the corpus, so it stays annotation-free and is excluded from
+`packages/tests/tsconfig.json`. Callers (`test262/run.ts`, the leak runner, the libm and stat
+example runners) load the `.ts` paths. `fixture-build.ts` still accepts an older `node_shim.mjs`
+after `node_shim.ts`.
+
+Exempt, and rejected by the checker when they are not: `js`-mode test inputs and examples
+(including `packages/tests/leak/keys.js` and `examples/**` other than `node_shim.*`), vendored
+upstream code, generated output, and `site/public/` assets. Oracle shims and the two vendor
+scripts are never exempt. `scripts/check-js-sources.ts` is that list: `pnpm run ci` runs it before
+typecheck, the static CI job runs it after `dupes`, and `moon run tests:ci` depends on
+`compiler:js-sources`.
+
+`fdlibm.c`'s generated preamble now names `port.ts`. The algorithm body was not regenerated
+(plan-notes 369).
+
+The libm and stat example runners already shared a clone. The shim rename changed its
+fingerprint, so `.jscpd-baseline.json` swaps one hash for one and stays at 180 clones.
+
+**Check:** `git ls-files '*.js' '*.mjs' '*.cjs'` lists only exempt paths (689 files);
+`node scripts/check-js-sources.ts` prints `stator: 689 tracked js/mjs/cjs files, all exempt` and
+exits 0. `pnpm run typecheck`, `pnpm run lint`, and `pnpm run dupes` exit 0.
+`pnpm run ci` is the rest of the gate.
+
 ## Phase 7 — FFI ✅ COMPLETE (2026-09-16)
 
 **Check — PASSED.** *An example that statically links SQLite, queries it from TS, and is

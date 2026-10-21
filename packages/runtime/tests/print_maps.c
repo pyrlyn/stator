@@ -1,6 +1,6 @@
 /* print_maps.c — prints a fixed corpus of Maps and Sets through jsrt_print.
  *
- * Ground truth is Node, not a table written here: runtime/tests/print_maps.mjs builds the SAME
+ * Ground truth is Node, not a table written here: runtime/tests/print_maps.ts builds the SAME
  * collections in the same order and prints them with console.log; `just runtime-test` diffs the
  * two byte-for-byte. Keep the two corpora in the same order or the diff means nothing.
  *

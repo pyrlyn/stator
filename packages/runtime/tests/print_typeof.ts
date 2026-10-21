@@ -1,4 +1,4 @@
-// print_typeof.mjs — the ground truth for print_typeof.c. Same values, same order, console.log.
+// print_typeof.ts — the ground truth for print_typeof.c. Same values, same order, console.log.
 // If these two files drift apart the diff is meaningless, so edit them together.
 
 class P {

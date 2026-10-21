@@ -53,13 +53,13 @@ New bugs, dead code and moves from a read-only Cursor cloud review of `main` at 
 
 | ID | Priority | Kind | Status | Where | Fix |
 | --- | --- | --- | --- | --- | --- |
-| T20 | P0 | bug | confirmed | `.github/workflows/ci.yml:3-10`; comment `:1-2`; `revert-on-failure` at `:406-410` | `ci.yml` runs only on `pull_request`, `workflow_dispatch` and `workflow_call`, not on `push` to `main`, so `main` has no test workflow and `revert-on-failure` never runs. Add `push: branches: [main]`, or make those checks required on `main`. |
+| ~~T20~~ | P0 | bug | fixed | plan-notes 353, 364 | `ci.yml` runs on `push` to `main`, so a merge has a test workflow and `revert-on-failure` can fire. |
 | T21 | P0 | bug | confirmed | PR CI run 37692965170 vs `ccf9818` on `main` | T17 was merged with red CI (`pipeline` failed in 0 s, `frontend (windows/arm64)` failed), so required checks are missing or bypassable. Require `static`, `frontend-coverage` and the Windows/macOS jobs (or a smaller set you actually enforce); do not merge on SonarCloud green alone. |
-| T22 | P0 | move | confirmed | `.github/workflows/pipeline.yml:26` (`uses: listepo/infra/…`) → the `pyrlyn/ci` reusable workflow | A public repo cannot call a private `listepo/infra` workflow; every pipeline run fails in 0 s (main run 37694735601). Merge PR #61, which repoints it. |
+| ~~T22~~ | P0 | move | fixed | plan-notes 353, 364; #158 | `pipeline.yml` calls `pyrlyn/ci/.github/workflows/ci.yml@main`. A SHA pin of that caller fails `no-pinned-ci`. |
 | ~~T23~~ | P1 | bug | fixed | plan-notes 354 | The official win-arm64 Node is cross-compiled without a startup snapshot, so `util.format` sees seven later globals. The test follows `node_use_node_snapshot` and still fails on any other difference. |
 | T24 | P1 | move | confirmed | `packages/compiler/src/codegen/index.ts` (6,276 lines, the only file in `codegen/`) → files under `packages/compiler/src/codegen/` | Split the C emitter by HIR family (expressions, statements, classes, closures, runtime calls); it is the merge bottleneck. |
-| T25 | P2 | bug | confirmed | `AGENTS.md` repo map; `packages/runtime/src/jsrt_print.c:42-46`, `:50-80`; `packages/runtime/vendor/` | The repo map says Ryū is vendored, but `vendor/` holds only `quickjs-ng/` and `fdlibm/`, and `shortest_digits` is a hand-written float printer. Fix the repo map now; vendoring Ryū stays with §12, where it is already scheduled. |
-| T26 | P2 | dead code | confirmed | root `package.json:53`; `packages/tests/package.json:10`; comments only in `packages/compiler/src/frontend/program.ts:532`, `:592`, `:608` | `memfs` is never imported. Remove it from both `package.json` files, or add the memfs host the comments describe. |
+| ~~T25~~ | P2 | bug | fixed | plan-notes 353, 364 | The repo map names QuickJS-NG only. `docs/TOOLCHAIN.md` says Ryū is not vendored; fetching it stays on §12. |
+| ~~T26~~ | P2 | dead code | fixed | plan-notes 353, 364 | `memfs` is gone from both package manifests. The custom-host comments say "in-memory CompilerHost". |
 
 Already tracked here, not added again: moving number printing to the vendored Ryū C code (the review's move M3) is in §12, "Ryū rides here too".
 
@@ -78,7 +78,7 @@ Not added: exposing `ffi-gen` as a `stator ffi-gen` subcommand is optional, and 
 7. **Allocation dominates, not dispatch.** Boa's Cranelift JIT experiment proved it: 10× on numeric loops, <5% on allocation-bound benchmarks; GC tracing 10–16% of time, dispatch only ~13%. This ordering drives the optimization ladder (§12).
 8. **One pipeline, two modes.** A mode is a *policy layer* (which files are accepted, which constructs are errors, how untyped code is typed) over one shared pipeline. If a feature seems to require forking the pipeline per mode, the design is wrong — stop and fix the design (usually: the feature belongs to the dynamic representation or the Phase-8 tier).
 9. **The compiler itself is strict TypeScript.** Locked `tsconfig` (§4 Task 1.0), no `any` in compiler source, vitest for unit tests (dev-only, run on Node's own type stripping — plan-notes 285), runtime dependency budget: the `typescript` package only — **owner-directed exception (2026-09-04, plan-notes 187):** `src/cli/` may use ink + react (human-facing rendering plus per-command help, long-form flags) and dotenv (environment loading), and `typebox` + `jsonc-parser` for `stator.config.json` (`src/cli/config.ts` only, plan-notes 303), and OpenTelemetry tracing (`@opentelemetry/*`, opt-in via `STATOR_OTEL`, standard OTLP env config — works with Maple and any OTLP backend) is wired through `src/support/telemetry.ts`; execa is dev-only for `tests/unit/cli.test.ts`. The budget still rules everything else: no pass, lowering, or codegen code may depend on these. The compiler must always pass its own `ts` mode's *philosophy*: fully typed, no dynamic escape hatches.
-10. **No JavaScript in the project's own source** (creator's direction 2026-10-02, plan-notes 289). The compiler, runtime, `std`, the `node:*` wrappers, test harnesses, oracle shims and scripts are strict TypeScript, C or Zig. `.js` / `.mjs` / `.cjs` files exist only as: `js`-mode test inputs and examples (the thing under test), vendored upstream code, generated output, and assets a browser loads as-is (`site/public/`). The existing harness `.mjs` files migrate under §9 Task 6.15.
+10. **No JavaScript in the project's own source** (creator's direction 2026-10-02, plan-notes 289). The compiler, runtime, `std`, the `node:*` wrappers, test harnesses, oracle shims and scripts are strict TypeScript, C or Zig. `.js` / `.mjs` / `.cjs` files exist only as: `js`-mode test inputs and examples (the thing under test), vendored upstream code, generated output, and assets a browser loads as-is (`site/public/`). Tracked files outside that set fail `scripts/check-js-sources.ts`, which `pnpm run ci` runs (Task 6.15, plan-notes 369).
 
 **Non-goals (v1):** npm-ecosystem compatibility (Phase 11 targets Node *programs* such as `tsc`, not the npm ecosystem at large); `eval`/`new Function` (never in `ts` mode; `js` mode not before Phase 8); `Proxy`; `with`; prototype mutation after construction; decorators; full Intl; Node API emulation outside Phase 11's `--node` platform (§11c); Windows (POSIX + clang first); self-hosting the compiler.
 
@@ -802,15 +802,7 @@ one people learn to ignore — which costs more than having no gate at all.
 
 ~~**Task 6.14 — A checker stack overflow must fail its test, never its shard.**~~ ✅ **landed 2026-09-14** — evidence in [done.md](done.md) → Phase 6 Task 6.14 (plan-notes 254).
 
-**Task 6.15 — No JavaScript in our own source (§0.10, plan-notes 289).** Port to strict TS (Node
-runs them through type stripping, as it runs every harness today): the oracle shims
-(`packages/tests/golden/*/*/node_shim.mjs`, `examples/ffi/*/node_shim.mjs`), the runtime print
-corpus (`packages/runtime/tests/print_*.mjs`), `scripts/check-node.mjs`,
-`packages/runtime/vendor/update.mjs`, `packages/runtime/vendor/fdlibm/port.mjs` and
-`site/astro.config.mjs`. Exempt: `js`-mode test inputs and examples, vendored upstream code,
-generated output, `site/public/` assets. **Check:** `git ls-files '*.js' '*.mjs' '*.cjs'` lists only
-exempt paths; a lint step (a few lines in `scripts/`) enforces that list in `ci`; `pnpm run ci`
-green.
+~~**Task 6.15 — No JavaScript in our own source (§0.10, plan-notes 289).**~~ ✅ **landed 2026-10-19** — evidence in [done.md](done.md) → Phase 6 Task 6.15 (plan-notes 369).
 
 **Task 6.16 — Work the clone baseline to zero (AGENTS.md golden rule 10).** `.jscpd-baseline.json`
 records 224 clones (identifier-insensitive, tests/vendor/docs excluded — 4.6% of our source, of
@@ -1150,7 +1142,7 @@ two things that must exist before implementation is allowed to start:
    at link time, not a merge conflict a compiler will catch. Vendor `quickjs.c`/`quickjs.h` at the
    **same commit**, extend the existing `VENDOR.md` rather than starting a second one, and check who
    supplies the `lre_*` embedder callbacks once both halves are present. Acquisition is
-   `node runtime/vendor/update.mjs quickjs-ng` (`pnpm run vendor:update`) with `quickjs.c`/
+   `node packages/runtime/vendor/update.ts quickjs-ng` (`pnpm run vendor:update`) with `quickjs.c`/
    `quickjs.h` added to that manifest — the same route the existing drop took, and it reaches the
    network (plan-notes 188 corrects the stale no-network constraint). The commit, not the transport,
    is the constraint.
@@ -2454,4 +2446,5 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.81** (2026-10-19): **Task 6.31's caller changed under it** (plan-notes 361). #138 deleted `sonarcloud.yml` and #158 requires `pyrlyn/ci` at `@main` (`no-pinned-ci` rejects a SHA). The card now sets the `infra.yml` commands and the setup doc; it does not add a pinned workflow.
 - **v4.84** (2026-10-19): **Task 6.31 lands** (plan-notes 363). `pipeline / sonarcloud / sonarcloud` on run 39297920890 ran Setup and, with `SONAR_TOKEN` set, Coverage; the scanner read `coverage/lcov.info`. The card moves to done.md.
 
+- **v4.82** (2026-10-19): **Cloud-review rows T20, T22, T25 and T26 were already fixed** (plan-notes 364). The table still said confirmed. `ci.yml` pushes `main`, `pipeline.yml` calls `pyrlyn/ci` at `@main` (#158), the repo map no longer lists Ryū as vendored, and `memfs` is gone. T21 (required checks) and T24 (split the C emitter) stay open. These rows were never given Steps and a Check, so they are struck in the table the way T23 was, not moved to `done.md`.
 - **v4.85** (2026-10-19): **T10.3 lands: parallel clang via `STATOR_COMPILE_JOBS`** (plan-notes 368). Unset uses the host's parallelism but stays one translation unit under 8 functions or 40,000 characters of C. An explicit value above 1 splits at two functions. `1` is the old single clang line, and the emitted C does not change. A bad value is `STA0021`. On the clang-heavy fixture, 4 jobs were 1.63× the serial wall (clang itself 3.4×). Emit and verify were too small to shard; typecheck did not dominate that fixture, so there is no process pool. The CI smoke is `packages/tests/unit/compile-jobs.test.ts` in the existing frontend jobs.

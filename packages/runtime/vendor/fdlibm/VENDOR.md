@@ -8,7 +8,7 @@
 | Version | V8 `14.6.202` — the V8 inside the pinned Node `26.7.0` (`process.versions.v8`) |
 | License | fdlibm (SunSoft, 1993) + V8's BSD-3-Clause — see `LICENSE` |
 | Vendored | 2026-09-01 |
-| Converted by | `port.mjs` (C++ → C11, mechanical) |
+| Converted by | `port.ts` (C++ → C11, mechanical) |
 
 ## Why this is here
 
@@ -31,9 +31,9 @@ transcendentals with the same code Node does, so agreement is structural rather 
 
 | File | Why |
 |---|---|
-| `fdlibm.c` | The engine — 20 entry points, generated from upstream by `port.mjs`. |
+| `fdlibm.c` | The engine — 20 entry points, generated from upstream by `port.ts`. |
 | `fdlibm.h` | Their declarations, `fdlibm_`-prefixed. |
-| `port.mjs` | The C++ → C11 conversion, so a version bump is re-download + re-run. |
+| `port.ts` | The C++ → C11 conversion, so a version bump is re-download + re-run. |
 | `LICENSE` | Upstream's, unmodified. |
 
 **Not here:** `hypot` and `random`. Neither lives in `ieee754.cc` upstream — V8 implements
@@ -50,9 +50,9 @@ file exists to remove. The prefix makes the choice explicit at every call site.
 ## Rules
 
 **Never hand-edit `fdlibm.c`** (AGENTS.md, Don'ts). It is generated. A change that turns out to be
-necessary is a `plan-notes.md` entry first, then an edit to `port.mjs` — which keeps the next
-version bump a re-run rather than a merge: `node runtime/vendor/update.mjs fdlibm [ref]` downloads
-upstream's `ieee754.cc` into a temp dir and runs `port.mjs` over it. `LICENSE` is assembled by hand
+necessary is a `plan-notes.md` entry first, then an edit to `port.ts` — which keeps the next
+version bump a re-run rather than a merge: `node packages/runtime/vendor/update.ts fdlibm [ref]` downloads
+upstream's `ieee754.cc` into a temp dir and runs `port.ts` over it. `LICENSE` is assembled by hand
 (SunSoft's notice + V8's, neither of which is a file upstream), so that script never touches it —
 re-read it when a bump crosses a license change.
 

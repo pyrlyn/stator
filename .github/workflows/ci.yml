@@ -29,6 +29,7 @@ concurrency:
 #   typecheck   -> static (once) + frontend (every platform)
 #   lint        -> static
 #   dupes       -> static
+#   check-js-sources -> static
 #   test        -> frontend
 #   test:coverage -> frontend (linux/x64; lcov artifact)
 #   runtime     -> runtime
@@ -160,6 +161,7 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run lint
       - run: pnpm run dupes
+      - run: node scripts/check-js-sources.ts
       # Workflow lint, not part of `pnpm run ci`: jactionlint with .github/jactionlint.yaml and its
       # baseline, the check the pre-push hook (hk.pkl) runs. Last, so mise's PATH never shadows the
       # Node above; install_args installs only jactionlint (version as in mise.toml), and
