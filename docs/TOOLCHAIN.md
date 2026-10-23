@@ -153,6 +153,8 @@ compiled as thin-LTO bitcode too when the archive was. Full PGO / a custom LLVM 
 | `STATOR_RUNTIME` | runtime flavor: `asan` or `intl` archive, and the builtins the gate admits | yes |
 | `STATOR_OTEL` | turns tracing on (plan-notes 187) | yes |
 | `CC` | the C compiler Stator runs | **no** |
+| `STATOR_COMPILE_JOBS` | how many clang processes compile the generated C (plan.md §11b T10.3). `1` is one translation unit and one clang line; unset splits a large enough program across the host's cores; an explicit value above 1 splits whenever there are two functions. An invalid value is `STA0021` | **no** |
+| `STATOR_COMPILE_TIMING` | set to anything to print one `stator: timing …` line of per-span wall times on stderr (T10.3's measurement; does not change the output) | **no** |
 | `STATOR_RUNTIME_ROOT` (and `STATOR_STD_ROOT`, `STATOR_NODE_ROOT`) | where the runtime headers and archives live | **no** |
 | `OTEL_*` (`OTEL_EXPORTER_OTLP_ENDPOINT`, `_HEADERS`, `OTEL_SERVICE_NAME`, …) | where trace data goes | **no** |
 

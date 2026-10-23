@@ -8,10 +8,11 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { emitC, type LibraryEmit } from '../codegen/index.ts';
 import { collectLinkFlags } from '../frontend/extern.ts';
 import {
@@ -30,7 +31,12 @@ import { optimize } from '../passes/index.ts';
 import { BuildError, type Diagnostic } from '../support/diagnostics.ts';
 import { type RuntimeFlavor, runtimeFlavor, withRuntimeFlavor } from '../support/features.ts';
 import { packageRoot } from '../support/package-root.ts';
-import { withSpan } from '../support/telemetry.ts';
+import { addStageTime, runStageTimings, withSpan } from '../support/telemetry.ts';
+import {
+  partitionTranslationUnit,
+  resolveCompileJobs,
+  shouldSplitTranslationUnit,
+} from './compile-jobs.ts';
 import { isStaleLdSystemLibFailure, staleLdHint, staleLdRetryArgs } from '../support/toolchain.ts';
 import {
   type BundlerChoice,
@@ -56,8 +62,8 @@ export interface BuildOptions {
   /** Keep the intermediate .c next to the executable instead of deleting it. */
   readonly keepC: boolean;
   /** clang `-O` for the final link when not under ASan. Default 2; CLI `--opt` / `STATOR_OPT`
-   * override. `0` trades runtime speed for faster iterate compiles. Full per-module `.o` cache and
-   * parallel clang are a separate follow-up — not this knob. */
+   * override. `0` trades runtime speed for faster iterate compiles. How many clang processes
+   * compile the generated C is `STATOR_COMPILE_JOBS`, not this knob (plan.md §11b T10.3). */
   readonly opt?: OptLevel;
   /** Extra clang link flags from the CLI `--link=` escape hatch (docs/FFI.md §9), in
    * command-line order. The `.d.ts` `@statorLink` pragma flags travel inside the compiled
@@ -84,6 +90,8 @@ export interface BuildOptions {
   /** `--node`: the Node platform (plan.md §11c T11.5, docs/MODES.md §6). Node built-ins resolve
    * to `packages/node`; a frontend policy, like the mode. */
   readonly node?: boolean;
+  /** In-process seam for `STATOR_COMPILE_JOBS`. The CLI leaves it unset. */
+  readonly compileJobs?: number;
 }
 
 export { BuildError };
@@ -213,6 +221,16 @@ const UNIT_NAME = /^[A-Za-z0-9_]+$/;
 
 /** Returns the process exit code: 0 on success, 1 if the program was rejected. */
 export async function build(options: BuildOptions): Promise<number> {
+  // Off unless asked: the store and the stderr line are the T10.3 measurement, not part of a
+  // normal build's output.
+  if (process.env['STATOR_COMPILE_TIMING'] === undefined) {
+    return runBuild(options);
+  }
+  return runStageTimings(() => runBuild(options));
+}
+
+async function runBuild(options: BuildOptions): Promise<number> {
+  const jobs = demandCompileJobs(options.compileJobs);
   if (options.unitName !== undefined && !UNIT_NAME.test(options.unitName)) {
     throw new BuildError(
       'STA0004',
@@ -323,16 +341,29 @@ export async function build(options: BuildOptions): Promise<number> {
   try {
     writeOutput(keptC ?? { role: 'the C file', path: cPath }, compiled.c);
     // Default -O2; STATOR_OPT=0 / --opt=0 skips most clang opts for faster iterate compiles.
-    // Per-module parallel .o cache stays a follow-up (plan.md §12).
-    linkExecutable(
-      cPath,
-      options.out,
-      options.opt ?? 2,
-      [...compiled.linkFlags, ...(options.linkFlags ?? [])],
-      compiled.std,
-      runtime,
-      compiled.flavor,
-    );
+    // Jobs=1 keeps one clang invocation, so the C it compiles is the text just written.
+    const externFlags = [...compiled.linkFlags, ...(options.linkFlags ?? [])];
+    const opt = options.opt ?? 2;
+    if (shouldSplitTranslationUnit(compiled.c, jobs.jobs, jobs.explicit)) {
+      const partsDir = mkdtempSync(join(tmpdir(), 'stator-jobs-'));
+      try {
+        await linkExecutableParallel(
+          compiled.c,
+          partsDir,
+          options.out,
+          opt,
+          externFlags,
+          compiled.std,
+          runtime,
+          compiled.flavor,
+          jobs.jobs,
+        );
+      } finally {
+        rmSync(partsDir, { recursive: true, force: true });
+      }
+    } else {
+      linkExecutable(cPath, options.out, opt, externFlags, compiled.std, runtime, compiled.flavor);
+    }
     return 0;
   } finally {
     if (scratch !== null) {
@@ -530,6 +561,17 @@ async function reportDiagnostics(diagnostics: readonly Diagnostic[]): Promise<bo
   return diagnostics.length > 0;
 }
 
+function demandCompileJobs(override: number | undefined): {
+  readonly jobs: number;
+  readonly explicit: boolean;
+} {
+  const resolved = resolveCompileJobs(process.env['STATOR_COMPILE_JOBS'], override);
+  if (!resolved.ok) {
+    throw new BuildError('STA0021', resolved.message);
+  }
+  return resolved;
+}
+
 function linkExecutable(
   cPath: string,
   out: string,
@@ -632,6 +674,144 @@ function runClangCaptured(cc: string, args: readonly string[]): CapturedClang {
   };
 }
 
+/** The parallel path's runner. `spawnSync` would serialize the pool; a captured child keeps one
+ * failure's text identical to `runClangCaptured` and lets the other units keep compiling. */
+function runClangAsync(cc: string, args: readonly string[]): Promise<CapturedClang> {
+  return new Promise((resolve) => {
+    const child = spawn(cc, [...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const out = child.stdout;
+    const err = child.stderr;
+    let settled = false;
+    let spawnError: unknown;
+    const finish = (status: number | null, error: unknown): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve({ status, stdout: stdout.join(''), stderr: stderr.join(''), error });
+    };
+    if (out === null || err === null) {
+      finish(null, new Error('clang stdio was not piped'));
+      return;
+    }
+    out.setEncoding('utf8');
+    err.setEncoding('utf8');
+    out.on('data', (chunk: string) => {
+      stdout.push(chunk);
+    });
+    err.on('data', (chunk: string) => {
+      stderr.push(chunk);
+    });
+    // 'error' is not always followed by a useful status. Record it, and also finish here so a
+    // spawn that never closes cannot hang the build.
+    child.on('error', (error) => {
+      spawnError = error;
+      finish(null, error);
+    });
+    child.on('close', (status) => {
+      finish(status, spawnError);
+    });
+  });
+}
+
+/** At most `limit` tasks at once. The first failure is the one rethrown, after the tasks already
+ * running have finished — clang children are not left behind. */
+async function runPool(tasks: readonly (() => Promise<void>)[], limit: number): Promise<void> {
+  if (tasks.length === 0) {
+    return;
+  }
+  let cursor = 0;
+  let failure: unknown;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      if (failure !== undefined) {
+        return;
+      }
+      const index = cursor;
+      cursor += 1;
+      if (index >= tasks.length) {
+        return;
+      }
+      const task = tasks[index];
+      if (task === undefined) {
+        continue;
+      }
+      try {
+        await task();
+      } catch (error) {
+        if (failure === undefined) {
+          failure = error;
+        }
+      }
+    }
+  };
+  const width = Math.max(1, Math.min(limit, tasks.length));
+  await Promise.all(Array.from({ length: width }, () => worker()));
+  if (failure !== undefined) {
+    throw failure;
+  }
+}
+
+/** Partition the emitted C, compile each unit in parallel, then link the objects. The objects
+ * share one header of extern declarations; the shared unit owns every file-scope definition. */
+async function linkExecutableParallel(
+  c: string,
+  partsDir: string,
+  out: string,
+  opt: OptLevel,
+  externFlags: readonly string[],
+  std: boolean,
+  runtime: Runtime,
+  gateFlavor: RuntimeFlavor,
+  jobs: number,
+): Promise<void> {
+  const parts = partitionTranslationUnit(c, jobs);
+  writeFileSync(join(partsDir, parts.headerName), parts.header, 'utf8');
+  const objects: string[] = [];
+  const compileTasks: (() => Promise<void>)[] = [];
+  let compileMs = 0;
+  const cc = selectCC(runtime);
+  const compileArgs = [
+    '-std=c11',
+    ...(runtime.sanitized ? SANITIZER_FLAGS : [`-O${String(opt)}`]),
+    '-I',
+    runtime.include,
+    '-c',
+  ];
+  for (const unit of parts.units) {
+    const unitPath = join(partsDir, unit.name);
+    const objectPath = unitPath.replace(/\.c$/, '.o');
+    writeFileSync(unitPath, unit.source, 'utf8');
+    objects.push(objectPath);
+    compileTasks.push(async () => {
+      const start = performance.now();
+      const result = await runClangAsync(cc, [...compileArgs, unitPath, '-o', objectPath]);
+      compileMs += performance.now() - start;
+      const startError = clangStartError(cc, result);
+      if (startError !== undefined) {
+        throw startError;
+      }
+      if (result.status !== 0) {
+        process.stderr.write(result.stdout);
+        process.stderr.write(result.stderr);
+        throw new BuildError(
+          'STA0009',
+          `C compiler failed (exit ${result.status ?? 'signal'} on ${unit.name}) — this is a ` +
+            'compiler bug; keep the C with `--keep-c` and report it',
+        );
+      }
+      requireProduced(cc, objectPath);
+    });
+  }
+  await runPool(compileTasks, jobs);
+  addStageTime('link/compile', compileMs);
+  withSpan('link/ld', {}, () => {
+    link(objects, out, opt, externFlags, std, runtime, gateFlavor);
+  });
+}
+
 /** Compile generated C to a relocatable object for a C consumer (`--emit-header`, plan §10
  * Task 7.2 step 1): `clang -c`, so `-o` names an object, not an executable. No archive, no
  * link flags — linking is the consumer's job once steps 3–5 emit the stubs and the init. */
@@ -673,17 +853,18 @@ function requireProduced(cc: string, out: string): void {
   }
 }
 
-/** The clang link line, pure so a test can read it: the generated C, `libjsrt_std.a` exactly
- * when the program imports `std/*` (plan.md §11c T11.2 Check), the runtime archive, the
- * recorded and extern flags. Exported for that test only. */
+/** The clang link line, pure so a test can read it: the generated C (or its partitioned
+ * objects), `libjsrt_std.a` exactly when the program imports `std/*` (plan.md §11c T11.2 Check),
+ * the runtime archive, the recorded and extern flags. Exported for that test only. */
 export function linkArguments(
-  cPath: string,
+  inputs: string | readonly string[],
   out: string,
   opt: OptLevel,
   externFlags: readonly string[],
   std: boolean,
   runtime: Runtime = resolveRuntime(),
 ): string[] {
+  const sources = typeof inputs === 'string' ? [inputs] : inputs;
   // Tree-shaking builtins (plan.md Task 3.12): builtins live in libjsrt.a, and the archive links
   // at .o granularity -- one referenced symbol drags in every builtin its object file holds. The
   // linker's dead-stripping restores function granularity: a builtin the program never references
@@ -702,7 +883,7 @@ export function linkArguments(
     ...shakeFlags,
     '-I',
     runtime.include,
-    cPath,
+    ...sources,
     // The std archive before the runtime's, though neither depends on the other: the order a
     // static link reads archives is load-bearing in general, and fixing it here keeps it stable.
     ...(std ? [STD_ARCHIVE] : []),
@@ -752,7 +933,7 @@ function requireLinkArchives(std: boolean, runtime: Runtime): void {
 }
 
 function link(
-  cPath: string,
+  inputs: string | readonly string[],
   out: string,
   opt: OptLevel,
   externFlags: readonly string[],
@@ -772,7 +953,7 @@ function link(
   // conda-clang 21.1.8's Darwin ASan runtime deadlocks during dyld's early malloc
   // initialization on the current macOS host (see selectCC above).
   const cc = selectCC(runtime);
-  const args = linkArguments(cPath, out, opt, externFlags, std, runtime);
+  const args = linkArguments(inputs, out, opt, externFlags, std, runtime);
   const first = runClangCaptured(cc, args);
   const startError = clangStartError(cc, first);
   if (startError !== undefined) {
