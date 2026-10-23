@@ -2800,7 +2800,7 @@ function staticName(className: string, member: string): string {
  * not model) falls back to the source name, which is what the descriptor will carry too: the
  * declaration site renames only against bindings already made. */
 function hirClassName(declaration: ts.ClassDeclaration | ts.ClassExpression): string {
-  return hirNameOf(declaration) ?? declaration.name?.text ?? '';
+  return hirNameOf(declaration) ?? classDisplayName(declaration) ?? '';
 }
 
 /** The storage a `#private` USE resolves to: the mangled slot/property plus the class that
@@ -8516,7 +8516,7 @@ function mangleClassName(
     // them), so there is no tuple to specialize.
     return hirNameOf(owner) ?? expressionClassName(owner) ?? null;
   }
-  const name = owner.name?.text;
+  const name = classDisplayName(owner);
   if (name === undefined || name === '') {
     return null;
   }
@@ -9370,18 +9370,25 @@ function lowerClass(
   },
 ): ClassDeclaration | Block | null {
   const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
-  // An expression has no name of its own: its identity is Node's `.name` for the spelling —
-  // the inner name, else the bound variable (see `expressionClassName`) — which doubles as
-  // the scope registration below (shadowing renames exactly like a declaration's) and as the
-  // `#private` owner and span-lookup name. Its instance type comes from the construct
-  // signature's return: the variable binds the static side, and the inner name (if any)
-  // is visible only inside, so neither names the instance from here.
+  // A class's identity is Node's `.name` for the spelling — the declared name, the inner
+  // name or bound variable of an expression (see `expressionClassName`), or `default` for
+  // the anonymous `export default class {}` — which doubles as the scope registration below
+  // (shadowing renames exactly like a declaration's) and as the `#private` owner and
+  // span-lookup name. The BINDING is `declaredBindingName` where one exists: `*default*` for
+  // the anonymous default export, which is the name the module's export table looks up
+  // (plan.md §11c T11.5a). Its instance type comes from the construct signature's return for
+  // a spelling with no name node, and from the declared type otherwise.
   const displayName = classDisplayName(node);
   let self: ts.Type | undefined;
   if (displayName !== undefined) {
     if (ts.isClassExpression(node)) {
+      // An expression's type is the constructor; the instance is its construct return.
       self = checker.getTypeAtLocation(node).getConstructSignatures()[0]?.getReturnType();
-    } else if (node.name !== undefined) {
+    } else if (node.name === undefined) {
+      // The anonymous `export default class {}`: the declaration's own type IS the instance
+      // type (the checker gives a named declaration's name symbol the same answer).
+      self = checker.getTypeAtLocation(node);
+    } else {
       const symbol = checker.getSymbolAtLocation(node.name);
       self = symbol === undefined ? undefined : checker.getDeclaredTypeOfSymbol(symbol);
     }
@@ -9409,11 +9416,16 @@ function lowerClass(
   // An ordinary declaration is ALSO a binding of its scope, declared here before anything it
   // contains is lowered: a block that re-declares an outer class gets a HIR name of its own
   // instead of sharing the outer descriptor (plan.md §8 step 23). `declare` (not `set`) is what
-  // makes shadowing rename. Specializations skip this -- a generic class lives at module scope
+  // makes shadowing rename. The binding is `declaredBindingName` where one exists (`*default*`
+  // for the anonymous default export, which is what the module's export table looks up) and the
+  // display name otherwise. Specializations skip this -- a generic class lives at module scope
   // by gate rule, so its source name is already unique, and the tuple lowerings share one
   // declaration node whose HIR name belongs to the carrier.
   if (spec === undefined) {
-    hirNameOfDeclaration.set(node, bindings.declare(displayName, type));
+    const bindingName = ts.isClassDeclaration(node)
+      ? (declaredBindingName(node) ?? displayName)
+      : displayName;
+    hirNameOfDeclaration.set(node, bindings.declare(bindingName, type));
   }
   // The HIR identity of this declaration: the mangled tuple for a specialization, the renamed
   // binding for a shadowing class, the source name otherwise. Every use site resolves to the
@@ -9428,13 +9440,9 @@ function lowerClass(
   // the base is always lowered first, source order being what makes the descriptor's forward
   // reference to it legal.
   const renameBase = (name: string): string => {
-    // Expression bases match by display name (Node's `.name`), declarations by source name.
-    const owner = ancestry(node, checker).find(
-      (candidate) =>
-        (ts.isClassExpression(candidate)
-          ? expressionClassName(candidate)
-          : candidate.name?.text) === name,
-    );
+    // Bases match by display name (Node's `.name`): the declared name, an expression's
+    // inner name or variable, or `default` for the anonymous default export.
+    const owner = ancestry(node, checker).find((candidate) => classDisplayName(candidate) === name);
     const renamed = owner === undefined ? undefined : hirNameOf(owner);
     return renamed ?? name;
   };

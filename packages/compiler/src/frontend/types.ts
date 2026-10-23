@@ -1,7 +1,12 @@
 import * as ts from 'typescript';
 import { ERROR_CLASSES, errorHType } from '../hir/nodes.ts';
 import type { HField, HType } from '../hir/types.ts';
-import { ambiguousStarExports, namespaceModule } from './modules.ts';
+import {
+  ambiguousStarExports,
+  DEFAULT_EXPORT_BINDING,
+  isDefaultExportDeclaration,
+  namespaceModule,
+} from './modules.ts';
 import {
   accessorName,
   accessorProperty,
@@ -296,19 +301,14 @@ function classTypeToHType(type: ts.Type, checker: ts.TypeChecker, depth: number)
   if (symbol === undefined || declaration === undefined) {
     return null;
   }
-  // An anonymous class DECLARATION (`export default class {}`) has no name to identify its
-  // layout by, and nominal equality needs one. A bound EXPRESSION takes Node's `.name` — the
-  // inner name, else the variable (`const C = class D {}` is `D`, `const C = class {}` is
-  // `C`) — so nominal equality holds onto the same spelling every use resolves through
-  // (plan.md §8 step 12(d)). An unbound expression has no identity and stays Unknown.
+  // An anonymous class DECLARATION (`export default class {}`) takes Node's `.name` —
+  // `default` — the same way a bound EXPRESSION takes the inner name or the variable
+  // (`const C = class D {}` is `D`, `const C = class {}` is `C`), so nominal equality holds
+  // onto the same spelling every use resolves through (plan.md §8 step 12(d)). Any other
+  // unnamed declaration or an unbound expression has no identity and stays Unknown.
   let className: string | undefined;
-  if (ts.isClassDeclaration(declaration)) {
-    if (declaration.name === undefined) {
-      return null;
-    }
-    className = declaration.name.text;
-  } else if (ts.isClassExpression(declaration)) {
-    className = expressionClassName(declaration);
+  if (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration)) {
+    className = classDisplayName(declaration);
     if (className === undefined) {
       return null;
     }
@@ -753,15 +753,20 @@ export function shapeName(fields: readonly HField[], methods: readonly HField[] 
   ];
   return `{${parts.join(', ')}}`;
 }
-/** The instance type a class declaration declares, or `undefined` for an anonymous one. Going
- * through the name's symbol is what makes this answerable for any class in a chain, not just the
- * one whose `ts.Type` the caller happened to start from. */
+/** The instance type a class declaration declares, or `undefined` when no symbol resolves.
+ * Going through the name's symbol is what makes this answerable for any class in a chain, not
+ * just the one whose `ts.Type` the caller happened to start from. The anonymous `export default
+ * class {}` has no name symbol; its declaration's own type is already the instance type. */
 function declaredTypeOf(
   declaration: ts.ClassDeclaration | ts.ClassExpression,
   checker: ts.TypeChecker,
 ): ts.Type | undefined {
-  const symbol =
-    declaration.name === undefined ? undefined : checker.getSymbolAtLocation(declaration.name);
+  if (declaration.name === undefined) {
+    return ts.isClassDeclaration(declaration) && isDefaultExportDeclaration(declaration)
+      ? checker.getTypeAtLocation(declaration)
+      : undefined;
+  }
+  const symbol = checker.getSymbolAtLocation(declaration.name);
   return symbol === undefined ? undefined : checker.getDeclaredTypeOfSymbol(symbol);
 }
 
@@ -1291,7 +1296,9 @@ export function aliasedClassDeclaration(
       return undefined;
     }
     if (ts.isClassDeclaration(declaration)) {
-      return declaration.name !== undefined ? declaration : undefined;
+      // The anonymous `export default class {}` has no name node but does have an identity
+      // (`*default*`, plan.md §8 step 12(d)); anything else without a name does not.
+      return classDisplayName(declaration) !== undefined ? declaration : undefined;
     }
     // The binding's own name declares rather than uses: without this the formation
     // `const K = C` would resolve its own `K` to `C` and read as a use of itself.
@@ -1400,13 +1407,21 @@ export function expressionClassName(expression: ts.ClassExpression): string | un
 }
 
 /** The spelling a class-like answers to in source positions: the declared name for a
- * declaration, Node's `.name` (inner name, else bound variable) for an expression.
- * `undefined` for an anonymous declaration or an unbound expression — shapes with no
- * identity, which the gate refuses before any consumer asks. */
+ * declaration, Node's `.name` (inner name, else bound variable) for an expression, and
+ * `*default*` for the anonymous `export default class {}` — ES's own binding name, which
+ * the descriptor keys on and `descriptorName` prints as Node's `.name` (`default`).
+ * `undefined` for any other anonymous declaration or an unbound expression — shapes with
+ * no identity, which the gate refuses before any consumer asks. */
 export function classDisplayName(
   node: ts.ClassDeclaration | ts.ClassExpression,
 ): string | undefined {
-  return ts.isClassExpression(node) ? expressionClassName(node) : node.name?.text;
+  if (ts.isClassExpression(node)) {
+    return expressionClassName(node);
+  }
+  if (node.name !== undefined) {
+    return node.name.text;
+  }
+  return isDefaultExportDeclaration(node) ? DEFAULT_EXPORT_BINDING : undefined;
 }
 
 /** The type of `new P()` for a JavaScript constructor function `P`: TypeScript gives the

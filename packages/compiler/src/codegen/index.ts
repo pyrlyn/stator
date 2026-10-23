@@ -97,6 +97,7 @@ import {
   type ExportedFunction,
   type UnitExports,
 } from '../frontend/export.ts';
+import { DEFAULT_EXPORT_BINDING } from '../frontend/modules.ts';
 import { RECEIVER_NAME } from '../lower/captures.ts';
 import { shadowSource } from '../lower/scope.ts';
 
@@ -336,6 +337,11 @@ function descriptorName(name: string): string {
   // A shadowed class prints under its source name: Node shows `C`, not the HIR spelling the
   // descriptor is keyed by (plan.md §8 step 23 -- the class twin of step 17's function rule).
   const unshadowed = shadowSource(name) ?? name;
+  // The anonymous `export default class {}` binds `*default*` (plan.md §11c T11.5a) and prints
+  // as Node's own `.name`, `default`.
+  if (unshadowed === DEFAULT_EXPORT_BINDING) {
+    return 'default';
+  }
   // A specialization prints under its source name: Node shows `Box`, not `Box<number>`, and the
   // mangled tuple is a compile-time key no identifier can spell, so stripping it cannot collide.
   const generic = unshadowed.indexOf('<');
@@ -945,7 +951,7 @@ class Emitter {
       // whose evaluation can repeat, which is exactly the surface that could capture here.
       out.push(
         `static const JSRTClosure _jsrt_class_object_${id} = {${cls.ctor === undefined ? 'NULL' : `_jsrt_fn_${String(this.functionId(cls.ctor.fn))}`}, ` +
-          `${cls.ctor === undefined ? 0 : String(closureMeta(cls.ctor.fn).arity)}, ${cNameLiteral(cls.name)}, NULL, false, &_jsrt_class_${id}};`,
+          `${cls.ctor === undefined ? 0 : String(closureMeta(cls.ctor.fn).arity)}, ${cNameLiteral(descriptorName(cls.name))}, NULL, false, &_jsrt_class_${id}};`,
       );
     }
     if (this.classes.length > 0) {

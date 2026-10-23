@@ -581,17 +581,10 @@ test('a bound class expression is vetted like a declaration and compiles', () =>
     ),
     ['STA1214'],
   );
-  // An anonymous DECLARATION keeps its own message (plan.md §8 step 12(d) residue).
-  const { program: declProgram } = createProgram(
-    'export default class { m() { return 7; } }\n',
-    '/test.ts',
-  );
-  const decl = gateProgram(declProgram, 'ts');
-  assert.deepEqual(
-    decl.map((d) => d.code),
-    ['STA1214'],
-  );
-  assert.match(decl[0]?.message ?? '', /an anonymous class is not yet supported/);
+  // An anonymous default DECLARATION takes Node's `.name` (`default`) and is accepted
+  // (plan.md §8 step 12(d)); a named default class is accepted as before.
+  assert.deepEqual(codesFor('export default class { m() { return 7; } }\n'), []);
+  assert.deepEqual(codesFor('export default class N { m() { return 7; } }\n'), []);
 });
 
 test('this is gated, not left to the lowering', () => {
