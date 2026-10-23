@@ -13620,3 +13620,10 @@ Initial integration checks: strict typecheck and lint pass; `pnpm run dupes`
 reports 143 clones and zero new clones, with the baseline unchanged. The full
 `pnpm run ci` gate is run on the combined tree before merge; its final output is
 recorded in the follow-up PR.
+
+The first full run found three unit expectations for the old string-index and
+unknown-object-spread refusals. They now assert the newly supported constructs;
+a separate assertion still requires STA1214 for `{ ...null }`, preserving the
+adjacent unsupported case. All 800 unit tests pass. The standard selfhost generator
+records a reduction from 1879 to 1831 STA1214 diagnostics, with the other codes
+and `not-yet` verdict unchanged; its 15 targets and std/node smoke pass.
