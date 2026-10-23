@@ -2,7 +2,9 @@
 // @verdict: not-yet
 // @code: STA1214
 // SUBSET.md: Static methods and static class members
-// `super.m()` in a static starts the lookup at the base and keeps `this` as the receiver.
+// `super.m()` in a static is lexically bound to the base, so the CALL erases — but the
+// base method's own `this` is still the reached-through class object (`B.m()` sees `B`,
+// `D.m()` sees `D`), which needs the class object (subset_static_this_*).
 
 class B {
   static id = 'B';

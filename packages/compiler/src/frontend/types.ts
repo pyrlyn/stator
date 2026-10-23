@@ -1571,6 +1571,23 @@ export function staticMemberOf(
       member: ts.ClassElement;
     }
   | undefined {
+  // `this.x` / `super.x` inside a STATIC context name a static of the class (or its base),
+  // the same binding `C.x` reads (plan.md §8 step 12(d)). The receiver is the class object,
+  // which this subset does not build -- so the access erases to the declaration, exactly as
+  // a bound class expression's in-place use does. An INSTANCE context's `this` is the
+  // receiver parameter and takes the ordinary member path below.
+  if (access.expression.kind === ts.SyntaxKind.ThisKeyword) {
+    const owner = staticThisClass(access);
+    return owner === undefined
+      ? undefined
+      : staticMemberIn(owner, access.name.text, wantMethod, checker);
+  }
+  if (access.expression.kind === ts.SyntaxKind.SuperKeyword) {
+    const owner = staticSuperClass(access, checker);
+    return owner === undefined
+      ? undefined
+      : staticMemberIn(owner, access.name.text, wantMethod, checker);
+  }
   if (!ts.isIdentifier(access.expression)) {
     return undefined;
   }
@@ -1589,7 +1606,23 @@ export function staticMemberOf(
   if (declaration === undefined) {
     return undefined;
   }
-  const name = access.name.text;
+  return staticMemberIn(declaration, access.name.text, wantMethod, checker);
+}
+
+/** The static `name` of `declaration`, walking the chain -- statics are inherited, so `D.count`
+ * on `class D extends C` reads the ONE binding `C` declared. Shared by the identifier path and
+ * the `this`/`super` erasure above. */
+function staticMemberIn(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  name: string,
+  wantMethod: boolean | undefined,
+  checker: ts.TypeChecker,
+):
+  | {
+      owner: ts.ClassDeclaration | ts.ClassExpression;
+      member: ts.ClassElement;
+    }
+  | undefined {
   const seen = new Set<ts.ClassDeclaration | ts.ClassExpression>();
   for (
     let current: ts.ClassDeclaration | ts.ClassExpression | undefined = declaration;
@@ -1615,6 +1648,49 @@ export function staticMemberOf(
     }
   }
   return undefined;
+}
+
+/** The class whose statics `this.x` names inside a STATIC context: the enclosing class body's
+ * owner. `undefined` outside one, or in an INSTANCE context where `this` is the receiver
+ * parameter and takes the ordinary member path. Bare `this` in a static is the class object,
+ * which stays refused (plan.md §8 step 12(d)). */
+export function staticThisClass(
+  access: ts.PropertyAccessExpression,
+): ts.ClassDeclaration | ts.ClassExpression | undefined {
+  for (let n: ts.Node | undefined = access.parent; n !== undefined; n = n.parent) {
+    if (ts.isClassDeclaration(n) || ts.isClassExpression(n)) {
+      return n;
+    }
+    // An instance member's `this` is the receiver, not the class object — stop here.
+    // A static member continues the walk: its `this` is the class being defined.
+    if (
+      ts.isConstructorDeclaration(n) ||
+      ts.isMethodDeclaration(n) ||
+      ts.isGetAccessorDeclaration(n) ||
+      ts.isSetAccessorDeclaration(n) ||
+      ts.isPropertyDeclaration(n)
+    ) {
+      if (!isStaticMember(n)) {
+        return undefined;
+      }
+      continue;
+    }
+    if (ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n)) {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/** The class whose statics `super.x` names inside a static context: the base of the enclosing
+ * class. `undefined` when there is no enclosing class or no base -- bare `super` in a static is
+ * a JavaScript SyntaxError and stays refused. */
+export function staticSuperClass(
+  access: ts.PropertyAccessExpression,
+  checker: ts.TypeChecker,
+): ts.ClassDeclaration | ts.ClassExpression | undefined {
+  const self = staticThisClass(access);
+  return self === undefined ? undefined : baseClassOf(self, checker);
 }
 
 /** Which class in `declaration`'s ancestry declares the method `name` that `declaration` responds

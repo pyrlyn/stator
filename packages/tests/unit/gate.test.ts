@@ -409,13 +409,17 @@ test('statics are accepted; what has no class object to read is not', () => {
   assert.deepEqual(codesFor(`${cls}console.log(C.m());`), []);
   // A static initialization block runs at class-definition time against the statics, which are
   // plain bindings initialized where the class declaration sits -- so its statements lower
-  // right after it. `this` inside one is still the class object, which does not exist here.
+  // right after it. `this.x` naming a static erases to that binding; bare `this` stays refused.
   assert.deepEqual(
     codesFor('class C {\n  static n = 1;\n  static {\n    C.n = 2;\n  }\n}\nconsole.log(C.n);'),
     [],
   );
   assert.deepEqual(
     codesFor('class C {\n  static n = 1;\n  static {\n    this.n = 2;\n  }\n}\nconsole.log(C.n);'),
+    [],
+  );
+  assert.deepEqual(
+    codesFor('class C {\n  static n = 1;\n  static {\n    console.log(this);\n  }\n}\n'),
     ['STA1214'],
   );
   assert.deepEqual(

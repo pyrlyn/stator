@@ -1,9 +1,8 @@
 // @mode: js
-// @verdict: not-yet
-// @code: STA1214
+// @verdict: static
 // SUBSET.md: Static methods and static class members (plan.md §8 step 12(d)).
-// Same refusal as subset_static_block_this_ts: a static block has no receiver,
-// so `this` would read the class object, which does not exist here.
+// Same rule as subset_static_block_this_ts: `this.x` in a static block names the
+// class being defined and erases to its static binding.
 
 class C {
   static n = 1;

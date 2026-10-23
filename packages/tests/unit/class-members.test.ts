@@ -428,14 +428,27 @@ test('a static block lowers after the class declaration, in the same scope', () 
   assert.deepEqual(gateCodes(STATIC_BLOCK, 'js'), []);
 });
 
-test('this in a static block stays not-yet', () => {
+test('this.x naming a static is accepted in a static block; bare this stays not-yet', () => {
+  // `this.x` erases to the class's own static binding (plan.md §8 step 12(d)); bare `this`
+  // is the class object, which stays refused.
   assert.deepEqual(
     gateCodes(`class C {\n  static n = 1;\n  static {\n    this.n = 2;\n  }\n}\n`, 'ts'),
+    [],
+  );
+  assert.deepEqual(
+    gateCodes(`class C {\n  static n = 1;\n  static {\n    console.log(this);\n  }\n}\n`, 'ts'),
     ['STA1214'],
   );
 });
 
-test('super in a static block stays not-yet', () => {
+test('super.x naming a base static is accepted; a base instance method stays not-yet', () => {
+  assert.deepEqual(
+    gateCodes(
+      `class B {\n  static n = 1;\n}\nclass D extends B {\n  static {\n    console.log(super.n);\n  }\n}\n`,
+      'ts',
+    ),
+    [],
+  );
   assert.deepEqual(
     gateCodes(
       `class B {\n  m(): number {\n    return 1;\n  }\n}\nclass D extends B {\n  static s = 0;\n  static {\n    D.s = super.m();\n  }\n}\n`,

@@ -591,7 +591,7 @@ function gateConstruct(
       return gateNew(node as ts.NewExpression, typeChecker, mode);
 
     case ts.SyntaxKind.ThisKeyword:
-      return gateThis(node);
+      return gateThis(node, typeChecker);
 
     // Permanently rejected in BOTH modes, by design -- ESM is always strict and `with`
     // is illegal in strict mode, so this is the language's restriction, not Stator's
@@ -4298,11 +4298,11 @@ function gateClass(
     // are plain bindings initialized where the class declaration sits. Field initializers and
     // blocks execute in source order (plan.md §8 step 12(d)): the declaration carries every
     // static binding, the fields before the first block initialize with it, and each later
-    // field run assigns after its block. One limit keeps that honest: `super` in a block
-    // would read the class object through a base it has no receiver for (`this` is refused
-    // separately, by the `this` rule, as for static methods).
+    // field run assigns after its block. One limit keeps that honest: a `super` that does not
+    // name a base static would read the class object through a base it has no receiver for
+    // (`this` is refused separately, by the `this` rule, as for static methods).
     if (ts.isClassStaticBlockDeclaration(member)) {
-      if (staticBlockUsesSuper(member)) {
+      if (staticBlockUsesSuper(member, checker)) {
         return notYet('super in a static initialization block is not yet supported', 5);
       }
       continue;
@@ -5509,13 +5509,15 @@ function gateNew(node: ts.NewExpression, checker: ts.TypeChecker, mode: Mode): G
  * nothing there — the construct is supported, the typing is not.
  * At the top level of a module `this` is `undefined` but there is no function to own it, and in
  * a static member it is the class object, which does not exist here — both stay refused. */
-function gateThis(node: ts.Node): GateResult {
+function gateThis(node: ts.Node, checker: ts.TypeChecker): GateResult {
   for (let n: ts.Node | undefined = node.parent; n !== undefined; n = n.parent) {
     // A field INITIALIZER is a `this` position too, though it is lexically inside no function:
     // the lowering moves it into the constructor, where the receiver is a parameter. A STATIC
-    // member's `this` is the class object instead, and there is no class object here -- a static is
-    // a plain binding -- so there is nothing for it to read. A static BLOCK is the same position
-    // wearing a block's clothes: it runs against the statics, not a receiver.
+    // member's `this` is the class object, which this subset does not build — so a `this.x`
+    // in a static FIELD initializer or BLOCK (where `this` is always the class being defined)
+    // erases to that class's static binding and is accepted; in a static METHOD `this` depends
+    // on how the method was reached (a subclass may have overridden the static), so that stays
+    // refused. Bare `this` in any static stays refused.
     if (
       ts.isConstructorDeclaration(n) ||
       ts.isMethodDeclaration(n) ||
@@ -5523,12 +5525,20 @@ function gateThis(node: ts.Node): GateResult {
       ts.isSetAccessorDeclaration(n) ||
       ts.isPropertyDeclaration(n)
     ) {
-      return isStaticMember(n)
-        ? notYet('this in a static class member is not yet supported', 5)
-        : { kind: 'accept' };
+      if (!isStaticMember(n)) {
+        return { kind: 'accept' };
+      }
+      // A static FIELD initializer runs with `this` bound to the class being defined, so
+      // erasure is exact. A static METHOD's `this` is whoever the method was reached through.
+      const defining = ts.isPropertyDeclaration(n);
+      return defining && isStaticThisMemberUse(node, checker)
+        ? { kind: 'accept' }
+        : notYet('this in a static class member is not yet supported', 5);
     }
     if (ts.isClassStaticBlockDeclaration(n)) {
-      return notYet('this in a static initialization block is not yet supported', 5);
+      return isStaticThisMemberUse(node, checker)
+        ? { kind: 'accept' }
+        : notYet('this in a static initialization block is not yet supported', 5);
     }
     // An arrow does NOT stop the walk: it has no `this` of its own and sees the enclosing one,
     // which is the whole reason arrows are used inside methods. A plain `function` DOES stop it,
@@ -5539,6 +5549,19 @@ function gateThis(node: ts.Node): GateResult {
     }
   }
   return notYet('this outside a method or function is not yet supported', 5);
+}
+
+/** Whether `this` is the receiver of a member access that names a static of the enclosing
+ * class — the narrow `static x = this.y` / `this.m()` path (plan.md §8 step 12(d)). Bare `this`
+ * in a static, or a member that is not a static, stays the class-object refusal. */
+function isStaticThisMemberUse(node: ts.Node, checker: ts.TypeChecker): boolean {
+  const parent = node.parent;
+  return (
+    parent !== undefined &&
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === node &&
+    staticMemberOf(parent, checker, undefined) !== undefined
+  );
 }
 
 /** The constraint of a type-parameter-typed value, if it is declared with one.
@@ -5694,15 +5717,28 @@ export function constraintDeclaration(
  * `super` in a block would read the class object through a base with no receiver to run it
  * against (`lowerSuperCall` needs the receiver binding only constructors and methods have). A
  * nested class body is skipped: `super` there belongs to the inner class, which the gate vets
- * on its own. (`this` needs no walk: the `this` rule refuses it node by node.) */
-function staticBlockUsesSuper(block: ts.ClassStaticBlockDeclaration): boolean {
+ * on its own. (`this` needs no walk: the `this` rule refuses it node by node.)
+ * `super.x` naming a static of the base is the one admitted shape (plan.md §8 step 12(d)):
+ * it erases to the base's static binding, which needs no receiver. */
+function staticBlockUsesSuper(
+  block: ts.ClassStaticBlockDeclaration,
+  checker: ts.TypeChecker,
+): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found || ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
       return;
     }
     if (node.kind === ts.SyntaxKind.SuperKeyword) {
-      found = true;
+      const parent = node.parent;
+      const resolved =
+        parent !== undefined &&
+        ts.isPropertyAccessExpression(parent) &&
+        parent.expression === node &&
+        staticMemberOf(parent, checker, undefined) !== undefined;
+      if (!resolved) {
+        found = true;
+      }
       return;
     }
     ts.forEachChild(node, visit);
@@ -5780,6 +5816,12 @@ function gateMemberAccess(
   // make. Bare `super` never reaches here (the SuperKeyword case owns it) and stays refused
   // there.
   if (access.expression.kind === ts.SyntaxKind.SuperKeyword) {
+    // In a STATIC context `super.x` names a static of the base class — the one binding `Base.x`
+    // reads (plan.md §8 step 12(d)). The class object does not exist here, so the access erases
+    // to that binding exactly as `this.x` does in a static of the same class.
+    if (staticMemberOf(access, checker, undefined) !== undefined) {
+      return { kind: 'accept' };
+    }
     // Declarations and bound-expression bases alike (plan.md §8 step 12(d)): `super.m` in a
     // subclass of `const C = class …` skips to the expression's method the same way.
     const base = classLikeOf(checker.getTypeAtLocation(access.expression));
