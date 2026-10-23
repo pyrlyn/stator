@@ -73,6 +73,10 @@ pnpm run ci                      # typecheck -> lint -> dupes -> unit -> runtime
 pnpm run test                    # unit tests via vitest (the default; coverage is on-demand, not per-run)
 pnpm run test:impact             # only the tests your diff reaches, every harness (plan.md §9 Task 6.17); prints its reasons, falls back to the full run
 pnpm run test:impact:record      # record that map: a full instrumented run at a clean HEAD → .cache/impact/impact-map.json
+# CI handoff (Task 6.17 step 4): `impact map` on `main` (and nightly) records and publishes the
+# map as an artifact + cache entry `impact-map-<sha>`; `impact select` on pull requests restores
+# the newest `main` map and runs `test:impact`. Neither job is a required check — `test` and
+# `pnpm run ci` stay the gate.
 pnpm run test:coverage           # unit tests + src/ coverage table; writes coverage/lcov.info (only when the table is the question — ~4x wall time)
 pnpm run test:subset             # feature × mode decision matrix
 pnpm run test:golden             # compile + run vs the pinned Node, byte-for-byte
