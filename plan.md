@@ -884,7 +884,7 @@ built yet:
   **Growth may be recorded** (creator, 2026-10-02, plan-notes 306): a change that grows a count
   runs `--update` in the same change, so the increase shows in `baseline.json`'s diff for review.
   This differs from `dupes:baseline`, which only ever shrinks.
-  Whether growth may be recorded is open for the creator (plan-notes 306). When a target reaches
+  When a target reaches
   zero, that is its milestone, and from then on its build and smoke check are part of the gate.
 - **Stage-2 check (not built).** When the compiler's verdict becomes `static` or `dynamic`, its
   binary compiles a hello-world fixture. That C output must be **byte-identical** to the C the

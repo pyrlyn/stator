@@ -13504,3 +13504,33 @@ threshold problem — if the weekly host's measured spread ever clears 20%, the 
 (with `--update` for the new `process.ts` target). Not run here: `pnpm run ci` in full
 (test262/asan/leak need the CI toolchain), `pnpm run test:golden` in full (a sample of
 `node_*` and `loop` fixtures was run).
+
+
+## 375. Integrate the outstanding local branches and refresh selfhost evidence (2026-10-23)
+
+The integration preserves the commits from local `main`, `b1-class-surface`,
+`c1-tooling-ci`, and the uncommitted anonymous-default-class work in `d1-class-redo`.
+The latter is already covered by B1; its merge changes no source. The emitter conflicts
+are resolved in T24's modules rather than restoring the old monolithic `index.ts`.
+Existing `ancestry`, call-slot, loop, and module-state helpers are reused. The clone
+baseline shrinks to 143 clones with zero new clones; no fingerprints are added.
+
+The first full `pnpm run ci` passed 800 unit tests, the runtime print corpus,
+967 subset fixtures (936 passed, 31 expected-fail, 0 failed), and all 471 goldens,
+then exposed a stale selfhost count: `STA1214` 1844 → 1879. A separate
+`node src/cli/main.ts explain --json` in `packages/compiler` on the original local
+`main` (`17e42fb`) already reports 1849. The integrated tree reports 1879; its added
+CLI code brings package/global/process/QualifiedName and other not-yet diagnostics.
+The verdict remains `not-yet`, with `STA1207: 1` and `STA1213: 2` unchanged.
+`node packages/tests/selfhost/run.ts --update` records the measured count under
+§9 Task 6.19's explicit growth policy and passes all 15 targets plus std/node smoke.
+
+The same section still called permission to record growth an open question immediately
+after documenting the creator's decision allowing it (note 306). That stale sentence
+is removed, and AGENTS.md's command comment is aligned with the normative policy.
+No task or phase is newly declared complete by this integration.
+
+SonarCloud's two new reliability findings were default `.sort()` calls in the
+`std_env` golden. One shared explicit UTF-16 comparator preserves Node's default
+ordering independently of locale; `node packages/tests/golden/run.ts --filter std_env`
+prints `golden: 1 fixtures — 1 passed, 0 failed`.

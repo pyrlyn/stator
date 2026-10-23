@@ -6,6 +6,11 @@
 import { cwd, get, has, names, set, unset } from "std/env";
 import { isAbsolute } from "std/path";
 
+// Environment names use Node's default UTF-16 order, independent of the host locale.
+function compareNames(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 console.log(get("TZ"), has("TZ"));
 console.log(names().includes("TZ"), names().includes("STATOR_STD_ENV_SCRATCH"));
 console.log(get("STATOR_STD_ENV_SCRATCH"), has("STATOR_STD_ENV_SCRATCH"));
@@ -13,11 +18,11 @@ set("STATOR_STD_ENV_SCRATCH", "hello-std");
 console.log(get("STATOR_STD_ENV_SCRATCH"), has("STATOR_STD_ENV_SCRATCH"));
 set("STATOR_STD_ENV_SCRATCH", "");
 console.log("[" + (get("STATOR_STD_ENV_SCRATCH") ?? "unset") + "]", has("STATOR_STD_ENV_SCRATCH"));
-console.log(names().includes("STATOR_STD_ENV_SCRATCH"), names().filter((n) => n.startsWith("STATOR_")).sort().join(","));
+console.log(names().includes("STATOR_STD_ENV_SCRATCH"), names().filter((n) => n.startsWith("STATOR_")).sort(compareNames).join(","));
 unset("STATOR_STD_ENV_SCRATCH");
 unset("STATOR_STD_ENV_SCRATCH");
 console.log(get("STATOR_STD_ENV_SCRATCH"), has("STATOR_STD_ENV_SCRATCH"));
-console.log(names().includes("STATOR_STD_ENV_SCRATCH"), names().filter((n) => n.startsWith("STATOR_")).sort().join(","));
+console.log(names().includes("STATOR_STD_ENV_SCRATCH"), names().filter((n) => n.startsWith("STATOR_")).sort(compareNames).join(","));
 console.log(isAbsolute(cwd()));
 
 function attempt(label: string, body: () => void): void {
