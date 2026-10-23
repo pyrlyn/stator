@@ -443,6 +443,98 @@ jobs:
     timeout-minutes: 60
     steps: *ffi-steps
 
+  # Task 6.17 step 4: the impact map is recorded on main (and by nightly.yml) and handed to pull
+  # requests, which run `test:impact` against it. Recording is a full instrumented run of every
+  # harness at a clean HEAD -- it is the only thing that produces `.cache/impact/impact-map.json`
+  # -- so it is a main-only job and never a required check. `record.ts` writes nothing when a test
+  # fails (a map recorded on red would under-select exactly the code that broke).
+  #
+  # Handoff: the map is published twice. (1) an artifact on this run, named `impact-map`, which a
+  # human or a later workflow can download; (2) a cache entry keyed `impact-map-<sha>`, which is
+  # the mechanism the PR job restores with `restore-keys: impact-map-` -- GitHub serves the most
+  # recently created matching cache, and caches from the default branch are readable from every
+  # pull request. The cache is what makes "newest main map" a one-line restore; the artifact is
+  # the inspectable copy.
+  impact-map:
+    name: impact map
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      # fetch-depth 0: the map is keyed to HEAD and the selector later proves
+      # `merge-base --is-ancestor <map.commit> HEAD`, which a shallow clone cannot answer.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.58.0'
+      - uses: ./.github/actions/setup
+      # Same native deps as `runtime`, so leak and ffi are recorded rather than skipped -- a map
+      # that never saw a harness selects conservatively and loses the whole point of step 4.
+      - name: Install Boehm GC and SQLite
+        run: sudo apt-get update && sudo apt-get install -y libgc-dev libsqlite3-dev clang llvm
+      - run: pnpm install --frozen-lockfile
+      - name: Record impact map
+        run: pnpm run test:impact:record
+      - name: Upload impact map artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: impact-map
+          path: .cache/impact/impact-map.json
+          if-no-files-found: ignore
+      - name: Save impact map cache
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .cache/impact/impact-map.json
+          key: impact-map-${{ github.sha }}
+
+  # The pull-request half of Task 6.17 step 4: restore the newest `main` map and run
+  # `pnpm run test:impact`, which prints the selection (or `impact: FULL RUN — <why>` and runs
+  # everything) in this job's log. Not a required check -- `test` and `pnpm run ci` stay the
+  # gate (AGENTS.md). This is the fast iteration signal, and its log is where a reviewer sees
+  # "selection made from a main map".
+  impact-select:
+    name: impact select
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.58.0'
+      - uses: ./.github/actions/setup
+      - name: Install Boehm GC and SQLite
+        run: sudo apt-get update && sudo apt-get install -y libgc-dev libsqlite3-dev clang llvm
+      - run: pnpm install --frozen-lockfile
+      # restore-keys prefix finds the most recently created `impact-map-*` cache, which the
+      # impact-map job on main writes. Caches from the default branch are visible to every PR,
+      # so this is the newest main map without an API lookup. A miss leaves the path empty and
+      # `test:impact` falls back to the full run, saying why -- never a silent narrowing.
+      - name: Restore newest main impact map
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .cache/impact/impact-map.json
+          key: impact-map-pr-${{ github.sha }}
+          restore-keys: |
+            impact-map-
+      - name: Show map provenance
+        run: |
+          if [ -f .cache/impact/impact-map.json ]; then
+            node -e "const m=require('./.cache/impact/impact-map.json'); console.log('impact: map from commit', m.commit, 'on Node', m.node, m.platform, 'dirty=' + String(m.dirty))"
+          else
+            echo "impact: no map restored — test:impact will fall back to the full run"
+          fi
+      - name: Run tests the change reaches
+        run: pnpm run test:impact
+
   revert-on-failure:
     name: revert-on-failure
     needs:

@@ -23,6 +23,10 @@
     "verdict": "dynamic",
     "codes": {}
   },
+  "packages/node/src/process.ts": {
+    "verdict": "dynamic",
+    "codes": {}
+  },
   "packages/std/src/encoding.ts": {
     "verdict": "static",
     "codes": {}

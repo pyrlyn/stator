@@ -6101,11 +6101,11 @@ function lowerExpression(
     // lose which of the five was written -- and that is exactly what `instanceof` has to answer.
     const errorCtor = errorCtorName(node.expression, checker);
     if (errorCtor !== undefined) {
-      const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
-      const args = lowerArguments(node.arguments, sourceFile, checker, bindings, diagnostics);
-      if (args === null) {
+      const lowered = lowerNewCallArgs(node, sourceFile, checker, bindings, diagnostics);
+      if (lowered === null) {
         return null;
       }
+      const { span, args } = lowered;
       // §20.5.1.1 step 3 sets `message` only when the argument is not undefined, leaving it the
       // empty string otherwise -- so the omitted form is `''`, not `undefined`.
       const arg: Expression = args[0] ?? {
@@ -6134,11 +6134,11 @@ function lowerExpression(
     // is the only one the gate let through, and `jsrt_date_from_value` discriminates its three
     // shapes -- a time value, an ISO string, another Date -- by tag.
     if (type.kind === 'date') {
-      const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
-      const args = lowerArguments(node.arguments, sourceFile, checker, bindings, diagnostics);
-      if (args === null) {
+      const lowered = lowerNewCallArgs(node, sourceFile, checker, bindings, diagnostics);
+      if (lowered === null) {
         return null;
       }
+      const { span, args } = lowered;
       // `new Date()` is `new Date(Date.now())`: §21.4.2.1 step 2 defines the zero-argument form as
       // the current time value, so desugaring it here costs the HIR no second node kind and keeps
       // the clock read in exactly one place. It is NOT `new Date(undefined)`, which is an Invalid
@@ -6169,11 +6169,11 @@ function lowerExpression(
       };
     }
     if (type.kind === 'promise') {
-      const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
-      const args = lowerArguments(node.arguments, sourceFile, checker, bindings, diagnostics);
-      if (args === null) {
+      const lowered = lowerNewCallArgs(node, sourceFile, checker, bindings, diagnostics);
+      if (lowered === null) {
         return null;
       }
+      const { span, args } = lowered;
       const executor = args[0];
       if (executor === undefined) {
         diagnostics.push(
@@ -11025,6 +11025,23 @@ function lowerOnlyArgument(
 ): Expression | null {
   const args = lowerArguments(node.arguments, sourceFile, checker, bindings, diagnostics, node);
   return args?.[0] ?? null;
+}
+
+/** The span and lowered arguments of a `new` call, or `null` when any argument failed. Shared
+ * by every constructor form that reads `node.arguments` (Error, Date, …). */
+function lowerNewCallArgs(
+  node: ts.NewExpression,
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  bindings: Scope,
+  diagnostics: Diagnostic[],
+): { readonly span: Span; readonly args: Expression[] } | null {
+  const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
+  const args = lowerArguments(node.arguments, sourceFile, checker, bindings, diagnostics);
+  if (args === null) {
+    return null;
+  }
+  return { span, args };
 }
 
 function lowerArguments(

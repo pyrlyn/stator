@@ -810,7 +810,13 @@ threshold to sit above a **measured** spread; what has been measured is one repe
 (22.358 → 21.458 ms, **4.0%**, same commit — done.md) plus five repeats on a second host
 (21.215–22.778 ms, **7.4%** max spread — plan-notes 246), and the 20% gate stands on both with
 ~3× headroom. Still open, narrowed: the Check names the machine that runs the weekly job, and
-neither host is it. **Check:** a handful of repeats of one commit
+neither host is it. **Local evidence (plan-notes 374, 2026-10-23):** five repeats of one commit
+on darwin-arm64 (Apple M3 Max, **not** the weekly job's ubuntu-24.04 runner) gave stator
+geomeans 25.784–29.497 ms (**14.4%** range spread); a sixth run tripped the 20% gate at
+**+53.9%** on the same commit, driven by `json-roundtrip` (53.9% per-program spread) and
+`startup` (62.4%) jitter at the millisecond scale. The **20% gate is unchanged**: the measured
+geomean spread sits under it, and raising the gate to hide the outlier would be the "alarm that
+fires on noise" this residue names. **Check:** a handful of repeats of one commit
 on the machine that runs the weekly job, the observed spread recorded in `plan-notes.md`, and the
 gate set from it. A gate below the noise floor fires on noise, and an alarm that fires on noise is
 one people learn to ignore — which costs more than having no gate at all.
@@ -844,15 +850,21 @@ records 224 clones (identifier-insensitive, tests/vendor/docs excluded — 4.6% 
 which 1.1% exact) as debt. Extract a shared helper per clone family at the responsible layer
 (`lower/`, `codegen/`, `runtime/src/jsrt_array_ops.c` lead the list) and shrink the baseline with
 `pnpm run dupes:baseline` in the same change. **Check:** the baseline is empty; `pnpm run dupes`
-then runs with no baseline at all.
+then runs with no baseline at all. **First tranche landed 2026-10-23** (plan-notes 374): six
+helpers in `lower/` + `codegen/` (`emitLoopBody`/`emitLoopEpilogue`, `emitWhileOpen`,
+`emitRouteDispatch`, `resetToModuleLevel`, `flushCallSlots`, `lowerNewCallArgs`); the baseline
+shrank 180 → 171 fingerprints. The `runtime/src/jsrt_array_ops.c` family and the rest of the
+list are still open.
 
 ~~**Task 6.17 — Test impact: build and run only what a change reaches.**~~ ✅ **landed 2026-10-02**
 (steps 1–3 and 5; Check (a)–(e) passed) — evidence in [done.md](done.md) → Phase 6 Task 6.17
-(plan-notes 293). **Still open — step 4, CI:** after PR #45's staged pipeline, `main` and the
-nightly run `pnpm run test:impact:record` and upload `.cache/impact/impact-map.json` as an
-artifact; pull requests download the newest `main` map and run `pnpm run test:impact` (it falls
-back to the full run, saying why, when that map is missing or not an ancestor). Done when a pull
-request's CI log shows a selection made from a `main` map.
+(plan-notes 293). **Step 4, CI — wiring landed 2026-10-23** (plan-notes 374): `main` and the
+nightly run `pnpm run test:impact:record` and publish `.cache/impact/impact-map.json` as an
+artifact **and** a cache entry `impact-map-<sha>`; pull requests restore the newest `main` map
+(`restore-keys: impact-map-`) and run `pnpm run test:impact` in the `impact select` job (it
+falls back to the full run, saying why, when that map is missing or not an ancestor). Local
+selection from a clean map is proved in plan-notes 374. **Done when a pull request's CI log
+shows a selection made from a `main` map** — not yet observable from this branch.
 
 ~~**Task 6.18 — `stator.config.json`: every CLI option in one validated file.**~~ ✅ **landed 2026-10-02** — evidence in [done.md](done.md) → Phase 6 Task 6.18 (plan-notes 303; `docs/CONFIG.md`).
 
@@ -1415,17 +1427,22 @@ Independent of T10.1/T10.2. Host Node only.
 
 Steps:
 
-1. Baseline: wall time of `stator build` on a fixed multi-file fixture at `STATOR_COMPILE_JOBS=1`
-   with spans (frontend / lower / verify / emit / clang / link).
-2. C1 — parallel clang; keep if ≥1.3× on that fixture.
-3. C2 — parallel emit if emit shows in the profile.
+1. ✅ **Baseline (2026-10-23, plan-notes 374):** wall time of `stator build` on a fixed multi-file
+   fixture at `STATOR_COMPILE_JOBS=1` with spans (frontend / lower / verify / emit / clang / link).
+   `STATOR_COMPILE_TIMING=1` prints the span line.
+2. ✅ **C1 — parallel clang (2026-10-23, plan-notes 374):** `STATOR_COMPILE_JOBS` partitions the
+   emitted C and compiles the units concurrently. **2.11×** on the 556KB fixture (jobs=8 vs 1);
+   `STATOR_COMPILE_JOBS=1` keeps byte-identical C. `STA0021` for a bad value. C2 below was not
+   taken (emit is 10 ms of a 2.4 s build).
+3. C2 — parallel emit if emit shows in the profile. **Not taken** (plan-notes 374: emit 10 ms).
 4. C3 — sharded lower/verify via process pool if typecheck/HIR dominate; document the Program
-   isolation choice.
+   isolation choice. **Not taken** (plan-notes 374: `hir/verify` 3 ms).
 5. CI: one job runs `STATOR_COMPILE_JOBS=2` smoke so races fail the build; default CI may stay
    serial for log readability.
 
 **Check:** documented before/after numbers in plan-notes; `STATOR_COMPILE_JOBS=1` preserves
-byte-identical emitted C for the fixture; CI green.
+byte-identical emitted C for the fixture; CI green. **Met 2026-10-23** (plan-notes 374) except
+the step-5 CI smoke, which is still open.
 
 ---
 
@@ -1615,10 +1632,15 @@ it). **Second slice landed** (plan-notes 317): the `node:fs` sync subset, 12 of 
 functions `tsc` calls (`closeSync`, `existsSync`, `mkdirSync`, `openSync`, `readFileSync`,
 `readdirSync`, `realpathSync`, `statSync`, `unlinkSync`, `utimesSync`, `writeFileSync`,
 `writeSync`) plus `rmdirSync`, with Node's `SystemError` shape. `watch`, `watchFile` and
-`unwatchFile` wait on the event loop (N2) and stay `STA1214`. **Next**, in the order `tsc` needs
-them: `process`, `node:os`, `Buffer.from`/`toString` (then `readFileSync` without an encoding
-answers a `Buffer`), `crypto.createHash`, `perf_hooks.performance`, timers; `path.win32` is its
-own slice (13 of T11.7's `path` tests need it).
+`unwatchFile` wait on the event loop (N2) and stay `STA1214`. **`process` slice landed
+2026-10-23** (plan-notes 374): `packages/node/src/process.ts` answers `argv`, `env` (startup
+snapshot via new `std/env.names()`), `cwd`, `exit`, `exitCode`, `pid`, `ppid`, `platform`,
+`arch`, `execPath`, `hrtime()` and `memoryUsage()` (rss), with goldens `ts/node_process.ts` and
+`js/node_process.js`, three decision tests, and `docs/NODE.md` at 12/68 for `node:process`.
+`hrtime.bigint`, `stdout`/`stderr`, `nextTick` and the free `process` global stay open. **Next**,
+in the order `tsc` needs them: `node:os`, `Buffer.from`/`toString` (then `readFileSync` without an
+encoding answers a `Buffer`), `crypto.createHash`, `perf_hooks.performance`, timers; `path.win32` is
+its own slice (13 of T11.7's `path` tests need it).
 
 **Check:** `tsc --version` and `tsc -p` on a small fixture project, compiled by Stator, print
 byte-for-byte what `node _tsc.js` prints on Node 26.7.0; `docs/NODE.md` slice N1 at 100%.

@@ -13380,3 +13380,127 @@ byte-for-byte; `subset_accessor_compound_*` extended to value position.
 
 **Still refused (honest):** `this.x` in a static METHOD (class-object dispatch), bare
 `this`/`super` in a static, opaque class values, `#n in o`.
+
+## 374. C1 batch: impact-map CI, clone baseline, parallel clang, node:process, bench noise (2026-10-23)
+
+**Plan:** §9 Tasks 6.17 step 4, 6.16 first tranche, 6.3 noise floor; §11b T10.3 step C1; §11c
+T11.6 `node:process` slice. Branch `c1-tooling-ci`. Host for every measurement below is
+**darwin-arm64, Apple M3 Max, Node v26.7.0, clang from Xcode** — not the weekly job's
+ubuntu-24.04 runner.
+
+### C1 — Task 6.17 step 4: the impact map in CI
+
+`ci.yml` gains two jobs and `nightly.yml` one step set. **`impact map`** (push to `main` only)
+runs `pnpm run test:impact:record` at `fetch-depth: 0` (the map is keyed to HEAD and later
+proven by `merge-base --is-ancestor`) and publishes `.cache/impact/impact-map.json` twice: an
+`actions/upload-artifact` named `impact-map`, and an `actions/cache/save` entry keyed
+`impact-map-<sha>`. Nightly records the same way on the daily schedule so a quiet week still
+refreshes the map. **`impact select`** (pull requests only) restores with
+`actions/cache/restore` and `restore-keys: impact-map-` — GitHub serves the most recently
+created matching cache, and caches from the default branch are readable from every PR, so this
+is the newest `main` map with no API lookup — prints the map's provenance, then runs
+`pnpm run test:impact`, whose `formatSelection` is the log line the Check wants.
+
+Neither job is a required check; `static analysis`, `frontend (linux/x64)`,
+`frontend (windows/x64)`, `frontend (windows/arm64)` and `pipeline / gate` keep their names
+and their steps (T21). Local proof of the handoff, at a clean `8e8b12c`: a map recorded with
+`--harness=node-coverage` was trusted (`dirty: false`, same Node/platform, ancestor commit) and
+`test:impact --dry-run` printed a per-harness selection with reasons — not `impact: FULL RUN`.
+Deleting the map restored the fallback line
+`impact: FULL RUN — no map at … (record one: pnpm run test:impact:record)`.
+The Done clause ("a PR's CI log shows a selection made from a `main` map") cannot be observed
+until this branch merges and a real PR runs against a recorded map; the wiring and the local
+selection are the evidence until then. `jactionlint` is clean.
+
+### C2 — Task 6.16 first tranche: clone baseline toward zero
+
+Six helpers, all at the responsible layer, no behavior change (unit 798 green, `node_*` and
+`loop` goldens green, subset `for*` 28 green):
+
+| Helper | File | Clones it removed |
+| --- | --- | --- |
+| `emitLoopBody` + `emitLoopEpilogue` | `codegen/index.ts` | while/for/do-while body and close (the 13L and 9L exact pairs) |
+| `emitWhileOpen` | `codegen/index.ts` | the while/for condition-open twin |
+| `emitRouteDispatch` | `codegen/index.ts` | map/set and iterator for-of route closes |
+| `resetToModuleLevel` | `codegen/index.ts` | `emitMain` / `emitLibrary` state reset (11L exact) |
+| `flushCallSlots` | `codegen/index.ts` | object-static / typed-op / global-call / string-static slot flush (9L exact) |
+| `lowerNewCallArgs` | `lower/index.ts` | `new Error` / `new Date` / `new Promise` span+args prologue (10L exact) |
+
+`.jscpd-baseline.json` **shrank** 180 → 171 fingerprints (`pnpm run dupes:baseline` in the same
+change). `pnpm run dupes` is green with no new clones. The Check wants the baseline empty; this
+is the first tranche, not the whole job.
+
+### C3 — T10.3 step C1: parallel clang (`STATOR_COMPILE_JOBS`)
+
+**Before** (current serial path, `STATOR_COMPILE_JOBS` did not exist). Fixture: 20 modules × 8
+functions of arithmetic loops, **556,499 bytes** of C, 160 exported functions, output `1317`.
+Warm wall `2.41 s` (3 runs: 3.50 cold, 2.41, 2.41). Spans at jobs=1 after the change
+(`STATOR_COMPILE_TIMING=1`): `frontend/program=140ms gate=86 graph=1 lower=56 optimize=6
+verify=3 emit=10 link/clang=1976ms`.
+
+**After.** `packages/compiler/src/cli/compile-jobs.ts` partitions the emitted C into a shared
+unit plus up to N function units (column-zero function opens only — an indented `if (…) {` is
+not a function), each compiled by its own clang, then one link. `STATOR_COMPILE_JOBS=1` is the
+old single-tTU clang line and the `--keep-c` output is **byte-identical** (`cmp` clean).
+`STATOR_COMPILE_JOBS=8`: warm wall `1.14 s` (3 runs: 1.14, 1.14, 1.30). Spans:
+`link/compile=1465ms` (sum of the pool) `link/ld=151ms`.
+
+**Wall speedup `2.41 / 1.14 = 2.11×`** — above the 1.3× keep bar. A smaller 170KB / 49-function
+fixture does **not** clear 1.3× on this host (warm ~0.95 s either way): the unset default
+therefore still requires 8 functions and 40,000 characters (`PARALLEL_MIN_*`). An explicit
+value above 1 splits as soon as there are two functions, which is how the 15 unit tests in
+`packages/tests/unit/compile-jobs.test.ts` smoke the path. Invalid values are `STA0021`
+(`docs/DIAGNOSTICS.md`). `STATOR_COMPILE_TIMING=1` prints one `stator: timing …` line per span
+(`addStageTime` for the pool's compile vs. `link/ld`). C2 (parallel emit) and C3 (sharded
+lower/verify) were **not taken**: emit is 10 ms of a 2.4 s build and `hir/verify` is 3 ms.
+
+### C4 — T11.6 slice: `node:process`
+
+`packages/node/src/process.ts` lands the N1 members over `std/process`, `std/env` and `std/os`:
+`argv` (Node's single-executable shape), `env` (a startup snapshot from new `std/env.names()`,
+libc `environ`), `cwd()`, `exit()`, `exitCode` accessor, `pid`, `ppid`, `platform`, `arch`,
+`execPath`, `hrtime()` (`[seconds, nanoseconds]` as `number[]` — the HIR has no tuple;
+`hrtime.bigint` is a function-with-properties and stays not-yet), `memoryUsage()` (rss; the
+heap fields stay 0). `std/zig/env.zig` gains `jsrt_std_env_count` / `jsrt_std_env_name`.
+`require('node:process')` joins `module.ts`'s landed table.
+
+Proof: goldens `ts/node_process.ts` and `js/node_process.js` (13 `node_*` fixtures green under
+`--node`, including `process.exit(0)` at the end), decision tests
+`subset_node_process_{node_ts,node_js,ts}` (3 green; without `--node` the specifier is
+`STA1214`), `docs/NODE.md` regenerated to **12 / 68 (18%)** for `node:process`, selfhost
+baseline records the new `packages/node/src/process.ts` target (dynamic). The free `process`
+global rewrite and `stdout`/`nextTick` stay with their own slices (PR #168 has a broader
+version of this work; this slice is the task's member list only).
+
+### C5 — Task 6.3 noise floor: local measurement
+
+Five repeats of one commit (`8e8b12c`) of `pnpm run bench:record` on this host:
+
+| Run | stator geomean (ms) |
+| --- | --- |
+| 1 | 29.380 |
+| 2 | 27.924 |
+| 3 | 25.784 |
+| 4 | 29.497 |
+| 5 | 26.244 |
+
+Range spread `(max-min)/min = 14.4%`. Consecutive deltas: −5.0%, −7.7%, **+14.4%**, −11.0%.
+A sixth run **tripped the 20% gate at +53.9%** on the same commit (noise). Per-program spreads
+explain it: `json-roundtrip` 53.9% (5.8–9.0 ms) and `startup` 62.4% (5.4–8.8 ms) are
+millisecond-scale and dominate the geomean when they jitter.
+
+This host is **not** the machine that runs the weekly job (that is ubuntu-24.04 in
+`nightly.yml`). The Check wants the threshold set from that machine's spread; these numbers are
+local evidence only. The **20% gate is left unchanged**: the measured geomean spread (14.4%)
+sits under it, and raising the gate to hide the 53.9% outlier would be exactly the "alarm that
+fires on noise" failure the residue names. The outlier is a short-program jitter problem, not a
+threshold problem — if the weekly host's measured spread ever clears 20%, the gate moves then.
+
+### Gates run
+
+`pnpm install --frozen-lockfile` · `pnpm run typecheck` · `pnpm run lint` · `pnpm run test`
+(798) · `pnpm run dupes` (no new clones; baseline 180→171) · `node scripts/check-js-sources.ts`
+· `pnpm run docs:node` + `pnpm run test:node-coverage` · `jactionlint` · `pnpm run test:selfhost`
+(with `--update` for the new `process.ts` target). Not run here: `pnpm run ci` in full
+(test262/asan/leak need the CI toolchain), `pnpm run test:golden` in full (a sample of
+`node_*` and `loop` fixtures was run).

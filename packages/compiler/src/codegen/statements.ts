@@ -75,31 +75,15 @@ function pushFinallyScope(
   return scope;
 }
 
-/** Runs every recorded jump action against a C `int` completion variable. */
+/** Both completion cells route the same jumps; only the representation of their code differs. */
 function emitFinallyDispatch(
   emitter: Emitter,
-  comp: string,
   routes: ReadonlyMap<string, { readonly code: number; readonly action: () => void }>,
+  test: (code: number) => string,
   span: Span,
 ): void {
   for (const route of routes.values()) {
-    emitter.appendLine(`if (${comp} == ${route.code}) {`, span);
-    emitter.indent++;
-    route.action();
-    emitter.indent--;
-    emitter.appendLine('}', span);
-  }
-}
-
-/** Same dispatch against a boxed (number) completion slot — the suspendable cleanup shape. */
-function emitFinallyDispatchBoxed(
-  emitter: Emitter,
-  comp: string,
-  routes: ReadonlyMap<string, { readonly code: number; readonly action: () => void }>,
-  span: Span,
-): void {
-  for (const route of routes.values()) {
-    emitter.appendLine(`if (jsrt_number_value(${comp}) == ${String(route.code)}) {`, span);
+    emitter.appendLine(`if (${test(route.code)}) {`, span);
     emitter.indent++;
     route.action();
     emitter.indent--;
@@ -188,12 +172,8 @@ export function emitStatement(emitter: Emitter, stmt: Statement): void {
       emitter.emitIterEnvOpen(id, stmt.span);
       emitter.appendLine('do {', stmt.span);
       emitter.indent++;
-      emitter.emitIterEnvEnter(id, stmt.span);
-      emitter.emitScope(stmt.body.statements);
-      // `continue` in a do/while jumps to the TEST, not past it -- the loop still gets to decide
-      // whether to run again. Placing the target at the end of the body is what achieves that.
-      emitter.emitJumpTarget(`cont_${id}`, stmt.span);
-      emitter.emitIterEnvCommit(id, stmt.span);
+      // The shared continue target precedes the do/while test.
+      emitLoopBody(emitter, id, stmt.span, stmt.body.statements);
       const cond = emitter.capture(() => emitter.emitExpression(stmt.condition));
       if (cond.lines.length === 0) {
         emitter.indent--;
@@ -621,7 +601,7 @@ export function emitMapSetForOf(
   emitter.tryFinallyStack.pop();
   emitter.appendLine(`${fin}: ;`, span);
   emitter.appendLine(`jsrt_map_iter_end(${coll});`, span);
-  emitFinallyDispatch(emitter, comp, scope.routes, span);
+  emitFinallyDispatch(emitter, scope.routes, (code) => `${comp} == ${String(code)}`, span);
   closeFinallyLoop(emitter, id, span);
 }
 
@@ -770,7 +750,12 @@ export function emitBoxedIteratorForOf(
     `if (jsrt_number_value(${comp}) == 1) { jsrt_throw(${exc}); goto ${emitter.currentPad()}; }`,
     span,
   );
-  emitFinallyDispatchBoxed(emitter, comp, scope.routes, span);
+  emitFinallyDispatch(
+    emitter,
+    scope.routes,
+    (code) => `jsrt_number_value(${comp}) == ${String(code)}`,
+    span,
+  );
   closeFinallyLoop(emitter, id, span);
 }
 

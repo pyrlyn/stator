@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-08-29T23:36:45.021Z",
+  "recordedAt": "2026-10-23T14:44:12.385Z",
   "host": {
     "platform": "darwin",
     "release": "25.5.0",
@@ -149,5 +149,219 @@
       "compileMsBest": 345,
       "binaryBytes": 68944
     }
-  ]
+  ],
+  "programs": [
+    "ffi-sqrt.ts",
+    "fib.ts",
+    "json-roundtrip.ts",
+    "nbody.ts",
+    "startup.ts",
+    "string-churn.ts"
+  ],
+  "engines": [
+    {
+      "engine": "stator",
+      "version": "working tree",
+      "measurements": [
+        {
+          "program": "ffi-sqrt.ts",
+          "startupMsBest": 697.249542,
+          "runtimeMsBest": 44.08025,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 264768,
+          "output": "666667166.4588418\n"
+        },
+        {
+          "program": "fib.ts",
+          "startupMsBest": 683.012167,
+          "runtimeMsBest": 599.422167,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 265168,
+          "output": "5702887\n"
+        },
+        {
+          "program": "json-roundtrip.ts",
+          "startupMsBest": 725.715459,
+          "runtimeMsBest": 5.981875,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 282000,
+          "output": "4000\n"
+        },
+        {
+          "program": "nbody.ts",
+          "startupMsBest": 738.761458,
+          "runtimeMsBest": 30.312666,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 264880,
+          "output": "1715\n"
+        },
+        {
+          "program": "startup.ts",
+          "startupMsBest": 680.113125,
+          "runtimeMsBest": 5.695084,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 54880,
+          "output": ""
+        },
+        {
+          "program": "string-churn.ts",
+          "startupMsBest": 728.752542,
+          "runtimeMsBest": 11.972959,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 264976,
+          "output": "1000\n"
+        }
+      ]
+    },
+    {
+      "engine": "node",
+      "version": "v26.7.0",
+      "measurements": [
+        {
+          "program": "ffi-sqrt.ts",
+          "startupMsBest": 53.744542,
+          "runtimeMsBest": 53.744542,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 0,
+          "output": "666667166.4588418\n"
+        },
+        {
+          "program": "fib.ts",
+          "startupMsBest": 90.48925,
+          "runtimeMsBest": 90.48925,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 0,
+          "output": "5702887\n"
+        },
+        {
+          "program": "json-roundtrip.ts",
+          "startupMsBest": 51.976083,
+          "runtimeMsBest": 51.976083,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 0,
+          "output": "4000\n"
+        },
+        {
+          "program": "nbody.ts",
+          "startupMsBest": 57.219291,
+          "runtimeMsBest": 57.219291,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 0,
+          "output": "1715\n"
+        },
+        {
+          "program": "startup.ts",
+          "startupMsBest": 46.862542,
+          "runtimeMsBest": 46.862542,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 0,
+          "output": ""
+        },
+        {
+          "program": "string-churn.ts",
+          "startupMsBest": 53.538208,
+          "runtimeMsBest": 53.538208,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 0,
+          "output": "1000\n"
+        }
+      ]
+    },
+    {
+      "engine": "bun",
+      "version": "1.3.14",
+      "measurements": [
+        {
+          "program": "ffi-sqrt.ts",
+          "startupMsBest": 28.683041,
+          "runtimeMsBest": 28.683041,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 0,
+          "output": "666667166.4588418\n"
+        },
+        {
+          "program": "fib.ts",
+          "startupMsBest": 39.7375,
+          "runtimeMsBest": 39.7375,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 0,
+          "output": "5702887\n"
+        },
+        {
+          "program": "json-roundtrip.ts",
+          "startupMsBest": 14.733583,
+          "runtimeMsBest": 14.733583,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 0,
+          "output": "4000\n"
+        },
+        {
+          "program": "nbody.ts",
+          "startupMsBest": 17.802958,
+          "runtimeMsBest": 17.802958,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 0,
+          "output": "1715\n"
+        },
+        {
+          "program": "startup.ts",
+          "startupMsBest": 13.997292,
+          "runtimeMsBest": 13.997292,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 0,
+          "output": ""
+        },
+        {
+          "program": "string-churn.ts",
+          "startupMsBest": 14.851458,
+          "runtimeMsBest": 14.851458,
+          "peakRssBytes": 0,
+          "peakRssRaw": 0,
+          "binaryBytes": 0,
+          "output": "1000\n"
+        }
+      ]
+    },
+    {
+      "engine": "qjs",
+      "version": "absent",
+      "measurements": []
+    },
+    {
+      "engine": "perry",
+      "version": "absent",
+      "measurements": []
+    },
+    {
+      "engine": "scriptc",
+      "version": "absent",
+      "measurements": []
+    },
+    {
+      "engine": "hermes",
+      "version": "absent",
+      "measurements": []
+    }
+  ],
+  "regression": {
+    "thresholdPercent": 20,
+    "statorGeomeanMs": 26.243594837265828
+  }
 }

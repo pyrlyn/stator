@@ -73,6 +73,10 @@ pnpm run ci                      # typecheck -> lint -> dupes -> unit -> runtime
 pnpm run test                    # unit tests via vitest (the default; coverage is on-demand, not per-run)
 pnpm run test:impact             # only the tests your diff reaches, every harness (plan.md §9 Task 6.17); prints its reasons, falls back to the full run
 pnpm run test:impact:record      # record that map: a full instrumented run at a clean HEAD → .cache/impact/impact-map.json
+# CI handoff (Task 6.17 step 4): `impact map` on `main` (and nightly) records and publishes the
+# map as an artifact + cache entry `impact-map-<sha>`; `impact select` on pull requests restores
+# the newest `main` map and runs `test:impact`. Neither job is a required check — `test` and
+# `pnpm run ci` stay the gate.
 pnpm run test:coverage           # unit tests + src/ coverage table; writes coverage/lcov.info (only when the table is the question — ~4x wall time)
 pnpm run test:subset             # feature × mode decision matrix
 pnpm run test:golden             # compile + run vs the pinned Node, byte-for-byte
@@ -157,6 +161,8 @@ compiled as thin-LTO bitcode too when the archive was. Full PGO / a custom LLVM 
 | `STATOR_RUNTIME` | runtime flavor: `asan` or `intl` archive, and the builtins the gate admits | yes |
 | `STATOR_OTEL` | turns tracing on (plan-notes 187) | yes |
 | `CC` | the C compiler Stator runs | **no** |
+| `STATOR_COMPILE_JOBS` | how many clang processes compile the generated C (plan.md §11b T10.3). `1` is one translation unit and one clang line; unset splits a large enough program across the host's cores; an explicit value above 1 splits whenever there are two functions. An invalid value is `STA0021` | **no** |
+| `STATOR_COMPILE_TIMING` | set to anything to print one `stator: timing …` line of per-span wall times on stderr (T10.3's measurement; does not change the output) | **no** |
 | `STATOR_RUNTIME_ROOT` (and `STATOR_STD_ROOT`, `STATOR_NODE_ROOT`) | where the runtime headers and archives live | **no** |
 | `OTEL_*` (`OTEL_EXPORTER_OTLP_ENDPOINT`, `_HEADERS`, `OTEL_SERVICE_NAME`, …) | where trace data goes | **no** |
 
