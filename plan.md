@@ -1470,6 +1470,9 @@ built-in modules. The first target is TypeScript 6.0.3's own `tsc` bundle.
   deferred; N3 (net/http/tls/zlib, `worker_threads`, `vm`) is not planned.
 - Coverage is tracked in **`docs/NODE.md`**, generated from the pinned Node and checked in `ci`
   (AGENTS.md golden rule 11).
+  Platform-specific exports use the measured union of Linux/macOS surfaces for that pin;
+  generation validates the host variant and both platforms must reproduce the same document
+  (plan-notes 378).
 
 **Packages.** The work is decomposed by package; each card names the one package it changes
 (tests and docs ride along). Dependencies point one way only:

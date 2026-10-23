@@ -13627,3 +13627,28 @@ a separate assertion still requires STA1214 for `{ ...null }`, preserving the
 adjacent unsupported case. All 800 unit tests pass. The standard selfhost generator
 records a reduction from 1879 to 1831 STA1214 diagnostics, with the other codes
 and `not-yet` verdict unchanged; its 15 targets and std/node smoke pass.
+
+## 378. Reproducible Node API coverage across Linux and macOS (2026-10-23)
+
+PR #177's Linux `impact select` fallback passed the feature suites but failed the
+generated Node-document drift check; the complete macOS gate passed. Reproducing
+the generator on official Node v26.7.0 Linux x64 in Colima exposed the mechanism:
+`node:constants` has six Linux-only exports and two macOS-only exports, while
+`fs.lchmod` and `fs.lchmodSync` are functions on macOS and exported `undefined`
+values on Linux. The old dashboard therefore counted 2364 members on macOS and
+2368 on Linux and could not satisfy the same committed-document check on both.
+
+The dashboard now includes the measured union of both public surfaces: 2370
+members, including all 237 constants. Platform-only members carry an explicit
+platform kind. The generator validates each measured export's host variant and
+the exact Node pin, requiring the inventory to be refreshed when either changes.
+It still enumerates all other live exports and compares the complete generated
+document byte-for-byte; no member or stale-document check is skipped. The Phase-11
+coverage contract in `plan.md` records this cross-platform denominator.
+
+Proof: `pnpm run docs:node` followed by `pnpm run test:node-coverage` passes on
+macOS arm64. Running the generator with official `node:26.7.0-bookworm-slim`
+Linux x64 (image digest
+`sha256:4db36457f406501e6f608802e5da617e5fbd0e80b75901b6a09de1ae5a667d32`)
+produces an identical document (`diff -u` exits 0), and its read-only `--check`
+reports `node-coverage: docs/NODE.md is current`. Strict typecheck and lint pass.

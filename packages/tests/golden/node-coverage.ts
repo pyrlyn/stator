@@ -48,7 +48,41 @@ const GLOBAL_ALIAS: Readonly<Record<string, string>> = {
 };
 const CLASS_STATIC_SKIP = new Set(['length', 'name', 'prototype', 'caller', 'arguments']);
 
-type Kind = 'function' | 'class' | 'value' | 'getter' | 'static' | 'method' | 'accessor';
+type Kind =
+  | 'function'
+  | 'class'
+  | 'value'
+  | 'getter'
+  | 'static'
+  | 'method'
+  | 'accessor'
+  | 'value (Linux)'
+  | 'value (macOS)'
+  | 'function (macOS)';
+
+// Measured from official Node v26.7.0 on Linux x64 and macOS arm64 (plan-notes 378).
+// Absent exports must remain in the union: omitting them would inflate coverage on one host.
+const PLATFORM_SURFACE_NODE = 'v26.7.0';
+type PlatformExport = {
+  readonly kind: Kind;
+  readonly variants: Readonly<Record<string, 'absent' | 'number' | 'function' | 'undefined'>>;
+};
+const PLATFORM_EXPORTS: Readonly<Record<string, Readonly<Record<string, PlatformExport>>>> = {
+  constants: {
+    O_DIRECT: { kind: 'value (Linux)', variants: { linux: 'number', darwin: 'absent' } },
+    O_NOATIME: { kind: 'value (Linux)', variants: { linux: 'number', darwin: 'absent' } },
+    O_SYMLINK: { kind: 'value (macOS)', variants: { linux: 'absent', darwin: 'number' } },
+    RTLD_DEEPBIND: { kind: 'value (Linux)', variants: { linux: 'number', darwin: 'absent' } },
+    SIGINFO: { kind: 'value (macOS)', variants: { linux: 'absent', darwin: 'number' } },
+    SIGPOLL: { kind: 'value (Linux)', variants: { linux: 'number', darwin: 'absent' } },
+    SIGPWR: { kind: 'value (Linux)', variants: { linux: 'number', darwin: 'absent' } },
+    SIGSTKFLT: { kind: 'value (Linux)', variants: { linux: 'number', darwin: 'absent' } },
+  },
+  fs: {
+    lchmod: { kind: 'function (macOS)', variants: { linux: 'undefined', darwin: 'function' } },
+    lchmodSync: { kind: 'function (macOS)', variants: { linux: 'undefined', darwin: 'function' } },
+  },
+};
 type Member = {
   readonly name: string;
   readonly kind: Kind;
@@ -83,11 +117,28 @@ function surfaceOf(id: string, exports: unknown): Member[] {
   const specifier = (s: string): boolean =>
     s.includes(`'${id}'`) || s.includes(`"${id}"`) || s.includes(`node:${bare}`);
   const out: Member[] = [];
-  for (const name of Object.keys(exports).filter(isPublic).sort()) {
+  const platformExports = PLATFORM_EXPORTS[bare];
+  const names = new Set([
+    ...Object.keys(exports).filter(isPublic),
+    ...Object.keys(platformExports ?? {}),
+  ]);
+  for (const name of [...names].sort()) {
     const desc = Object.getOwnPropertyDescriptor(exports, name);
-    if (desc === undefined) continue;
     const word = mentionsWord(name);
     const top = (s: string): boolean => specifier(s) && word(s);
+    const platformExport = platformExports?.[name];
+    if (platformExport !== undefined) {
+      const expected = platformExport.variants[process.platform];
+      const observed = desc === undefined ? 'absent' : typeof desc.value;
+      if (expected === undefined || observed !== expected) {
+        throw new Error(
+          `node-coverage: ${id}.${name} on ${process.platform} is ${observed}; refresh the measured platform surface`,
+        );
+      }
+      out.push({ name, kind: platformExport.kind, spelled: `${bare}.${name}`, mentions: top });
+      continue;
+    }
+    if (desc === undefined) continue;
     if (desc.get !== undefined || desc.set !== undefined) {
       out.push({ name, kind: 'getter', spelled: `${bare}.${name}`, mentions: top });
       continue;
@@ -252,7 +303,10 @@ function render(version: string, modules: readonly { id: string; rows: readonly 
     'A member is **covered** only when a golden fixture exercises it and matches Node byte-for-byte —',
     'the `test:builtins` rule. The member list is read from Node itself: every enumerable export of',
     "every built-in module, plus each exported class's static and prototype members (`_`-prefixed",
-    'names are private and left out). **Corpus** counts uses in the T11.0 corpus',
+    'names are private and left out). Platform-specific exports use the measured union of Linux',
+    'and macOS on this Node pin: kinds name the platform when availability differs, and the',
+    'generator validates those differences on the current host (plan-notes 378).',
+    '**Corpus** counts uses in the T11.0 corpus',
     "(`docs/research/node-mode/scan.json`); **tsc** marks members TypeScript 6.0.3's `tsc` needs",
     "(plan.md §11c, slice N1). **Node tests** counts files of Node's own `test/parallel` selected",
     'for the module and expected to pass under Stator, from',
@@ -305,6 +359,9 @@ function main(): void {
       `node-coverage: running ${process.version}, pinned ${pinned} — the surface is read from the pin only`,
     );
     process.exit(1);
+  }
+  if (process.version !== PLATFORM_SURFACE_NODE) {
+    throw new Error('node-coverage: refresh the measured platform surface for the new Node pin');
   }
   process.noDeprecation = true;
   process.removeAllListeners('warning');

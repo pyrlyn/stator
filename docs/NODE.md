@@ -8,14 +8,17 @@ is stale (AGENTS.md, Testing rules).
 A member is **covered** only when a golden fixture exercises it and matches Node byte-for-byte —
 the `test:builtins` rule. The member list is read from Node itself: every enumerable export of
 every built-in module, plus each exported class's static and prototype members (`_`-prefixed
-names are private and left out). **Corpus** counts uses in the T11.0 corpus
+names are private and left out). Platform-specific exports use the measured union of Linux
+and macOS on this Node pin: kinds name the platform when availability differs, and the
+generator validates those differences on the current host (plan-notes 378).
+**Corpus** counts uses in the T11.0 corpus
 (`docs/research/node-mode/scan.json`); **tsc** marks members TypeScript 6.0.3's `tsc` needs
 (plan.md §11c, slice N1). **Node tests** counts files of Node's own `test/parallel` selected
 for the module and expected to pass under Stator, from
 `packages/tests/node-suite/expectations.json`, which `pnpm run test:node-suite` holds to the
 truth (plan.md §11c T11.7).
 
-**Total: 69 / 2364 members covered (3%) across 58 modules.**
+**Total: 69 / 2370 members covered (3%) across 58 modules.**
 **Slice N1 (`tsc`): 22 / 37 (59%).**
 **Node tests: 0 / 17 selected files pass.**
 
@@ -28,7 +31,7 @@ truth (plan.md §11c T11.7).
 | [`node:child_process`](#nodechild_process) | 0 | 12 | 0% | 17 | 0 |  |
 | [`node:cluster`](#nodecluster) | 0 | 19 | 0% | 0 | 0 |  |
 | [`node:console`](#nodeconsole) | 0 | 44 | 0% | 3 | 0 |  |
-| [`node:constants`](#nodeconstants) | 0 | 231 | 0% | 0 | 0 |  |
+| [`node:constants`](#nodeconstants) | 0 | 237 | 0% | 0 | 0 |  |
 | [`node:crypto`](#nodecrypto) | 0 | 148 | 0% | 17 | 1 |  |
 | [`node:dgram`](#nodedgram) | 0 | 29 | 0% | 0 | 0 |  |
 | [`node:diagnostics_channel`](#nodediagnostics_channel) | 0 | 21 | 0% | 0 | 0 |  |
@@ -445,7 +448,7 @@ truth (plan.md §11c T11.7).
 
 ### node:constants
 
-<details><summary><code>node:constants</code> — 0 / 231 (0%)</summary>
+<details><summary><code>node:constants</code> — 0 / 237 (0%)</summary>
 
 | Member | Kind | Covered | Corpus | tsc |
 | --- | --- | --- | --- | --- |
@@ -550,15 +553,17 @@ truth (plan.md §11c T11.7).
 | `OPENSSL_VERSION_NUMBER` | value | — |  |  |
 | `O_APPEND` | value | — |  |  |
 | `O_CREAT` | value | — |  |  |
+| `O_DIRECT` | value (Linux) | — |  |  |
 | `O_DIRECTORY` | value | — |  |  |
 | `O_DSYNC` | value | — |  |  |
 | `O_EXCL` | value | — |  |  |
+| `O_NOATIME` | value (Linux) | — |  |  |
 | `O_NOCTTY` | value | — |  |  |
 | `O_NOFOLLOW` | value | — |  |  |
 | `O_NONBLOCK` | value | — |  |  |
 | `O_RDONLY` | value | — |  |  |
 | `O_RDWR` | value | — |  |  |
-| `O_SYMLINK` | value | — |  |  |
+| `O_SYMLINK` | value (macOS) | — |  |  |
 | `O_SYNC` | value | — |  |  |
 | `O_TRUNC` | value | — |  |  |
 | `O_WRONLY` | value | — |  |  |
@@ -580,6 +585,7 @@ truth (plan.md §11c T11.7).
 | `RSA_PSS_SALTLEN_MAX_SIGN` | value | — |  |  |
 | `RSA_SSLV23_PADDING` | value | — |  |  |
 | `RSA_X931_PADDING` | value | — |  |  |
+| `RTLD_DEEPBIND` | value (Linux) | — |  |  |
 | `RTLD_GLOBAL` | value | — |  |  |
 | `RTLD_LAZY` | value | — |  |  |
 | `RTLD_LOCAL` | value | — |  |  |
@@ -593,15 +599,18 @@ truth (plan.md §11c T11.7).
 | `SIGFPE` | value | — |  |  |
 | `SIGHUP` | value | — |  |  |
 | `SIGILL` | value | — |  |  |
-| `SIGINFO` | value | — |  |  |
+| `SIGINFO` | value (macOS) | — |  |  |
 | `SIGINT` | value | — |  |  |
 | `SIGIO` | value | — |  |  |
 | `SIGIOT` | value | — |  |  |
 | `SIGKILL` | value | — |  |  |
 | `SIGPIPE` | value | — |  |  |
+| `SIGPOLL` | value (Linux) | — |  |  |
 | `SIGPROF` | value | — |  |  |
+| `SIGPWR` | value (Linux) | — |  |  |
 | `SIGQUIT` | value | — |  |  |
 | `SIGSEGV` | value | — |  |  |
+| `SIGSTKFLT` | value (Linux) | — |  |  |
 | `SIGSTOP` | value | — |  |  |
 | `SIGSYS` | value | — |  |  |
 | `SIGTERM` | value | — |  |  |
@@ -1199,8 +1208,8 @@ truth (plan.md §11c T11.7).
 | `futimesSync` | function | — |  |  |
 | `glob` | function | — |  |  |
 | `globSync` | function | — |  |  |
-| `lchmod` | function | — |  |  |
-| `lchmodSync` | function | — |  |  |
+| `lchmod` | function (macOS) | — |  |  |
+| `lchmodSync` | function (macOS) | — |  |  |
 | `lchown` | function | — |  |  |
 | `lchownSync` | function | — |  |  |
 | `link` | function | — |  |  |
