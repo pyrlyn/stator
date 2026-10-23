@@ -454,7 +454,7 @@ two directions, so the halves cannot drift. `STA1122`–`STA1124` and `STA1126` 
 `docs/DIAGNOSTICS.md`, no longer proposals.
 
 Landed (steps 3–5): the init contract, the TS-throws contract, and the frame/stack roots —
-`src/codegen/index.ts` emits them from the same slot layout `main` uses, `build.ts` roots
+`src/codegen/` (the C emitter family modules; `emitC` is re-exported from `index.ts`) emits them from the same slot layout `main` uses, `build.ts` roots
 the shake at the export names, and every decision below is pinned in
 `tests/unit/export-stubs.test.ts` (in-process shape plus a linked C `main()` proving the
 init→call→error paths; the CI example stays step 9's). Recorded choices, each made once

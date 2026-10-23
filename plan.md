@@ -57,7 +57,7 @@ New bugs, dead code and moves from a read-only Cursor cloud review of `main` at 
 | T21 | P0 | bug | confirmed | PR CI run 37692965170 vs `ccf9818` on `main` | T17 was merged with red CI (`pipeline` failed in 0 s, `frontend (windows/arm64)` failed), so required checks are missing or bypassable. Require `static`, `frontend-coverage` and the Windows/macOS jobs (or a smaller set you actually enforce); do not merge on SonarCloud green alone. |
 | ~~T22~~ | P0 | move | fixed | plan-notes 353, 364; #158 | `pipeline.yml` calls `pyrlyn/ci/.github/workflows/ci.yml@main`. A SHA pin of that caller fails `no-pinned-ci`. |
 | ~~T23~~ | P1 | bug | fixed | plan-notes 354 | The official win-arm64 Node is cross-compiled without a startup snapshot, so `util.format` sees seven later globals. The test follows `node_use_node_snapshot` and still fails on any other difference. |
-| T24 | P1 | move | confirmed | `packages/compiler/src/codegen/index.ts` (6,276 lines, the only file in `codegen/`) → files under `packages/compiler/src/codegen/` | Split the C emitter by HIR family (expressions, statements, classes, closures, runtime calls); it is the merge bottleneck. |
+| ~~T24~~ | P1 | move | fixed | plan-notes 370 | Split the C emitter by HIR family (expressions, statements, classes, closures, runtime calls); it is the merge bottleneck. |
 | ~~T25~~ | P2 | bug | fixed | plan-notes 353, 364 | The repo map names QuickJS-NG only. `docs/TOOLCHAIN.md` says Ryū is not vendored; fetching it stays on §12. |
 | ~~T26~~ | P2 | dead code | fixed | plan-notes 353, 364 | `memfs` is gone from both package manifests. The custom-host comments say "in-memory CompilerHost". |
 
