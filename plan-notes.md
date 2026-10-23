@@ -13594,3 +13594,29 @@ position already carry precise per-shape refusals (`subset_generic_homeless_*`);
 **Checks (F3 landing run).** typecheck + lint clean. `test:golden --filter=string_exotic_index`
 2/2, `--filter=spread_dropped_as` 2/2, `--filter=class_private` 6/6. `test:subset
 --filter=string_index` 2/2; full subset/golden reported below with the commit.
+
+
+## 377. Follow-up integration of the completed D1/F1 worktrees (2026-10-23)
+
+The creator requested waiting for the worktrees' remaining work after PR #176.
+The final inspected heads are `d1-class-redo` at `2bc9ead` and `f1-residues` at
+`7a25fbe`: both have clean indexes/worktrees, stable committed changes, and no
+compiler, runtime-build, or test processes running in either worktree.
+
+D1 independently replayed B1's class fixes. Comparing `b1-class-surface` with D1
+shows identical frontend type mapping, HIR nodes/verifier, rewrite, explain, and
+class fixtures; its gate/test differences only update the emitter path in comments.
+D1's expression/slot/module emitter files also match the integrated `main` exactly.
+No class implementation or test is duplicated or reverted in this follow-up.
+
+F1 contributes the string-exotic-index and dropped-assertion-spread commits
+`c9be1cc` and `7a25fbe`, preserving their human authors. Frontend conflicts use
+`frontendTypes` for the shared helpers already adopted by #176. The subset matrix
+keeps the anonymous-default-class support from #176 alongside the new spread
+support. The roadmap records both accessor compounds and private-brand checks as
+landed. F1's original note 375 is renumbered 376 to preserve #176's note 375.
+
+Initial integration checks: strict typecheck and lint pass; `pnpm run dupes`
+reports 143 clones and zero new clones, with the baseline unchanged. The full
+`pnpm run ci` gate is run on the combined tree before merge; its final output is
+recorded in the follow-up PR.
