@@ -13134,3 +13134,64 @@ preamble from `port.ts` and leaves the algorithm alone.
 `node_shim.mjs` with `node_shim.ts` in both changed that clone's fingerprint. `.jscpd-baseline.json`
 swaps one fingerprint for one (`964d0cad4424ce0b` → `4aecb478f234e5bf`) and stays at 180.
 
+
+## 372. A1–A5 runtime residue: two landed earlier, three closed here (2026-10-23)
+
+**Touches:** `runtime/src/jsrt_boolean_methods.c` (new), `runtime/src/jsrt_number_methods.c`,
+`runtime/src/jsrt_shape.c`, `runtime/include/jsrt_value.h`, `compiler/src/lower/index.ts`,
+`tests/golden/js/{dynamic_missing_method.js,primitive_methods.js}`. plan-notes 223 items 5 and 6
+were carded as Phase 5 steps 20–21 (plan-notes 249) and most of that work already sat on this
+tree; the residues below are what a fresh repro still showed, and what this change closes.
+
+**A1 — named-capture `$<name>` in `replace` (already landed, step 21c).**
+Before: `'ab'.replace(/(?<x>a)/, '[$<x>]')` printed `[$<x>]b` (no `$<name>` branch in
+`jsrt_regexp.c`'s substitute). After: `[a]b`. The expander's `$<name>` arm, the `$&`/`$1`/`$$`
+forms and the unknown-name-empty rule are already in `runtime/src/jsrt_regexp.c` and pinned by
+`tests/golden/{js,ts}/replace_named_group.*`. Verified byte-for-byte against the pinned Node.
+
+**A2 — `Date.parse` hour 24 (already landed, step 21d).**
+Before: `Date.parse("2024-01-01T24:00:01Z")` answered `1704153601000`. After: `NaN`.
+`parse_iso` rejects hour 24 unless minutes, seconds and the full-precision fraction are zero;
+`T24:00:00Z` rolls to the next day. Pinned by `tests/golden/{js,ts}/date_parse_hour24.*`.
+Non-ISO hour-24 (`2024-01-01 24:00:00`) stays `NaN` on purpose: `jsrt_date_parse` is the
+Date Time String Format only (§21.4.1.32), and V8's fallback parser is not specified — the
+parser header records that an unparseable string is honestly Invalid rather than a guess.
+
+**A3 — a missing method on an Unknown receiver panicked STA2006 (closed here).**
+Before: `function callIt(a) { return a.nosuch(); }` with `a = [1]` aborted
+`PANIC: STA2006: calling a non-function`. After: `TypeError: a.nosuch is not a function`,
+catchable, Node's wording. The shape-table and prototype walks answered `undefined` for a name
+neither has, and `jsrt_call_at` turned that into the located abort. The fix is the lowering's:
+every `dyn-method-call` now carries `notFunction` (`compiler/src/lower/index.ts`), so the
+emitter's existing non-closure check throws Node's `TypeError` before the call. The check is a
+no-op when the load found a closure. Array, class and literal methods are unchanged — they were
+already answered by `jsrt_array_method` / the class descriptor / the `#method:` slot.
+
+**A4 — `jsrt_as_array`'s missing tag check (already landed, step 20).**
+Before: `function add(v) { arr.push(v); }` with a hoisted `var arr` segfaulted (the unbox of
+`undefined` was NULL). After: `TypeError: Cannot read properties of undefined (reading 'push')`.
+The checked unbox is `jsrt_require_array`, which throws `STA2008` (already allocated in
+`docs/DIAGNOSTICS.md`) with Node's member-access wording for nullish; raw `jsrt_as_array` stays
+for internal callers that ran a public entry first. Pinned by
+`tests/golden/js/dynamic_array_receiver.js`.
+
+**A5 — Boolean.prototype and `Number.prototype.valueOf` on an Unknown receiver (closed here).**
+Before: `function f(a) { return a.toString(); }` with `a = false` aborted STA2006 —
+`jsrt_get_prop`'s primitive walk consulted `jsrt_string_method` and `jsrt_number_method` only.
+After: `false`. `jsrt_boolean_method` (new `runtime/src/jsrt_boolean_methods.c`) answers
+`toString`/`toLocaleString`/`valueOf` bound to the receiver on the
+`jsrt_string_method`/`jsrt_number_method` contract; `jsrt_number_method` gains `valueOf`.
+String and number methods (including `toUpperCase`, `toFixed`, `toString`) already worked
+(plan-notes 310). Goldens: `tests/golden/js/primitive_methods.js` (boolean + `valueOf` lines)
+and `tests/golden/js/dynamic_missing_method.js`. The ts gate still refuses
+`Boolean.prototype.toString` as `STA1214` on a dynamic `this`, so the ts twin stays on the
+methods that arm already supports.
+
+**Residue named, not hidden.** `a[0]` on a string through an Unknown receiver answers
+`undefined` where Node answers the character — `jsrt_get_prop` handles string `length` and the
+prototype methods but not the string exotic index. It is a wrong answer, not a panic, and is
+outside this batch's method-dispatch scope.
+
+**Checks.** `pnpm run typecheck && pnpm run lint` clean. `pnpm run test` 783/783.
+`pnpm run test:golden` 465/465. `pnpm run test:subset` 933 passed, 31 expected-fail, 0 failed.
+`pnpm run test:runtime` print corpus matches Node.

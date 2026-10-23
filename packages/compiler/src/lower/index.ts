@@ -7442,17 +7442,19 @@ function lowerDynMethodCall(
   if (slot !== undefined) {
     return { kind: 'field-call', type, span, target, field, slot, args };
   }
-  return grown
-    ? {
-        kind: 'dyn-method-call',
-        type,
-        span,
-        target,
-        method: field,
-        args,
-        notFunction: notFunctionSubject(expr, sourceFile),
-      }
-    : { kind: 'dyn-method-call', type, span, target, method: field, args };
+  /* Every dynamic method call carries `notFunction`: a name the shape table and the prototype
+   * walk both miss must throw Node's `TypeError: x.m is not a function` rather than fall into
+   * `jsrt_call_at`'s STA2006 abort (plan-notes 372). The check is a no-op when the load found
+   * a closure. */
+  return {
+    kind: 'dyn-method-call',
+    type,
+    span,
+    target,
+    method: field,
+    args,
+    notFunction: notFunctionSubject(expr, sourceFile),
+  };
 }
 
 /** A call with a spread argument (plan.md §11c T11.4 step 5): the arguments fold into ONE array
