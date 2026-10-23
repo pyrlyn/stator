@@ -51,7 +51,6 @@ import {
   classLikeOf,
   computedKeyStaticName,
   elementStaticKey,
-  expressionClassName,
   hasAbstractModifier,
   hasExplicitAny,
   innerClassExpression,
@@ -4129,20 +4128,15 @@ function gateClass(
   checker: ts.TypeChecker,
   classNameCounts: ClassNameFiles,
 ): GateResult {
-  if (declaration.name === undefined) {
-    // Only a bound expression has an identity (Node's `.name`: the variable it binds);
-    // an unbound one — a heritage base, a call argument, a parenthesized expression — has
-    // no layout key, and nominal equality has nothing to hold onto. An anonymous
-    // DECLARATION stays refused here too: its only identity would be `default`, and the class
-    // pipeline keys every descriptor on a declared name (plan-notes 278; default imports
-    // themselves landed with plan.md §11c T11.5a).
-    if (ts.isClassExpression(declaration) && expressionClassName(declaration) !== undefined) {
-      // fall through to member vetting below
-    } else {
-      return ts.isClassExpression(declaration)
-        ? notYet('an anonymous class expression is not yet supported', 5)
-        : notYet('an anonymous class is not yet supported', 5);
-    }
+  // A class needs an identity to key its descriptor on: the declared name, Node's `.name`
+  // for a bound expression (inner name, else the variable), or `default` for the anonymous
+  // `export default class {}`. An unbound expression — a heritage base, a call argument, a
+  // parenthesized expression — has no layout key, and nominal equality has nothing to hold
+  // onto (plan-notes 278; default imports landed with plan.md §11c T11.5a).
+  if (classDisplayName(declaration) === undefined) {
+    return ts.isClassExpression(declaration)
+      ? notYet('an anonymous class expression is not yet supported', 5)
+      : notYet('an anonymous class is not yet supported', 5);
   }
   // A generic expression has nowhere to specialize under: tuple descriptors key on the
   // declaration's source name, and an expression's identity is its binding, not a scope
