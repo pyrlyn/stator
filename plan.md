@@ -54,14 +54,48 @@ New bugs, dead code and moves from a read-only Cursor cloud review of `main` at 
 | ID | Priority | Kind | Status | Where | Fix |
 | --- | --- | --- | --- | --- | --- |
 | ~~T20~~ | P0 | bug | fixed | plan-notes 353, 364 | `ci.yml` runs on `push` to `main`, so a merge has a test workflow and `revert-on-failure` can fire. |
-| T21 | P0 | bug | confirmed | PR CI run 37692965170 vs `ccf9818` on `main` | T17 was merged with red CI (`pipeline` failed in 0 s, `frontend (windows/arm64)` failed), so required checks are missing or bypassable. Require `static`, `frontend-coverage` and the Windows/macOS jobs (or a smaller set you actually enforce); do not merge on SonarCloud green alone. |
+| ~~T21~~ | P0 | bug | fixed | plan-notes 370 | T17 was merged with red CI (`pipeline` failed in 0 s, `frontend (windows/arm64)` failed), so required checks were missing or bypassable. `protect-main` now requires `pipeline / gate`, `static analysis`, `frontend (linux/x64)` and both Windows frontend legs; the desktop matrix name bug that made those legs unmatchable is fixed. |
 | ~~T22~~ | P0 | move | fixed | plan-notes 353, 364; #158 | `pipeline.yml` calls `pyrlyn/ci/.github/workflows/ci.yml@main`. A SHA pin of that caller fails `no-pinned-ci`. |
 | ~~T23~~ | P1 | bug | fixed | plan-notes 354 | The official win-arm64 Node is cross-compiled without a startup snapshot, so `util.format` sees seven later globals. The test follows `node_use_node_snapshot` and still fails on any other difference. |
-| ~~T24~~ | P1 | move | fixed | plan-notes 370 | Split the C emitter by HIR family (expressions, statements, classes, closures, runtime calls); it is the merge bottleneck. |
+| ~~T24~~ | P1 | move | fixed | plan-notes 371 | Split the C emitter by HIR family (expressions, statements, classes, closures, runtime calls); it is the merge bottleneck. |
 | ~~T25~~ | P2 | bug | fixed | plan-notes 353, 364 | The repo map names QuickJS-NG only. `docs/TOOLCHAIN.md` says Ryū is not vendored; fetching it stays on §12. |
 | ~~T26~~ | P2 | dead code | fixed | plan-notes 353, 364 | `memfs` is gone from both package manifests. The custom-host comments say "in-memory CompilerHost". |
 
 Already tracked here, not added again: moving number printing to the vendored Ryū C code (the review's move M3) is in §12, "Ryū rides here too".
+
+### T21. Required status checks on `main` (cloud review)
+
+The other cloud-review rows were struck without Steps and a Check because they needed no change.
+T21 is a live GitHub-state change, so it gets both.
+
+**Steps.**
+
+1. Fix the `frontend-desktop` matrix in `.github/workflows/ci.yml`: a leading space in the JSON
+   key (`" platform"`) left `matrix.platform` empty, so the Windows/macOS legs reported as
+   `frontend (/x64)` / `frontend (/arm64)` — names no ruleset context can match. Trailing spaces
+   in the `os` labels go in the same edit.
+2. Update the `protect-main` ruleset (`pyrlyn/stator`, id 24341905) so
+   `required_status_checks` is exactly: `pipeline / gate`, `static analysis`,
+   `frontend (linux/x64)`, `frontend (windows/x64)`, `frontend (windows/arm64)`.
+   (Apply via `gh api -X PUT repositories/1353641814/rulesets/24341905` — the `listepo/stator`
+   alias 307-redirects and `gh` will not follow a redirected PUT.)
+3. Leave `frontend (macos/arm64)` and the `-macos` twins **unrequired**: when the org variable
+   `MACOS_CI_DISABLED` is true, the macOS matrix entry is removed (not skipped), so a required
+   macOS context would block every PR with a check that never reports. The `if:`-gated
+   `-macos` jobs report `skipped` (success for a required check) when the variable is true;
+   the matrix-excluded desktop legs report nothing.
+4. Do **not** reintroduce the `repo-settings` caller (#170/#171): it never had
+   `REPO_ADMIN_TOKEN` and failed HTTP 401. Re-applying the ruleset after an accidental edit is
+   the `gh api` PUT above, not a workflow.
+
+**Check.**
+
+```
+gh api repos/pyrlyn/stator/rulesets/24341905 \
+  --jq '[.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context]'
+```
+
+Must print exactly `["pipeline / gate","static analysis","frontend (linux/x64)","frontend (windows/x64)","frontend (windows/arm64)"]`, and a PR whose `static analysis` or a Windows `frontend` leg is red must show merge blocked (admin bypass remains available on PRs only — actor `RepositoryRole` admin, `bypass_mode: pull_request`).
 
 Not added: exposing `ffi-gen` as a `stator ffi-gen` subcommand is optional, and the review says to keep it in-tree as it is; the identity string methods (`jsrt_string_to_string`, `jsrt_string_value_of`) are used through the method table.
 
@@ -2460,3 +2494,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.84** (2026-10-19): **Task 6.31 lands** (plan-notes 363). `pipeline / sonarcloud / sonarcloud` on run 39297920890 ran Setup and, with `SONAR_TOKEN` set, Coverage; the scanner read `coverage/lcov.info`. The card moves to done.md.
 
 - **v4.82** (2026-10-19): **Cloud-review rows T20, T22, T25 and T26 were already fixed** (plan-notes 364). The table still said confirmed. `ci.yml` pushes `main`, `pipeline.yml` calls `pyrlyn/ci` at `@main` (#158), the repo map no longer lists Ryū as vendored, and `memfs` is gone. T21 (required checks) and T24 (split the C emitter) stay open. These rows were never given Steps and a Check, so they are struck in the table the way T23 was, not moved to `done.md`.
+- **v4.85** (2026-10-23): **Cloud-review T21 lands: `protect-main` requires the real test jobs** (plan-notes 370). The ruleset required only `pipeline / gate`, which is why T17 merged with red CI. It now also requires `static analysis`, `frontend (linux/x64)`, `frontend (windows/x64)` and `frontend (windows/arm64)`. A leading-space key in the `frontend-desktop` `fromJSON` matrix had been reporting those legs as `frontend (/x64)` — unmatchable as check contexts — and is fixed in the same change. macOS legs stay unrequired because `MACOS_CI_DISABLED=true` removes them from the matrix instead of skipping them.
