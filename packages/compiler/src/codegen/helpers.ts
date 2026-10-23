@@ -1,3 +1,4 @@
+import { DEFAULT_EXPORT_BINDING } from '../frontend/modules.ts';
 /* Shared pure helpers for the C emitter (T24 split). No Emitter state. */
 
 import type {
@@ -144,6 +145,11 @@ export function descriptorName(name: string): string {
   // A shadowed class prints under its source name: Node shows `C`, not the HIR spelling the
   // descriptor is keyed by (plan.md §8 step 23 -- the class twin of step 17's function rule).
   const unshadowed = shadowSource(name) ?? name;
+  // The anonymous `export default class {}` binds `*default*` (plan.md §11c T11.5a) and prints
+  // as Node's own `.name`, `default`.
+  if (unshadowed === DEFAULT_EXPORT_BINDING) {
+    return 'default';
+  }
   // A specialization prints under its source name: Node shows `Box`, not `Box<number>`, and the
   // mangled tuple is a compile-time key no identifier can spell, so stripping it cannot collide.
   const generic = unshadowed.indexOf('<');

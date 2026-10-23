@@ -366,6 +366,12 @@ export function countExpression(emitter: Emitter, expr: Expression): void {
         emitter.slotCount += 2;
         emitter.countExpression(expr.target.target);
         emitter.countExpression(expr.target.index);
+      } else if (expr.target.kind === 'accessor-place') {
+        // Two contiguous slots: the receiver (argv[0]) and the set value (argv[1]). The get
+        // takes argc=1 over the same base; the set argc=2. Contiguous so `&base` is argv.
+        emitter.indexSlots.set(expr, emitter.slotCount);
+        emitter.slotCount += 2;
+        emitter.countExpression(expr.target.target);
       } else if (expr.target.kind === 'field-access' || expr.target.kind === 'dyn-field-access') {
         emitter.indexSlots.set(expr, emitter.slotCount);
         emitter.slotCount++;
@@ -660,6 +666,11 @@ export function countExpression(emitter: Emitter, expr: Expression): void {
       break;
     case 'dyn-field-access':
       emitter.tempSlots.set(expr, emitter.slotCount++);
+      emitter.countExpression(expr.target);
+      break;
+    // An accessor place is only ever an update target: its receiver roots in the update's
+    // slot (the read-once rule), and the get/set halves are method calls the update emits.
+    case 'accessor-place':
       emitter.countExpression(expr.target);
       break;
     // The dispatch allocates (it boxes collections) and can throw (a non-iterable leaves a

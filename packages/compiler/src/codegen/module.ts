@@ -157,7 +157,7 @@ export function emit(emitter: Emitter, module: Module, library?: LibraryEmit): s
     // whose evaluation can repeat, which is exactly the surface that could capture here.
     out.push(
       `static const JSRTClosure _jsrt_class_object_${id} = {${cls.ctor === undefined ? 'NULL' : `_jsrt_fn_${String(emitter.functionId(cls.ctor.fn))}`}, ` +
-        `${cls.ctor === undefined ? 0 : String(closureMeta(cls.ctor.fn).arity)}, ${cNameLiteral(cls.name)}, NULL, false, &_jsrt_class_${id}};`,
+        `${cls.ctor === undefined ? 0 : String(closureMeta(cls.ctor.fn).arity)}, ${cNameLiteral(descriptorName(cls.name))}, NULL, false, &_jsrt_class_${id}};`,
     );
   }
   if (emitter.classes.length > 0) {

@@ -579,8 +579,8 @@ bundle — evidence: done.md → Phase 5).~~ ✅
     variable declared inside a loop, `instanceof` against anything but a class name, assignment and
     compound assignment to a non-variable, `++`/`--` on a non-variable and in value position, and
     the binary/unary/statement catch-alls (`describeKind`).~~ ✅ **landed 2026-09-02**
-    (plan-notes 164). **Residue:** accessor compound and `#n in o` stay not-yet (families (d) /
-    private).
+    (plan-notes 164). **Residue:** `#n in o` stays not-yet (family (private)). Accessor
+    compound landed in both positions (plan-notes 373).
     (c) **[D3] Object literal forms**: shorthand, spread, method and accessor members; keys that are not
     identifiers. **Shorthand, non-identifier keys, and spread landed 2026-09-03** (plan-notes 181;
     evidence in [done.md](done.md) → Phase 5 step 12c, including the LAYOUT-vs-ENUMERATION order
@@ -615,12 +615,13 @@ bundle — evidence: done.md → Phase 5).~~ ✅
     blocks in source order (276), branch `super` in init-free derived ctors with exactly-once
     refusal (273), and bound class expressions via descriptor erasure (278). **Residue:**
     abstract accessors (`gate.ts:3670` override arm — need virtual accessor dispatch),
-    switch-guarded supers (the branch rule's `checkCtorList` covers `if`/`else`/blocks only —
-    a `switch` stays `STA1214`), `super` in a static block (`gate.ts:3730`), `this` in a static
-    member or block (`gate.ts:4711,4715`), bare `super` (`gate.ts:482,4984` — a JavaScript
-    SyntaxError, stays refused), opaque class values (`gate.ts:904,919,940,5283` — need the
-    class object), and anonymous default classes (`export default class {}` — default imports
-    landed with §11c T11.5a; what is left is a descriptor for a declaration with no name).
+    ~~switch-guarded supers~~ **landed** (plan-notes 373; `checkCtorList` covers `switch`),
+    ~~`super` in a static block~~ **landed** (plan-notes 373; `super.x` naming a base static
+    erases to that binding), `this` in a static METHOD (`this.x` in a static field initializer
+    or block landed — plan-notes 373; a method's `this` is the reached-through class object),
+    bare `super` (`gate.ts:482,4984` — a JavaScript SyntaxError, stays refused), opaque class
+    values (`gate.ts:904,919,940,5283` — need the class object), and ~~anonymous default
+    classes~~ **landed** (plan-notes 373; `export default class {}` keys on `*default*`).
     (e) **[D3] Values that need a closure or a class object**: ~~calling an arbitrary expression~~,
     ~~function declarations inside a block/loop/branch~~, ~~method values (`const f = o.m`)~~,
     ~~calling a class field~~, and ~~named function expressions~~ **landed** (evidence in

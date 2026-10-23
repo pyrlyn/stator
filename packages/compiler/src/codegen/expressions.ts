@@ -19,6 +19,7 @@ import type {
   Span,
   TemplateLiteral,
   UpdateExpr,
+  UpdatePlace,
   VtableEntry,
 } from '../hir/nodes.ts';
 import {
@@ -491,6 +492,11 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
       emitter.emitPendingCheck(expr.span);
       return result;
     }
+
+    // Only ever an update target; `emitUpdate` owns the get/set pair. Emitting one standalone
+    // would be a lowering bug -- the node has no value of its own outside the fold.
+    case 'accessor-place':
+      throw new Error('accessor-place emitted outside an update');
 
     // `index`, `input` and `groups` are PROPERTIES of the match array, so they read through the
     // same shape chain and the same per-site cache any dynamic property does. `length` is not:
@@ -1483,6 +1489,21 @@ export function methodCallee(emitter: Emitter, expr: MethodCall, receiver: strin
   return emitter.closureValue(emitter.methodOf(expr).fn);
 }
 
+/** The callee a DIRECT accessor half invokes: the class's own `get x` / `set x` closure.
+ * Virtual halves load through `jsrt_method` instead (the `dispatch` arm in `emitUpdate`). */
+function accessorCallee(
+  emitter: Emitter,
+  place: Extract<UpdatePlace, { kind: 'accessor-place' }>,
+  half: 'get' | 'set',
+): string {
+  const method = half === 'get' ? `get ${place.property}` : `set ${place.property}`;
+  const found = emitter.classAt(place.owner).methods.find((m) => m.name === method);
+  if (found === undefined) {
+    throw new Error(`class ${place.owner} has no method ${method}`);
+  }
+  return emitter.closureValue(found.fn);
+}
+
 /** The closure constant a method-table entry names: the implementing class's own function.
  *
  * A table entry must be a file-scope constant to name one, so a method that captures has none:
@@ -1823,6 +1844,38 @@ export function emitUpdate(emitter: Emitter, expr: UpdateExpr): string {
         `jsrt_set_prop(${target}, ${cNameLiteral(place.field)}, ${value}, &${ic})`;
       break;
     }
+    case 'accessor-place': {
+      // Two contiguous slots hold argv: the receiver, then the set value. The get runs
+      // `jsrt_call(callee, 1, &base)` and the set `jsrt_call(callee, 2, &base)` — the same
+      // ABI `method-call` uses, with the fold's answer as the setter's argument. A set-only
+      // property answers `undefined` for the missing half (the compound forms' rule).
+      const base = emitter.indexSlots.get(expr);
+      if (base === undefined) {
+        throw new Error('update accessor place was not registered during counting');
+      }
+      const receiver = emitter.slotAt(base);
+      const arg = emitter.slotAt(base + 1);
+      emitter.appendLine(`${receiver} = ${emitter.emitExpression(place.target)};`, expr.span);
+      const getCallee =
+        place.hasGet && place.getSlot >= 0
+          ? place.dispatch === 'virtual'
+            ? `jsrt_method(${receiver}, ${place.getSlot})`
+            : accessorCallee(emitter, place, 'get')
+          : undefined;
+      const setCallee =
+        place.setSlot >= 0
+          ? place.dispatch === 'virtual'
+            ? `jsrt_method(${receiver}, ${place.setSlot})`
+            : accessorCallee(emitter, place, 'set')
+          : undefined;
+      read =
+        getCallee === undefined ? 'JSRT_UNDEFINED' : `jsrt_call(${getCallee}, 1, &${receiver})`;
+      write = (value: string) =>
+        setCallee === undefined
+          ? `(${arg} = ${value})`
+          : `(${arg} = ${value}, jsrt_call(${setCallee}, 2, &${receiver}))`;
+      break;
+    }
   }
   const op = expr.operator;
   if (op === '=') {
@@ -1835,11 +1888,15 @@ export function emitUpdate(emitter: Emitter, expr: UpdateExpr): string {
     emitter.appendLine(`${write(result)};`, expr.span);
   } else {
     emitter.appendLine(`${result} = ${read};`, expr.span);
-    // A dynamic read throws on a nullish receiver, and a static index read degrades to it on
-    // a statically-typed array that arrives as something else (plan.md §8 step 20) -- either
-    // unwinds before the arithmetic below consumes the value. (The write has the blanket
-    // check at the end of this function.)
-    if (place.kind === 'dyn-field-access' || place.kind === 'index-access') {
+    // A dynamic read throws on a nullish receiver, a static index read degrades to it on
+    // a statically-typed array that arrives as something else (plan.md §8 step 20), and an
+    // accessor getter is a user call -- each unwinds before the arithmetic below consumes
+    // the value. (The write has the blanket check at the end of this function.)
+    if (
+      place.kind === 'dyn-field-access' ||
+      place.kind === 'index-access' ||
+      place.kind === 'accessor-place'
+    ) {
       emitter.emitPendingCheck(expr.span);
     }
     if (op === '++' || op === '--') {

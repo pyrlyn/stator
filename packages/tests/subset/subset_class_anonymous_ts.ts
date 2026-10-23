@@ -1,10 +1,10 @@
 // @mode: ts
-// @verdict: not-yet
-// @code: STA1214
-// SUBSET.md: Classes -- an anonymous DECLARATION (`export default class { … }`) has no name to
-// identify its layout by, so nominal equality has nothing to hold onto. Expected message
-// (pinned in gate.test.ts -- explain reports verdicts, not prose): "an anonymous class is not
-// yet supported; planned for Phase 5".
+// @verdict: static
+// SUBSET.md: Classes -- the anonymous DECLARATION (`export default class { … }`) takes
+// Node's `.name` (`default`); the descriptor keys on ES's `*default*` binding, which the
+// default import aliases (plan.md §8 step 12(d)). Constructing, reading fields, calling
+// methods and `instanceof` all work; the class object itself (`C.name`, `console.log(C)`)
+// stays the class-as-value refusal.
 
 export default class {
   m(): number {

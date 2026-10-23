@@ -104,6 +104,7 @@ import {
 } from '../frontend/types.ts';
 import { isClassFormationDeclarator } from '../frontend/types.ts';
 import type {
+  AccessorPlace,
   ArrayLength,
   ArrayLiteral,
   ArrayOpName,
@@ -2800,7 +2801,7 @@ function staticName(className: string, member: string): string {
  * not model) falls back to the source name, which is what the descriptor will carry too: the
  * declaration site renames only against bindings already made. */
 function hirClassName(declaration: ts.ClassDeclaration | ts.ClassExpression): string {
-  return hirNameOf(declaration) ?? declaration.name?.text ?? '';
+  return hirNameOf(declaration) ?? classDisplayName(declaration) ?? '';
 }
 
 /** The storage a `#private` USE resolves to: the mangled slot/property plus the class that
@@ -3764,6 +3765,13 @@ function lowerUpdatePlace(
   bindings: Scope,
   diagnostics: Diagnostic[],
 ): UpdatePlace | null {
+  // An accessor place is a CALL pair, not a slot: `c.x += 1` in value position runs the getter,
+  // folds, and runs the setter — the statement-position rule's twin (`memberAssignment`'s
+  // `accessorPlace`), with the fold's answer as the expression value (plan.md §8 step 12b).
+  const accessorTarget = accessorUpdateTarget(node, checker, bindings, sourceFile, diagnostics);
+  if (accessorTarget !== undefined) {
+    return accessorTarget;
+  }
   const expr = lowerExpression(node, sourceFile, checker, bindings, diagnostics);
   if (expr === null) {
     return null;
@@ -3798,6 +3806,62 @@ function lowerUpdatePlace(
     ),
   );
   return null;
+}
+
+/** An accessor `++`/`--`/`+=`/`=` place, or `undefined` when `node` is not one. Shared by the
+ * value-position path above and nothing else: the statement path goes through `memberAssignment`
+ *'s `accessorPlace`, which folds into a write statement rather than an expression. */
+function accessorUpdateTarget(
+  node: ts.Expression,
+  checker: ts.TypeChecker,
+  bindings: Scope,
+  sourceFile: ts.SourceFile,
+  diagnostics: Diagnostic[],
+): AccessorPlace | undefined {
+  const property = ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : ts.isElementAccessExpression(node)
+      ? elementStaticKey(node.argumentExpression, checker)
+      : null;
+  if (property === null || property === undefined) {
+    return undefined;
+  }
+  const receiver = ts.isPropertyAccessExpression(node)
+    ? node.expression
+    : ts.isElementAccessExpression(node)
+      ? node.expression
+      : undefined;
+  if (receiver === undefined) {
+    return undefined;
+  }
+  const owner = accessorOwner(receiver, property, checker, bindings, sourceFile);
+  if (owner === undefined) {
+    return undefined;
+  }
+  const target = lowerExpression(receiver, sourceFile, checker, bindings, diagnostics);
+  if (target === null || target.type.kind !== 'object') {
+    return undefined;
+  }
+  const getSlot = target.type.methods.findIndex((m) => m.name === accessorName('get', property));
+  const setSlot = target.type.methods.findIndex((m) => m.name === accessorName('set', property));
+  if (getSlot < 0 && setSlot < 0) {
+    return undefined;
+  }
+  const hasGet = hasAccessorHalf(receiver, property, 'get', checker, bindings, sourceFile);
+  return {
+    kind: 'accessor-place',
+    type: typeAt(node, checker, bindings),
+    span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
+    target,
+    owner,
+    property,
+    getSlot,
+    setSlot,
+    dispatch: isOverridden(target.type.name, accessorName('get', property), checker)
+      ? 'virtual'
+      : 'direct',
+    hasGet,
+  };
 }
 
 function lowerForIn(
@@ -8518,7 +8582,7 @@ function mangleClassName(
     // them), so there is no tuple to specialize.
     return hirNameOf(owner) ?? expressionClassName(owner) ?? null;
   }
-  const name = owner.name?.text;
+  const name = classDisplayName(owner);
   if (name === undefined || name === '') {
     return null;
   }
@@ -9372,18 +9436,25 @@ function lowerClass(
   },
 ): ClassDeclaration | Block | null {
   const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
-  // An expression has no name of its own: its identity is Node's `.name` for the spelling —
-  // the inner name, else the bound variable (see `expressionClassName`) — which doubles as
-  // the scope registration below (shadowing renames exactly like a declaration's) and as the
-  // `#private` owner and span-lookup name. Its instance type comes from the construct
-  // signature's return: the variable binds the static side, and the inner name (if any)
-  // is visible only inside, so neither names the instance from here.
+  // A class's identity is Node's `.name` for the spelling — the declared name, the inner
+  // name or bound variable of an expression (see `expressionClassName`), or `default` for
+  // the anonymous `export default class {}` — which doubles as the scope registration below
+  // (shadowing renames exactly like a declaration's) and as the `#private` owner and
+  // span-lookup name. The BINDING is `declaredBindingName` where one exists: `*default*` for
+  // the anonymous default export, which is the name the module's export table looks up
+  // (plan.md §11c T11.5a). Its instance type comes from the construct signature's return for
+  // a spelling with no name node, and from the declared type otherwise.
   const displayName = classDisplayName(node);
   let self: ts.Type | undefined;
   if (displayName !== undefined) {
     if (ts.isClassExpression(node)) {
+      // An expression's type is the constructor; the instance is its construct return.
       self = checker.getTypeAtLocation(node).getConstructSignatures()[0]?.getReturnType();
-    } else if (node.name !== undefined) {
+    } else if (node.name === undefined) {
+      // The anonymous `export default class {}`: the declaration's own type IS the instance
+      // type (the checker gives a named declaration's name symbol the same answer).
+      self = checker.getTypeAtLocation(node);
+    } else {
       const symbol = checker.getSymbolAtLocation(node.name);
       self = symbol === undefined ? undefined : checker.getDeclaredTypeOfSymbol(symbol);
     }
@@ -9411,11 +9482,16 @@ function lowerClass(
   // An ordinary declaration is ALSO a binding of its scope, declared here before anything it
   // contains is lowered: a block that re-declares an outer class gets a HIR name of its own
   // instead of sharing the outer descriptor (plan.md §8 step 23). `declare` (not `set`) is what
-  // makes shadowing rename. Specializations skip this -- a generic class lives at module scope
+  // makes shadowing rename. The binding is `declaredBindingName` where one exists (`*default*`
+  // for the anonymous default export, which is what the module's export table looks up) and the
+  // display name otherwise. Specializations skip this -- a generic class lives at module scope
   // by gate rule, so its source name is already unique, and the tuple lowerings share one
   // declaration node whose HIR name belongs to the carrier.
   if (spec === undefined) {
-    hirNameOfDeclaration.set(node, bindings.declare(displayName, type));
+    const bindingName = ts.isClassDeclaration(node)
+      ? (declaredBindingName(node) ?? displayName)
+      : displayName;
+    hirNameOfDeclaration.set(node, bindings.declare(bindingName, type));
   }
   // The HIR identity of this declaration: the mangled tuple for a specialization, the renamed
   // binding for a shadowing class, the source name otherwise. Every use site resolves to the
@@ -9430,13 +9506,9 @@ function lowerClass(
   // the base is always lowered first, source order being what makes the descriptor's forward
   // reference to it legal.
   const renameBase = (name: string): string => {
-    // Expression bases match by display name (Node's `.name`), declarations by source name.
-    const owner = ancestry(node, checker).find(
-      (candidate) =>
-        (ts.isClassExpression(candidate)
-          ? expressionClassName(candidate)
-          : candidate.name?.text) === name,
-    );
+    // Bases match by display name (Node's `.name`): the declared name, an expression's
+    // inner name or variable, or `default` for the anonymous default export.
+    const owner = ancestry(node, checker).find((candidate) => classDisplayName(candidate) === name);
     const renamed = owner === undefined ? undefined : hirNameOf(owner);
     return renamed ?? name;
   };
