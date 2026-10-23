@@ -13105,7 +13105,8 @@ and from `packages/compiler/src/frontend/program.ts`. The custom-host comments s
 "in-memory CompilerHost". plan-notes 353 removed the dependency.
 
 **Left open.** T21 is a required-check / ruleset change, and this session does not edit
-rulesets. T24 is still one file: `packages/compiler/src/codegen/index.ts`.
+rulesets. T24 is still one file: `packages/compiler/src/codegen/index.ts` (closed later in
+plan-notes 371).
 ## 369. Task 6.15: own-source JavaScript is TypeScript, and the exempt set is checked (2026-10-19)
 
 **Plan:** §0.10 and §9 Task 6.15. `plan.md` edited in the same change: the task is a stub,
@@ -13194,3 +13195,66 @@ reports (skipped rather than absent), add `frontend (macos/arm64)` to the rulese
 `docs/TOOLCHAIN.md` "CI stages" now names the required set. `jactionlint` is clean on the
 changed workflow.
 
+## 371. T24: the C emitter is split by HIR family under `src/codegen/` (2026-10-23)
+
+**Plan:** the cloud-review table at the top of `plan.md` (not a phase card). `plan.md` edited
+in the same change: the T24 row is struck the way T23/T20 were — it never had Steps and a
+Check of its own, so there is no record to move to `done.md`. The Check for this move is the
+one below, recorded here as the acceptance.
+
+**What moved.** `packages/compiler/src/codegen/index.ts` (6,276 lines, the only file in
+`codegen/`) is now a 16-line facade re-exporting `emitC` / `LibraryEmit`. The emitter is:
+
+| File | Lines | Role |
+| --- | ---: | --- |
+| `expressions.ts` | 1,911 | `emitExpression` + binary/logical/conditional/optional/update/template and class method resolution |
+| `statements.ts` | 1,205 | `emitStatement`, for-of, try/finally, switch, loop scopes |
+| `module.ts` | 813 | `emit` / main / library init / export stubs |
+| `slots.ts` | 776 | the counting pass, slot map, `slotAt`/`slotRef` |
+| `runtime_calls.ts` | 573 | call sequencing, extern ABI, console |
+| `helpers.ts` | 487 | pure helpers (no emitter state) |
+| `closures.ts` | 476 | function units, async/generator, environments |
+| `emitter.ts` | 430 | state fields + `declare` method shapes |
+| `install.ts` | 58 | prototype install of family free functions |
+| `types.ts` | 112 | `FunctionUnit`, `TryFinallyScope`, `CallSlotted`, `LibraryEmit` |
+| `tables.ts` | 90 | `BINARY_EMITTERS` & friends |
+
+Family modules take the emitter as a leading parameter (`emitter: Emitter`) so they stay
+ordinary exported functions under oxlint's `no-this-in-exported-function`. `install.ts`
+rebinds them onto `Emitter.prototype` once before the first `emit()`; mutual recursion stays
+`emitter.emitExpression(...)` through the prototype. Method shapes on the class are
+`declare` fields (type-only under `useDefineForClassFields`) rather than an interface merge,
+which `typescript/no-unsafe-declaration-merging` rejects.
+
+**Why not grow the clone baseline.** Renaming `this.` → `emitter.` re-fingerprinted ~17
+already-present structural clones (jscpd's `ignoreIdentifiers` does not treat the keyword
+`this` as an identifier). Those were removed by extracting shared helpers instead:
+`openCapturedWhile` / `emitLoopBody` / `closeLoopScope`, `pushFinallyScope` /
+`emitFinallyDispatch*`, `openFinallyTail` / `closeFinallyLoop`, unit-state
+snapshot/restore by key list, `requireIndexBase` / `requireCallBase` / `sequenceCallOperands`
+/ `findClassMethod` / `requireTempSlot`, `emitBranchArm`, `beginModuleUnits`,
+`withLiveIterEnv`. `.jscpd-baseline.json` is unchanged; `pnpm run dupes` reports 163 clones
+and **zero** new ones.
+
+**Docs.** `docs/FFI.md` and `docs/SUBSET.md` no longer name a single `codegen/index.ts` as
+the emitter's home (the facade is only the re-export). Architecture diagrams already said
+`src/codegen/` and did not need a D2 edit.
+
+**Check (passed on this worktree).**
+
+```
+pnpm run typecheck     # clean
+pnpm run lint          # oxlint --deny-warnings + oxfmt --check: clean
+pnpm run dupes         # 163 clones, 0 new
+pnpm run test          # 61 files, 783 tests, 0 failed
+pnpm run test:golden   # 464 fixtures, 464 passed, 2 intl_* skipped (non-intl STATOR_RUNTIME)
+```
+
+`pnpm run ci` was not run in full (serial wall-time); the gates above are typecheck, lint,
+dupes, unit, and golden — the ones this move can break. A spot-check that `--emit=c` for a
+recursive `f` is byte-identical to the pre-split emitter (`diff` empty) was the byte-for-byte
+guard while landing the branch-arm helper.
+
+**Left.** Class-descriptor *emission* stays inside `module.ts`'s `emit()` (it is file-scope
+prologue, not a separate HIR family). If a later card wants a `classes.ts`, the method
+resolution helpers already live in `expressions.ts` and can move with them.
