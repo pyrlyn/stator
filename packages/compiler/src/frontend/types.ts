@@ -1623,13 +1623,7 @@ function staticMemberIn(
       member: ts.ClassElement;
     }
   | undefined {
-  const seen = new Set<ts.ClassDeclaration | ts.ClassExpression>();
-  for (
-    let current: ts.ClassDeclaration | ts.ClassExpression | undefined = declaration;
-    current !== undefined && !seen.has(current);
-    current = baseClassOf(current, checker)
-  ) {
-    seen.add(current);
+  for (const current of ancestry(declaration, checker).reverse()) {
     // An identifier names itself; a literal-typed computed key (`static [k]` with `k: "m"`)
     // is the name the direct spelling writes, so it matches the same read. String/numeric
     // literal spellings keep their old verdict -- this predicate only learns the computed
