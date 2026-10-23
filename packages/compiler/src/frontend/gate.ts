@@ -3950,10 +3950,6 @@ function gateObjectLiteral(
     // scratch slot and reads each field out of that, so a call or member access runs its effect
     // exactly once (plan.md §8 step 12 family c; plan-notes 181).
     if (ts.isSpreadAssignment(property)) {
-      const asserted = frontendTypes.tsTypeToHType(
-        checker.getTypeAtLocation(property.expression),
-        checker,
-      );
       const spread = spreadOperandType(property.expression, checker);
       // `{ ...a }` over an array: indices first, then named extras through the array's own
       // shape table (the step-38 walk), copied onto a dynamic result. The lowering folds every
@@ -3984,24 +3980,13 @@ function gateObjectLiteral(
       // dynamic-literal requirement holds here by construction whenever the operand is `any`
       // (the literal types `any` with it); a narrowed-to-`never` operand rides on the checker's
       // TS2698, which js mode drops and which leaves the literal `any` too. A dropped `as`
-      // assertion keeps its own refusal below: the shape it names is not the value's.
-      if (
-        spread.kind === 'unknown' &&
-        asserted.kind !== 'object' &&
-        frontendTypes.objectLiteralIsDynamic(literal, checker)
-      ) {
+      // assertion joins this arm (`{ ...(o as { x: number }) }`): the assertion names a shape
+      // the value need not have, so the result takes the dynamic path and `assign` copies what
+      // the run-time value actually holds (`objectLiteralIsDynamic` marks the literal).
+      if (spread.kind === 'unknown' && frontendTypes.objectLiteralIsDynamic(literal, checker)) {
         continue;
       }
       if (spread.kind !== 'object') {
-        // A dropped `as` assertion to a fixed shape (`...(u as { x: number })` with `u: unknown`)
-        // passes the shape test on the asserted type but lowers to Unknown, which the lowering
-        // reports as STA4068. It names the unknown value rather than the missing shape: the shape
-        // is right there in the assertion, it is the VALUE that is dynamic. Spreading an unknown
-        // object needs the shape-table enumeration of a dynamically-typed value, whose spread
-        // residue (step 12(c)) Phase 5 already owns — the same owner the arm below names.
-        if (asserted.kind === 'object') {
-          return notYet('an object spread of an unknown value is not yet supported', 5);
-        }
         return notYet('an object spread of a value with no fixed shape is not yet supported', 5);
       }
       // A method on an object LITERAL is an own enumerable property, so spreading copies it
@@ -6307,7 +6292,9 @@ function gateElementAccess(
     // A string's exotic index (ECMA-262 §10.4.3): `s[0]` answers the UTF-16 unit at that
     // position, `undefined` past the end. The runtime's `jsrt_get_prop` string arm is the
     // same entry an Unknown receiver takes (plan-notes 372 residue).
-    return hir.kind === 'unknown' || hir.kind === 'string' || frontendTypes.isDynamicShape(receiver, checker)
+    return hir.kind === 'unknown' ||
+      hir.kind === 'string' ||
+      frontendTypes.isDynamicShape(receiver, checker)
       ? { kind: 'accept' }
       : notYet('index access on a non-array is not yet supported', 5);
   }

@@ -13551,3 +13551,46 @@ variable existed. The current shared `snyk.yml` and `sonarcloud.yml` both use
 `${{ vars.CI_RUNNER || 'xcode-27-local' }}`. Set the supported repository override
 `CI_RUNNER=ubuntu-latest` and document it in TOOLCHAIN.md. This supplies a hosted
 runner to the unchanged checks; it does not skip them or change their gate policy.
+## 376. F1 residues: string exotic index, dropped-`as` spread; `#n in o` already landed (2026-10-23)
+
+**Plan:** §8 step 12 residues. Originally numbered 375 on `f1-residues`; renumbered 376 because note 375 records the first integration PR.
+Touches: `runtime/src/jsrt_shape.c`, `compiler/src/frontend/{gate,types}.ts`,
+`compiler/src/codegen/helpers.ts`, `compiler/src/hir/verify.ts`, goldens
+`{ts,js}/string_exotic_index`, `{ts,js}/spread_dropped_as`, subset `subset_string_index_*` and
+the flipped `subset_spread_unknown_cast_*`, `docs/SUBSET.md`, `plan.md` residue lines.
+
+**F1 — string exotic index (closed).** Before: `a[0]` where `a` is a string through an Unknown
+receiver answered `undefined`; Node answers the character. `jsrt_get_prop` handled string
+`length` and the prototype methods but not the string exotic index (plan-notes 372 residue).
+The same arm now answers a canonical array index below `length` with the UTF-16 unit at that
+position, and `jsrt_has_prop` agrees. The gate accepts a typed-string index (`s[0]`), which
+`indexGetCall`/`indexSetCall` route through the same dynamic entry; the verifier's
+`checkIndexable` admits `string`. Goldens `string_exotic_index` both modes match Node
+byte-for-byte (js also covers string keys and non-canonical spellings). Decision tests
+`subset_string_index_*` are `dynamic` (the read is `string | undefined` under
+`noUncheckedIndexedAccess`).
+
+**F2 — `#n in o` (already landed, residue struck).** The brand check lowers to `instanceof`
+against the lexically-resolved declaring class (`brandDeclaringClass`); goldens
+`class_private_accessor` and `class_private_redeclare` both modes, subset
+`subset_class_private_accessor_*` `dynamic`. plan.md step 12(b) residue no longer names it.
+
+**F3 — dropped `as` assertion's unknown operand in object-literal spread (closed).**
+`{ ...(o as { x: number }) }` stayed `STA1214` because `objectLiteralIsDynamic` was false (the
+literal types the asserted shape) while the lowering drops the non-checkable `as` and spreads
+the unknown operand. The result now takes the dynamic path: `objectLiteralIsDynamic` is true
+when any spread reads a run-time key set (a dropped-`as` unknown), and the gate's unknown-spread
+arm accepts it. The shape-table `assign` already copied the run-time keys (plan-notes 297). Array
+spread of a dropped `as` already worked and rides the same fixture. Goldens
+`spread_dropped_as` both modes; `subset_spread_unknown_cast_*` flipped `not-yet` → `dynamic`.
+
+**Left open (not landed here).** Step 12(a) nested patterns / rest-in-pattern / default-in-pattern
+(`isSimpleBindingPattern` still refuses a nested binding element; the gate message is the shallow
+destructuring refusal, not a named residue). Step 12(f) homeless generics outside a call-argument
+position already carry precise per-shape refusals (`subset_generic_homeless_*`);
+`const f = <T>(x: T) => x` at module scope already specializes under the const home
+(`subset_generic_arrow_*` `static`). No new diagnostic codes.
+
+**Checks (F3 landing run).** typecheck + lint clean. `test:golden --filter=string_exotic_index`
+2/2, `--filter=spread_dropped_as` 2/2, `--filter=class_private` 6/6. `test:subset
+--filter=string_index` 2/2; full subset/golden reported below with the commit.
