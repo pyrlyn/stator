@@ -594,8 +594,8 @@ bundle — evidence: done.md → Phase 5).~~ ✅
     step 12c computed keys).
     **A spread of an untyped value into a literal the checker types `any` landed** (plan-notes
     297: the operand folds through the shape-table `assign`, beside the array spread).
-    **Residue:** a dropped `as` assertion's unknown operand, a value with no fixed shape in a
-    fixed-typed literal (`{ ...null }`, an array beside an own key), and the methods-order
+    **Residue:** a value with no fixed shape in a
+    fixed-typed literal (a dropped `as` unknown operand lands as dynamic, plan-notes 376) (`{ ...null }`, an array beside an own key), and the methods-order
     shapes (`gate.ts` spread-prefix arms) stay `STA1214` — all need the dynamic tier (step 39),
     not this slice. Spread of any
     fixed-shape EXPRESSION compiles — variable, call, or member access, evaluated once via

@@ -1,6 +1,5 @@
 // @mode: js
-// @verdict: not-yet
-// @code: STA1214
+// @verdict: dynamic
 // SUBSET.md: Spread operator ... in array literals / Object literals with static keys
 // An `as` assertion to an array or object type is never checkable (only number, string and
 // boolean are), so the lowering drops it and spreads the unknown operand — refused here with

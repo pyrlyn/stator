@@ -100,9 +100,10 @@ test('BigInt is not-yet STA1213 in both modes, never an internal error', () => {
 
 // Index access is admitted only where the target is genuinely an array. `s[0]` and `o['k']` are
 // the same syntax reaching a different runtime operation, and neither has an HIR node yet.
-test('index access is accepted on an array and not-yet on anything else', () => {
+test('index access is accepted on an array and a string, not-yet on anything else', () => {
   assert.deepEqual(codesFor('const a: number[] = [1];\nconsole.log(a[0]);'), []);
-  assert.deepEqual(codesFor("const s: string = 'ab';\nconsole.log(s[0]);"), ['STA1214']);
+  // A string's exotic index is admitted (plan-notes 376 / F1): `s[0]` is the UTF-16 unit.
+  assert.deepEqual(codesFor("const s: string = 'ab';\nconsole.log(s[0]);"), []);
   // A hole is rejected: a dense array cannot be absent. Array spread of a typed array is accepted.
   assert.deepEqual(codesFor('const a: number[] = [1, , 3];'), ['STA1214']);
   assert.deepEqual(codesFor('const a: number[] = [1];\nconst b: number[] = [...a];'), []);
@@ -125,11 +126,11 @@ test('spread of an unknown value drains at run time; an object spread of one is 
   );
   // A tuple is a checker-level array the HType model calls Unknown.
   assert.deepEqual(codesFor('const t: [number, string] = [1, "a"];\nconst b = [...t];', 'js'), []);
-  // The object twin: a dropped assertion to a fixed shape names the unknown value, not the
-  // missing shape (which the assertion itself supplies).
+  // The object twin: a dropped assertion to a fixed shape names the unknown VALUE, so the
+  // spread enumerates run-time keys through the shape table (plan-notes 376 / F3).
   assert.deepEqual(
     codesFor('declare const u: unknown;\nconst b = { ...(u as { x: number }) };', 'js'),
-    ['STA1214'],
+    [],
   );
   // A directly-`unknown` operand stays the checker's (TS2488) in ts mode, and js mode suppresses
   // that code: the gate is silent either way.
@@ -139,13 +140,16 @@ test('spread of an unknown value drains at run time; an object spread of one is 
   assert.deepEqual(codesFor('const a: unknown[] = [1];\nconst b: unknown[] = [...a];', 'js'), []);
 });
 
-test('an object spread of an unknown carries its own message', () => {
+test('an object spread of a dropped-as unknown is accepted on the dynamic path', () => {
   const { program: objectProgram } = createProgram(
     'declare const u: unknown;\nconst b = { ...(u as { x: number }) };',
     '/test.ts',
   );
   const objectDiags = gateProgram(objectProgram, 'js');
-  assert.match(objectDiags[0]?.message ?? '', /an object spread of an unknown value/);
+  assert.deepEqual(
+    objectDiags.map((d) => d.message),
+    [],
+  );
 });
 
 test('switch, case, default and do/while are all accepted syntax', () => {

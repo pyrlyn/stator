@@ -13551,3 +13551,30 @@ variable existed. The current shared `snyk.yml` and `sonarcloud.yml` both use
 `${{ vars.CI_RUNNER || 'xcode-27-local' }}`. Set the supported repository override
 `CI_RUNNER=ubuntu-latest` and document it in TOOLCHAIN.md. This supplies a hosted
 runner to the unchanged checks; it does not skip them or change their gate policy.
+
+## 376. F1/F3 residue: string exotic index and dropped-`as` object spread (2026-10-23)
+
+**Plan:** §8 step 12 residues left open after the A batch (plan-notes 372 named the string-index
+gap). Landed here on `finish-f-residues` against the integrated `0fa4c6d` main.
+
+**F1 — string exotic index.** `jsrt_get_prop` / `jsrt_has_prop` now answer a canonical array
+index below `length` with the UTF-16 unit (ECMA-262 §10.4.3); out of range and non-canonical keys
+stay `undefined`. `indexGetCall` / `indexSetCall` route `string` through the dyn entry (a write
+keeps Node's strict-mode TypeError). Gate admits `hir.kind === 'string'`; `checkIndexable` too.
+Goldens `ts|js/string_exotic_index`; subset `subset_string_index_*` → `dynamic`.
+
+**F3 — dropped-`as` object spread.** `objectLiteralIsDynamic` is true when a spread operand's
+VALUE is Unknown (including through a dropped `as`); the gate accepts that shape on the dynamic
+literal path and the shape-table `assign` copies run-time keys (plan-notes 297's arm, object
+twin). Subset `subset_spread_unknown_cast_*` flipped `not-yet` → `dynamic`; goldens
+`ts|js/spread_dropped_as`.
+
+**Still open from F's list:** homeless generic arrows outside call-argument position (F4) and
+nested binding patterns (F5) — both already carry precise STA1214 refusals; no code change here.
+
+**Check:**
+```
+pnpm run typecheck && pnpm run lint
+pnpm run test:subset
+pnpm run test:golden
+```

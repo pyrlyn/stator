@@ -4000,6 +4000,11 @@ function gateObjectLiteral(
         // object needs the shape-table enumeration of a dynamically-typed value, whose spread
         // residue (step 12(c)) Phase 5 already owns — the same owner the arm below names.
         if (asserted.kind === 'object') {
+          // A dropped `as` whose VALUE is unknown: the shape it names is not the value's, so
+          // the copy enumerates run-time keys through the shape table (plan-notes 375 / F3).
+          if (spread.kind === 'unknown' && frontendTypes.objectLiteralIsDynamic(literal, checker)) {
+            continue;
+          }
           return notYet('an object spread of an unknown value is not yet supported', 5);
         }
         return notYet('an object spread of a value with no fixed shape is not yet supported', 5);
@@ -6304,7 +6309,10 @@ function gateElementAccess(
     if (mode === 'js' && hir.kind === 'object' && hir.namespace !== true && key === null) {
       return { kind: 'accept' };
     }
-    return hir.kind === 'unknown' || frontendTypes.isDynamicShape(receiver, checker)
+    // String exotic index (ECMA-262 §10.4.3): `s[0]` is the UTF-16 unit at that position.
+    return hir.kind === 'unknown' ||
+      hir.kind === 'string' ||
+      frontendTypes.isDynamicShape(receiver, checker)
       ? { kind: 'accept' }
       : notYet('index access on a non-array is not yet supported', 5);
   }

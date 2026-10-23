@@ -740,9 +740,42 @@ export function objectLiteralIsDynamic(
     // can answer it (plan-notes 297).
     (own.flags & ts.TypeFlags.Any) !== 0 ||
     literalHasRuntimeComputedKey(literal, checker) ||
+    // A spread whose operand is a run-time key set (Unknown, or a dropped `as` whose VALUE is
+    // unknown): CopyDataProperties enumerates at run time, so the result cannot be a fixed slot
+    // list (plan-notes 375 / F3).
+    literalHasRuntimeKeySpread(literal, checker) ||
     (contextual !== undefined && isDynamicShape(contextual, checker)) ||
     isDynamicShape(own, checker)
   );
+}
+
+/** Whether any spread operand's VALUE is dynamic (Unknown), including through a dropped `as`
+ * whose asserted shape is not the value's. The asserted type is checked elsewhere; this asks
+ * only whether the key set is known at compile time. */
+function literalHasRuntimeKeySpread(
+  literal: ts.ObjectLiteralExpression,
+  checker: ts.TypeChecker,
+): boolean {
+  for (const property of literal.properties) {
+    if (!ts.isSpreadAssignment(property)) {
+      continue;
+    }
+    let expr: ts.Expression = property.expression;
+    while (ts.isParenthesizedExpression(expr)) {
+      expr = expr.expression;
+    }
+    if (ts.isAsExpression(expr)) {
+      expr = expr.expression;
+      while (ts.isParenthesizedExpression(expr)) {
+        expr = expr.expression;
+      }
+    }
+    const value = tsTypeToHType(checker.getTypeAtLocation(expr), checker);
+    if (value.kind === 'unknown' || isDynamicShape(checker.getTypeAtLocation(expr), checker)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** The structural name of a shape: what makes two identical literals one layout. */
