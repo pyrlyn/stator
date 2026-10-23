@@ -120,6 +120,9 @@ CI runs in two stages (plan-notes 292):
    and the durable ignores in `.github/jactionlint.yaml`) and `frontend (linux/x64)` (subset tests, runtime archive, unit tests **with
    coverage**; uploads the `coverage-lcov` artifact). This is the only job that collects coverage.
    The `pyrlyn/ci` workflow callers and `macos-runner` action use `@main`: pinning them fails `no-pinned-ci` (plan-notes 362, 375).
+   Set the repository Actions variable `CI_RUNNER=ubuntu-latest` for the shared pipeline.
+   Its Snyk and SonarCloud jobs otherwise fall back to the `xcode-27-local` label, which
+   has no runner registered for this repository (plan-notes 375).
 2. **Stage 2, Windows and macOS:** `frontend-desktop` (macOS and Windows, plain `pnpm run test`),
    plus the `-macos` twins of `runtime`, `asan`, `intl` and `ffi`. Each has
    `needs: [static, frontend-coverage]`, so none starts unless every stage-1 job passed.

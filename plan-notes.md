@@ -13543,3 +13543,11 @@ policy to the action as well as the reusable workflow; no check is bypassed.
 The action receives the same file-and-reference-specific `jactionlint` ignore as the
 two existing shared workflow callers. All other `unpinned-uses` findings remain errors;
 `mise exec -- jactionlint --sarif-hide-baselined` passes with an empty baseline.
+
+The ready PR then waited on Snyk/SonarCloud jobs 120564959109/120564959561:
+GitHub reported their labels as `["xcode-27-local"]`, while the repository's
+`actions/runners` endpoint returned `total_count: 0` and no repository `CI_RUNNER`
+variable existed. The current shared `snyk.yml` and `sonarcloud.yml` both use
+`${{ vars.CI_RUNNER || 'xcode-27-local' }}`. Set the supported repository override
+`CI_RUNNER=ubuntu-latest` and document it in TOOLCHAIN.md. This supplies a hosted
+runner to the unchanged checks; it does not skip them or change their gate policy.
