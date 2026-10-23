@@ -123,6 +123,14 @@ CI runs in two stages (plan-notes 292):
 Other Linux jobs (`test262`, Linux arm64 `frontend`, Linux `runtime`/`asan`/`intl`/`ffi`) belong to
 neither stage and run ungated, in parallel with stage 1.
 
+**Required to merge into `main`** (the `protect-main` ruleset; cloud-review T21, plan-notes 370):
+`pipeline / gate`, `static analysis`, `frontend (linux/x64)`, `frontend (windows/x64)` and
+`frontend (windows/arm64)`. The macOS frontend legs are not required: under
+`MACOS_CI_DISABLED=true` the matrix drops them entirely rather than reporting `skipped`, so a
+required macOS context would block every PR with a check that never appears. Admin can still
+bypass on a PR; an ordinary merge cannot. The ruleset is GitHub state only — nothing in-tree
+re-applies it (the `repo-settings` caller never had `REPO_ADMIN_TOKEN`, plan-notes 370).
+
 ## Compile-time opt level (`STATOR_OPT` / `--opt`)
 
 The final clang link of generated C defaults to `-O2` (non-asan). Override per build:
