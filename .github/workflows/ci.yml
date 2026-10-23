@@ -249,8 +249,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Keys and runner labels are exact: a leading space in a key made `matrix.platform`
+        # empty (check names became `frontend (/x64)`), which can never match a required
+        # status check context (T21).
         include: >-
-          ${{ fromJSON(vars.MACOS_CI_DISABLED == 'true' && '[{" platform": "windows", "arch": "x64", "os": "windows-2025 "}, {" platform": "windows", "arch": "arm64", "os": "windows-11-arm "}]' || '[{" platform": "macos", "arch": "arm64", "os": "macos-14 "}, {" platform": "windows", "arch": "x64", "os": "windows-2025 "}, {" platform": "windows", "arch": "arm64", "os": "windows-11-arm "}]') }}
+          ${{ fromJSON(vars.MACOS_CI_DISABLED == 'true' && '[{"platform": "windows", "arch": "x64", "os": "windows-2025"}, {"platform": "windows", "arch": "arm64", "os": "windows-11-arm"}]' || '[{"platform": "macos", "arch": "arm64", "os": "macos-14"}, {"platform": "windows", "arch": "x64", "os": "windows-2025"}, {"platform": "windows", "arch": "arm64", "os": "windows-11-arm"}]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps: *frontend-steps

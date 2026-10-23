@@ -13105,7 +13105,8 @@ and from `packages/compiler/src/frontend/program.ts`. The custom-host comments s
 "in-memory CompilerHost". plan-notes 353 removed the dependency.
 
 **Left open.** T21 is a required-check / ruleset change, and this session does not edit
-rulesets. T24 is still one file: `packages/compiler/src/codegen/index.ts`.
+rulesets. T24 is still one file: `packages/compiler/src/codegen/index.ts` (closed later in
+plan-notes 371).
 ## 369. Task 6.15: own-source JavaScript is TypeScript, and the exempt set is checked (2026-10-19)
 
 **Plan:** §0.10 and §9 Task 6.15. `plan.md` edited in the same change: the task is a stub,
@@ -13134,6 +13135,129 @@ preamble from `port.ts` and leaves the algorithm alone.
 `node_shim.mjs` with `node_shim.ts` in both changed that clone's fingerprint. `.jscpd-baseline.json`
 swaps one fingerprint for one (`964d0cad4424ce0b` → `4aecb478f234e5bf`) and stays at 180.
 
+## 370. T21: protect-main requires the stage-1 and Windows checks (2026-10-23)
+
+**Plan:** cloud-review row T21; `plan.md` edited in the same change — the row is struck and
+gains a `### T21` Steps/Check section (the other cloud-review rows needed none because they
+needed no change).
+
+**What was broken.** The `protect-main` ruleset (repo `pyrlyn/stator`, id 24341905; the
+`listepo/stator` name 307-redirects) required exactly one status check: `pipeline / gate`.
+That gate is the shared SonarCloud/CodeQL/Snyk pipeline. T17 (`ccf9818`, PR #113) merged with
+red CI — `pipeline` failed in 0 s and `frontend (windows/arm64)` failed — because the `ci.yml`
+jobs (`static analysis`, every `frontend`/`runtime`/`asan`/… leg) were not required at all.
+Admin can also bypass on PRs (`bypass_mode: pull_request`, actor `RepositoryRole` admin);
+that bypass is kept, so the human can still emergency-merge, but an ordinary merge is now
+blocked on the real test jobs.
+
+**A second bug made the desktop legs unrequired-able.** `frontend-desktop`'s matrix was
+built with `fromJSON` over JSON that used a leading space in the key (`" platform"`) and
+trailing spaces in the runner labels (`"windows-2025 "`). `matrix.platform` was therefore
+empty and the jobs reported check names `frontend (/x64)` / `frontend (/arm64)` (two legs
+even shared a name). A required-status-check context can never match those names. Fixed in
+`.github/workflows/ci.yml` in the same change: exact keys, exact labels
+(`windows-2025`, `windows-11-arm`, `macos-14`).
+
+**What is required now** (applied via API, verified by read-back):
+
+```
+pipeline / gate
+static analysis                 # ci.yml job id `static`
+frontend (linux/x64)            # ci.yml job id `frontend-coverage`
+frontend (windows/x64)          # ci.yml job id `frontend-desktop`
+frontend (windows/arm64)
+```
+
+Commands (PUT needs the numeric repo id — `gh` does not follow the 307 from
+`listepo/stator` / `pyrlyn/stator` on PUT):
+
+```
+gh api -X PUT repositories/1353641814/rulesets/24341905 --input protect-main.json
+gh api repos/pyrlyn/stator/rulesets/24341905 \
+  --jq '[.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context]'
+```
+
+Read-back: `["pipeline / gate","static analysis","frontend (linux/x64)","frontend (windows/x64)","frontend (windows/arm64)"]`.
+
+**Why not the macOS legs.** Org variable `MACOS_CI_DISABLED` is currently `false`, but when
+it is `true` the `frontend-desktop` matrix drops the macOS entry entirely (the job never
+reports), while the `-macos` twins of `runtime`/`asan`/`intl`/`ffi` use `if:` and report
+`skipped` (which satisfies a required check). Requiring `frontend (macos/arm64)` would
+therefore block every PR whenever the org variable is flipped, with no check run to wait
+for. Stage-1 (`static analysis` + `frontend (linux/x64)`) plus both Windows frontend legs is
+the set that always reports on every PR; macOS coverage still runs on every PR while the
+variable is false, just unenforced. If the matrix is ever restructured so macOS always
+reports (skipped rather than absent), add `frontend (macos/arm64)` to the ruleset.
+
+**What remains manual.** The ruleset lives only on GitHub; nothing in-tree re-applies it.
+#170/#171 already established that the `pyrlyn/ci` `repo-settings` caller cannot work here
+(no `REPO_ADMIN_TOKEN`, HTTP 401). Re-applying after a UI edit is the `gh api` PUT above.
+`docs/TOOLCHAIN.md` "CI stages" now names the required set. `jactionlint` is clean on the
+changed workflow.
+
+## 371. T24: the C emitter is split by HIR family under `src/codegen/` (2026-10-23)
+
+**Plan:** the cloud-review table at the top of `plan.md` (not a phase card). `plan.md` edited
+in the same change: the T24 row is struck the way T23/T20 were — it never had Steps and a
+Check of its own, so there is no record to move to `done.md`. The Check for this move is the
+one below, recorded here as the acceptance.
+
+**What moved.** `packages/compiler/src/codegen/index.ts` (6,276 lines, the only file in
+`codegen/`) is now a 16-line facade re-exporting `emitC` / `LibraryEmit`. The emitter is:
+
+| File | Lines | Role |
+| --- | ---: | --- |
+| `expressions.ts` | 1,911 | `emitExpression` + binary/logical/conditional/optional/update/template and class method resolution |
+| `statements.ts` | 1,205 | `emitStatement`, for-of, try/finally, switch, loop scopes |
+| `module.ts` | 813 | `emit` / main / library init / export stubs |
+| `slots.ts` | 776 | the counting pass, slot map, `slotAt`/`slotRef` |
+| `runtime_calls.ts` | 573 | call sequencing, extern ABI, console |
+| `helpers.ts` | 487 | pure helpers (no emitter state) |
+| `closures.ts` | 476 | function units, async/generator, environments |
+| `emitter.ts` | 430 | state fields + `declare` method shapes |
+| `install.ts` | 58 | prototype install of family free functions |
+| `types.ts` | 112 | `FunctionUnit`, `TryFinallyScope`, `CallSlotted`, `LibraryEmit` |
+| `tables.ts` | 90 | `BINARY_EMITTERS` & friends |
+
+Family modules take the emitter as a leading parameter (`emitter: Emitter`) so they stay
+ordinary exported functions under oxlint's `no-this-in-exported-function`. `install.ts`
+rebinds them onto `Emitter.prototype` once before the first `emit()`; mutual recursion stays
+`emitter.emitExpression(...)` through the prototype. Method shapes on the class are
+`declare` fields (type-only under `useDefineForClassFields`) rather than an interface merge,
+which `typescript/no-unsafe-declaration-merging` rejects.
+
+**Why not grow the clone baseline.** Renaming `this.` → `emitter.` re-fingerprinted ~17
+already-present structural clones (jscpd's `ignoreIdentifiers` does not treat the keyword
+`this` as an identifier). Those were removed by extracting shared helpers instead:
+`openCapturedWhile` / `emitLoopBody` / `closeLoopScope`, `pushFinallyScope` /
+`emitFinallyDispatch*`, `openFinallyTail` / `closeFinallyLoop`, unit-state
+snapshot/restore by key list, `requireIndexBase` / `requireCallBase` / `sequenceCallOperands`
+/ `findClassMethod` / `requireTempSlot`, `emitBranchArm`, `beginModuleUnits`,
+`withLiveIterEnv`. `.jscpd-baseline.json` is unchanged; `pnpm run dupes` reports 163 clones
+and **zero** new ones.
+
+**Docs.** `docs/FFI.md` and `docs/SUBSET.md` no longer name a single `codegen/index.ts` as
+the emitter's home (the facade is only the re-export). Architecture diagrams already said
+`src/codegen/` and did not need a D2 edit.
+
+**Check (passed on this worktree).**
+
+```
+pnpm run typecheck     # clean
+pnpm run lint          # oxlint --deny-warnings + oxfmt --check: clean
+pnpm run dupes         # 163 clones, 0 new
+pnpm run test          # 61 files, 783 tests, 0 failed
+pnpm run test:golden   # 464 fixtures, 464 passed, 2 intl_* skipped (non-intl STATOR_RUNTIME)
+```
+
+`pnpm run ci` was not run in full (serial wall-time); the gates above are typecheck, lint,
+dupes, unit, and golden — the ones this move can break. A spot-check that `--emit=c` for a
+recursive `f` is byte-identical to the pre-split emitter (`diff` empty) was the byte-for-byte
+guard while landing the branch-arm helper.
+
+**Left.** Class-descriptor *emission* stays inside `module.ts`'s `emit()` (it is file-scope
+prologue, not a separate HIR family). If a later card wants a `classes.ts`, the method
+resolution helpers already live in `expressions.ts` and can move with them.
 
 ## 372. A1–A5 runtime residue: two landed earlier, three closed here (2026-10-23)
 
