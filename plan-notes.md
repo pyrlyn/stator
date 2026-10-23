@@ -13134,3 +13134,63 @@ preamble from `port.ts` and leaves the algorithm alone.
 `node_shim.mjs` with `node_shim.ts` in both changed that clone's fingerprint. `.jscpd-baseline.json`
 swaps one fingerprint for one (`964d0cad4424ce0b` → `4aecb478f234e5bf`) and stays at 180.
 
+## 370. T21: protect-main requires the stage-1 and Windows checks (2026-10-23)
+
+**Plan:** cloud-review row T21; `plan.md` edited in the same change — the row is struck and
+gains a `### T21` Steps/Check section (the other cloud-review rows needed none because they
+needed no change).
+
+**What was broken.** The `protect-main` ruleset (repo `pyrlyn/stator`, id 24341905; the
+`listepo/stator` name 307-redirects) required exactly one status check: `pipeline / gate`.
+That gate is the shared SonarCloud/CodeQL/Snyk pipeline. T17 (`ccf9818`, PR #113) merged with
+red CI — `pipeline` failed in 0 s and `frontend (windows/arm64)` failed — because the `ci.yml`
+jobs (`static analysis`, every `frontend`/`runtime`/`asan`/… leg) were not required at all.
+Admin can also bypass on PRs (`bypass_mode: pull_request`, actor `RepositoryRole` admin);
+that bypass is kept, so the human can still emergency-merge, but an ordinary merge is now
+blocked on the real test jobs.
+
+**A second bug made the desktop legs unrequired-able.** `frontend-desktop`'s matrix was
+built with `fromJSON` over JSON that used a leading space in the key (`" platform"`) and
+trailing spaces in the runner labels (`"windows-2025 "`). `matrix.platform` was therefore
+empty and the jobs reported check names `frontend (/x64)` / `frontend (/arm64)` (two legs
+even shared a name). A required-status-check context can never match those names. Fixed in
+`.github/workflows/ci.yml` in the same change: exact keys, exact labels
+(`windows-2025`, `windows-11-arm`, `macos-14`).
+
+**What is required now** (applied via API, verified by read-back):
+
+```
+pipeline / gate
+static analysis                 # ci.yml job id `static`
+frontend (linux/x64)            # ci.yml job id `frontend-coverage`
+frontend (windows/x64)          # ci.yml job id `frontend-desktop`
+frontend (windows/arm64)
+```
+
+Commands (PUT needs the numeric repo id — `gh` does not follow the 307 from
+`listepo/stator` / `pyrlyn/stator` on PUT):
+
+```
+gh api -X PUT repositories/1353641814/rulesets/24341905 --input protect-main.json
+gh api repos/pyrlyn/stator/rulesets/24341905 \
+  --jq '[.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context]'
+```
+
+Read-back: `["pipeline / gate","static analysis","frontend (linux/x64)","frontend (windows/x64)","frontend (windows/arm64)"]`.
+
+**Why not the macOS legs.** Org variable `MACOS_CI_DISABLED` is currently `false`, but when
+it is `true` the `frontend-desktop` matrix drops the macOS entry entirely (the job never
+reports), while the `-macos` twins of `runtime`/`asan`/`intl`/`ffi` use `if:` and report
+`skipped` (which satisfies a required check). Requiring `frontend (macos/arm64)` would
+therefore block every PR whenever the org variable is flipped, with no check run to wait
+for. Stage-1 (`static analysis` + `frontend (linux/x64)`) plus both Windows frontend legs is
+the set that always reports on every PR; macOS coverage still runs on every PR while the
+variable is false, just unenforced. If the matrix is ever restructured so macOS always
+reports (skipped rather than absent), add `frontend (macos/arm64)` to the ruleset.
+
+**What remains manual.** The ruleset lives only on GitHub; nothing in-tree re-applies it.
+#170/#171 already established that the `pyrlyn/ci` `repo-settings` caller cannot work here
+(no `REPO_ADMIN_TOKEN`, HTTP 401). Re-applying after a UI edit is the `gh api` PUT above.
+`docs/TOOLCHAIN.md` "CI stages" now names the required set. `jactionlint` is clean on the
+changed workflow.
+
