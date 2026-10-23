@@ -14,3 +14,7 @@ ignores:
     uses: pyrlyn/ci/.github/workflows/sync-docs.yml@main
     file: .github/workflows/sync-docs.yml
     reason: pyrlyn/ci no-pinned-ci rejects a SHA pin; @main is required
+  - rule: unpinned-uses
+    uses: pyrlyn/ci/.github/actions/macos-runner@main
+    file: .github/workflows/ci.yml
+    reason: pyrlyn/ci no-pinned-ci rejects a SHA pin; @main is required

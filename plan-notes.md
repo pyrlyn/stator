@@ -13534,3 +13534,12 @@ SonarCloud's two new reliability findings were default `.sort()` calls in the
 `std_env` golden. One shared explicit UTF-16 comparator preserves Node's default
 ordering independently of locale; `node packages/tests/golden/run.ts --filter std_env`
 prints `golden: 1 fixtures — 1 passed, 0 failed`.
+
+The ready PR also exposed an older pinned `pyrlyn/ci` action in `ci.yml`: the
+`no-pinned-ci` job rejected `macos-runner@4b5b547…` (run 39997145944,
+job 120563580600). Its reference now uses `@main`, applying the existing #158
+policy to the action as well as the reusable workflow; no check is bypassed.
+
+The action receives the same file-and-reference-specific `jactionlint` ignore as the
+two existing shared workflow callers. All other `unpinned-uses` findings remain errors;
+`mise exec -- jactionlint --sarif-hide-baselined` passes with an empty baseline.

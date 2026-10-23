@@ -119,7 +119,7 @@ CI runs in two stages (plan-notes 292):
    check, `dupes`, then jactionlint 2.0.2 over the workflows against `.github/jactionlint-baseline.json`
    and the durable ignores in `.github/jactionlint.yaml`) and `frontend (linux/x64)` (subset tests, runtime archive, unit tests **with
    coverage**; uploads the `coverage-lcov` artifact). This is the only job that collects coverage.
-   The two `pyrlyn/ci` `@main` callers stay unpinned: pinning them fails `no-pinned-ci` (plan-notes 362).
+   The `pyrlyn/ci` workflow callers and `macos-runner` action use `@main`: pinning them fails `no-pinned-ci` (plan-notes 362, 375).
 2. **Stage 2, Windows and macOS:** `frontend-desktop` (macOS and Windows, plain `pnpm run test`),
    plus the `-macos` twins of `runtime`, `asan`, `intl` and `ffi`. Each has
    `needs: [static, frontend-coverage]`, so none starts unless every stage-1 job passed.
