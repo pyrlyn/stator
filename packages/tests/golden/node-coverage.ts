@@ -122,7 +122,8 @@ function surfaceOf(id: string, exports: unknown): Member[] {
     ...Object.keys(exports).filter(isPublic),
     ...Object.keys(platformExports ?? {}),
   ]);
-  for (const name of [...names].sort()) {
+  // Preserve Node's UTF-16 order independently of the host locale.
+  for (const name of [...names].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))) {
     const desc = Object.getOwnPropertyDescriptor(exports, name);
     const word = mentionsWord(name);
     const top = (s: string): boolean => specifier(s) && word(s);
