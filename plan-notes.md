@@ -13134,3 +13134,64 @@ preamble from `port.ts` and leaves the algorithm alone.
 `node_shim.mjs` with `node_shim.ts` in both changed that clone's fingerprint. `.jscpd-baseline.json`
 swaps one fingerprint for one (`964d0cad4424ce0b` → `4aecb478f234e5bf`) and stays at 180.
 
+
+## 373. Step 12(d)/(e) class-surface residue: five slices (2026-10-19)
+
+**Plan:** §8 step 12(d)/(e) residue (plan-notes 272–278 aftermath). `plan.md` edited in this
+change: residue bullets struck/narrowed for what landed.
+
+### B1. Switch-guarded `super(...)` — already landed (commit `7da5402`)
+
+`checkCtorList` covers `switch` clauses with the same exactly-once / no-early-return /
+no-`this`-before-super rules as `if`/`else` (needs a non-empty `default` for the unmatched
+path). Fixtures `subset_super_switch_*`, `subset_class_super_late_*`; goldens
+`class_super_late.{ts,js}`. No code change here — verified green and named in the residue.
+
+### B2. `super.x` in a static block / method — landed (narrow)
+
+`super.x` naming a static of the base class erases to that binding (`staticMemberOf` now
+resolves `super` receivers through `staticSuperClass` → `staticMemberIn`). Lexically bound,
+so erasure is exact even in a static method (`super.n` always reads `Base.n`). A base
+INSTANCE method stays refused (no receiver); bare `super` is a JavaScript SyntaxError.
+Gate: `gateMemberAccess` super arm checks `staticMemberOf` first; `staticBlockUsesSuper`
+only refuses unresolved `super`. Goldens `class_static_this_super.{ts,js}`;
+fixtures `subset_static_block_super_*` flipped to static.
+
+### B3. `this.x` in a static — landed for field initializers and blocks only
+
+`this.x` in a static FIELD initializer or BLOCK is the class being defined — erasure to
+that class's static binding is exact (`staticThisClass` → `staticMemberIn`). In a static
+METHOD `this` is whoever the method was reached through (`T.m()` reads `T.v`, `S.m()`
+reads `S.v`), which needs the class object — that stays `STA1214`. Bare `this` in any
+static stays refused. `staticThisClass` returns `undefined` in instance contexts so
+`this.count` in an instance method still reads the instance field (the defect this
+narrowing caught: without it `statics.ts` panicked `STA2002`). Goldens
+`class_static_this_super.*`; `subset_static_block_this_*` flipped, `subset_static_this_*`
+stays not-yet with the dispatch reason.
+
+### B4. Anonymous default class — landed
+
+`export default class {}` takes Node's `.name` (`default`); the descriptor keys on ES's
+`*default*` binding (`declaredBindingName`), which the default import aliases.
+`classDisplayName` returns `*default*`; `descriptorName` prints `default`. Sites:
+`types.ts` (`classDisplayName`, `classTypeToHType`, `declaredTypeOf`, `aliasedClassDeclaration`),
+`gate.ts` (`gateClass`), `lower/index.ts` (`lowerClass` binding, `hirClassName`,
+`mangleClassName`, `renameBase`), `codegen/index.ts` (`descriptorName`). Decision tests
+`subset_class_anonymous_*` flipped to static; goldens `class_default_anon/{ts,js}/`.
+Class-as-value (`C.name`, `console.log(C)`) stays the opaque-class refusal.
+
+### B5. Accessor compound in value position — landed
+
+`o.x += 1` / `o.x++` / `++o.x` on a getter/setter in value position run the getter, fold,
+and setter, answering the fold's value (`+=` and prefix answer the new number, postfix the
+old). New `AccessorPlace` UpdatePlace variant (`hir/nodes.ts`); lowering
+(`accessorUpdateTarget`), codegen (`emitUpdate` accessor arm, `accessorCallee`), verifier,
+rewrite, explain. An untyped call-result receiver takes the dynamic path (docs/VALUE.md
+§4.24) — the js golden omits that case. Goldens `class_accessor_compound.{ts,js}` extended
+byte-for-byte; `subset_accessor_compound_*` extended to value position.
+
+**Gates.** typecheck, lint, subset (964: 933/31/0), golden (468/468), unit (class-members
+58/58, gate 81/81). HIR verifier clean on all fixtures touched.
+
+**Still refused (honest):** `this.x` in a static METHOD (class-object dispatch), bare
+`this`/`super` in a static, opaque class values, `#n in o`.
