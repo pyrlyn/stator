@@ -550,8 +550,18 @@ jsrt_value jsrt_get_prop(jsrt_value obj, const char *key, JSRTIC *ic) {
       }
       return JSRT_UNDEFINED;
     }
-    if (jsrt_is(obj, JSRT_TAG_STRING) && strcmp(key, "length") == 0) {
-      return jsrt_number((double)jsrt_string_length(obj));
+    if (jsrt_is(obj, JSRT_TAG_STRING)) {
+      if (strcmp(key, "length") == 0) {
+        return jsrt_number((double)jsrt_string_length(obj));
+      }
+      /* String exotic index (ECMA-262 §10.4.3): a canonical array index below length answers
+       * the UTF-16 unit at that position, not `undefined` (plan-notes 372 residue). `a[0]` on a
+       * string through an Unknown receiver went through this arm and missed the character. */
+      uint32_t index = 0;
+      if (jsrt_key_is_array_index(key, &index) && index < jsrt_string_length(obj)) {
+        const uint16_t unit = jsrt_string_char(obj, index);
+        return jsrt_string_from_units(&unit, 1);
+      }
     }
     /* A primitive's prototype methods, bound to it (plan-notes 310; booleans plan-notes 372):
      * `text.slice(1)` on an Unknown receiver read `undefined` here and the call aborted STA2006. */
@@ -761,7 +771,15 @@ bool jsrt_has_prop(jsrt_value obj, const char *key) {
       return fixed_has(obj, key) ||
              (extras != NULL && jsrt_shape_find(extras->shape, key) != NULL);
     }
-    return jsrt_is(obj, JSRT_TAG_STRING) && strcmp(key, "length") == 0;
+    if (jsrt_is(obj, JSRT_TAG_STRING)) {
+      if (strcmp(key, "length") == 0) {
+        return true;
+      }
+      /* The same string exotic index `jsrt_get_prop` answers: present exactly when in range. */
+      uint32_t index = 0;
+      return jsrt_key_is_array_index(key, &index) && index < jsrt_string_length(obj);
+    }
+    return false;
   }
   const PropTable o = as_prop_table(obj, "has");
   return jsrt_shape_find(*o.shape, key) != NULL;

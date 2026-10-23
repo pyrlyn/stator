@@ -6304,7 +6304,10 @@ function gateElementAccess(
     if (mode === 'js' && hir.kind === 'object' && hir.namespace !== true && key === null) {
       return { kind: 'accept' };
     }
-    return hir.kind === 'unknown' || frontendTypes.isDynamicShape(receiver, checker)
+    // A string's exotic index (ECMA-262 §10.4.3): `s[0]` answers the UTF-16 unit at that
+    // position, `undefined` past the end. The runtime's `jsrt_get_prop` string arm is the
+    // same entry an Unknown receiver takes (plan-notes 372 residue).
+    return hir.kind === 'unknown' || hir.kind === 'string' || frontendTypes.isDynamicShape(receiver, checker)
       ? { kind: 'accept' }
       : notYet('index access on a non-array is not yet supported', 5);
   }
