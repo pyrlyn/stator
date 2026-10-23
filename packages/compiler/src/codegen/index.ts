@@ -1018,8 +1018,9 @@ class Emitter {
     }
   }
 
-  private emitMain(module: Module, globalSlots: number): string[] {
-    const produced: string[] = [];
+  /** Point the emitter at `produced` and clear every per-function stack: the module-level entry
+   * for `emitMain` and `emitLibrary`, whose function units save and restore what they touch. */
+  private resetToModuleLevel(produced: string[]): void {
     this.lines = produced;
     this.indent = 0;
     this.inFunction = false;
@@ -1029,6 +1030,11 @@ class Emitter {
     this.unwindUsed = false;
     this.tryFinallyStack = [];
     this.tryCount = 0;
+  }
+
+  private emitMain(module: Module, globalSlots: number): string[] {
+    const produced: string[] = [];
+    this.resetToModuleLevel(produced);
 
     if (module.isAsync) {
       this.emitAsyncModule(module, globalSlots);
@@ -1167,15 +1173,7 @@ class Emitter {
     scratch: number,
   ): string[] {
     const produced: string[] = [];
-    this.lines = produced;
-    this.indent = 0;
-    this.inFunction = false;
-    this.slotMap = this.globalMap;
-    this.slotCount = this.globalCount;
-    this.padStack = [];
-    this.unwindUsed = false;
-    this.tryFinallyStack = [];
-    this.tryCount = 0;
+    this.resetToModuleLevel(produced);
 
     this.emitExportConstDefs(library);
     this.emitErrorCell(library);
@@ -2494,25 +2492,9 @@ class Emitter {
         this.indent++;
         const cond = this.capture(() => this.emitExpression(stmt.condition));
         this.indent--;
-        if (cond.lines.length === 0) {
-          this.appendLine(`while (jsrt_truthy(${cond.value})) {`, stmt.span);
-          this.indent++;
-        } else {
-          this.appendLine('while (1) {', stmt.span);
-          this.indent++;
-          this.lines.push(...cond.lines);
-          this.usedLabels.add(`brk_${id}`);
-          this.appendLine(`if (!jsrt_truthy(${cond.value})) { goto brk_${id}; }`, stmt.span);
-        }
-        this.emitIterEnvEnter(id, stmt.span);
-        this.emitScope(stmt.body.statements);
-        this.emitJumpTarget(`cont_${id}`, stmt.span);
-        this.emitIterEnvCommit(id, stmt.span);
-        this.indent--;
-        this.appendLine('}', stmt.span);
-        this.emitJumpTarget(`brk_${id}`, stmt.span);
-        this.emitIterEnvClose(id, stmt.span);
-        this.enclosing.pop();
+        this.emitWhileOpen(cond, id, stmt.span, false);
+        this.emitLoopBody(id, stmt.body.statements, stmt.span);
+        this.emitLoopEpilogue(id, stmt.span);
         break;
       }
 
@@ -2521,12 +2503,9 @@ class Emitter {
         this.emitIterEnvOpen(id, stmt.span);
         this.appendLine('do {', stmt.span);
         this.indent++;
-        this.emitIterEnvEnter(id, stmt.span);
-        this.emitScope(stmt.body.statements);
         // `continue` in a do/while jumps to the TEST, not past it -- the loop still gets to decide
         // whether to run again. Placing the target at the end of the body is what achieves that.
-        this.emitJumpTarget(`cont_${id}`, stmt.span);
-        this.emitIterEnvCommit(id, stmt.span);
+        this.emitLoopBody(id, stmt.body.statements, stmt.span);
         const cond = this.capture(() => this.emitExpression(stmt.condition));
         if (cond.lines.length === 0) {
           this.indent--;
@@ -2560,36 +2539,13 @@ class Emitter {
         const cond =
           condition === undefined ? undefined : this.capture(() => this.emitExpression(condition));
         this.indent--;
-        if (cond === undefined || cond.lines.length === 0) {
-          this.appendLine(
-            `while (${cond === undefined ? '1' : `jsrt_truthy(${cond.value})`}) {`,
-            stmt.span,
-          );
-          this.indent++;
-        } else {
-          this.appendLine('while (1) {', stmt.span);
-          this.indent++;
-          this.lines.push(...cond.lines);
-          this.usedLabels.add(`brk_${id}`);
-          this.appendLine(`if (!jsrt_truthy(${cond.value})) { goto brk_${id}; }`, stmt.span);
-        }
-        this.emitIterEnvEnter(id, stmt.span);
-        this.emitScope(stmt.body.statements);
-        // The continue target sits BEFORE the update, which is the one thing a `for` gets wrong if
-        // it is lowered naively: `continue` skips the rest of the body but must still run `i++`,
-        // or the loop never terminates.
-        this.emitJumpTarget(`cont_${id}`, stmt.span);
-        // Commit before the update so `i++` mutates the CONTROL env, not the clone the body
-        // captured — otherwise `() => i` would see the post-increment value (1, 2, 3).
-        this.emitIterEnvCommit(id, stmt.span);
-        if (stmt.update) {
-          this.emitStatement(stmt.update);
-        }
-        this.indent--;
-        this.appendLine('}', stmt.span);
-        this.emitJumpTarget(`brk_${id}`, stmt.span);
-        this.emitIterEnvClose(id, stmt.span);
-        this.enclosing.pop();
+        this.emitWhileOpen(cond ?? { lines: [], value: '1' }, id, stmt.span, cond === undefined);
+        this.emitLoopBody(id, stmt.body.statements, stmt.span, () => {
+          if (stmt.update) {
+            this.emitStatement(stmt.update);
+          }
+        });
+        this.emitLoopEpilogue(id, stmt.span);
         break;
       }
 
@@ -2940,17 +2896,7 @@ class Emitter {
     this.tryFinallyStack.pop();
     this.appendLine(`${fin}: ;`, span);
     this.appendLine(`jsrt_map_iter_end(${coll});`, span);
-    for (const route of scope.routes.values()) {
-      this.appendLine(`if (${comp} == ${route.code}) {`, span);
-      this.indent++;
-      route.action();
-      this.indent--;
-      this.appendLine('}', span);
-    }
-    this.indent--;
-    this.appendLine('}', span);
-    this.emitIterEnvClose(id, span);
-    this.enclosing.pop();
+    this.emitRouteDispatch(scope.routes.values(), (code) => `${comp} == ${String(code)}`, id, span);
   }
 
   private emitArrayForOfYield(stmt: ForOfStatement, iterable: string, cursor: string): void {
@@ -3097,22 +3043,87 @@ class Emitter {
       `if (jsrt_number_value(${comp}) == 1) { jsrt_throw(${exc}); goto ${this.currentPad()}; }`,
       span,
     );
-    for (const route of scope.routes.values()) {
-      this.appendLine(`if (jsrt_number_value(${comp}) == ${String(route.code)}) {`, span);
-      this.indent++;
-      route.action();
-      this.indent--;
-      this.appendLine('}', span);
-    }
-    this.indent--;
-    this.appendLine('}', span);
-    this.emitIterEnvClose(id, span);
-    this.enclosing.pop();
+    this.emitRouteDispatch(
+      scope.routes.values(),
+      (code) => `jsrt_number_value(${comp}) == ${String(code)}`,
+      id,
+      span,
+    );
   }
 
   /** Opens a loop's jump scope. `stmt` is what ties the loop to the two suspension slots counted
    * for it (`iterEnvSlots`): the id is minted here, at emission time, and the slots had to exist
    * before it, so the statement is the only key both passes share. */
+  /** Enter the iteration env, emit the body, place the continue target and commit. `after` is
+   * the `for` update: it runs after the commit so `i++` mutates the control env, not the clone
+   * the body captured, and `continue` still reaches it because the target sits before `after`. */
+  private emitLoopBody(
+    id: number,
+    statements: readonly Statement[],
+    span: Span,
+    after?: () => void,
+  ): void {
+    this.emitIterEnvEnter(id, span);
+    this.emitScope(statements);
+    this.emitJumpTarget(`cont_${id}`, span);
+    this.emitIterEnvCommit(id, span);
+    if (after !== undefined) {
+      after();
+    }
+  }
+
+  /** Open a `while`/`for` header. With no captured lines the test nests in `while (…)`; with
+   * them the test moves into the body (still before the first statement of the iteration) and
+   * a `goto brk` stands in for the compact form's break. */
+  private emitWhileOpen(
+    cond: { readonly lines: readonly string[]; readonly value: string },
+    id: number,
+    span: Span,
+    absentIsInfinite: boolean,
+  ): void {
+    if (cond.lines.length === 0) {
+      const test = absentIsInfinite ? '1' : `jsrt_truthy(${cond.value})`;
+      this.appendLine(`while (${test}) {`, span);
+      this.indent++;
+      return;
+    }
+    this.appendLine('while (1) {', span);
+    this.indent++;
+    this.lines.push(...cond.lines);
+    this.usedLabels.add(`brk_${id}`);
+    this.appendLine(`if (!jsrt_truthy(${cond.value})) { goto brk_${id}; }`, span);
+  }
+
+  /** Close a `while`/`for` body: indent, `}`, break target, iteration-env close, loop pop. */
+  private emitLoopEpilogue(id: number, span: Span, withBreak = true): void {
+    this.indent--;
+    this.appendLine('}', span);
+    if (withBreak) {
+      this.emitJumpTarget(`brk_${id}`, span);
+    }
+    this.emitIterEnvClose(id, span);
+    this.enclosing.pop();
+  }
+
+  /** Emit each suspension route as `if (test(code)) { action(); }`, then close the loop scope
+   * without a break target (the routes ARE the exits). Shared by the map/set and iterator
+   * for-of closes; `test` names how this emitter compares its control cell. */
+  private emitRouteDispatch(
+    routes: Iterable<{ readonly code: number; readonly action: () => void }>,
+    test: (code: number) => string,
+    id: number,
+    span: Span,
+  ): void {
+    for (const route of routes) {
+      this.appendLine(`if (${test(route.code)}) {`, span);
+      this.indent++;
+      route.action();
+      this.indent--;
+      this.appendLine('}', span);
+    }
+    this.emitLoopEpilogue(id, span, false);
+  }
+
   private enterLoop(stmt: { label?: string; perIterationEnv?: true }): number {
     const id = this.loopCount++;
     const iterEnv = stmt.perIterationEnv === true && this.envMap.size > 0;
@@ -3386,6 +3397,24 @@ class Emitter {
     }
     const operands = [target, ...expr.args.map((_, index) => arg(index))].join(', ');
     return `jsrt_array_${snakeCase(expr.op)}(${operands})`;
+  }
+
+  /** Root every argument in its counted slot and name the operands in order. Shared by every
+   * sequenced call shape (`object-static`/`typed-op`/`global-call` and `string-static`). */
+  private flushCallSlots(expr: CallSlotted & { readonly args: readonly Expression[] }): {
+    readonly base: number;
+    readonly parts: string[];
+    readonly flushed: boolean;
+    readonly operands: string;
+  } {
+    const base = this.callSlots.get(expr);
+    if (base === undefined) {
+      throw new Error(`${expr.kind} was not registered during counting`);
+    }
+    const parts: string[] = [];
+    const flushed = this.sequenceArgs(parts, expr.args, expr.span, base, 0);
+    const operands = expr.args.map((_, index) => this.slotAt(base + index)).join(', ');
+    return { base, parts, flushed, operands };
   }
 
   private sequenceArgs(
@@ -5015,13 +5044,7 @@ class Emitter {
           const operands = expr.args.map((arg) => this.emitExpression(arg)).join(', ');
           return `${name}(${operands})`;
         }
-        const base = this.callSlots.get(expr);
-        if (base === undefined) {
-          throw new Error(`${expr.kind} was not registered during counting`);
-        }
-        const parts: string[] = [];
-        const flushed = this.sequenceArgs(parts, expr.args, expr.span, base, 0);
-        const operands = expr.args.map((_, index) => this.slotAt(base + index)).join(', ');
+        const { base, parts, flushed, operands } = this.flushCallSlots(expr);
         const opCall = `${name}(${operands})`;
         // Every typed op can throw: a RangeError for a length or bound, or the TypeError a lying
         // receiver gets (golden rule 4) -- so each one is a statement with its pending check.
@@ -5052,13 +5075,7 @@ class Emitter {
             ? `${name}(0)`
             : `${name}(${String(expr.args.length)}, ${operands})`;
         }
-        const base = this.callSlots.get(expr);
-        if (base === undefined) {
-          throw new Error(`${expr.kind} was not registered during counting`);
-        }
-        const parts: string[] = [];
-        const flushed = this.sequenceArgs(parts, expr.args, expr.span, base, 0);
-        const operands = expr.args.map((_, index) => this.slotAt(base + index)).join(', ');
+        const { base, parts, flushed, operands } = this.flushCallSlots(expr);
         return this.finishOp(
           parts,
           base,
