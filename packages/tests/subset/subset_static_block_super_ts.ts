@@ -1,11 +1,9 @@
 // @mode: ts
-// @verdict: not-yet
-// @code: STA1214
+// @verdict: static
 // SUBSET.md: Static methods and static class members (plan.md §8 step 12(d)).
-// A static block runs against the statics with no receiver for a base to resolve
-// through: `super` in a block would read the class object through a base it has no
-// receiver for (gate.ts static-block arm). Accepted blocks touch statics through
-// the class name (subset_static_block_ts).
+// `super.x` in a static block names a static of the base class — lexically bound,
+// so erasure to the base's static binding is exact. A base INSTANCE method stays
+// refused (no receiver); bare `super` is a JavaScript SyntaxError.
 
 class B {
   static n = 1;
@@ -18,3 +16,4 @@ class D extends B {
   }
 }
 export const x = D.s;
+export const y = B.n;

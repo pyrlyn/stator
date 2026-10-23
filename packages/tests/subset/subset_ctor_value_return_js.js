@@ -3,7 +3,7 @@
 // @code: STA1214
 // SUBSET.md: Class inheritance and `super(...)`
 // The js-mode twin: `new` yields the allocated object and ignores what a constructor
-// returns (`codegen/index.ts`), where Node substitutes a returned object — so a constructor
+// returns (`codegen/`), where Node substitutes a returned object — so a constructor
 // value return stays refused (plan.md §8 step 12(d)).
 
 class C {

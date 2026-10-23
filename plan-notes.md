@@ -13105,7 +13105,8 @@ and from `packages/compiler/src/frontend/program.ts`. The custom-host comments s
 "in-memory CompilerHost". plan-notes 353 removed the dependency.
 
 **Left open.** T21 is a required-check / ruleset change, and this session does not edit
-rulesets. T24 is still one file: `packages/compiler/src/codegen/index.ts`.
+rulesets. T24 is still one file: `packages/compiler/src/codegen/index.ts` (closed later in
+plan-notes 371).
 ## 369. Task 6.15: own-source JavaScript is TypeScript, and the exempt set is checked (2026-10-19)
 
 **Plan:** §0.10 and §9 Task 6.15. `plan.md` edited in the same change: the task is a stub,
@@ -13134,3 +13135,419 @@ preamble from `port.ts` and leaves the algorithm alone.
 `node_shim.mjs` with `node_shim.ts` in both changed that clone's fingerprint. `.jscpd-baseline.json`
 swaps one fingerprint for one (`964d0cad4424ce0b` → `4aecb478f234e5bf`) and stays at 180.
 
+## 370. T21: protect-main requires the stage-1 and Windows checks (2026-10-23)
+
+**Plan:** cloud-review row T21; `plan.md` edited in the same change — the row is struck and
+gains a `### T21` Steps/Check section (the other cloud-review rows needed none because they
+needed no change).
+
+**What was broken.** The `protect-main` ruleset (repo `pyrlyn/stator`, id 24341905; the
+`listepo/stator` name 307-redirects) required exactly one status check: `pipeline / gate`.
+That gate is the shared SonarCloud/CodeQL/Snyk pipeline. T17 (`ccf9818`, PR #113) merged with
+red CI — `pipeline` failed in 0 s and `frontend (windows/arm64)` failed — because the `ci.yml`
+jobs (`static analysis`, every `frontend`/`runtime`/`asan`/… leg) were not required at all.
+Admin can also bypass on PRs (`bypass_mode: pull_request`, actor `RepositoryRole` admin);
+that bypass is kept, so the human can still emergency-merge, but an ordinary merge is now
+blocked on the real test jobs.
+
+**A second bug made the desktop legs unrequired-able.** `frontend-desktop`'s matrix was
+built with `fromJSON` over JSON that used a leading space in the key (`" platform"`) and
+trailing spaces in the runner labels (`"windows-2025 "`). `matrix.platform` was therefore
+empty and the jobs reported check names `frontend (/x64)` / `frontend (/arm64)` (two legs
+even shared a name). A required-status-check context can never match those names. Fixed in
+`.github/workflows/ci.yml` in the same change: exact keys, exact labels
+(`windows-2025`, `windows-11-arm`, `macos-14`).
+
+**What is required now** (applied via API, verified by read-back):
+
+```
+pipeline / gate
+static analysis                 # ci.yml job id `static`
+frontend (linux/x64)            # ci.yml job id `frontend-coverage`
+frontend (windows/x64)          # ci.yml job id `frontend-desktop`
+frontend (windows/arm64)
+```
+
+Commands (PUT needs the numeric repo id — `gh` does not follow the 307 from
+`listepo/stator` / `pyrlyn/stator` on PUT):
+
+```
+gh api -X PUT repositories/1353641814/rulesets/24341905 --input protect-main.json
+gh api repos/pyrlyn/stator/rulesets/24341905 \
+  --jq '[.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context]'
+```
+
+Read-back: `["pipeline / gate","static analysis","frontend (linux/x64)","frontend (windows/x64)","frontend (windows/arm64)"]`.
+
+**Why not the macOS legs.** Org variable `MACOS_CI_DISABLED` is currently `false`, but when
+it is `true` the `frontend-desktop` matrix drops the macOS entry entirely (the job never
+reports), while the `-macos` twins of `runtime`/`asan`/`intl`/`ffi` use `if:` and report
+`skipped` (which satisfies a required check). Requiring `frontend (macos/arm64)` would
+therefore block every PR whenever the org variable is flipped, with no check run to wait
+for. Stage-1 (`static analysis` + `frontend (linux/x64)`) plus both Windows frontend legs is
+the set that always reports on every PR; macOS coverage still runs on every PR while the
+variable is false, just unenforced. If the matrix is ever restructured so macOS always
+reports (skipped rather than absent), add `frontend (macos/arm64)` to the ruleset.
+
+**What remains manual.** The ruleset lives only on GitHub; nothing in-tree re-applies it.
+#170/#171 already established that the `pyrlyn/ci` `repo-settings` caller cannot work here
+(no `REPO_ADMIN_TOKEN`, HTTP 401). Re-applying after a UI edit is the `gh api` PUT above.
+`docs/TOOLCHAIN.md` "CI stages" now names the required set. `jactionlint` is clean on the
+changed workflow.
+
+## 371. T24: the C emitter is split by HIR family under `src/codegen/` (2026-10-23)
+
+**Plan:** the cloud-review table at the top of `plan.md` (not a phase card). `plan.md` edited
+in the same change: the T24 row is struck the way T23/T20 were — it never had Steps and a
+Check of its own, so there is no record to move to `done.md`. The Check for this move is the
+one below, recorded here as the acceptance.
+
+**What moved.** `packages/compiler/src/codegen/index.ts` (6,276 lines, the only file in
+`codegen/`) is now a 16-line facade re-exporting `emitC` / `LibraryEmit`. The emitter is:
+
+| File | Lines | Role |
+| --- | ---: | --- |
+| `expressions.ts` | 1,911 | `emitExpression` + binary/logical/conditional/optional/update/template and class method resolution |
+| `statements.ts` | 1,205 | `emitStatement`, for-of, try/finally, switch, loop scopes |
+| `module.ts` | 813 | `emit` / main / library init / export stubs |
+| `slots.ts` | 776 | the counting pass, slot map, `slotAt`/`slotRef` |
+| `runtime_calls.ts` | 573 | call sequencing, extern ABI, console |
+| `helpers.ts` | 487 | pure helpers (no emitter state) |
+| `closures.ts` | 476 | function units, async/generator, environments |
+| `emitter.ts` | 430 | state fields + `declare` method shapes |
+| `install.ts` | 58 | prototype install of family free functions |
+| `types.ts` | 112 | `FunctionUnit`, `TryFinallyScope`, `CallSlotted`, `LibraryEmit` |
+| `tables.ts` | 90 | `BINARY_EMITTERS` & friends |
+
+Family modules take the emitter as a leading parameter (`emitter: Emitter`) so they stay
+ordinary exported functions under oxlint's `no-this-in-exported-function`. `install.ts`
+rebinds them onto `Emitter.prototype` once before the first `emit()`; mutual recursion stays
+`emitter.emitExpression(...)` through the prototype. Method shapes on the class are
+`declare` fields (type-only under `useDefineForClassFields`) rather than an interface merge,
+which `typescript/no-unsafe-declaration-merging` rejects.
+
+**Why not grow the clone baseline.** Renaming `this.` → `emitter.` re-fingerprinted ~17
+already-present structural clones (jscpd's `ignoreIdentifiers` does not treat the keyword
+`this` as an identifier). Those were removed by extracting shared helpers instead:
+`openCapturedWhile` / `emitLoopBody` / `closeLoopScope`, `pushFinallyScope` /
+`emitFinallyDispatch*`, `openFinallyTail` / `closeFinallyLoop`, unit-state
+snapshot/restore by key list, `requireIndexBase` / `requireCallBase` / `sequenceCallOperands`
+/ `findClassMethod` / `requireTempSlot`, `emitBranchArm`, `beginModuleUnits`,
+`withLiveIterEnv`. `.jscpd-baseline.json` is unchanged; `pnpm run dupes` reports 163 clones
+and **zero** new ones.
+
+**Docs.** `docs/FFI.md` and `docs/SUBSET.md` no longer name a single `codegen/index.ts` as
+the emitter's home (the facade is only the re-export). Architecture diagrams already said
+`src/codegen/` and did not need a D2 edit.
+
+**Check (passed on this worktree).**
+
+```
+pnpm run typecheck     # clean
+pnpm run lint          # oxlint --deny-warnings + oxfmt --check: clean
+pnpm run dupes         # 163 clones, 0 new
+pnpm run test          # 61 files, 783 tests, 0 failed
+pnpm run test:golden   # 464 fixtures, 464 passed, 2 intl_* skipped (non-intl STATOR_RUNTIME)
+```
+
+`pnpm run ci` was not run in full (serial wall-time); the gates above are typecheck, lint,
+dupes, unit, and golden — the ones this move can break. A spot-check that `--emit=c` for a
+recursive `f` is byte-identical to the pre-split emitter (`diff` empty) was the byte-for-byte
+guard while landing the branch-arm helper.
+
+**Left.** Class-descriptor *emission* stays inside `module.ts`'s `emit()` (it is file-scope
+prologue, not a separate HIR family). If a later card wants a `classes.ts`, the method
+resolution helpers already live in `expressions.ts` and can move with them.
+
+## 372. A1–A5 runtime residue: two landed earlier, three closed here (2026-10-23)
+
+**Touches:** `runtime/src/jsrt_boolean_methods.c` (new), `runtime/src/jsrt_number_methods.c`,
+`runtime/src/jsrt_shape.c`, `runtime/include/jsrt_value.h`, `compiler/src/lower/index.ts`,
+`tests/golden/js/{dynamic_missing_method.js,primitive_methods.js}`. plan-notes 223 items 5 and 6
+were carded as Phase 5 steps 20–21 (plan-notes 249) and most of that work already sat on this
+tree; the residues below are what a fresh repro still showed, and what this change closes.
+
+**A1 — named-capture `$<name>` in `replace` (already landed, step 21c).**
+Before: `'ab'.replace(/(?<x>a)/, '[$<x>]')` printed `[$<x>]b` (no `$<name>` branch in
+`jsrt_regexp.c`'s substitute). After: `[a]b`. The expander's `$<name>` arm, the `$&`/`$1`/`$$`
+forms and the unknown-name-empty rule are already in `runtime/src/jsrt_regexp.c` and pinned by
+`tests/golden/{js,ts}/replace_named_group.*`. Verified byte-for-byte against the pinned Node.
+
+**A2 — `Date.parse` hour 24 (already landed, step 21d).**
+Before: `Date.parse("2024-01-01T24:00:01Z")` answered `1704153601000`. After: `NaN`.
+`parse_iso` rejects hour 24 unless minutes, seconds and the full-precision fraction are zero;
+`T24:00:00Z` rolls to the next day. Pinned by `tests/golden/{js,ts}/date_parse_hour24.*`.
+Non-ISO hour-24 (`2024-01-01 24:00:00`) stays `NaN` on purpose: `jsrt_date_parse` is the
+Date Time String Format only (§21.4.1.32), and V8's fallback parser is not specified — the
+parser header records that an unparseable string is honestly Invalid rather than a guess.
+
+**A3 — a missing method on an Unknown receiver panicked STA2006 (closed here).**
+Before: `function callIt(a) { return a.nosuch(); }` with `a = [1]` aborted
+`PANIC: STA2006: calling a non-function`. After: `TypeError: a.nosuch is not a function`,
+catchable, Node's wording. The shape-table and prototype walks answered `undefined` for a name
+neither has, and `jsrt_call_at` turned that into the located abort. The fix is the lowering's:
+every `dyn-method-call` now carries `notFunction` (`compiler/src/lower/index.ts`), so the
+emitter's existing non-closure check throws Node's `TypeError` before the call. The check is a
+no-op when the load found a closure. Array, class and literal methods are unchanged — they were
+already answered by `jsrt_array_method` / the class descriptor / the `#method:` slot.
+
+**A4 — `jsrt_as_array`'s missing tag check (already landed, step 20).**
+Before: `function add(v) { arr.push(v); }` with a hoisted `var arr` segfaulted (the unbox of
+`undefined` was NULL). After: `TypeError: Cannot read properties of undefined (reading 'push')`.
+The checked unbox is `jsrt_require_array`, which throws `STA2008` (already allocated in
+`docs/DIAGNOSTICS.md`) with Node's member-access wording for nullish; raw `jsrt_as_array` stays
+for internal callers that ran a public entry first. Pinned by
+`tests/golden/js/dynamic_array_receiver.js`.
+
+**A5 — Boolean.prototype and `Number.prototype.valueOf` on an Unknown receiver (closed here).**
+Before: `function f(a) { return a.toString(); }` with `a = false` aborted STA2006 —
+`jsrt_get_prop`'s primitive walk consulted `jsrt_string_method` and `jsrt_number_method` only.
+After: `false`. `jsrt_boolean_method` (new `runtime/src/jsrt_boolean_methods.c`) answers
+`toString`/`toLocaleString`/`valueOf` bound to the receiver on the
+`jsrt_string_method`/`jsrt_number_method` contract; `jsrt_number_method` gains `valueOf`.
+String and number methods (including `toUpperCase`, `toFixed`, `toString`) already worked
+(plan-notes 310). Goldens: `tests/golden/js/primitive_methods.js` (boolean + `valueOf` lines)
+and `tests/golden/js/dynamic_missing_method.js`. The ts gate still refuses
+`Boolean.prototype.toString` as `STA1214` on a dynamic `this`, so the ts twin stays on the
+methods that arm already supports.
+
+**Residue named, not hidden.** `a[0]` on a string through an Unknown receiver answers
+`undefined` where Node answers the character — `jsrt_get_prop` handles string `length` and the
+prototype methods but not the string exotic index. It is a wrong answer, not a panic, and is
+outside this batch's method-dispatch scope.
+
+**Checks.** `pnpm run typecheck && pnpm run lint` clean. `pnpm run test` 783/783.
+`pnpm run test:golden` 465/465. `pnpm run test:subset` 933 passed, 31 expected-fail, 0 failed.
+`pnpm run test:runtime` print corpus matches Node.
+
+## 373. Step 12(d)/(e) class-surface residue: five slices (2026-10-19)
+
+**Plan:** §8 step 12(d)/(e) residue (plan-notes 272–278 aftermath). `plan.md` edited in this
+change: residue bullets struck/narrowed for what landed.
+
+### B1. Switch-guarded `super(...)` — already landed (commit `7da5402`)
+
+`checkCtorList` covers `switch` clauses with the same exactly-once / no-early-return /
+no-`this`-before-super rules as `if`/`else` (needs a non-empty `default` for the unmatched
+path). Fixtures `subset_super_switch_*`, `subset_class_super_late_*`; goldens
+`class_super_late.{ts,js}`. No code change here — verified green and named in the residue.
+
+### B2. `super.x` in a static block / method — landed (narrow)
+
+`super.x` naming a static of the base class erases to that binding (`staticMemberOf` now
+resolves `super` receivers through `staticSuperClass` → `staticMemberIn`). Lexically bound,
+so erasure is exact even in a static method (`super.n` always reads `Base.n`). A base
+INSTANCE method stays refused (no receiver); bare `super` is a JavaScript SyntaxError.
+Gate: `gateMemberAccess` super arm checks `staticMemberOf` first; `staticBlockUsesSuper`
+only refuses unresolved `super`. Goldens `class_static_this_super.{ts,js}`;
+fixtures `subset_static_block_super_*` flipped to static.
+
+### B3. `this.x` in a static — landed for field initializers and blocks only
+
+`this.x` in a static FIELD initializer or BLOCK is the class being defined — erasure to
+that class's static binding is exact (`staticThisClass` → `staticMemberIn`). In a static
+METHOD `this` is whoever the method was reached through (`T.m()` reads `T.v`, `S.m()`
+reads `S.v`), which needs the class object — that stays `STA1214`. Bare `this` in any
+static stays refused. `staticThisClass` returns `undefined` in instance contexts so
+`this.count` in an instance method still reads the instance field (the defect this
+narrowing caught: without it `statics.ts` panicked `STA2002`). Goldens
+`class_static_this_super.*`; `subset_static_block_this_*` flipped, `subset_static_this_*`
+stays not-yet with the dispatch reason.
+
+### B4. Anonymous default class — landed
+
+`export default class {}` takes Node's `.name` (`default`); the descriptor keys on ES's
+`*default*` binding (`declaredBindingName`), which the default import aliases.
+`classDisplayName` returns `*default*`; `descriptorName` prints `default`. Sites:
+`types.ts` (`classDisplayName`, `classTypeToHType`, `declaredTypeOf`, `aliasedClassDeclaration`),
+`gate.ts` (`gateClass`), `lower/index.ts` (`lowerClass` binding, `hirClassName`,
+`mangleClassName`, `renameBase`), `codegen/index.ts` (`descriptorName`). Decision tests
+`subset_class_anonymous_*` flipped to static; goldens `class_default_anon/{ts,js}/`.
+Class-as-value (`C.name`, `console.log(C)`) stays the opaque-class refusal.
+
+### B5. Accessor compound in value position — landed
+
+`o.x += 1` / `o.x++` / `++o.x` on a getter/setter in value position run the getter, fold,
+and setter, answering the fold's value (`+=` and prefix answer the new number, postfix the
+old). New `AccessorPlace` UpdatePlace variant (`hir/nodes.ts`); lowering
+(`accessorUpdateTarget`), codegen (`emitUpdate` accessor arm, `accessorCallee`), verifier,
+rewrite, explain. An untyped call-result receiver takes the dynamic path (docs/VALUE.md
+§4.24) — the js golden omits that case. Goldens `class_accessor_compound.{ts,js}` extended
+byte-for-byte; `subset_accessor_compound_*` extended to value position.
+
+**Gates.** typecheck, lint, subset (964: 933/31/0), golden (468/468), unit (class-members
+58/58, gate 81/81). HIR verifier clean on all fixtures touched.
+
+**Still refused (honest):** `this.x` in a static METHOD (class-object dispatch), bare
+`this`/`super` in a static, opaque class values, `#n in o`.
+
+## 374. C1 batch: impact-map CI, clone baseline, parallel clang, node:process, bench noise (2026-10-23)
+
+**Plan:** §9 Tasks 6.17 step 4, 6.16 first tranche, 6.3 noise floor; §11b T10.3 step C1; §11c
+T11.6 `node:process` slice. Branch `c1-tooling-ci`. Host for every measurement below is
+**darwin-arm64, Apple M3 Max, Node v26.7.0, clang from Xcode** — not the weekly job's
+ubuntu-24.04 runner.
+
+### C1 — Task 6.17 step 4: the impact map in CI
+
+`ci.yml` gains two jobs and `nightly.yml` one step set. **`impact map`** (push to `main` only)
+runs `pnpm run test:impact:record` at `fetch-depth: 0` (the map is keyed to HEAD and later
+proven by `merge-base --is-ancestor`) and publishes `.cache/impact/impact-map.json` twice: an
+`actions/upload-artifact` named `impact-map`, and an `actions/cache/save` entry keyed
+`impact-map-<sha>`. Nightly records the same way on the daily schedule so a quiet week still
+refreshes the map. **`impact select`** (pull requests only) restores with
+`actions/cache/restore` and `restore-keys: impact-map-` — GitHub serves the most recently
+created matching cache, and caches from the default branch are readable from every PR, so this
+is the newest `main` map with no API lookup — prints the map's provenance, then runs
+`pnpm run test:impact`, whose `formatSelection` is the log line the Check wants.
+
+Neither job is a required check; `static analysis`, `frontend (linux/x64)`,
+`frontend (windows/x64)`, `frontend (windows/arm64)` and `pipeline / gate` keep their names
+and their steps (T21). Local proof of the handoff, at a clean `8e8b12c`: a map recorded with
+`--harness=node-coverage` was trusted (`dirty: false`, same Node/platform, ancestor commit) and
+`test:impact --dry-run` printed a per-harness selection with reasons — not `impact: FULL RUN`.
+Deleting the map restored the fallback line
+`impact: FULL RUN — no map at … (record one: pnpm run test:impact:record)`.
+The Done clause ("a PR's CI log shows a selection made from a `main` map") cannot be observed
+until this branch merges and a real PR runs against a recorded map; the wiring and the local
+selection are the evidence until then. `jactionlint` is clean.
+
+### C2 — Task 6.16 first tranche: clone baseline toward zero
+
+Six helpers, all at the responsible layer, no behavior change (unit 798 green, `node_*` and
+`loop` goldens green, subset `for*` 28 green):
+
+| Helper | File | Clones it removed |
+| --- | --- | --- |
+| `emitLoopBody` + `emitLoopEpilogue` | `codegen/index.ts` | while/for/do-while body and close (the 13L and 9L exact pairs) |
+| `emitWhileOpen` | `codegen/index.ts` | the while/for condition-open twin |
+| `emitRouteDispatch` | `codegen/index.ts` | map/set and iterator for-of route closes |
+| `resetToModuleLevel` | `codegen/index.ts` | `emitMain` / `emitLibrary` state reset (11L exact) |
+| `flushCallSlots` | `codegen/index.ts` | object-static / typed-op / global-call / string-static slot flush (9L exact) |
+| `lowerNewCallArgs` | `lower/index.ts` | `new Error` / `new Date` / `new Promise` span+args prologue (10L exact) |
+
+`.jscpd-baseline.json` **shrank** 180 → 171 fingerprints (`pnpm run dupes:baseline` in the same
+change). `pnpm run dupes` is green with no new clones. The Check wants the baseline empty; this
+is the first tranche, not the whole job.
+
+### C3 — T10.3 step C1: parallel clang (`STATOR_COMPILE_JOBS`)
+
+**Before** (current serial path, `STATOR_COMPILE_JOBS` did not exist). Fixture: 20 modules × 8
+functions of arithmetic loops, **556,499 bytes** of C, 160 exported functions, output `1317`.
+Warm wall `2.41 s` (3 runs: 3.50 cold, 2.41, 2.41). Spans at jobs=1 after the change
+(`STATOR_COMPILE_TIMING=1`): `frontend/program=140ms gate=86 graph=1 lower=56 optimize=6
+verify=3 emit=10 link/clang=1976ms`.
+
+**After.** `packages/compiler/src/cli/compile-jobs.ts` partitions the emitted C into a shared
+unit plus up to N function units (column-zero function opens only — an indented `if (…) {` is
+not a function), each compiled by its own clang, then one link. `STATOR_COMPILE_JOBS=1` is the
+old single-tTU clang line and the `--keep-c` output is **byte-identical** (`cmp` clean).
+`STATOR_COMPILE_JOBS=8`: warm wall `1.14 s` (3 runs: 1.14, 1.14, 1.30). Spans:
+`link/compile=1465ms` (sum of the pool) `link/ld=151ms`.
+
+**Wall speedup `2.41 / 1.14 = 2.11×`** — above the 1.3× keep bar. A smaller 170KB / 49-function
+fixture does **not** clear 1.3× on this host (warm ~0.95 s either way): the unset default
+therefore still requires 8 functions and 40,000 characters (`PARALLEL_MIN_*`). An explicit
+value above 1 splits as soon as there are two functions, which is how the 15 unit tests in
+`packages/tests/unit/compile-jobs.test.ts` smoke the path. Invalid values are `STA0021`
+(`docs/DIAGNOSTICS.md`). `STATOR_COMPILE_TIMING=1` prints one `stator: timing …` line per span
+(`addStageTime` for the pool's compile vs. `link/ld`). C2 (parallel emit) and C3 (sharded
+lower/verify) were **not taken**: emit is 10 ms of a 2.4 s build and `hir/verify` is 3 ms.
+
+### C4 — T11.6 slice: `node:process`
+
+`packages/node/src/process.ts` lands the N1 members over `std/process`, `std/env` and `std/os`:
+`argv` (Node's single-executable shape), `env` (a startup snapshot from new `std/env.names()`,
+libc `environ`), `cwd()`, `exit()`, `exitCode` accessor, `pid`, `ppid`, `platform`, `arch`,
+`execPath`, `hrtime()` (`[seconds, nanoseconds]` as `number[]` — the HIR has no tuple;
+`hrtime.bigint` is a function-with-properties and stays not-yet), `memoryUsage()` (rss; the
+heap fields stay 0). `std/zig/env.zig` gains `jsrt_std_env_count` / `jsrt_std_env_name`.
+`require('node:process')` joins `module.ts`'s landed table.
+
+Proof: goldens `ts/node_process.ts` and `js/node_process.js` (13 `node_*` fixtures green under
+`--node`, including `process.exit(0)` at the end), decision tests
+`subset_node_process_{node_ts,node_js,ts}` (3 green; without `--node` the specifier is
+`STA1214`), `docs/NODE.md` regenerated to **12 / 68 (18%)** for `node:process`, selfhost
+baseline records the new `packages/node/src/process.ts` target (dynamic). The free `process`
+global rewrite and `stdout`/`nextTick` stay with their own slices (PR #168 has a broader
+version of this work; this slice is the task's member list only).
+
+### C5 — Task 6.3 noise floor: local measurement
+
+Five repeats of one commit (`8e8b12c`) of `pnpm run bench:record` on this host:
+
+| Run | stator geomean (ms) |
+| --- | --- |
+| 1 | 29.380 |
+| 2 | 27.924 |
+| 3 | 25.784 |
+| 4 | 29.497 |
+| 5 | 26.244 |
+
+Range spread `(max-min)/min = 14.4%`. Consecutive deltas: −5.0%, −7.7%, **+14.4%**, −11.0%.
+A sixth run **tripped the 20% gate at +53.9%** on the same commit (noise). Per-program spreads
+explain it: `json-roundtrip` 53.9% (5.8–9.0 ms) and `startup` 62.4% (5.4–8.8 ms) are
+millisecond-scale and dominate the geomean when they jitter.
+
+This host is **not** the machine that runs the weekly job (that is ubuntu-24.04 in
+`nightly.yml`). The Check wants the threshold set from that machine's spread; these numbers are
+local evidence only. The **20% gate is left unchanged**: the measured geomean spread (14.4%)
+sits under it, and raising the gate to hide the 53.9% outlier would be exactly the "alarm that
+fires on noise" failure the residue names. The outlier is a short-program jitter problem, not a
+threshold problem — if the weekly host's measured spread ever clears 20%, the gate moves then.
+
+### Gates run
+
+`pnpm install --frozen-lockfile` · `pnpm run typecheck` · `pnpm run lint` · `pnpm run test`
+(798) · `pnpm run dupes` (no new clones; baseline 180→171) · `node scripts/check-js-sources.ts`
+· `pnpm run docs:node` + `pnpm run test:node-coverage` · `jactionlint` · `pnpm run test:selfhost`
+(with `--update` for the new `process.ts` target). Not run here: `pnpm run ci` in full
+(test262/asan/leak need the CI toolchain), `pnpm run test:golden` in full (a sample of
+`node_*` and `loop` fixtures was run).
+
+
+## 375. Integrate the outstanding local branches and refresh selfhost evidence (2026-10-23)
+
+The integration preserves the commits from local `main`, `b1-class-surface`,
+`c1-tooling-ci`, and the uncommitted anonymous-default-class work in `d1-class-redo`.
+The latter is already covered by B1; its merge changes no source. The emitter conflicts
+are resolved in T24's modules rather than restoring the old monolithic `index.ts`.
+Existing `ancestry`, call-slot, loop, and module-state helpers are reused. The clone
+baseline shrinks to 143 clones with zero new clones; no fingerprints are added.
+
+The first full `pnpm run ci` passed 800 unit tests, the runtime print corpus,
+967 subset fixtures (936 passed, 31 expected-fail, 0 failed), and all 471 goldens,
+then exposed a stale selfhost count: `STA1214` 1844 → 1879. A separate
+`node src/cli/main.ts explain --json` in `packages/compiler` on the original local
+`main` (`17e42fb`) already reports 1849. The integrated tree reports 1879; its added
+CLI code brings package/global/process/QualifiedName and other not-yet diagnostics.
+The verdict remains `not-yet`, with `STA1207: 1` and `STA1213: 2` unchanged.
+`node packages/tests/selfhost/run.ts --update` records the measured count under
+§9 Task 6.19's explicit growth policy and passes all 15 targets plus std/node smoke.
+
+The same section still called permission to record growth an open question immediately
+after documenting the creator's decision allowing it (note 306). That stale sentence
+is removed, and AGENTS.md's command comment is aligned with the normative policy.
+No task or phase is newly declared complete by this integration.
+
+SonarCloud's two new reliability findings were default `.sort()` calls in the
+`std_env` golden. One shared explicit UTF-16 comparator preserves Node's default
+ordering independently of locale; `node packages/tests/golden/run.ts --filter std_env`
+prints `golden: 1 fixtures — 1 passed, 0 failed`.
+
+The ready PR also exposed an older pinned `pyrlyn/ci` action in `ci.yml`: the
+`no-pinned-ci` job rejected `macos-runner@4b5b547…` (run 39997145944,
+job 120563580600). Its reference now uses `@main`, applying the existing #158
+policy to the action as well as the reusable workflow; no check is bypassed.
+
+The action receives the same file-and-reference-specific `jactionlint` ignore as the
+two existing shared workflow callers. All other `unpinned-uses` findings remain errors;
+`mise exec -- jactionlint --sarif-hide-baselined` passes with an empty baseline.
+
+The ready PR then waited on Snyk/SonarCloud jobs 120564959109/120564959561:
+GitHub reported their labels as `["xcode-27-local"]`, while the repository's
+`actions/runners` endpoint returned `total_count: 0` and no repository `CI_RUNNER`
+variable existed. The current shared `snyk.yml` and `sonarcloud.yml` both use
+`${{ vars.CI_RUNNER || 'xcode-27-local' }}`. Set the supported repository override
+`CI_RUNNER=ubuntu-latest` and document it in TOOLCHAIN.md. This supplies a hosted
+runner to the unchanged checks; it does not skip them or change their gate policy.

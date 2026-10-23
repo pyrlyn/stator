@@ -1637,6 +1637,27 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
       break;
     }
 
+    case 'accessor-place': {
+      verifyExpression(expr.target, problems, bindings);
+      if (expr.target.type.kind !== 'object') {
+        problems.push({
+          kind: 'accessor-place',
+          span: expr.span,
+          code: 'STA4049',
+          message: 'accessor-place receiver must be an object',
+        });
+      }
+      if (expr.getSlot < 0 && expr.setSlot < 0) {
+        problems.push({
+          kind: 'accessor-place',
+          span: expr.span,
+          code: 'STA4067',
+          message: `accessor '${expr.property}' has neither half in ${expr.owner}`,
+        });
+      }
+      break;
+    }
+
     case 'dyn-field-access': {
       verifyExpression(expr.target, problems, bindings);
       // The target is Unknown, or a fixed layout read at a name with no slot. The second shape

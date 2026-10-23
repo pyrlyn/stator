@@ -119,6 +119,7 @@ wrong, so its class already carries that information.
 | STA0018 | both | error | --config names a missing file: {path} | `--config=<path>` (resolved against the current directory) does not exist. Without `--config`, a missing `./stator.config.json` is not an error: Stator runs on flags and defaults |
 | STA0019 | both | error | cannot write {output} "{path}": {errno} ({reason}) | plan.md §9 Task 6.20 (QA audit F2), `src/cli/outputs.ts`. A `build` output the user's file system refuses: `ENOENT` (the directory does not exist), `ENOTDIR`, `EISDIR`, `EACCES`, `EPERM`, `EROFS`, `ENOSPC`. Raised by the write of `-o` (`--emit=c`), `--emit-header` and the C file, and before clang runs, when `-o`'s directory is missing or not writable or `-o` is a directory, so clang's own failure there is never blamed on the compiler (`STA0009`). Any other write error is still `STA4072`. A `BuildError`: no span, no verdict |
 | STA0020 | both | error | {step}: "{tool}" not found — install it (Linux: binutils; macOS: `xcode-select --install`) or set {CC\|OBJCOPY\|AR} · {step}: "{tool}" failed ({exit}) | plan.md §10 Task 7.4 (plan-notes 342), `src/cli/library.ts`. A tool the `--emit=lib` steps run after the unit's own compile: the prelink (`$CC -r`), the ELF symbol localization (`objcopy`) and the archiver (`ar`). The tool's own output is replayed before the diagnostic. Not `STA0008` (that is the C compiler missing before any compile) and not `STA0009` (the C it compiled is the runtime's and the unit's, already compiled once). A `BuildError`: no span, no verdict |
+| STA0021 | both | error | unknown compile jobs "{value}" in {origin} (expected an integer >= 1) | plan.md §11b T10.3 (plan-notes 374), `src/cli/compile-jobs.ts`. `STATOR_COMPILE_JOBS` (or the in-process `compileJobs` override) is not a positive integer. The origin names the environment variable or the override. Not a config key and not settable from `.env` (like `CC`): the knob is a developer/CI measurement switch. A `BuildError`: no span, no verdict |
 
 `STA4001` is also raised by the CLI (`--version` with an unreadable `package.json`), but it lives
 in the `STA4xxx` table below: the range is decided by what the code *means* — an internal
@@ -379,7 +380,7 @@ gate and the HIR disagree about the subset — see the invariant at the top of `
 The following ranges are reserved for future phases:
 
 - **STA0007–STA0009**: CLI/toolchain (Phase 2+)
-- **STA0021–STA0099**: CLI/toolchain and config (STA0014–STA0015 are the bundler's since T12.1, plan-notes 296, 320; STA0016–STA0018 are the config file's, plan-notes 303; STA0019 is the unwritable output's, Task 6.20, plan-notes 331; STA0020 is the `--emit=lib` tools', Task 7.4, plan-notes 342)
+- **STA0021–STA0099**: CLI/toolchain and config (STA0014–STA0015 are the bundler's since T12.1, plan-notes 296, 320; STA0016–STA0018 are the config file's, plan-notes 303; STA0019 is the unwritable output's, Task 6.20, plan-notes 331; STA0020 is the `--emit=lib` tools', Task 7.4, plan-notes 342; STA0021 is `STATOR_COMPILE_JOBS`', T10.3, plan-notes 374)
 - **STA1122–STA1199**: Rejected constructs (Phase 1+ may add more as new anti-goals are clarified)
 - **STA1209, STA1221–STA1299**: Not-yet features (Phase 2+ will expand as phases land)
 - **STA2010–STA2999**: Lowering and boundary errors (Phase 2 onward)

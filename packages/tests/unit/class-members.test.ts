@@ -197,14 +197,15 @@ test('a statement-position compound on an accessor is accepted', () => {
   assert.deepEqual(gateCodes(`${ACCESSOR}const c = new C();\n--c.value;\n`, 'ts'), []);
 });
 
-test('a value-position compound on an accessor stays not-yet', () => {
-  // The target lowers to the getter call, which is not an update place.
-  assert.deepEqual(gateCodes(`${ACCESSOR}const c = new C();\nconst y = c.value++;\n`, 'ts'), [
-    'STA1214',
-  ]);
-  assert.deepEqual(gateCodes(`${ACCESSOR}const c = new C();\nconst y = (c.value += 1);\n`, 'ts'), [
-    'STA1214',
-  ]);
+test('a value-position compound on an accessor is accepted', () => {
+  // The place is an `accessor-place` update: get, fold, set, and the fold's answer is the
+  // expression's value (plan.md §8 step 12b).
+  assert.deepEqual(gateCodes(`${ACCESSOR}const c = new C();\nconst y = c.value++;\n`, 'ts'), []);
+  assert.deepEqual(
+    gateCodes(`${ACCESSOR}const c = new C();\nconst y = (c.value += 1);\n`, 'ts'),
+    [],
+  );
+  assert.deepEqual(gateCodes(`${ACCESSOR}const c = new C();\nconst y = --c.value;\n`, 'ts'), []);
 });
 
 test('an accessor compound evaluates a side-effecting receiver once', () => {
@@ -427,14 +428,27 @@ test('a static block lowers after the class declaration, in the same scope', () 
   assert.deepEqual(gateCodes(STATIC_BLOCK, 'js'), []);
 });
 
-test('this in a static block stays not-yet', () => {
+test('this.x naming a static is accepted in a static block; bare this stays not-yet', () => {
+  // `this.x` erases to the class's own static binding (plan.md §8 step 12(d)); bare `this`
+  // is the class object, which stays refused.
   assert.deepEqual(
     gateCodes(`class C {\n  static n = 1;\n  static {\n    this.n = 2;\n  }\n}\n`, 'ts'),
+    [],
+  );
+  assert.deepEqual(
+    gateCodes(`class C {\n  static n = 1;\n  static {\n    console.log(this);\n  }\n}\n`, 'ts'),
     ['STA1214'],
   );
 });
 
-test('super in a static block stays not-yet', () => {
+test('super.x naming a base static is accepted; a base instance method stays not-yet', () => {
+  assert.deepEqual(
+    gateCodes(
+      `class B {\n  static n = 1;\n}\nclass D extends B {\n  static {\n    console.log(super.n);\n  }\n}\n`,
+      'ts',
+    ),
+    [],
+  );
   assert.deepEqual(
     gateCodes(
       `class B {\n  m(): number {\n    return 1;\n  }\n}\nclass D extends B {\n  static s = 0;\n  static {\n    D.s = super.m();\n  }\n}\n`,
@@ -803,7 +817,7 @@ test('a return that completes a path before the call stays not-yet', () => {
 test('a return after the call is accepted; a value return stays not-yet', () => {
   // A bare return past the call retires its path with the base initialized. A VALUE return
   // cannot land at all: `new` yields the allocated object and ignores what a constructor
-  // returns (codegen/index.ts), where Node substitutes the returned object (plan.md §8
+  // returns (codegen/), where Node substitutes the returned object (plan.md §8
   // step 12(d)). A nested arrow's return completes the arrow and is nobody else's.
   const bare = `${LATE_SUPER}class D extends B {
     constructor(n: number) {

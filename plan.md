@@ -54,14 +54,48 @@ New bugs, dead code and moves from a read-only Cursor cloud review of `main` at 
 | ID | Priority | Kind | Status | Where | Fix |
 | --- | --- | --- | --- | --- | --- |
 | ~~T20~~ | P0 | bug | fixed | plan-notes 353, 364 | `ci.yml` runs on `push` to `main`, so a merge has a test workflow and `revert-on-failure` can fire. |
-| T21 | P0 | bug | confirmed | PR CI run 37692965170 vs `ccf9818` on `main` | T17 was merged with red CI (`pipeline` failed in 0 s, `frontend (windows/arm64)` failed), so required checks are missing or bypassable. Require `static`, `frontend-coverage` and the Windows/macOS jobs (or a smaller set you actually enforce); do not merge on SonarCloud green alone. |
+| ~~T21~~ | P0 | bug | fixed | plan-notes 370 | T17 was merged with red CI (`pipeline` failed in 0 s, `frontend (windows/arm64)` failed), so required checks were missing or bypassable. `protect-main` now requires `pipeline / gate`, `static analysis`, `frontend (linux/x64)` and both Windows frontend legs; the desktop matrix name bug that made those legs unmatchable is fixed. |
 | ~~T22~~ | P0 | move | fixed | plan-notes 353, 364; #158 | `pipeline.yml` calls `pyrlyn/ci/.github/workflows/ci.yml@main`. A SHA pin of that caller fails `no-pinned-ci`. |
 | ~~T23~~ | P1 | bug | fixed | plan-notes 354 | The official win-arm64 Node is cross-compiled without a startup snapshot, so `util.format` sees seven later globals. The test follows `node_use_node_snapshot` and still fails on any other difference. |
-| T24 | P1 | move | confirmed | `packages/compiler/src/codegen/index.ts` (6,276 lines, the only file in `codegen/`) → files under `packages/compiler/src/codegen/` | Split the C emitter by HIR family (expressions, statements, classes, closures, runtime calls); it is the merge bottleneck. |
+| ~~T24~~ | P1 | move | fixed | plan-notes 371 | Split the C emitter by HIR family (expressions, statements, classes, closures, runtime calls); it is the merge bottleneck. |
 | ~~T25~~ | P2 | bug | fixed | plan-notes 353, 364 | The repo map names QuickJS-NG only. `docs/TOOLCHAIN.md` says Ryū is not vendored; fetching it stays on §12. |
 | ~~T26~~ | P2 | dead code | fixed | plan-notes 353, 364 | `memfs` is gone from both package manifests. The custom-host comments say "in-memory CompilerHost". |
 
 Already tracked here, not added again: moving number printing to the vendored Ryū C code (the review's move M3) is in §12, "Ryū rides here too".
+
+### T21. Required status checks on `main` (cloud review)
+
+The other cloud-review rows were struck without Steps and a Check because they needed no change.
+T21 is a live GitHub-state change, so it gets both.
+
+**Steps.**
+
+1. Fix the `frontend-desktop` matrix in `.github/workflows/ci.yml`: a leading space in the JSON
+   key (`" platform"`) left `matrix.platform` empty, so the Windows/macOS legs reported as
+   `frontend (/x64)` / `frontend (/arm64)` — names no ruleset context can match. Trailing spaces
+   in the `os` labels go in the same edit.
+2. Update the `protect-main` ruleset (`pyrlyn/stator`, id 24341905) so
+   `required_status_checks` is exactly: `pipeline / gate`, `static analysis`,
+   `frontend (linux/x64)`, `frontend (windows/x64)`, `frontend (windows/arm64)`.
+   (Apply via `gh api -X PUT repositories/1353641814/rulesets/24341905` — the `listepo/stator`
+   alias 307-redirects and `gh` will not follow a redirected PUT.)
+3. Leave `frontend (macos/arm64)` and the `-macos` twins **unrequired**: when the org variable
+   `MACOS_CI_DISABLED` is true, the macOS matrix entry is removed (not skipped), so a required
+   macOS context would block every PR with a check that never reports. The `if:`-gated
+   `-macos` jobs report `skipped` (success for a required check) when the variable is true;
+   the matrix-excluded desktop legs report nothing.
+4. Do **not** reintroduce the `repo-settings` caller (#170/#171): it never had
+   `REPO_ADMIN_TOKEN` and failed HTTP 401. Re-applying the ruleset after an accidental edit is
+   the `gh api` PUT above, not a workflow.
+
+**Check.**
+
+```
+gh api repos/pyrlyn/stator/rulesets/24341905 \
+  --jq '[.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context]'
+```
+
+Must print exactly `["pipeline / gate","static analysis","frontend (linux/x64)","frontend (windows/x64)","frontend (windows/arm64)"]`, and a PR whose `static analysis` or a Windows `frontend` leg is red must show merge blocked (admin bypass remains available on PRs only — actor `RepositoryRole` admin, `bypass_mode: pull_request`).
 
 Not added: exposing `ffi-gen` as a `stator ffi-gen` subcommand is optional, and the review says to keep it in-tree as it is; the identity string methods (`jsrt_string_to_string`, `jsrt_string_value_of`) are used through the method table.
 
@@ -545,8 +579,8 @@ bundle — evidence: done.md → Phase 5).~~ ✅
     variable declared inside a loop, `instanceof` against anything but a class name, assignment and
     compound assignment to a non-variable, `++`/`--` on a non-variable and in value position, and
     the binary/unary/statement catch-alls (`describeKind`).~~ ✅ **landed 2026-09-02**
-    (plan-notes 164). **Residue:** accessor compound and `#n in o` stay not-yet (families (d) /
-    private).
+    (plan-notes 164). **Residue:** `#n in o` stays not-yet (family (private)). Accessor
+    compound landed in both positions (plan-notes 373).
     (c) **[D3] Object literal forms**: shorthand, spread, method and accessor members; keys that are not
     identifiers. **Shorthand, non-identifier keys, and spread landed 2026-09-03** (plan-notes 181;
     evidence in [done.md](done.md) → Phase 5 step 12c, including the LAYOUT-vs-ENUMERATION order
@@ -581,12 +615,13 @@ bundle — evidence: done.md → Phase 5).~~ ✅
     blocks in source order (276), branch `super` in init-free derived ctors with exactly-once
     refusal (273), and bound class expressions via descriptor erasure (278). **Residue:**
     abstract accessors (`gate.ts:3670` override arm — need virtual accessor dispatch),
-    switch-guarded supers (the branch rule's `checkCtorList` covers `if`/`else`/blocks only —
-    a `switch` stays `STA1214`), `super` in a static block (`gate.ts:3730`), `this` in a static
-    member or block (`gate.ts:4711,4715`), bare `super` (`gate.ts:482,4984` — a JavaScript
-    SyntaxError, stays refused), opaque class values (`gate.ts:904,919,940,5283` — need the
-    class object), and anonymous default classes (`export default class {}` — default imports
-    landed with §11c T11.5a; what is left is a descriptor for a declaration with no name).
+    ~~switch-guarded supers~~ **landed** (plan-notes 373; `checkCtorList` covers `switch`),
+    ~~`super` in a static block~~ **landed** (plan-notes 373; `super.x` naming a base static
+    erases to that binding), `this` in a static METHOD (`this.x` in a static field initializer
+    or block landed — plan-notes 373; a method's `this` is the reached-through class object),
+    bare `super` (`gate.ts:482,4984` — a JavaScript SyntaxError, stays refused), opaque class
+    values (`gate.ts:904,919,940,5283` — need the class object), and ~~anonymous default
+    classes~~ **landed** (plan-notes 373; `export default class {}` keys on `*default*`).
     (e) **[D3] Values that need a closure or a class object**: ~~calling an arbitrary expression~~,
     ~~function declarations inside a block/loop/branch~~, ~~method values (`const f = o.m`)~~,
     ~~calling a class field~~, and ~~named function expressions~~ **landed** (evidence in
@@ -775,7 +810,13 @@ threshold to sit above a **measured** spread; what has been measured is one repe
 (22.358 → 21.458 ms, **4.0%**, same commit — done.md) plus five repeats on a second host
 (21.215–22.778 ms, **7.4%** max spread — plan-notes 246), and the 20% gate stands on both with
 ~3× headroom. Still open, narrowed: the Check names the machine that runs the weekly job, and
-neither host is it. **Check:** a handful of repeats of one commit
+neither host is it. **Local evidence (plan-notes 374, 2026-10-23):** five repeats of one commit
+on darwin-arm64 (Apple M3 Max, **not** the weekly job's ubuntu-24.04 runner) gave stator
+geomeans 25.784–29.497 ms (**14.4%** range spread); a sixth run tripped the 20% gate at
+**+53.9%** on the same commit, driven by `json-roundtrip` (53.9% per-program spread) and
+`startup` (62.4%) jitter at the millisecond scale. The **20% gate is unchanged**: the measured
+geomean spread sits under it, and raising the gate to hide the outlier would be the "alarm that
+fires on noise" this residue names. **Check:** a handful of repeats of one commit
 on the machine that runs the weekly job, the observed spread recorded in `plan-notes.md`, and the
 gate set from it. A gate below the noise floor fires on noise, and an alarm that fires on noise is
 one people learn to ignore — which costs more than having no gate at all.
@@ -809,15 +850,21 @@ records 224 clones (identifier-insensitive, tests/vendor/docs excluded — 4.6% 
 which 1.1% exact) as debt. Extract a shared helper per clone family at the responsible layer
 (`lower/`, `codegen/`, `runtime/src/jsrt_array_ops.c` lead the list) and shrink the baseline with
 `pnpm run dupes:baseline` in the same change. **Check:** the baseline is empty; `pnpm run dupes`
-then runs with no baseline at all.
+then runs with no baseline at all. **First tranche landed 2026-10-23** (plan-notes 374): six
+helpers in `lower/` + `codegen/` (`emitLoopBody`/`emitLoopEpilogue`, `emitWhileOpen`,
+`emitRouteDispatch`, `resetToModuleLevel`, `flushCallSlots`, `lowerNewCallArgs`); the baseline
+shrank 180 → 171 fingerprints. The `runtime/src/jsrt_array_ops.c` family and the rest of the
+list are still open.
 
 ~~**Task 6.17 — Test impact: build and run only what a change reaches.**~~ ✅ **landed 2026-10-02**
 (steps 1–3 and 5; Check (a)–(e) passed) — evidence in [done.md](done.md) → Phase 6 Task 6.17
-(plan-notes 293). **Still open — step 4, CI:** after PR #45's staged pipeline, `main` and the
-nightly run `pnpm run test:impact:record` and upload `.cache/impact/impact-map.json` as an
-artifact; pull requests download the newest `main` map and run `pnpm run test:impact` (it falls
-back to the full run, saying why, when that map is missing or not an ancestor). Done when a pull
-request's CI log shows a selection made from a `main` map.
+(plan-notes 293). **Step 4, CI — wiring landed 2026-10-23** (plan-notes 374): `main` and the
+nightly run `pnpm run test:impact:record` and publish `.cache/impact/impact-map.json` as an
+artifact **and** a cache entry `impact-map-<sha>`; pull requests restore the newest `main` map
+(`restore-keys: impact-map-`) and run `pnpm run test:impact` in the `impact select` job (it
+falls back to the full run, saying why, when that map is missing or not an ancestor). Local
+selection from a clean map is proved in plan-notes 374. **Done when a pull request's CI log
+shows a selection made from a `main` map** — not yet observable from this branch.
 
 ~~**Task 6.18 — `stator.config.json`: every CLI option in one validated file.**~~ ✅ **landed 2026-10-02** — evidence in [done.md](done.md) → Phase 6 Task 6.18 (plan-notes 303; `docs/CONFIG.md`).
 
@@ -837,7 +884,7 @@ built yet:
   **Growth may be recorded** (creator, 2026-10-02, plan-notes 306): a change that grows a count
   runs `--update` in the same change, so the increase shows in `baseline.json`'s diff for review.
   This differs from `dupes:baseline`, which only ever shrinks.
-  Whether growth may be recorded is open for the creator (plan-notes 306). When a target reaches
+  When a target reaches
   zero, that is its milestone, and from then on its build and smoke check are part of the gate.
 - **Stage-2 check (not built).** When the compiler's verdict becomes `static` or `dynamic`, its
   binary compiles a hello-world fixture. That C output must be **byte-identical** to the C the
@@ -1380,17 +1427,22 @@ Independent of T10.1/T10.2. Host Node only.
 
 Steps:
 
-1. Baseline: wall time of `stator build` on a fixed multi-file fixture at `STATOR_COMPILE_JOBS=1`
-   with spans (frontend / lower / verify / emit / clang / link).
-2. C1 — parallel clang; keep if ≥1.3× on that fixture.
-3. C2 — parallel emit if emit shows in the profile.
+1. ✅ **Baseline (2026-10-23, plan-notes 374):** wall time of `stator build` on a fixed multi-file
+   fixture at `STATOR_COMPILE_JOBS=1` with spans (frontend / lower / verify / emit / clang / link).
+   `STATOR_COMPILE_TIMING=1` prints the span line.
+2. ✅ **C1 — parallel clang (2026-10-23, plan-notes 374):** `STATOR_COMPILE_JOBS` partitions the
+   emitted C and compiles the units concurrently. **2.11×** on the 556KB fixture (jobs=8 vs 1);
+   `STATOR_COMPILE_JOBS=1` keeps byte-identical C. `STA0021` for a bad value. C2 below was not
+   taken (emit is 10 ms of a 2.4 s build).
+3. C2 — parallel emit if emit shows in the profile. **Not taken** (plan-notes 374: emit 10 ms).
 4. C3 — sharded lower/verify via process pool if typecheck/HIR dominate; document the Program
-   isolation choice.
+   isolation choice. **Not taken** (plan-notes 374: `hir/verify` 3 ms).
 5. CI: one job runs `STATOR_COMPILE_JOBS=2` smoke so races fail the build; default CI may stay
    serial for log readability.
 
 **Check:** documented before/after numbers in plan-notes; `STATOR_COMPILE_JOBS=1` preserves
-byte-identical emitted C for the fixture; CI green.
+byte-identical emitted C for the fixture; CI green. **Met 2026-10-23** (plan-notes 374) except
+the step-5 CI smoke, which is still open.
 
 ---
 
@@ -1580,10 +1632,15 @@ it). **Second slice landed** (plan-notes 317): the `node:fs` sync subset, 12 of 
 functions `tsc` calls (`closeSync`, `existsSync`, `mkdirSync`, `openSync`, `readFileSync`,
 `readdirSync`, `realpathSync`, `statSync`, `unlinkSync`, `utimesSync`, `writeFileSync`,
 `writeSync`) plus `rmdirSync`, with Node's `SystemError` shape. `watch`, `watchFile` and
-`unwatchFile` wait on the event loop (N2) and stay `STA1214`. **Next**, in the order `tsc` needs
-them: `process`, `node:os`, `Buffer.from`/`toString` (then `readFileSync` without an encoding
-answers a `Buffer`), `crypto.createHash`, `perf_hooks.performance`, timers; `path.win32` is its
-own slice (13 of T11.7's `path` tests need it).
+`unwatchFile` wait on the event loop (N2) and stay `STA1214`. **`process` slice landed
+2026-10-23** (plan-notes 374): `packages/node/src/process.ts` answers `argv`, `env` (startup
+snapshot via new `std/env.names()`), `cwd`, `exit`, `exitCode`, `pid`, `ppid`, `platform`,
+`arch`, `execPath`, `hrtime()` and `memoryUsage()` (rss), with goldens `ts/node_process.ts` and
+`js/node_process.js`, three decision tests, and `docs/NODE.md` at 12/68 for `node:process`.
+`hrtime.bigint`, `stdout`/`stderr`, `nextTick` and the free `process` global stay open. **Next**,
+in the order `tsc` needs them: `node:os`, `Buffer.from`/`toString` (then `readFileSync` without an
+encoding answers a `Buffer`), `crypto.createHash`, `perf_hooks.performance`, timers; `path.win32` is
+its own slice (13 of T11.7's `path` tests need it).
 
 **Check:** `tsc --version` and `tsc -p` on a small fixture project, compiled by Stator, print
 byte-for-byte what `node _tsc.js` prints on Node 26.7.0; `docs/NODE.md` slice N1 at 100%.
@@ -2460,3 +2517,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.84** (2026-10-19): **Task 6.31 lands** (plan-notes 363). `pipeline / sonarcloud / sonarcloud` on run 39297920890 ran Setup and, with `SONAR_TOKEN` set, Coverage; the scanner read `coverage/lcov.info`. The card moves to done.md.
 
 - **v4.82** (2026-10-19): **Cloud-review rows T20, T22, T25 and T26 were already fixed** (plan-notes 364). The table still said confirmed. `ci.yml` pushes `main`, `pipeline.yml` calls `pyrlyn/ci` at `@main` (#158), the repo map no longer lists Ryū as vendored, and `memfs` is gone. T21 (required checks) and T24 (split the C emitter) stay open. These rows were never given Steps and a Check, so they are struck in the table the way T23 was, not moved to `done.md`.
+- **v4.85** (2026-10-23): **Cloud-review T21 lands: `protect-main` requires the real test jobs** (plan-notes 370). The ruleset required only `pipeline / gate`, which is why T17 merged with red CI. It now also requires `static analysis`, `frontend (linux/x64)`, `frontend (windows/x64)` and `frontend (windows/arm64)`. A leading-space key in the `frontend-desktop` `fromJSON` matrix had been reporting those legs as `frontend (/x64)` — unmatchable as check contexts — and is fixed in the same change. macOS legs stay unrequired because `MACOS_CI_DISABLED=true` removes them from the matrix instead of skipping them.

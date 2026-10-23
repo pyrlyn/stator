@@ -409,13 +409,17 @@ test('statics are accepted; what has no class object to read is not', () => {
   assert.deepEqual(codesFor(`${cls}console.log(C.m());`), []);
   // A static initialization block runs at class-definition time against the statics, which are
   // plain bindings initialized where the class declaration sits -- so its statements lower
-  // right after it. `this` inside one is still the class object, which does not exist here.
+  // right after it. `this.x` naming a static erases to that binding; bare `this` stays refused.
   assert.deepEqual(
     codesFor('class C {\n  static n = 1;\n  static {\n    C.n = 2;\n  }\n}\nconsole.log(C.n);'),
     [],
   );
   assert.deepEqual(
     codesFor('class C {\n  static n = 1;\n  static {\n    this.n = 2;\n  }\n}\nconsole.log(C.n);'),
+    [],
+  );
+  assert.deepEqual(
+    codesFor('class C {\n  static n = 1;\n  static {\n    console.log(this);\n  }\n}\n'),
     ['STA1214'],
   );
   assert.deepEqual(
@@ -581,17 +585,10 @@ test('a bound class expression is vetted like a declaration and compiles', () =>
     ),
     ['STA1214'],
   );
-  // An anonymous DECLARATION keeps its own message (plan.md §8 step 12(d) residue).
-  const { program: declProgram } = createProgram(
-    'export default class { m() { return 7; } }\n',
-    '/test.ts',
-  );
-  const decl = gateProgram(declProgram, 'ts');
-  assert.deepEqual(
-    decl.map((d) => d.code),
-    ['STA1214'],
-  );
-  assert.match(decl[0]?.message ?? '', /an anonymous class is not yet supported/);
+  // An anonymous default DECLARATION takes Node's `.name` (`default`) and is accepted
+  // (plan.md §8 step 12(d)); a named default class is accepted as before.
+  assert.deepEqual(codesFor('export default class { m() { return 7; } }\n'), []);
+  assert.deepEqual(codesFor('export default class N { m() { return 7; } }\n'), []);
 });
 
 test('this is gated, not left to the lowering', () => {
@@ -650,10 +647,9 @@ test('accessors are accepted, in statement position and as statics', () => {
     codesFor(`class C {\n${body}}\nconst c = new C();\nc.value = 1;\nconsole.log(c.value);`),
     [],
   );
-  // A read-modify-write is a get AND a set of one property. In statement position the member
-  // place machinery evaluates the receiver once into a temporary and threads it through both
-  // calls; in value position the target lowers to the getter call, which is not an update
-  // place.
+  // A read-modify-write is a get AND a set of one property. The member place machinery
+  // evaluates the receiver once into a temporary and threads it through both calls --
+  // statement position discards the fold's answer, value position yields it (step 12b).
   assert.deepEqual(
     codesFor(`class C {\n${body}}\nconst c = new C();\nc.value += 1;\nconsole.log(c.value);`),
     [],
@@ -664,7 +660,7 @@ test('accessors are accepted, in statement position and as statics', () => {
   );
   assert.deepEqual(
     codesFor(`class C {\n${body}}\nconst c = new C();\nconst y = c.value++;\nconsole.log(y);`),
-    ['STA1214'],
+    [],
   );
   // A static accessor is a pair of plain functions under mangled static bindings: reading
   // `C.value` runs the getter, writing it runs the setter.

@@ -123,7 +123,7 @@ pnpm run test:impact:record     # full instrumented run at a clean HEAD → .cac
 pnpm run test:coverage          # same under c8 + packages/compiler/src coverage table; writes coverage/lcov.info — ONLY when the coverage table is the question (it costs ~4x wall time)
 pnpm run test:subset            # decision tests → verdict matrix
 pnpm run test:golden            # compile + run vs Node, byte-for-byte
-pnpm run test:selfhost          # Stator explains (and builds) its own packages; per-code counts may only shrink
+pnpm run test:selfhost          # Stator explains (and builds) its own packages; ratcheted per-code counts; record changes with --update
 pnpm run test:runtime           # the runtime's own print corpus vs Node, byte-for-byte
 pnpm run test:asan              # golden fixtures with runtime + generated C under ASan/UBSan
 pnpm run test:leak              # 10M-object loop; RSS must plateau (skips without Boehm)

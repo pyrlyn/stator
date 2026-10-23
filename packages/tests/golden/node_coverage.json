@@ -1,5 +1,5 @@
 {
-  "_comment": "plan.md §11c coverage: node:* module -> member -> golden fixtures exercising it (paths relative to tests/golden/), or {\"nondeterministic\": \"<proof under tests/>\"}. The member list itself is read from the pinned Node by node-coverage.ts, so a member absent here is counted as not covered rather than hidden. A claim is verified like test:builtins: the fixture must exist and mention both the module specifier and the member. Members are spelled as docs/NODE.md lists them: `readFileSync`, `Buffer.from`, `Buffer.prototype.toString`.",
+  "_comment": "plan.md \u00a711c coverage: node:* module -> member -> golden fixtures exercising it (paths relative to tests/golden/), or {\"nondeterministic\": \"<proof under tests/>\"}. The member list itself is read from the pinned Node by node-coverage.ts, so a member absent here is counted as not covered rather than hidden. A claim is verified like test:builtins: the fixture must exist and mention both the module specifier and the member. Members are spelled as docs/NODE.md lists them: `readFileSync`, `Buffer.from`, `Buffer.prototype.toString`.",
   "_example": {
     "fs": {
       "readFileSync": ["ts/node_fs_sync/main.ts"]
@@ -71,5 +71,19 @@
     "resolve": ["ts/node_path_posix.ts"],
     "sep": ["ts/node_path_posix.ts"],
     "toNamespacedPath": ["ts/node_path_posix.ts"]
+  },
+  "process": {
+    "arch": ["ts/node_process.ts", "js/node_process.js"],
+    "argv": ["ts/node_process.ts", "js/node_process.js"],
+    "cwd": ["ts/node_process.ts", "js/node_process.js"],
+    "env": ["ts/node_process.ts", "js/node_process.js"],
+    "exit": ["ts/node_process.ts", "js/node_process.js"],
+    "exitCode": ["ts/node_process.ts", "js/node_process.js"],
+    "execPath": ["ts/node_process.ts", "js/node_process.js"],
+    "hrtime": ["ts/node_process.ts", "js/node_process.js"],
+    "memoryUsage": ["ts/node_process.ts", "js/node_process.js"],
+    "pid": ["ts/node_process.ts", "js/node_process.js"],
+    "platform": ["ts/node_process.ts", "js/node_process.js"],
+    "ppid": ["ts/node_process.ts", "js/node_process.js"]
   }
 }

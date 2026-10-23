@@ -12,6 +12,7 @@ import { NodeError } from './internal/errors.ts';
 import fs from './fs.ts';
 import { fileHrefToPath } from './internal/url.ts';
 import path from './path.ts';
+import process from './process.ts';
 
 /** The pinned Node's `require('node:module').builtinModules` (v26.7.0, checked 2026-10-02):
  * every bare id, then the four that exist only with the `node:` prefix. */
@@ -112,6 +113,8 @@ function landed(id: string): unknown {
     case 'path':
     case 'path/posix':
       return path;
+    case 'process':
+      return process;
     default:
       return undefined;
   }

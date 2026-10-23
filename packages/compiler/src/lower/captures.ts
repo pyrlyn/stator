@@ -74,16 +74,18 @@ export type EnvOwner = FunctionLike | ts.ClassLikeDeclaration | ts.SourceFile;
 
 export type CaptureMap = ReadonlyMap<EnvOwner, CaptureInfo>;
 
+const FUNCTION_KINDS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.FunctionDeclaration,
+  ts.SyntaxKind.FunctionExpression,
+  ts.SyntaxKind.ArrowFunction,
+  ts.SyntaxKind.MethodDeclaration,
+  ts.SyntaxKind.Constructor,
+  ts.SyntaxKind.GetAccessor,
+  ts.SyntaxKind.SetAccessor,
+]);
+
 export function isFunctionLike(node: ts.Node): node is FunctionLike {
-  return (
-    ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isConstructorDeclaration(node) ||
-    ts.isGetAccessorDeclaration(node) ||
-    ts.isSetAccessorDeclaration(node)
-  );
+  return FUNCTION_KINDS.has(node.kind);
 }
 
 /** The scope that owns a `this` read: the nearest enclosing function that HAS a receiver of
