@@ -13551,3 +13551,104 @@ variable existed. The current shared `snyk.yml` and `sonarcloud.yml` both use
 `${{ vars.CI_RUNNER || 'xcode-27-local' }}`. Set the supported repository override
 `CI_RUNNER=ubuntu-latest` and document it in TOOLCHAIN.md. This supplies a hosted
 runner to the unchanged checks; it does not skip them or change their gate policy.
+## 376. F1 residues: string exotic index, dropped-`as` spread; `#n in o` already landed (2026-10-23)
+
+**Plan:** §8 step 12 residues. Originally numbered 375 on `f1-residues`; renumbered 376 because note 375 records the first integration PR.
+Touches: `runtime/src/jsrt_shape.c`, `compiler/src/frontend/{gate,types}.ts`,
+`compiler/src/codegen/helpers.ts`, `compiler/src/hir/verify.ts`, goldens
+`{ts,js}/string_exotic_index`, `{ts,js}/spread_dropped_as`, subset `subset_string_index_*` and
+the flipped `subset_spread_unknown_cast_*`, `docs/SUBSET.md`, `plan.md` residue lines.
+
+**F1 — string exotic index (closed).** Before: `a[0]` where `a` is a string through an Unknown
+receiver answered `undefined`; Node answers the character. `jsrt_get_prop` handled string
+`length` and the prototype methods but not the string exotic index (plan-notes 372 residue).
+The same arm now answers a canonical array index below `length` with the UTF-16 unit at that
+position, and `jsrt_has_prop` agrees. The gate accepts a typed-string index (`s[0]`), which
+`indexGetCall`/`indexSetCall` route through the same dynamic entry; the verifier's
+`checkIndexable` admits `string`. Goldens `string_exotic_index` both modes match Node
+byte-for-byte (js also covers string keys and non-canonical spellings). Decision tests
+`subset_string_index_*` are `dynamic` (the read is `string | undefined` under
+`noUncheckedIndexedAccess`).
+
+**F2 — `#n in o` (already landed, residue struck).** The brand check lowers to `instanceof`
+against the lexically-resolved declaring class (`brandDeclaringClass`); goldens
+`class_private_accessor` and `class_private_redeclare` both modes, subset
+`subset_class_private_accessor_*` `dynamic`. plan.md step 12(b) residue no longer names it.
+
+**F3 — dropped `as` assertion's unknown operand in object-literal spread (closed).**
+`{ ...(o as { x: number }) }` stayed `STA1214` because `objectLiteralIsDynamic` was false (the
+literal types the asserted shape) while the lowering drops the non-checkable `as` and spreads
+the unknown operand. The result now takes the dynamic path: `objectLiteralIsDynamic` is true
+when any spread reads a run-time key set (a dropped-`as` unknown), and the gate's unknown-spread
+arm accepts it. The shape-table `assign` already copied the run-time keys (plan-notes 297). Array
+spread of a dropped `as` already worked and rides the same fixture. Goldens
+`spread_dropped_as` both modes; `subset_spread_unknown_cast_*` flipped `not-yet` → `dynamic`.
+
+**Left open (not landed here).** Step 12(a) nested patterns / rest-in-pattern / default-in-pattern
+(`isSimpleBindingPattern` still refuses a nested binding element; the gate message is the shallow
+destructuring refusal, not a named residue). Step 12(f) homeless generics outside a call-argument
+position already carry precise per-shape refusals (`subset_generic_homeless_*`);
+`const f = <T>(x: T) => x` at module scope already specializes under the const home
+(`subset_generic_arrow_*` `static`). No new diagnostic codes.
+
+**Checks (F3 landing run).** typecheck + lint clean. `test:golden --filter=string_exotic_index`
+2/2, `--filter=spread_dropped_as` 2/2, `--filter=class_private` 6/6. `test:subset
+--filter=string_index` 2/2; full subset/golden reported below with the commit.
+
+
+## 377. Follow-up integration of the completed D1/F1 worktrees (2026-10-23)
+
+The creator requested waiting for the worktrees' remaining work after PR #176.
+The final inspected heads are `d1-class-redo` at `2bc9ead` and `f1-residues` at
+`7a25fbe`: both have clean indexes/worktrees, stable committed changes, and no
+compiler, runtime-build, or test processes running in either worktree.
+
+D1 independently replayed B1's class fixes. Comparing `b1-class-surface` with D1
+shows identical frontend type mapping, HIR nodes/verifier, rewrite, explain, and
+class fixtures; its gate/test differences only update the emitter path in comments.
+D1's expression/slot/module emitter files also match the integrated `main` exactly.
+No class implementation or test is duplicated or reverted in this follow-up.
+
+F1 contributes the string-exotic-index and dropped-assertion-spread commits
+`c9be1cc` and `7a25fbe`, preserving their human authors. Frontend conflicts use
+`frontendTypes` for the shared helpers already adopted by #176. The subset matrix
+keeps the anonymous-default-class support from #176 alongside the new spread
+support. The roadmap records both accessor compounds and private-brand checks as
+landed. F1's original note 375 is renumbered 376 to preserve #176's note 375.
+
+Initial integration checks: strict typecheck and lint pass; `pnpm run dupes`
+reports 143 clones and zero new clones, with the baseline unchanged. The full
+`pnpm run ci` gate is run on the combined tree before merge; its final output is
+recorded in the follow-up PR.
+
+The first full run found three unit expectations for the old string-index and
+unknown-object-spread refusals. They now assert the newly supported constructs;
+a separate assertion still requires STA1214 for `{ ...null }`, preserving the
+adjacent unsupported case. All 800 unit tests pass. The standard selfhost generator
+records a reduction from 1879 to 1831 STA1214 diagnostics, with the other codes
+and `not-yet` verdict unchanged; its 15 targets and std/node smoke pass.
+
+## 378. Reproducible Node API coverage across Linux and macOS (2026-10-23)
+
+PR #177's Linux `impact select` fallback passed the feature suites but failed the
+generated Node-document drift check; the complete macOS gate passed. Reproducing
+the generator on official Node v26.7.0 Linux x64 in Colima exposed the mechanism:
+`node:constants` has six Linux-only exports and two macOS-only exports, while
+`fs.lchmod` and `fs.lchmodSync` are functions on macOS and exported `undefined`
+values on Linux. The old dashboard therefore counted 2364 members on macOS and
+2368 on Linux and could not satisfy the same committed-document check on both.
+
+The dashboard now includes the measured union of both public surfaces: 2370
+members, including all 237 constants. Platform-only members carry an explicit
+platform kind. The generator validates each measured export's host variant and
+the exact Node pin, requiring the inventory to be refreshed when either changes.
+It still enumerates all other live exports and compares the complete generated
+document byte-for-byte; no member or stale-document check is skipped. The Phase-11
+coverage contract in `plan.md` records this cross-platform denominator.
+
+Proof: `pnpm run docs:node` followed by `pnpm run test:node-coverage` passes on
+macOS arm64. Running the generator with official `node:26.7.0-bookworm-slim`
+Linux x64 (image digest
+`sha256:4db36457f406501e6f608802e5da617e5fbd0e80b75901b6a09de1ae5a667d32`)
+produces an identical document (`diff -u` exits 0), and its read-only `--check`
+reports `node-coverage: docs/NODE.md is current`. Strict typecheck and lint pass.

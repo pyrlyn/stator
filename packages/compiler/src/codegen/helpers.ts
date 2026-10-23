@@ -400,6 +400,9 @@ export const ITER_KINDS = {
 export function indexGetCall(target: HType, object: string, index: string): string {
   switch (target.kind) {
     case 'unknown':
+    case 'string':
+      // A string's exotic index is answered by the same dynamic entry an Unknown receiver
+      // takes (`jsrt_get_prop`'s string arm): one UTF-16 unit, `undefined` past the end.
       return `jsrt_dyn_index_get(${object}, ${index}, NULL)`;
     case 'uint8array':
       return `jsrt_uint8array_get(${object}, ${index})`;
@@ -412,6 +415,8 @@ export function indexGetCall(target: HType, object: string, index: string): stri
 export function indexSetCall(target: HType, object: string, index: string, value: string): string {
   switch (target.kind) {
     case 'unknown':
+    case 'string':
+      // A string index is read-only; `jsrt_set_prop` answers Node's strict-mode TypeError.
       return `jsrt_dyn_index_set(${object}, ${index}, ${value}, NULL)`;
     case 'uint8array':
       return `jsrt_uint8array_put(${object}, ${index}, ${value})`;

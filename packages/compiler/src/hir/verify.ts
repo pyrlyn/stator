@@ -228,7 +228,8 @@ function checkIndexable(
   if (
     target.type.kind !== 'array' &&
     target.type.kind !== 'unknown' &&
-    target.type.kind !== 'uint8array'
+    target.type.kind !== 'uint8array' &&
+    target.type.kind !== 'string'
   ) {
     if (
       target.type.kind === 'object' &&

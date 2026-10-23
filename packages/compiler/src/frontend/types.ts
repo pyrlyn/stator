@@ -728,6 +728,30 @@ function literalHasRuntimeComputedKey(
   return false;
 }
 
+/** Whether a spread operand reads a run-time key set: its type is Unknown after a dropped `as`.
+ *
+ * `isCheckable` (narrowing.ts) is the same three kinds -- number, string and boolean -- spelled
+ * here so this file need not import the narrowing module (which imports this one). An `as` to
+ * anything else is dropped by the lowering, so the spread reads the operand's Unknown type and
+ * the keys are a run-time question. */
+function spreadReadsUnknown(expr: ts.Expression, checker: ts.TypeChecker): boolean {
+  let current = expr;
+  for (;;) {
+    while (ts.isParenthesizedExpression(current)) {
+      current = current.expression;
+    }
+    if (ts.isAsExpression(current)) {
+      const asserted = tsTypeToHType(checker.getTypeAtLocation(current), checker);
+      if (asserted.kind === 'number' || asserted.kind === 'string' || asserted.kind === 'boolean') {
+        return false;
+      }
+      current = current.expression;
+      continue;
+    }
+    return tsTypeToHType(checker.getTypeAtLocation(current), checker).kind === 'unknown';
+  }
+}
+
 export function objectLiteralIsDynamic(
   literal: ts.ObjectLiteralExpression,
   checker: ts.TypeChecker,
@@ -737,11 +761,17 @@ export function objectLiteralIsDynamic(
   return (
     // The checker typed the literal `any`: a spread of an `any` value, or one it refused (TS2698,
     // a js-mode runtime code). Its key set is then a run-time question, and only the shape table
-    // can answer it (plan-notes 297).
+    // can answer it (plan-notes 297). A spread of a dropped-`as` unknown (`{ ...(o as {x}) }`)
+    // is the same question: the assertion names a shape the value need not have, so the result
+    // cannot take a fixed layout (plan.md §8 step 12(c) residue).
     (own.flags & ts.TypeFlags.Any) !== 0 ||
     literalHasRuntimeComputedKey(literal, checker) ||
     (contextual !== undefined && isDynamicShape(contextual, checker)) ||
-    isDynamicShape(own, checker)
+    isDynamicShape(own, checker) ||
+    literal.properties.some(
+      (property) =>
+        ts.isSpreadAssignment(property) && spreadReadsUnknown(property.expression, checker),
+    )
   );
 }
 

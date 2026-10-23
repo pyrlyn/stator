@@ -574,13 +574,16 @@ bundle — evidence: done.md → Phase 5).~~ ✅
     ~~(a) **Parameter and binding forms** first, because every later family calls functions: rest,
     default, optional, uninitialized `let`, and shallow destructuring of parameters/declarations/
     catch.~~ ✅ **landed 2026-09-02** (plan-notes 158–161). **Residue:** nested patterns,
-    rest-in-pattern, and default-in-pattern stay not-yet in this family.
+    rest-in-pattern, and default-in-pattern stay not-yet in this family (F1 left nested
+    patterns open; the gate's message is still the shallow destructuring refusal).
     ~~(b) **Expression-position residue**: labels on anything but a loop or switch, capturing a
     variable declared inside a loop, `instanceof` against anything but a class name, assignment and
     compound assignment to a non-variable, `++`/`--` on a non-variable and in value position, and
     the binary/unary/statement catch-alls (`describeKind`).~~ ✅ **landed 2026-09-02**
-    (plan-notes 164). **Residue:** `#n in o` stays not-yet (family (private)). Accessor
-    compound landed in both positions (plan-notes 373).
+    (plan-notes 164). Accessor compound landed in both positions (plan-notes 373).
+    ~~`#n in o`~~ ✅ **landed** — the brand check lowers to `instanceof` against the
+    lexically-resolved declaring class (`brandDeclaringClass`), goldens `class_private_accessor`
+    and `class_private_redeclare` both modes.
     (c) **[D3] Object literal forms**: shorthand, spread, method and accessor members; keys that are not
     identifiers. **Shorthand, non-identifier keys, and spread landed 2026-09-03** (plan-notes 181;
     evidence in [done.md](done.md) → Phase 5 step 12c, including the LAYOUT-vs-ENUMERATION order
@@ -594,7 +597,9 @@ bundle — evidence: done.md → Phase 5).~~ ✅
     step 12c computed keys).
     **A spread of an untyped value into a literal the checker types `any` landed** (plan-notes
     297: the operand folds through the shape-table `assign`, beside the array spread).
-    **Residue:** a dropped `as` assertion's unknown operand, a value with no fixed shape in a
+    ~~**A dropped `as` assertion's unknown operand**~~ ✅ **landed (F1 residue)** — the
+    result takes the dynamic path and folds through the shape-table `assign` (plan-notes 297).
+    **Residue:** a value with no fixed shape in a
     fixed-typed literal (`{ ...null }`, an array beside an own key), and the methods-order
     shapes (`gate.ts` spread-prefix arms) stay `STA1214` — all need the dynamic tier (step 39),
     not this slice. Spread of any
@@ -1465,6 +1470,9 @@ built-in modules. The first target is TypeScript 6.0.3's own `tsc` bundle.
   deferred; N3 (net/http/tls/zlib, `worker_threads`, `vm`) is not planned.
 - Coverage is tracked in **`docs/NODE.md`**, generated from the pinned Node and checked in `ci`
   (AGENTS.md golden rule 11).
+  Platform-specific exports use the measured union of Linux/macOS surfaces for that pin;
+  generation validates the host variant and both platforms must reproduce the same document
+  (plan-notes 378).
 
 **Packages.** The work is decomposed by package; each card names the one package it changes
 (tests and docs ride along). Dependencies point one way only:
