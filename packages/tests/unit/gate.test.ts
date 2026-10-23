@@ -643,10 +643,9 @@ test('accessors are accepted, in statement position and as statics', () => {
     codesFor(`class C {\n${body}}\nconst c = new C();\nc.value = 1;\nconsole.log(c.value);`),
     [],
   );
-  // A read-modify-write is a get AND a set of one property. In statement position the member
-  // place machinery evaluates the receiver once into a temporary and threads it through both
-  // calls; in value position the target lowers to the getter call, which is not an update
-  // place.
+  // A read-modify-write is a get AND a set of one property. The member place machinery
+  // evaluates the receiver once into a temporary and threads it through both calls --
+  // statement position discards the fold's answer, value position yields it (step 12b).
   assert.deepEqual(
     codesFor(`class C {\n${body}}\nconst c = new C();\nc.value += 1;\nconsole.log(c.value);`),
     [],
@@ -657,7 +656,7 @@ test('accessors are accepted, in statement position and as statics', () => {
   );
   assert.deepEqual(
     codesFor(`class C {\n${body}}\nconst c = new C();\nconst y = c.value++;\nconsole.log(y);`),
-    ['STA1214'],
+    [],
   );
   // A static accessor is a pair of plain functions under mangled static bindings: reading
   // `C.value` runs the getter, writing it runs the setter.

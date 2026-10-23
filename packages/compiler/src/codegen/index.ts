@@ -70,6 +70,7 @@ import type {
   TypedOp,
   UnaryOp,
   UpdateExpr,
+  UpdatePlace,
   VtableEntry,
   YieldExpr,
 } from '../hir/nodes.ts';
@@ -2091,6 +2092,12 @@ class Emitter {
           this.slotCount += 2;
           this.countExpression(expr.target.target);
           this.countExpression(expr.target.index);
+        } else if (expr.target.kind === 'accessor-place') {
+          // Two contiguous slots: the receiver (argv[0]) and the set value (argv[1]). The get
+          // takes argc=1 over the same base; the set argc=2. Contiguous so `&base` is argv.
+          this.indexSlots.set(expr, this.slotCount);
+          this.slotCount += 2;
+          this.countExpression(expr.target.target);
         } else if (expr.target.kind === 'field-access' || expr.target.kind === 'dyn-field-access') {
           this.indexSlots.set(expr, this.slotCount);
           this.slotCount++;
@@ -2386,6 +2393,11 @@ class Emitter {
         break;
       case 'dyn-field-access':
         this.tempSlots.set(expr, this.slotCount++);
+        this.countExpression(expr.target);
+        break;
+      // An accessor place is only ever an update target: its receiver roots in the update's
+      // slot (the read-once rule), and the get/set halves are method calls the update emits.
+      case 'accessor-place':
         this.countExpression(expr.target);
         break;
       // The dispatch allocates (it boxes collections) and can throw (a non-iterable leaves a
@@ -4284,6 +4296,11 @@ class Emitter {
         return result;
       }
 
+      // Only ever an update target; `emitUpdate` owns the get/set pair. Emitting one standalone
+      // would be a lowering bug -- the node has no value of its own outside the fold.
+      case 'accessor-place':
+        throw new Error('accessor-place emitted outside an update');
+
       // `index`, `input` and `groups` are PROPERTIES of the match array, so they read through the
       // same shape chain and the same per-site cache any dynamic property does. `length` is not:
       // it is the array header's own field, and reading it through the table would answer
@@ -5633,6 +5650,20 @@ class Emitter {
     return this.closureValue(this.methodOf(expr).fn);
   }
 
+  /** The callee a DIRECT accessor half invokes: the class's own `get x` / `set x` closure.
+   * Virtual halves load through `jsrt_method` instead (the `dispatch` arm in `emitUpdate`). */
+  private accessorCallee(
+    place: Extract<UpdatePlace, { kind: 'accessor-place' }>,
+    half: 'get' | 'set',
+  ): string {
+    const method = half === 'get' ? `get ${place.property}` : `set ${place.property}`;
+    const found = this.classAt(place.owner).methods.find((m) => m.name === method);
+    if (found === undefined) {
+      throw new Error(`class ${place.owner} has no method ${method}`);
+    }
+    return this.closureValue(found.fn);
+  }
+
   /** The closure constant a method-table entry names: the implementing class's own function.
    *
    * A table entry must be a file-scope constant to name one, so a method that captures has none:
@@ -5992,6 +6023,38 @@ class Emitter {
           `jsrt_set_prop(${target}, ${cNameLiteral(place.field)}, ${value}, &${ic})`;
         break;
       }
+      case 'accessor-place': {
+        // Two contiguous slots hold argv: the receiver, then the set value. The get runs
+        // `jsrt_call(callee, 1, &base)` and the set `jsrt_call(callee, 2, &base)` — the same
+        // ABI `method-call` uses, with the fold's answer as the setter's argument. A set-only
+        // property answers `undefined` for the missing half (the compound forms' rule).
+        const base = this.indexSlots.get(expr);
+        if (base === undefined) {
+          throw new Error('update accessor place was not registered during counting');
+        }
+        const receiver = this.slotAt(base);
+        const arg = this.slotAt(base + 1);
+        this.appendLine(`${receiver} = ${this.emitExpression(place.target)};`, expr.span);
+        const getCallee =
+          place.hasGet && place.getSlot >= 0
+            ? place.dispatch === 'virtual'
+              ? `jsrt_method(${receiver}, ${place.getSlot})`
+              : this.accessorCallee(place, 'get')
+            : undefined;
+        const setCallee =
+          place.setSlot >= 0
+            ? place.dispatch === 'virtual'
+              ? `jsrt_method(${receiver}, ${place.setSlot})`
+              : this.accessorCallee(place, 'set')
+            : undefined;
+        read =
+          getCallee === undefined ? 'JSRT_UNDEFINED' : `jsrt_call(${getCallee}, 1, &${receiver})`;
+        write = (value: string) =>
+          setCallee === undefined
+            ? `(${arg} = ${value})`
+            : `(${arg} = ${value}, jsrt_call(${setCallee}, 2, &${receiver}))`;
+        break;
+      }
     }
     const op = expr.operator;
     if (op === '=') {
@@ -6004,11 +6067,15 @@ class Emitter {
       this.appendLine(`${write(result)};`, expr.span);
     } else {
       this.appendLine(`${result} = ${read};`, expr.span);
-      // A dynamic read throws on a nullish receiver, and a static index read degrades to it on
-      // a statically-typed array that arrives as something else (plan.md §8 step 20) -- either
-      // unwinds before the arithmetic below consumes the value. (The write has the blanket
-      // check at the end of this function.)
-      if (place.kind === 'dyn-field-access' || place.kind === 'index-access') {
+      // A dynamic read throws on a nullish receiver, a static index read degrades to it on
+      // a statically-typed array that arrives as something else (plan.md §8 step 20), and an
+      // accessor getter is a user call -- each unwinds before the arithmetic below consumes
+      // the value. (The write has the blanket check at the end of this function.)
+      if (
+        place.kind === 'dyn-field-access' ||
+        place.kind === 'index-access' ||
+        place.kind === 'accessor-place'
+      ) {
         this.emitPendingCheck(expr.span);
       }
       if (op === '++' || op === '--') {

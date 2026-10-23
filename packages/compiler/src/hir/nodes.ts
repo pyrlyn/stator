@@ -2037,8 +2037,24 @@ export interface OptionalBase extends Node {
   readonly kind: 'optional-base';
 }
 
+/** An accessor property as a `++`/`--`/`+=`/`=` place: the read calls `get <key>`, the write
+ * calls `set <key>`. The receiver is already evaluated once into the update's slot (the
+ * read-once rule, plan-notes 43), so the get and the set share it. Each half is its own
+ * method-table slot (`get x` vs `set x`); `getSlot` is `-1` when the property has only a
+ * setter, which the compound forms answer `undefined` for. */
+export interface AccessorPlace extends Node {
+  readonly kind: 'accessor-place';
+  readonly target: Expression;
+  readonly owner: string;
+  readonly property: string;
+  readonly getSlot: number;
+  readonly setSlot: number;
+  readonly dispatch: 'direct' | 'virtual';
+  readonly hasGet: boolean;
+}
+
 /** A place `++`/`--`/`+=`/`=` may read and write in expression position. */
-export type UpdatePlace = Identifier | IndexAccess | FieldAccess | DynFieldAccess;
+export type UpdatePlace = Identifier | IndexAccess | FieldAccess | DynFieldAccess | AccessorPlace;
 
 /** `++x`, `x++`, `x += e`, and `x = e` as expressions. Statement position still folds to Assignment. */
 export interface UpdateExpr extends Node {
@@ -2100,6 +2116,7 @@ export type Expression =
   | ObjectLiteral
   | DynObjectLiteral
   | DynFieldAccess
+  | AccessorPlace
   | CollectionNew
   | CollectionOp
   | MathCall

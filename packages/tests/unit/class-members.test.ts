@@ -197,14 +197,15 @@ test('a statement-position compound on an accessor is accepted', () => {
   assert.deepEqual(gateCodes(`${ACCESSOR}const c = new C();\n--c.value;\n`, 'ts'), []);
 });
 
-test('a value-position compound on an accessor stays not-yet', () => {
-  // The target lowers to the getter call, which is not an update place.
-  assert.deepEqual(gateCodes(`${ACCESSOR}const c = new C();\nconst y = c.value++;\n`, 'ts'), [
-    'STA1214',
-  ]);
-  assert.deepEqual(gateCodes(`${ACCESSOR}const c = new C();\nconst y = (c.value += 1);\n`, 'ts'), [
-    'STA1214',
-  ]);
+test('a value-position compound on an accessor is accepted', () => {
+  // The place is an `accessor-place` update: get, fold, set, and the fold's answer is the
+  // expression's value (plan.md §8 step 12b).
+  assert.deepEqual(gateCodes(`${ACCESSOR}const c = new C();\nconst y = c.value++;\n`, 'ts'), []);
+  assert.deepEqual(
+    gateCodes(`${ACCESSOR}const c = new C();\nconst y = (c.value += 1);\n`, 'ts'),
+    [],
+  );
+  assert.deepEqual(gateCodes(`${ACCESSOR}const c = new C();\nconst y = --c.value;\n`, 'ts'), []);
 });
 
 test('an accessor compound evaluates a side-effecting receiver once', () => {

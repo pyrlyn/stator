@@ -6148,14 +6148,11 @@ function gateMemberAccess(
     return notYet('using a class as a value is not yet supported', 5);
   }
   // `o.x` on an accessor is a CALL, so a read is fine, and so is a read-modify-write in
-  // STATEMENT position: `o.x += 1;` lowers through the member place machinery, which evaluates
-  // the receiver once into a temporary and threads it through the get and the set. In VALUE
-  // position (`y = o.x++`) the target lowers to the getter call, which is not an update place,
-  // so that stays not-yet.
+  // either position: the member place machinery evaluates the receiver once and threads it
+  // through the get and the set. Statement position folds into a write statement; value
+  // position (`y = o.x++`) is an `accessor-place` update that answers the fold's value.
   if (accessorDeclaringClass(declaration, access.name.text, checker) !== undefined) {
-    return isReadModifyWrite(access) && !isStatementUpdate(access)
-      ? notYet('a compound assignment to an accessor is not yet supported', 5)
-      : { kind: 'accept' };
+    return { kind: 'accept' };
   }
   // A method used as a VALUE (`const f = o.m`) would have to build a bound closure, which is a
   // per-instance allocation this rung does not make. As the callee of a call it is fine, and that
@@ -6172,36 +6169,6 @@ function gateMemberAccess(
     return notYet('a dynamic key on a class with an index signature is not yet supported', 8);
   }
   return { kind: 'accept' };
-}
-
-/** Statement position for a read-modify-written place: an expression statement, or a `for`
- * incrementor. Mirrors the test `lowerUpdateExpression` applies before taking the statement path,
- * which is the path whose place machinery an accessor read-modify-write lowers through. */
-function isStatementUpdate(place: ts.Expression): boolean {
-  // `place`'s parent is the update node when `isReadModifyWrite` holds; that node is a statement
-  // exactly in the two positions below.
-  const update = place.parent;
-  const grand = update.parent;
-  return (
-    ts.isExpressionStatement(grand) || (ts.isForStatement(grand) && grand.incrementor === update)
-  );
-}
-/** Is this place both read and written by one expression -- `p += e`, `p++`, `--p`? */
-function isReadModifyWrite(place: ts.Expression): boolean {
-  const parent = place.parent;
-  if (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) {
-    return (
-      parent.operator === ts.SyntaxKind.PlusPlusToken ||
-      parent.operator === ts.SyntaxKind.MinusMinusToken
-    );
-  }
-  return (
-    ts.isBinaryExpression(parent) &&
-    parent.left === place &&
-    parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken &&
-    parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-    parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-  );
 }
 
 /** `a[i]`, admitted only when `a` is an array. Indexing a string (`s[0]`) or an object is the same
@@ -6271,16 +6238,13 @@ function gateElementAccess(
       if (hir.methods.some((m) => m.name === key)) {
         return calleeOnlyMember(access, 'a method');
       }
-      // An accessor read is a call to the getter, so a read is fine; a read-modify-write in
-      // VALUE position lowers the target to the getter call, which is not an update place --
-      // the same positional rule the dot spelling states in gateMemberAccess.
+      // An accessor read is a call to the getter, so a read is fine; a read-modify-write
+      // takes the same place machinery in either position (see gateMemberAccess).
       if (
         hir.methods.some((m) => m.name === accessorName('get', key)) ||
         hir.methods.some((m) => m.name === accessorName('set', key))
       ) {
-        return isReadModifyWrite(access) && !isStatementUpdate(access)
-          ? notYet('a compound assignment to an accessor is not yet supported', 5)
-          : { kind: 'accept' };
+        return { kind: 'accept' };
       }
       return notYet('index access on a non-array is not yet supported', 5);
     }

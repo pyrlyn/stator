@@ -104,6 +104,7 @@ import {
 } from '../frontend/types.ts';
 import { isClassFormationDeclarator } from '../frontend/types.ts';
 import type {
+  AccessorPlace,
   ArrayLength,
   ArrayLiteral,
   ArrayOpName,
@@ -3764,6 +3765,13 @@ function lowerUpdatePlace(
   bindings: Scope,
   diagnostics: Diagnostic[],
 ): UpdatePlace | null {
+  // An accessor place is a CALL pair, not a slot: `c.x += 1` in value position runs the getter,
+  // folds, and runs the setter — the statement-position rule's twin (`memberAssignment`'s
+  // `accessorPlace`), with the fold's answer as the expression value (plan.md §8 step 12b).
+  const accessorTarget = accessorUpdateTarget(node, checker, bindings, sourceFile, diagnostics);
+  if (accessorTarget !== undefined) {
+    return accessorTarget;
+  }
   const expr = lowerExpression(node, sourceFile, checker, bindings, diagnostics);
   if (expr === null) {
     return null;
@@ -3798,6 +3806,62 @@ function lowerUpdatePlace(
     ),
   );
   return null;
+}
+
+/** An accessor `++`/`--`/`+=`/`=` place, or `undefined` when `node` is not one. Shared by the
+ * value-position path above and nothing else: the statement path goes through `memberAssignment`
+ *'s `accessorPlace`, which folds into a write statement rather than an expression. */
+function accessorUpdateTarget(
+  node: ts.Expression,
+  checker: ts.TypeChecker,
+  bindings: Scope,
+  sourceFile: ts.SourceFile,
+  diagnostics: Diagnostic[],
+): AccessorPlace | undefined {
+  const property = ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : ts.isElementAccessExpression(node)
+      ? elementStaticKey(node.argumentExpression, checker)
+      : null;
+  if (property === null || property === undefined) {
+    return undefined;
+  }
+  const receiver = ts.isPropertyAccessExpression(node)
+    ? node.expression
+    : ts.isElementAccessExpression(node)
+      ? node.expression
+      : undefined;
+  if (receiver === undefined) {
+    return undefined;
+  }
+  const owner = accessorOwner(receiver, property, checker, bindings, sourceFile);
+  if (owner === undefined) {
+    return undefined;
+  }
+  const target = lowerExpression(receiver, sourceFile, checker, bindings, diagnostics);
+  if (target === null || target.type.kind !== 'object') {
+    return undefined;
+  }
+  const getSlot = target.type.methods.findIndex((m) => m.name === accessorName('get', property));
+  const setSlot = target.type.methods.findIndex((m) => m.name === accessorName('set', property));
+  if (getSlot < 0 && setSlot < 0) {
+    return undefined;
+  }
+  const hasGet = hasAccessorHalf(receiver, property, 'get', checker, bindings, sourceFile);
+  return {
+    kind: 'accessor-place',
+    type: typeAt(node, checker, bindings),
+    span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
+    target,
+    owner,
+    property,
+    getSlot,
+    setSlot,
+    dispatch: isOverridden(target.type.name, accessorName('get', property), checker)
+      ? 'virtual'
+      : 'direct',
+    hasGet,
+  };
 }
 
 function lowerForIn(
