@@ -1442,12 +1442,15 @@ Steps:
 3. C2 — parallel emit if emit shows in the profile. **Not taken** (plan-notes 374: emit 10 ms).
 4. C3 — sharded lower/verify via process pool if typecheck/HIR dominate; document the Program
    isolation choice. **Not taken** (plan-notes 374: `hir/verify` 3 ms).
-5. CI: one job runs `STATOR_COMPILE_JOBS=2` smoke so races fail the build; default CI may stay
-   serial for log readability.
+5. ✅ **CI smoke (2026-10-24, plan-notes 381):** one non-required job (`compile jobs smoke`)
+   builds the multi-module `tests/golden/ts/modules` fixture and runs
+   `packages/tests/unit/compile-jobs.test.ts` with `STATOR_COMPILE_JOBS=2` so races fail the
+   build; default CI stays serial for log readability. Required checks keep their names.
 
 **Check:** documented before/after numbers in plan-notes; `STATOR_COMPILE_JOBS=1` preserves
 byte-identical emitted C for the fixture; CI green. **Met 2026-10-23** (plan-notes 374) except
-the step-5 CI smoke, which is still open.
+the step-5 CI smoke, which **landed 2026-10-24** (plan-notes 381) — CI green on the job itself
+is observable after merge.
 
 ---
 

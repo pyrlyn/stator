@@ -169,6 +169,11 @@ compiled as thin-LTO bitcode too when the archive was. Full PGO / a custom LLVM 
 | `STATOR_RUNTIME_ROOT` (and `STATOR_STD_ROOT`, `STATOR_NODE_ROOT`) | where the runtime headers and archives live | **no** |
 | `OTEL_*` (`OTEL_EXPORTER_OTLP_ENDPOINT`, `_HEADERS`, `OTEL_SERVICE_NAME`, …) | where trace data goes | **no** |
 
+The parallel path is smoke-tested in CI (`compile jobs smoke`, plan.md §11b T10.3 step 5): one
+non-required job builds the multi-module `tests/golden/ts/modules` fixture and runs
+`packages/tests/unit/compile-jobs.test.ts` with `STATOR_COMPILE_JOBS=2`, so a shared-state race
+in the partition/compile/link path fails that job. Default CI stays serial for log readability.
+
 The CLI reads `./.env` from the **current directory**, which is the project being compiled and
 may be a repository someone else wrote. So the file may set only the three build options above.
 The programs Stator runs and the place its telemetry goes come from the real environment, never

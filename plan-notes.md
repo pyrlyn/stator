@@ -13652,3 +13652,25 @@ Linux x64 (image digest
 `sha256:4db36457f406501e6f608802e5da617e5fbd0e80b75901b6a09de1ae5a667d32`)
 produces an identical document (`diff -u` exits 0), and its read-only `--check`
 reports `node-coverage: docs/NODE.md is current`. Strict typecheck and lint pass.
+
+## 381. Tooling-left batch: clone baseline tranche, T10.3 step-5 CI smoke, Task 6.3 noise-floor notes (2026-10-24)
+
+**Plan:** §9 Tasks 6.16, 6.3 noise floor + Phase-6 Check fuzzing clause; §11b T10.3 step 5.
+Branch `j1-tooling-left`. Host for every measurement below is **darwin-arm64, Apple M3 Max,
+Node v26.7.0** — not the weekly job's ubuntu-24.04 runner.
+
+### J2 — T10.3 step 5: `STATOR_COMPILE_JOBS=2` CI smoke
+
+`ci.yml` gains one non-required job, **`compile jobs smoke`** (`compile-jobs-smoke`). It builds
+the runtime archive, then with `STATOR_COMPILE_JOBS=2` (1) builds and runs the multi-module
+golden fixture `packages/tests/golden/ts/modules` (`init c / init b / init a / 30 / base=20`)
+and (2) runs `packages/tests/unit/compile-jobs.test.ts`. The unit file also gained a
+`NATIVE_ONLY` smoke that itself spawns that build with `STATOR_COMPILE_JOBS=2`, so the
+parallel path is exercised by `pnpm run test` as well. Default CI stays serial for log
+readability. Required checks (`static analysis`, `frontend (linux/x64)`,
+`frontend (windows/x64)`, `frontend (windows/arm64)`, `pipeline / gate`) keep their names and
+steps. `jactionlint` clean. `docs/TOOLCHAIN.md` documents the smoke beside the
+`STATOR_COMPILE_JOBS` row.
+
+Local proof: `vitest run packages/tests/unit/compile-jobs.test.ts` — **16/16 green** (15 pure
++ the new smoke, 1.97 s for the build). Job-level CI green is observable after merge.
