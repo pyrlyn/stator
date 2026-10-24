@@ -539,8 +539,8 @@ test('dynamic objects emit shape-table calls with per-site inline caches', () =>
   assert.match(c, /jsrt_set_prop\([^\n]*"y"[^\n]*&_jsrt_ic_0\)/);
   assert.match(c, /jsrt_get_prop\([^\n]*"y"[^\n]*&_jsrt_ic_1\)/);
   // File-scope, static, zero-initialized: a NULL shape IS the empty cache.
-  assert.match(c, /static JSRTIC _jsrt_ic_0;/);
-  assert.match(c, /static JSRTIC _jsrt_ic_1;/);
+  assert.match(c, /static _Thread_local JSRTIC _jsrt_ic_0;/);
+  assert.match(c, /static _Thread_local JSRTIC _jsrt_ic_1;/);
 });
 
 test('an Unknown index site emits jsrt_dyn_index_* with a per-site cache', () => {

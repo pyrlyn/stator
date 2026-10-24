@@ -43,9 +43,13 @@ const Intern = struct {
 
 var intern_buckets: []?*Intern = &.{};
 var intern_count: usize = 0;
+const concurrent = @import("jsrt_concurrent.zig");
+var metadata_lock: std.c.pthread_mutex_t = .{};
 
 /// How many distinct keys the table holds. Compare-only lookups must not move it.
 export fn jsrt_shape_intern_count() usize {
+    concurrent.lock(&metadata_lock);
+    defer concurrent.unlock(&metadata_lock);
     return intern_count;
 }
 
@@ -84,6 +88,8 @@ fn internRehash(next_len: usize) void {
 }
 
 export fn jsrt_shape_intern(key: [*:0]u8) [*:0]const u8 {
+    concurrent.lock(&metadata_lock);
+    defer concurrent.unlock(&metadata_lock);
     const bytes = std.mem.span(key);
     const h = internHash(bytes);
     if (intern_buckets.len == 0) internRehash(8);
@@ -158,6 +164,8 @@ export fn jsrt_shape_find(shape: *const Shape, key: [*c]const u8) ?*const Shape 
 /// Reuse before allocation is what keeps two same-history objects on ONE shape -- and it is why a
 /// delete can replay a chain minus one key and land where an object built without that key would.
 export fn jsrt_shape_transition(from: *Shape, key: [*c]const u8) *Shape {
+    concurrent.lock(&metadata_lock);
+    defer concurrent.unlock(&metadata_lock);
     var child: ?*Shape = from.transitions;
     while (child) |s| : (child = s.sibling) {
         if (sameKey(s.key, key)) return s;
@@ -208,4 +216,12 @@ export fn jsrt_shape_remove(shape: **Shape, slots: [*c]c.jsrt_value, hit: *const
         next += 1;
     }
     shape.* = replay;
+}
+
+// Fixed-layout spread descriptors share the same immutable metadata lifetime as shapes.
+export fn jsrt_shape_metadata_lock() void {
+    concurrent.lock(&metadata_lock);
+}
+export fn jsrt_shape_metadata_unlock() void {
+    concurrent.unlock(&metadata_lock);
 }

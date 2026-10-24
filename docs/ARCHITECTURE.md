@@ -61,7 +61,8 @@ Invariants:
   `JSRT_FRAME(n)` and pops it on every exit path, including landing pads.
 - **`std` is resolved and linked, never imported** — `frontend` maps `std/*` to `packages/std`'s
   sources and `cli` adds `libjsrt_std.a` only for a program that imports one (docs/STD.md §6).
-  Nothing in `packages/compiler` imports `packages/std`.
+  Nothing in `packages/compiler` imports `packages/std`. Thread/sync wrappers call the private
+  boxed ABI in the runtime Zig core (THREADS.md); other native backings stay in `libjsrt_std.a`.
 - **`node` is resolved, never imported** — under `--node` only, `frontend` maps `node:*` and the
   bare built-ins to `packages/node`'s sources (docs/MODES.md §6), strict TypeScript over `std/*`
   that compiles like any user module. Nothing in `packages/compiler` imports `packages/node`.

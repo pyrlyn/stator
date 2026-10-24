@@ -13990,3 +13990,35 @@ dropped unused (lint) — it is the next obvious cut.
 (lint type-checks `site/`) · typecheck · lint · `pnpm run test` (801) · `pnpm run test:subset` ·
 `pnpm run dupes` (125, baseline 129→125) · goldens `--filter=class` (56/56). Not run here:
 `pnpm run ci` in full, `pnpm run test:golden` beyond the class filter.
+
+## 388. Creator-directed std threads: implementation contract (2026-10-24)
+
+The basic modules already exist (packages/std/src, docs/STD.md). T10.2 is the missing part of
+the creator's requested std library. The existing FFI refuses closures (frontend/extern.ts),
+and the GC roots hook only visits the collector thread's TLS frames (jsrt_gc.zig); merely
+adding pthread_create would be unsound. docs/THREADS.md records the required bridge and roots
+registry before implementation. Reuse pthreads from libc and the pinned Zig stdlib rather than
+a new scheduler or dependency. Keep foreign C callbacks undefined. Arguments travel through
+a captured zero-argument closure. Filesystem Promise twins initially spawn one thread per call;
+a bounded reusable pool is deferred and not claimed. This explicitly adjusts Design B's pool
+wording without disguising synchronous I/O as asynchronous. T10.2 remains open until its Check
+and the full local CI gate pass.
+
+T10.2's `std/fs` module now imports the typed thread wrapper for its Promise twins. `explain`
+classifies the whole imported graph, so the four sync filesystem subset fixtures change from
+static to dynamic (29-row std slice: exactly those four mismatches before updating the declared
+verdicts). This is the private boxed bridge's presence, not a loss of native numeric lowering;
+STD.md and SUBSET.md record the observable change. The implementation also reuses the existing
+Zig frame helper from typed-array code and protects the shared spread-order descriptor cache.
+
+Selfhost records the two new std targets and the documented fs graph verdict. Compiler
+counts remain unchanged (STA1207 1, STA1213 2, STA1214 1887): the private symbol allowlist uses
+a plain array/includes rather than Set(iterable), which self-compilation cannot yet lower.
+`test:selfhost -- --update` builds/runs all 11 std modules plus 10 std goldens, and all five
+Node wrapper modules plus 13 Node goldens. No diagnostic allowance was increased.
+
+**Check completed 2026-10-25:** `mise exec node zig just -- pnpm run ci` exited 0.
+808 unit tests; subset 968 passed / 31 expected-fail / 0 failed; 483/483 goldens both plain
+and ASan/UBSan; all six native concurrency tests passed under sanitizers, including forced
+collection across four workers. Leak probes plateaued at 4384/4480/4432 KB (65536 KB cap).
+T10.2's card and full command evidence moved to done.md; normative Design B stays in plan.md.

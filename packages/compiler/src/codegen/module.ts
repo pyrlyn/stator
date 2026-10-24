@@ -166,7 +166,7 @@ export function emit(emitter: Emitter, module: Module, library?: LibraryEmit): s
   // One static cache per dynamic property site, zero-initialized: a NULL shape is the empty
   // cache, so no runtime setup is needed and the first access at each site fills it.
   for (let i = 0; i < emitter.icCount; i++) {
-    out.push(`static JSRTIC _jsrt_ic_${String(i)};`);
+    out.push(`static _Thread_local JSRTIC _jsrt_ic_${String(i)};`);
   }
   if (emitter.icCount > 0) {
     out.push('');

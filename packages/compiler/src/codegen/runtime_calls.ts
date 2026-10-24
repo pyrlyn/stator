@@ -270,6 +270,8 @@ export function emitExternCall(emitter: Emitter, expr: ExternCall, base: number)
       const temp = `_jsrt_exc_${site}_${String(index)}`;
       emitter.appendLine(`char *${temp} = jsrt_string_to_cstr(${slot});`, expr.span);
       cArgs.push(temp);
+    } else if (kind === 'value') {
+      cArgs.push(slot);
     } else if (kind === 'number') {
       cArgs.push(`jsrt_to_number(${slot})`);
     } else if (kind === 'boolean') {
@@ -374,13 +376,15 @@ export function emitExternCall(emitter: Emitter, expr: ExternCall, base: number)
         ? `(${raw} == NULL ? JSRT_UNDEFINED : jsrt_string_from_cstr(${raw}))`
         : `jsrt_string_from_cstr(${raw})`;
     const boxed =
-      expr.retKind === 'number'
-        ? `jsrt_number(${raw})`
-        : expr.retKind === 'boolean'
-          ? `jsrt_bool(${raw})`
-          : expr.retKind === 'pointer'
-            ? `(jsrt_value)(uintptr_t)${raw}`
-            : copyOut;
+      expr.retKind === 'value'
+        ? raw
+        : expr.retKind === 'number'
+          ? `jsrt_number(${raw})`
+          : expr.retKind === 'boolean'
+            ? `jsrt_bool(${raw})`
+            : expr.retKind === 'pointer'
+              ? `(jsrt_value)(uintptr_t)${raw}`
+              : copyOut;
     emitter.appendLine(`${result} = ${boxed};`, expr.span);
   }
   // Borrows freed before any throw below: the only `goto`s past this point are the
@@ -488,6 +492,8 @@ export function callLocation(emitter: Emitter, span: Span): string {
 
 export function externCType(_emitter: Emitter, kind: ExternAbiKind): string {
   switch (kind) {
+    case 'value':
+      return 'jsrt_value';
     case 'number':
       return 'double';
     case 'boolean':

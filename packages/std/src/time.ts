@@ -9,7 +9,7 @@ export function nowMs(): number {
 }
 
 /** Blocks the thread for `ms` milliseconds (fractions truncated). NaN, negative or over 2^31-1
- * is EINVAL. Nothing else runs meanwhile — no timers, no promise reactions. */
+ * is EINVAL. This does not drain Promise reactions; other OS threads may continue. */
 export function sleepMs(ms: number): void {
   if (jsrtStdTimeSleepMs(ms) !== 0) {
     throw __stdFailure('std/time.sleepMs', `${ms}`);

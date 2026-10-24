@@ -97,8 +97,8 @@ export fn jsrt_std_io_isatty(fd: f64) f64 {
     return if (std.c.isatty(f) == 1) 1 else 0;
 }
 
-var size_columns: f64 = 0;
-var size_rows: f64 = 0;
+threadlocal var size_columns: f64 = 0;
+threadlocal var size_rows: f64 = 0;
 
 /// The terminal's size (`TIOCGWINSZ`), parked for the two readers below. A descriptor that is
 /// not a terminal is `ENOTTY`, one that names no open file `EBADF`.

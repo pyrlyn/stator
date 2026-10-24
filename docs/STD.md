@@ -2,8 +2,7 @@
 
 > **Status: v0 implemented** (plan.md §11c T11.2, T11.3): `std/env`, `std/path`, `std/process`,
 > sync `std/fs`, `std/time`, `std/os`, `std/io`, `std/encoding` and `std/hash` live in
-> `packages/std` and compile into any program that imports them. `std/sync` and `std/thread` wait
-> for T10.2.
+> `packages/std` and compile into any program that imports them. `std/sync` and `std/thread` provide OS threads and synchronization (see [THREADS.md](THREADS.md)).
 > On any disagreement between this file and plan.md §11b/§11c, the plan wins (§15.3).
 
 `std` is a **first-party systems-style standard library**, not a Node compatibility layer and
@@ -24,7 +23,7 @@ One module owns the prefix: `packages/compiler/src/frontend/std.ts`.
 - A **std module** is a lower-case top-level `packages/std/src/<name>.ts`. `std/<name>`
   resolves to it through a `paths` entry on the program's own compiler options, so the
   checker, the gate and the module graph all resolve it the same way.
-- `std/sync` and `std/thread` are **not-yet** (`STA1214`, Phase 10, T10.2: OS threads).
+- `std/sync` and `std/thread` resolve like the other top-level modules.
 - **Any other `std/…`** is a hard error, `STA3002`, listing the std modules — never a
   fall-through to a package lookup. That includes the library's own plumbing
   (`std/internal/error`, `std/native/env`): only top-level modules are importable.
@@ -37,16 +36,10 @@ frontend nothing knows a file came from `std`, except the link (§6).
 
 ## 2. Sync vs Promise APIs
 
-v0 ships **sync only**. Promise-flavored `std/fs` arrives with T10.2 as thin `async` wrappers
-that `await` a thread-pool job (Design B). Until then there is no sync-under-`async` lie that
-blocks main by accident (T10.1 step 5).
-
-The twins are named now, so a program that reaches for one hears when it lands rather than that
-it does not exist. Each sync call's twin is its name plus `Async`, answering a `Promise`:
-`readTextAsync`, `writeTextAsync`, `statAsync`, `mkdirAsync`, `unlinkAsync`, `rmdirAsync`.
-Importing one is **not-yet** (`STA1214`, Phase 10, T10.2), in both modes. Any other name `std/fs`
-does not export is the checker's ordinary error (`STA0012`). The list lives beside the module
-list in `packages/compiler/src/frontend/std.ts`.
+The six filesystem twins `readTextAsync`, `writeTextAsync`, `statAsync`, `mkdirAsync`,
+`unlinkAsync` and `rmdirAsync` return Promises. Each executes its sync operation on an OS
+worker and settles on main's existing microtask queue. This version starts one worker per
+call; callers should bound concurrency. See [THREADS.md](THREADS.md).
 
 ## 3. Error model
 
@@ -85,6 +78,8 @@ errno (`failErrno`), and once listed a code is never renamed:
 | `ENOTTY` | the descriptor is not a terminal (`std/io.terminalSize`) |
 | `EAGAIN` | a non-blocking descriptor has nothing to give or no room to take (`std/io`) |
 | `EPIPE` | the reading end of the pipe is closed (`std/io` writes) |
+| `EPERM` | a synchronization operation requires the mutex owner or the main thread |
+| `EDEADLK` | recursive lock of a non-recursive mutex |
 | `EIO` | any other failure — never a guess at a closer code |
 
 **v0 carries the code in the message only.** The plan is an `Error` with a `code` property,
@@ -105,14 +100,14 @@ differ, `std` answers one way and says so (§5).
 | `std/env` | `has(name): boolean`, `get(name): string \| undefined`, `set(name, value)`, `unset(name)`, `cwd(): string`, `names(): string[]` | `setenv`/`unsetenv` semantics: an empty name or one containing `=` is `EINVAL`; unsetting an unset name succeeds. `names` walks libc `environ` (names only — a value may be a secret). `args` moved to T11.3 as `std/process.argv` (plan-notes 294) |
 | `std/process` | `argv(): string[]`, `execPath()`, `platform()`, `arch()`, `pid()`, `ppid()`, `hrtimeNs()`, `memoryUsage(): MemoryUsage`, `exitCode()`, `setExitCode(code)`, `exit(code)`, `abort()` | `exit` takes an integer `0..255` (else `EINVAL`, and nothing exits) and runs libc `exit`, so buffered output is flushed. `abort` raises `SIGABRT`. No signals yet (see below) |
 | `std/path` | `isAbsolute`, `basename`, `dirname`, `join(a, b)` | pure TypeScript, no backing (see below) |
-| `std/fs` | `readText(path)`, `writeText(path, text)`, `readBytes(path): Uint8Array`, `stat(path): Stat`, `exists(path)`, `realpath(path)`, `utimes(path, atimeMs, mtimeMs)`, `readdir(path): string[]`, `mkdir(path)`, `unlink(path)`, `rmdir(path)`; on descriptors `open(path, flags)`, `read(fd, length, position)`, `write(fd, data, position)`, `close(fd)` | sync (see below); the `…Async` Promise twins are not-yet, T10.2 (§2) |
-| `std/time` | `nowMs(): number`, `sleepMs(ms)` | `nowMs` is whole milliseconds since the Unix epoch (`Date.now()`); `sleepMs` blocks the only thread on the monotonic clock, fractions truncated |
+| `std/fs` | `readText(path)`, `writeText(path, text)`, `readBytes(path): Uint8Array`, `stat(path): Stat`, `exists(path)`, `realpath(path)`, `utimes(path, atimeMs, mtimeMs)`, `readdir(path): string[]`, `mkdir(path)`, `unlink(path)`, `rmdir(path)`; on descriptors `open(path, flags)`, `read(fd, length, position)`, `write(fd, data, position)`, `close(fd)` | sync (see below); the `…Async` Promise twins offload to workers (§2) |
+| `std/time` | `nowMs(): number`, `sleepMs(ms)` | `nowMs` is whole milliseconds since the Unix epoch (`Date.now()`); `sleepMs` blocks the calling thread on the monotonic clock, fractions truncated |
 | `std/os` | `platform()`, `arch()`, `release()`, `hostname()`, `homedir()`, `tmpdir()`, `cpuCount()`, `totalMemory()`, `eol` | the pinned Node's `node:os` answers (see below) |
 | `std/io` | `stdin`/`stdout`/`stderr` (`0`/`1`/`2`), `write(fd, text)`, `writeBytes(fd, bytes)`, `read(fd, max): Uint8Array`, `isatty(fd)`, `terminalSize(fd): TerminalSize` | raw descriptors through libc (see below) |
 | `std/encoding` | `utf8ToBytes`/`bytesToUtf8`, `latin1ToBytes`/`bytesToLatin1`, `base64ToBytes`/`bytesToBase64`, `base64urlToBytes`/`bytesToBase64url`, `hexToBytes`/`bytesToHex` | Node's `Buffer` conversions (see below) |
 | `std/hash` | `sha256(data)`, `sha1(data)`, `md5(data)` over `Uint8Array \| string`, `randomBytes(size)` | digests as `Uint8Array`; text hashes as its UTF-8 |
-| `std/sync` | — | not-yet, T10.2 |
-| `std/thread` | — | not-yet, T10.2 |
+| `std/sync` | `Mutex`, `CondVar`, `Channel<T>` | blocking synchronization; THREADS.md |
+| `std/thread` | `spawn`, `Thread<T>.join`, `join`, `runOnMain`, `availableParallelism` | shared-heap OS threads; THREADS.md |
 
 **`std/path` semantics** are POSIX `basename(3)`/`dirname(3)`, not Node's `path.posix`:
 trailing slashes are ignored (`/a/b/` names `b`), the root names itself (`basename('/')` is
@@ -203,7 +198,10 @@ OS's secure source through `std.Io`, and a `size` outside `0..2^31-1` is `EINVAL
 like any other file in the graph: everything is `static` except `std/env.get`, whose
 `string | undefined` answer is a union the HIR boxes, and `std/hash`'s digests, whose
 `Uint8Array | string` parameter is one. An importer of `std/env` or `std/hash` therefore
-explains as `dynamic` (docs/SUBSET.md).
+explains as `dynamic` (docs/SUBSET.md). `std/fs`, `std/thread` and `std/sync` also explain as
+`dynamic`: their module graphs include the private boxed concurrency ABI, including when the
+importer uses only synchronous filesystem operations. Their typed numeric operations retain
+the same static lowering.
 
 ## 6. Implementation layers
 
@@ -221,7 +219,7 @@ packages/std/
 - **Extern surface.** Each backing is an ordinary `@statorExtern` function (docs/FFI.md). The
   declarations are module-form `.d.ts` files the surface imports by relative path, so neither
   `CString` nor any binding lands in a user program's global scope.
-- **Strings out.** A backing that answers a string parks it in one result slot and returns a
+- **Strings out.** A backing that answers a string parks it in one thread-local result slot and returns a
   status; the surface reads it with `jsrtStdResult()`, whose `CString` return the emitter
   copies into a JS string at once (`jsrt_string_from_cstr`). The slot frees the previous answer
   when the next one is parked, so nothing leaks and nothing is read after it is freed.
@@ -246,6 +244,8 @@ packages/std/
 - **The archive** is built `-O ReleaseSafe`, `-fPIC`, `-mcpu=baseline`, with function and data
   sections, and the macOS deployment target clang uses (the runtime's own Zig rules). It calls
   only libc — never `libjsrt` — so one flavor serves every runtime flavor (plain, ASan, intl).
+  Thread/sync primitives live in the runtime Zig core because they manage GC-visible values;
+  their public wrappers remain here in TypeScript.
 - **The link.** `cli/build.ts` adds `packages/std/build/libjsrt_std.a` to the link line, before
   `-ljsrt`, only when the program's module graph holds a std source file. A program that
   imports no `std/*` module never names the archive. A missing archive is `STA0011`, naming
@@ -265,7 +265,7 @@ test task depends on it.
   `packages/std/src/<name>.ts`, so the golden proves Stator compiles that source the way Node
   runs it.
 - **Decision tests** (`packages/tests/subset/subset_std_*`) cover each module in both modes,
-  plus the unknown (`STA3002`), threads (`STA1214`) and Promise-twin (`STA1214`) refusals.
+  plus the unknown-module (`STA3002`) refusal and the thread/Promise-twin imports.
 - **Unit tests** (`packages/tests/unit/std.test.ts`) prove the conditional link and what a golden
   cannot run. That covers the two exits (a non-zero `exit`, `abort`), real arguments, a
   non-zero `setExitCode`, ranges for the values that differ every run (`pid`, `ppid`,
@@ -302,5 +302,17 @@ test task depends on it.
   `node:*` on top of `std`, not the other way round.
 - Not user FFI: users cannot add `std/*` modules; the prefix is reserved. Native
   extensibility stays Phase 7's `declare` surface.
-- Not threads (v0): the T10.2 modules refuse until the bridge exists; the refusal names
-  Phase 10, not a workaround.
+- Not JavaScript Workers or arbitrary foreign-thread callbacks: THREADS.md states the native
+  thread contract and its limits.
+
+## 11. Threads
+
+[THREADS.md](THREADS.md) defines shared-memory ownership, lifecycle, Promise ordering and
+blocking synchronization. Standard-library result/error slots and Zig I/O state are thread-local.
+Worker cleanup releases its native string, byte and directory-result mailboxes on both success
+and failure. Process-global environment and exit-status changes remain main-thread operations.
+
+Thread/sync lifecycle failures follow the same error-message format: `EINVAL` for a bad or
+destroyed handle/capacity or an asynchronous worker body, `EPERM` for wrong-thread operations,
+`EDEADLK` for a recursive mutex lock, `EBUSY` for destroying an in-use primitive, and `EPIPE`
+for sending to a closed channel or receiving after its buffer is drained.

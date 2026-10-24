@@ -447,9 +447,11 @@ typedef struct OrderIntern {
 static OrderIntern *order_interns = NULL;
 
 static const JSRTClass *shape_with_order(const JSRTClass *layout, const uint32_t *order) {
+  jsrt_shape_metadata_lock();
   const uint32_t n = layout->field_count;
   for (const OrderIntern *e = order_interns; e != NULL; e = e->next) {
     if (e->layout == layout && memcmp(e->order, order, (size_t)n * sizeof(uint32_t)) == 0) {
+      jsrt_shape_metadata_unlock();
       return &e->desc;
     }
   }
@@ -464,6 +466,7 @@ static const JSRTClass *shape_with_order(const JSRTClass *layout, const uint32_t
   e->desc.key_order = e->order;
   e->next = order_interns;
   order_interns = e;
+  jsrt_shape_metadata_unlock();
   return &e->desc;
 }
 

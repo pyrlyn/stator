@@ -1663,3 +1663,12 @@ reads as scheduling, not omission:
 | `jsrt_typeof` / `jsrt_check_*` | yes, from Task 3.5 (§4.7, §4.8) | `jsrt_check_*` for shapes: needs Task 4.1 |
 | Landing-pad frame discipline | yes, from Task 3.10 (§4.9): pads take the pending exception, unwind pads pop | — |
 | Boehm GC, with the mark procedure and root hook of §4.12 | yes, when `bdw-gc` is installed; plain `malloc` and no collection otherwise | precise generational, §12 |
+
+### Thread roots (T10.2)
+
+The collector's root hook visits every registered thread's TLS shadow stack, pending exception
+and return handoff, rather than only the collecting thread. New allocations in a threaded
+program stay in a thread-local transient-root list until the next generated statement boundary,
+when expression results are in frame slots. This closes the interval between a native return
+and its caller storing the boxed result. A generated return publishes its handoff before popping
+the frame. Channel receive publishes before removing a buffered value. See THREADS.md.
