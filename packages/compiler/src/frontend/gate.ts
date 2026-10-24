@@ -1484,7 +1484,8 @@ function isClassAliasUseInPlace(node: ts.Identifier, checker: ts.TypeChecker): b
   return (
     ts.isPropertyAccessExpression(parent) &&
     parent.expression === node &&
-    frontendTypes.staticMemberOf(parent, checker, undefined) !== undefined
+    (parent.name.text === 'name' ||
+      frontendTypes.staticMemberOf(parent, checker, undefined) !== undefined)
   );
 }
 
@@ -1512,8 +1513,13 @@ function namesAClassInPlace(node: ts.Identifier, checker: ts.TypeChecker): boole
   }
   // `C.count` -- the class NAME on the left of a static member access. It is not a value being
   // read: a static is one binding for the whole program, and the class name is half of its name.
+  // `C.name` is the class-object fold (docs/VALUE.md §4.26): the receiver names the class, and
+  // the read answers its display name without materializing a value.
   if (ts.isPropertyAccessExpression(parent) && parent.expression === node) {
-    return frontendTypes.staticMemberOf(parent, checker, undefined) !== undefined;
+    return (
+      parent.name.text === 'name' ||
+      frontendTypes.staticMemberOf(parent, checker, undefined) !== undefined
+    );
   }
   return (
     ts.isBinaryExpression(parent) &&
@@ -6029,14 +6035,18 @@ function gateMemberAccess(
   if (asStatic !== undefined) {
     return { kind: 'accept' };
   }
-  // `v.count` where the receiver is a class OBJECT (docs/VALUE.md §4.17): it would dispatch
-  // at run time through the class object's table, but the lowering has no value-receiver arm
-  // yet -- so every member read through a constructor-typed receiver stays refused here, with
-  // the prototype surface keeping its Phase-8 code.
+  // `v.count` where the receiver is a class OBJECT (docs/VALUE.md §4.26): a static read through
+  // a materialized class value routes to `JSRTClass.statics`, and `C.name` folds to the display
+  // name. The remainder of the surface -- `C.prototype` (Phase 8) and every other member -- stays
+  // refused here until the value path widens.
   if (classConstructorTypeOf(checker.getTypeAtLocation(access.expression))) {
-    return access.name.text === 'prototype'
-      ? notYet('the prototype surface is not yet supported', 8)
-      : notYet('a member read through a class object is not yet supported', 5);
+    if (access.name.text === 'prototype') {
+      return notYet('the prototype surface is not yet supported', 8);
+    }
+    if (access.name.text === 'name') {
+      return { kind: 'accept' };
+    }
+    return notYet('a member read through a class object is not yet supported', 5);
   }
   // `m.size`, and the method names that are only ever callees. `size` is a READ of a count the
   // structure keeps, so it is accepted as a value; a method is not, for the reason a class method is
