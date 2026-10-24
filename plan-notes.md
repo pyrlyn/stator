@@ -13756,6 +13756,49 @@ emitted but unreachable from the gate for those surfaces (plan-notes 283).
 **Gates.** typecheck clean · lint 0/0 + oxfmt clean · `pnpm run test` 801/801 ·
 `pnpm run test:subset` 973 fixtures — 942 passed, 31 expected-fail, 0 failed (was 969; +4 new).
 Not run here (disk/time): `pnpm run test:golden`, `pnpm run ci` in full.
+## 384. N1 batch: Task 6.16 clone tranche + Task 6.3 noise floor host note (2026-10-24)
+
+**Plan:** §9 Tasks 6.16 (clone baseline toward zero) and 6.3 step 7 (noise floor).
+Branch `n1-batch`. Host for every local measurement: **darwin-arm64, Apple M3 Max, Node v26.7.0**.
+
+### T30 — Task 6.16 third tranche: named families
+
+Shared helpers at the responsible layer, no behavior change (unit **801** green; runtime rebuild
+clean with `-Wall -Wextra -Werror`):
+
+| Helper | File | Family it removes |
+| --- | --- | --- |
+| `hasModifierKind` | `frontend/export.ts` | export/default modifier predicates |
+| `SELF_NAMED_KINDS` + `bindsOwnName` | `frontend/generics.ts` | declaration/member name-binding `ts.is*` lists |
+| `SCOPE_BOUNDARY_KINDS` | `frontend/generics.ts` | scope-boundary `ts.is*` list |
+| `ANNOTATION_SITE_KINDS` | `frontend/types.ts` | annotation-site `ts.is*` list |
+| `opProblem` + `verifyReceiverOpShape` | `hir/verify.ts` | string-op / array-op receiver+arity+result checks |
+| `verifyShapeCoverage` | `hir/verify.ts` | object-literal field/method cover loops |
+| `char_index` / `relative_char_index` / `search_from` / `substr_range` | `runtime/src/jsrt_string_ops.c` | charAt/at/charCodeAt/codePointAt, indexOf/includes, slice/substring |
+| `DATE_GETTER_FIELDS` X-macro | `runtime/src/jsrt_date.c` | sixteen `DATE_GETTER(...)` invocations |
+| `append_quoted_escape` | `runtime/src/jsrt_print.c` | quoted UTF-16 / UTF-8 escape tails |
+| `walk_present` + `visit_*` | `runtime/src/jsrt_array_ops.c` | for_each/map/filter/some/every/flatMap walk skeleton |
+
+`.jscpd-baseline.json` **shrank 129 → 117 fingerprints** (`pnpm run dupes:baseline` in the same
+change). `pnpm run dupes` green at 117 clones / 1.9%. Remaining leaders: `lower/index.ts`
+(operator maps, dispatch chains), `jsrt_array_ops.c` dispatch switch + enum, `gate.ts` SyntaxKind
+case lists, `jsrt_numeric.c`/`jsrt_print.c` scalar tails, `MATH_ARITY`/`COLLECTION_ARITY` tables.
+
+### T31 — Task 6.3 noise floor: weekly-job host unreachable
+
+The Check wants a handful of repeats of one commit **on the machine that runs the weekly job**.
+That job (`nightly.yml`, `0 3 * * 0`) runs on a **GitHub-hosted `ubuntu-24.04` runner** — an
+ephemeral VM with no SSH endpoint from this workstation. No measurement was taken there and **no
+numbers are invented**. The **20% gate stands unchanged**, on the existing local spreads
+(plan-notes 246: 7.4%; 374: 14.4% geomean on darwin-arm64). Closing this residue still requires
+either a self-hosted runner for the weekly bench or a workflow_dispatch that records five repeats
+on the runner itself and posts the spread.
+
+### Gates (T30+T31)
+
+`pnpm install --frozen-lockfile` · `pnpm --dir site install --frozen-lockfile` · typecheck ·
+lint · `pnpm run test` (**801** green) · `pnpm run dupes` (**117**, baseline **129 → 117**) ·
+runtime rebuild. Not run here: `pnpm run ci` in full.
 ## 385. T33 Ryū vendored and swapped; T34 bind left open (2026-10-24)
 
 Branch `o1-batch` (worktree `stator-o1`). Host: darwin-arm64, pinned Node 26.7.0.

@@ -250,6 +250,21 @@ static void append_control_escape(JSRTBuf *out, uint32_t cp) {
   }
 }
 
+/* Quote/backslash, then the control-escape tail. Shared by the UTF-16 and UTF-8 quoted writers;
+ * surrogate / multi-byte handling stays at the call sites. Answers true when the unit was escaped. */
+static bool append_quoted_escape(JSRTBuf *out, uint32_t cp, char quote) {
+  if (cp == (uint32_t)(unsigned char)quote || cp == '\\') {
+    jsrt_buf_putc(out, '\\');
+    jsrt_buf_putc(out, (char)cp);
+    return true;
+  }
+  if (cp < 0x20 || cp == 0x7F) {
+    append_control_escape(out, cp);
+    return true;
+  }
+  return false;
+}
+
 /* Quoting follows Node: single quotes, unless the string contains one and no double quote, and
  * backticks only when it contains both. The quote actually chosen is then the only quote that
  * needs escaping inside. */
@@ -267,14 +282,12 @@ static void append_quoted(JSRTBuf *out, const JSString *str) {
   jsrt_buf_putc(out, quote);
   for (uint32_t i = 0; i < str->length; i++) {
     uint16_t c = str->data[i];
-    if (c == (uint16_t)quote || c == '\\') {
-      jsrt_buf_putc(out, '\\');
-      jsrt_buf_putc(out, (char)c);
-    } else if (c < 0x20 || c == 0x7F) {
-      append_control_escape(out, c);
-    } else if (c >= 0xD800u && c <= 0xDFFFu &&
-               !(c <= 0xDBFFu && i + 1 < str->length && str->data[i + 1] >= 0xDC00u &&
-                 str->data[i + 1] <= 0xDFFFu)) {
+    if (append_quoted_escape(out, c, quote)) {
+      continue;
+    }
+    if (c >= 0xD800u && c <= 0xDFFFu &&
+        !(c <= 0xDBFFu && i + 1 < str->length && str->data[i + 1] >= 0xDC00u &&
+          str->data[i + 1] <= 0xDFFFu)) {
       /* A LONE surrogate: Node escapes it ("\ud800", lowercase hex), where the unquoted path
        * substitutes U+FFFD (append_string) and JSON escapes it per well-formed stringify. */
       char esc[8];
@@ -751,14 +764,11 @@ static void append_key(JSRTBuf *out, const char *key) {
       i += 3;
       continue;
     }
-    if (b == (unsigned char)quote || b == '\\') {
-      jsrt_buf_putc(out, '\\');
-      jsrt_buf_putc(out, (char)b);
-    } else if (b < 0x20 || b == 0x7F) {
-      append_control_escape(out, b);
-    } else {
-      jsrt_buf_putc(out, (char)b);
+    if (append_quoted_escape(out, b, quote)) {
+      i++;
+      continue;
     }
+    jsrt_buf_putc(out, (char)b);
     i++;
   }
   jsrt_buf_putc(out, quote);

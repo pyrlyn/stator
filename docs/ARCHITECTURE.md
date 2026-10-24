@@ -39,6 +39,9 @@ Source: [`architecture/pipeline.d2`](architecture/pipeline.d2)
 
 Source: [`architecture/build.d2`](architecture/build.d2)
 
+`STATOR_COMPILE_JOBS` above 1 compiles the emitted C as several translation units before the
+link (docs/TOOLCHAIN.md). The sequence is still emit, then clang, then link.
+
 Diagnostics short-circuit: any `STA` error at the gate stops the build with code + span + mode;
 `stator explain` runs the same front half and reports per-construct verdicts
 (`static | dynamic | error | not-yet`) instead of continuing to codegen.
