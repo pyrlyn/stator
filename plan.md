@@ -151,8 +151,10 @@ remainder is recorded here).
 class-object row; `C.name` / `K.name` folds to the display name (verdict `static`); `K.static`
 keeps alias erasure; `C.prototype` stays `STA1214` ("the prototype surface", Phase 8). Fixtures
 `subset_class_object_name_*` / `subset_class_object_prototype_*`, goldens `class_object_name` both
-modes. **Remainder (this card keeps its number and title):** materializing a class object as a
-value (`f(C)`, `console.log(K)`, `typeof C`, `K.length`, `C === D` observability), static reads
+modes. **`typeof C` / `typeof K` folds to `"function"` landed 2026-10-25 (plan-notes 387)** beside
+the `C.name` fold (no class object built); fixtures `subset_class_typeof_*`, goldens `class_typeof`
+both modes. **Remainder (this card keeps its number and title):** materializing a class object as a
+value (`f(C)`, `console.log(K)`, `K.length`, `C === D` observability), static reads
 through a *materialized* value (`ClassValue` + `staticProps` / `JSRTClass.statics` population),
 `this` in a static method (step 4), and `C.prototype` itself. HIR `ClassValue`/`NewValue`/
 `InstanceOfValue` and the runtime class-object entries stay declared but unreachable for those

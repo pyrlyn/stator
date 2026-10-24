@@ -1622,15 +1622,16 @@ are the `parent` walk, sound because the gate refuses a static override. A write
 and a write through the binding are the same write: the row's `slot` points at the binding's
 storage. Accessor half-rows CALL the slot's closure with the class object as receiver.
 
-**What v0 admits as reads (T27 narrow slice).**
+**What v0 admits as reads (T27 slices).**
 
 | Read | Answer | How |
 |---|---|---|
 | `C.name`, `K.name` (`const K = C`, chained aliases, class expressions) | Node's display name | Folds to a string-literal at the lowering — no class object is built. |
+| `typeof C`, `typeof K` | `"function"` | Folds to a string-literal at the lowering, beside `C.name` — no class object is built. A class object is a closure, so the runtime's `jsrt_typeof` would answer the same once one is materialized. |
 | `C.static`, `K.static` | The static's value | Alias erasure to the declaring class's binding (already landed). A static read through a *materialized* class value routes to `JSRTClass.statics` (the runtime path above). |
 | `C.prototype`, `K.prototype` | — | `not-yet(STA1214)`, "the prototype surface", Phase 8. |
 | `C.length`, any other member | — | `not-yet(STA1214)`, "a member read through a class object". |
-| `f(C)`, `console.log(K)`, `typeof C` | — | `not-yet(STA1214)`: the opaque class-value surface (step 12(e)). Printing needs `inspect_class` (already in the runtime) behind a materialized value. |
+| `f(C)`, `console.log(K)`, returning the class | — | `not-yet(STA1214)`: the opaque class-value surface (step 12(e)). Printing needs `inspect_class` (already in the runtime) behind a materialized value. |
 
 **HIR.** `ClassValue` names one file-scope class object by its HIR name (`className` is the key
 `ClassDeclaration` registers under). `NewValue` / `InstanceOfValue` are the value-spelling twins

@@ -1245,39 +1245,39 @@ function gateIdentifier(
     symbol !== undefined && (symbol.flags & ts.SymbolFlags.Alias) !== 0
       ? aliasedDeclaration(symbol, typeChecker)
       : decl;
+  // The shared exemption of the three generic-as-value refusals below: the declaration's own
+  // name binds rather than reads, an import specifier only spells the binding, and a callee is
+  // the one position where a tuple exists to pick a specialization by.
+  const genericValueExempt = (boundName: ts.Node | undefined): boolean =>
+    boundName === node ||
+    ts.isImportSpecifier(node.parent) ||
+    (ts.isCallExpression(node.parent) && node.parent.expression === node);
   if (
     aliased !== undefined &&
     ts.isFunctionDeclaration(aliased) &&
     aliased.typeParameters !== undefined &&
     aliased.typeParameters.length > 0 &&
-    ts.getNameOfDeclaration(aliased) !== node &&
-    !ts.isImportSpecifier(node.parent) &&
-    !(ts.isCallExpression(node.parent) && node.parent.expression === node)
+    !genericValueExempt(ts.getNameOfDeclaration(aliased))
   ) {
     return notYet('using a generic function as a value is not yet supported', 5);
   }
-  // A `const` holding a generic arrow has no value either — only its specializations do. The
-  // declarator's own name is exempt, and so is a callee, the one position with a tuple.
+  // A `const` holding a generic arrow has no value either — only its specializations do.
   if (
     aliased !== undefined &&
     ts.isVariableDeclaration(aliased) &&
     aliased.initializer !== undefined &&
     genericArrowKey(aliased.initializer) !== undefined &&
-    aliased.name !== node &&
-    !ts.isImportSpecifier(node.parent) &&
-    !(ts.isCallExpression(node.parent) && node.parent.expression === node)
+    !genericValueExempt(aliased.name)
   ) {
     return notYet('using a generic function as a value is not yet supported', 5);
   }
-  // An alias has no value either — only the calls through it do. The declarator's own name is
-  // exempt, and so is a callee; formation and argument positions were accepted above, so what
-  // reaches here escapes (returned, stored, branched on) and has no tuple to specialize to.
+  // An alias has no value either — only the calls through it do. Formation and argument
+  // positions were accepted above, so what reaches here escapes (returned, stored, branched on)
+  // and has no tuple to specialize to.
   if (
     decl !== undefined &&
     ts.isVariableDeclaration(decl) &&
-    decl.name !== node &&
-    !ts.isImportSpecifier(node.parent) &&
-    !(ts.isCallExpression(node.parent) && node.parent.expression === node) &&
+    !genericValueExempt(decl.name) &&
     genericAliasTarget(node, typeChecker) !== undefined
   ) {
     return notYet('using a generic function as a value is not yet supported', 5);
@@ -1484,6 +1484,11 @@ function isClassAliasUseInPlace(node: ts.Identifier, checker: ts.TypeChecker): b
   if (ts.isNewExpression(parent) && parent.expression === node) {
     return true;
   }
+  // `typeof K` folds to `"function"` beside `C.name` (docs/VALUE.md §4.26): the receiver names
+  // the class, and the operator answers a fixed string without materializing a value.
+  if (ts.isTypeOfExpression(parent) && parent.expression === node) {
+    return true;
+  }
   if (
     ts.isBinaryExpression(parent) &&
     parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
@@ -1503,6 +1508,11 @@ function namesAClassInPlace(node: ts.Identifier, checker: ts.TypeChecker): boole
   const parent = node.parent;
   if (ts.isNewExpression(parent)) {
     return parent.expression === node;
+  }
+  // `typeof C` folds to `"function"` beside `C.name` (docs/VALUE.md §4.26): the receiver names
+  // the class, and the operator answers a fixed string without materializing a value.
+  if (ts.isTypeOfExpression(parent) && parent.expression === node) {
+    return true;
   }
   // `class B extends A` -- the base of a heritage clause, which names a layout rather than reading
   // a value. It is not a type NODE, so the type-position exemption does not cover it.

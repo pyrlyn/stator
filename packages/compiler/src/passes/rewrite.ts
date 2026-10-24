@@ -387,11 +387,28 @@ function rebuildExpression(expr: Expression, rewriter: Rewriter): Expression {
       return target === expr.target && index === expr.index ? expr : { ...expr, target, index };
     }
     case 'new':
-    case 'console-log': {
+    case 'console-log':
+    case 'date-components':
+    case 'date-static':
+    case 'global-call':
+    case 'math-call':
+    case 'object-static':
+    case 'string-static':
+    case 'typed-op': {
       const args = rewriteEach(expr.args, sub);
       return args === expr.args ? expr : { ...expr, args };
     }
-    case 'new-value': {
+    case 'new-value':
+    case 'array-op':
+    case 'method-call':
+    case 'dyn-method-call':
+    case 'field-call':
+    case 'number-op':
+    case 'collection-op':
+    case 'date-op':
+    case 'regexp-op':
+    case 'string-op':
+    case 'promise-method': {
       const target = sub(expr.target);
       const args = rewriteEach(expr.args, sub);
       return target === expr.target && args === expr.args ? expr : { ...expr, target, args };
@@ -410,7 +427,8 @@ function rebuildExpression(expr: Expression, rewriter: Rewriter): Expression {
     case 'regexp-read':
     case 'get-iterator':
     case 'dyn-field-access':
-    case 'accessor-place': {
+    case 'accessor-place':
+    case 'method-value': {
       const target = sub(expr.target);
       return target === expr.target ? expr : { ...expr, target };
     }
@@ -420,33 +438,6 @@ function rebuildExpression(expr: Expression, rewriter: Rewriter): Expression {
       return target === expr.target && sent === expr.sent ? expr : { ...expr, target, sent };
     }
 
-    case 'method-value': {
-      const target = sub(expr.target);
-      return target === expr.target ? expr : { ...expr, target };
-    }
-    case 'array-op':
-    case 'method-call':
-    case 'dyn-method-call':
-    case 'field-call':
-    case 'number-op':
-    case 'collection-op':
-    case 'date-op':
-    case 'regexp-op':
-    case 'string-op': {
-      const target = sub(expr.target);
-      const args = rewriteEach(expr.args, sub);
-      return target === expr.target && args === expr.args ? expr : { ...expr, target, args };
-    }
-    case 'date-components':
-    case 'date-static':
-    case 'global-call':
-    case 'math-call':
-    case 'object-static':
-    case 'string-static':
-    case 'typed-op': {
-      const args = rewriteEach(expr.args, sub);
-      return args === expr.args ? expr : { ...expr, args };
-    }
     case 'date-new':
     case 'error-new':
     case 'json-parse':
@@ -454,11 +445,6 @@ function rebuildExpression(expr: Expression, rewriter: Rewriter): Expression {
     case 'promise-static': {
       const arg = sub(expr.arg);
       return arg === expr.arg ? expr : { ...expr, arg };
-    }
-    case 'promise-method': {
-      const target = sub(expr.target);
-      const args = rewriteEach(expr.args, sub);
-      return target === expr.target && args === expr.args ? expr : { ...expr, target, args };
     }
     case 'promise-construct': {
       const executor = sub(expr.executor);
