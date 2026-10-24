@@ -184,8 +184,8 @@ test('var is a permanent rejection in ts mode and is accepted in js mode', () =>
   );
 });
 
-// The HIR's Declaration carries exactly one name. Destructuring still has no shape to lower into.
-test('simple destructuring is accepted; nested and rest stay deferred', () => {
+// Nested patterns lower; rest-in-pattern and default-in-pattern stay not-yet (step 12a residue).
+test('destructuring is accepted including nested; rest and default stay deferred', () => {
   assert.deepEqual(
     codesFor('const p: { x: number; y: number } = { x: 1, y: 2 }; const { x, y } = p;'),
     [],
@@ -193,10 +193,10 @@ test('simple destructuring is accepted; nested and rest stay deferred', () => {
   assert.deepEqual(codesFor('const arr: number[] = [1, 2]; const [a, b] = arr;'), []);
   assert.deepEqual(codesFor('function f({ x }: { x: number }): number { return x; }'), []);
   assert.deepEqual(codesFor('try { throw 1; } catch ({ message }) { console.log(1); }'), []);
-  assert.deepEqual(codesFor('const { a: { b } }: { a: { b: number } } = { a: { b: 1 } };'), [
-    'STA1214',
-  ]);
+  assert.deepEqual(codesFor('const { a: { b } }: { a: { b: number } } = { a: { b: 1 } };'), []);
+  assert.deepEqual(codesFor('const [a, [b]]: number[][] = [[1], [2]];'), []);
   assert.deepEqual(codesFor('const [a, ...rest]: number[] = [1, 2];'), ['STA1214']);
+  assert.deepEqual(codesFor('const { a = 1 }: { a?: number } = {};'), ['STA1214']);
 });
 
 // Mirrors the compound-assignment-to-non-identifier test above, but for plain `=`: HIR Assignment

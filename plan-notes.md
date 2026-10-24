@@ -13652,3 +13652,29 @@ Linux x64 (image digest
 `sha256:4db36457f406501e6f608802e5da617e5fbd0e80b75901b6a09de1ae5a667d32`)
 produces an identical document (`diff -u` exits 0), and its read-only `--check`
 reports `node-coverage: docs/NODE.md is current`. Strict typecheck and lint pass.
+
+## 379. Nested binding patterns land; rest/default-in-pattern stay not-yet (2026-10-24)
+
+H1 (step 12a residue): `isSimpleBindingPattern` now accepts nested object/array
+patterns recursively (`const { a: { b } } = o`, `function f([x, [y]])`,
+`const { a: [b] } = o`). `bindPatternElement` recurses through
+`lowerBindingPattern` for nested elements; `lowerPatternRead` accepts
+`ts.BindingName` so the field read types the nested pattern. The gate's refusal
+message now names the remainder precisely: "rest or default in a destructuring
+declaration/parameter is not yet supported" instead of the vague
+"destructuring declarations/parameters are not yet supported".
+
+Decision tests both modes: `subset_nested_destructuring_{,array,mixed}_{ts,js}`
+(static for object nesting, dynamic for array nesting matching the existing
+array-destructuring verdict). Residue rows `subset_nested_destructuring_{rest,default}_{ts,js}`
+carry `@verdict: not-yet` + `@code: STA1214`. Goldens
+`tests/golden/ts|js/nested_destructure.*` match pinned Node byte-for-byte.
+
+H2 (homeless generic arrow) left open: `let`-homed / nesting slice needs
+specialization keying without a single parameter type (canonical-tuple blocked
+on dynamic-tier value semantics). The vague message sharpening is deferred with
+that slice.
+
+Gates: typecheck clean; lint pre-existing site/astro failure unrelated;
+`test` 800/800; `test:subset` 948 passed, 31 expected-fail, 0 failed;
+`test:golden --filter=nested_destructure` 2/2.

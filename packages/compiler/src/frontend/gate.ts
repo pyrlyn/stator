@@ -1699,7 +1699,9 @@ function gateDeclarationList(list: ts.VariableDeclarationList, mode: Mode): Gate
   return { kind: 'accept' };
 }
 
-/** Identifier, or a shallow object/array pattern of identifiers with no rest, default, or nest. */
+/** Identifier, or an object/array pattern whose elements bind identifiers or nested patterns.
+ * No rest (`...r`), no default (`= e`), and no computed property names — those stay not-yet
+ * under the family's gate message, which names them precisely. */
 export function isSimpleBindingPattern(name: ts.BindingName): boolean {
   if (ts.isIdentifier(name)) {
     return true;
@@ -1709,8 +1711,8 @@ export function isSimpleBindingPattern(name: ts.BindingName): boolean {
       (el) =>
         el.dotDotDotToken === undefined &&
         el.initializer === undefined &&
-        ts.isIdentifier(el.name) &&
-        (el.propertyName === undefined || ts.isIdentifier(el.propertyName)),
+        (el.propertyName === undefined || ts.isIdentifier(el.propertyName)) &&
+        isSimpleBindingPattern(el.name),
     );
   }
   if (ts.isArrayBindingPattern(name)) {
@@ -1720,7 +1722,7 @@ export function isSimpleBindingPattern(name: ts.BindingName): boolean {
         (ts.isBindingElement(el) &&
           el.dotDotDotToken === undefined &&
           el.initializer === undefined &&
-          ts.isIdentifier(el.name)),
+          isSimpleBindingPattern(el.name)),
     );
   }
   return false;
@@ -1753,7 +1755,7 @@ function isStatementPosition(node: ts.Expression): boolean {
 
 function gateDeclaration(decl: ts.VariableDeclaration, checker: ts.TypeChecker): GateResult {
   if (!isSimpleBindingPattern(decl.name)) {
-    return notYet('destructuring declarations are not yet supported', 5);
+    return notYet('rest or default in a destructuring declaration is not yet supported', 5);
   }
   // Out-slot annotations must agree with the initializer (docs/FFI.md §2): an `Out<T>`
   // name holding anything else — or a non-`Out` name initialized by a slot — is a
@@ -3634,7 +3636,7 @@ function gateParameter(param: ts.ParameterDeclaration): GateResult {
     return { kind: 'accept' };
   }
   if (!isSimpleBindingPattern(param.name)) {
-    return notYet('destructuring parameters are not yet supported', 5);
+    return notYet('rest or default in a destructuring parameter is not yet supported', 5);
   }
   if (ts.isIdentifier(param.name) && param.name.text === 'this') {
     return notYet('a `this` parameter is not yet supported', 5);
