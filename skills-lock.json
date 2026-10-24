@@ -4,72 +4,8 @@
     "agent-browser": {
       "source": "vercel-labs/agent-browser",
       "sourceType": "github",
-      "ref": "v0.39.2",
       "skillPath": "skills/agent-browser/SKILL.md",
-      "computedHash": "d7d2d096922191df17d77f7d7fb88c002c880daa172a9039060099842cb9ed15"
-    },
-    "agentcore": {
-      "source": "vercel-labs/agent-browser",
-      "sourceType": "github",
-      "ref": "v0.39.2",
-      "skillPath": "skill-data/agentcore/SKILL.md",
-      "computedHash": "73fc962256ae0483f0e9f6ea2a4c5d82475b5ffda2b09563573839cf115c872c"
-    },
-    "core": {
-      "source": "vercel-labs/agent-browser",
-      "sourceType": "github",
-      "ref": "v0.39.2",
-      "skillPath": "skill-data/core/SKILL.md",
-      "computedHash": "8429ff520cf6d96666c39fd4430c65ead15c7a81ede08f5b515c0d506b9a99a3"
-    },
-    "derive-client": {
-      "source": "vercel-labs/agent-browser",
-      "sourceType": "github",
-      "ref": "v0.39.2",
-      "skillPath": "skill-data/derive-client/SKILL.md",
-      "computedHash": "d375fbe8c9c5fdf02019b02cac0b0ee1d23cf7dec5d0c25fa1cd0ba31b0e9af9"
-    },
-    "dogfood": {
-      "source": "vercel-labs/agent-browser",
-      "sourceType": "github",
-      "ref": "v0.39.2",
-      "skillPath": "skill-data/dogfood/SKILL.md",
-      "computedHash": "cfb283a575c820944e561687869b7c44dfbab7f288ffca19967685f66e654b10"
-    },
-    "electron": {
-      "source": "vercel-labs/agent-browser",
-      "sourceType": "github",
-      "ref": "v0.39.2",
-      "skillPath": "skill-data/electron/SKILL.md",
-      "computedHash": "ecc5aa8cc49906cc4479359b4f5051247cf9867f93de277fdff5c70b41aa2800"
-    },
-    "protected-vercel-deployments": {
-      "source": "vercel-labs/agent-browser",
-      "sourceType": "github",
-      "ref": "v0.39.2",
-      "skillPath": "skill-data/protected-vercel-deployments/SKILL.md",
-      "computedHash": "adee07851f0a6c5e886edb8a27e796d18ef06c56fd16b059c0cbca4353802ba3"
-    },
-    "slack": {
-      "source": "vercel-labs/agent-browser",
-      "sourceType": "github",
-      "ref": "v0.39.2",
-      "skillPath": "skill-data/slack/SKILL.md",
-      "computedHash": "9165128526bfad162f54a3f930679c6928461a24a2f44df0e72cddc1f66cec12"
-    },
-    "vercel-sandbox": {
-      "source": "vercel-labs/agent-browser",
-      "sourceType": "github",
-      "ref": "v0.39.2",
-      "skillPath": "skill-data/vercel-sandbox/SKILL.md",
-      "computedHash": "55266fe0adf42843ca0773516a9a06b323c70ac0183037b317561db2e01306f9"
-    },
-    "webmcp-gen": {
-      "source": "vercel-labs/agent-browser",
-      "sourceType": "github",
-      "ref": "v0.39.2",
-      "skillPath": "skill-data/webmcp-gen/SKILL.md",
-      "computedHash": "965d3b10c93c9e21d0db17759d0eb671d2747d841db886df51ec7b54bda3f44e"
+      "computedHash": "80161e6836b3b40f4e83730a290deb40ac14d877d38c97ad5f6d71be37ce74c3"
     }
   }
 }
