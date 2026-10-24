@@ -13653,6 +13653,72 @@ Linux x64 (image digest
 produces an identical document (`diff -u` exits 0), and its read-only `--check`
 reports `node-coverage: docs/NODE.md is current`. Strict typecheck and lint pass.
 
+## 379. Nested binding patterns land; rest/default-in-pattern stay not-yet (2026-10-24)
+
+H1 (step 12a residue): `isSimpleBindingPattern` now accepts nested object/array
+patterns recursively (`const { a: { b } } = o`, `function f([x, [y]])`,
+`const { a: [b] } = o`). `bindPatternElement` recurses through
+`lowerBindingPattern` for nested elements; `lowerPatternRead` accepts
+`ts.BindingName` so the field read types the nested pattern. The gate's refusal
+message now names the remainder precisely: "rest or default in a destructuring
+declaration/parameter is not yet supported" instead of the vague
+"destructuring declarations/parameters are not yet supported".
+
+Decision tests both modes: `subset_nested_destructuring_{,array,mixed}_{ts,js}`
+(static for object nesting, dynamic for array nesting matching the existing
+array-destructuring verdict). Residue rows `subset_nested_destructuring_{rest,default}_{ts,js}`
+carry `@verdict: not-yet` + `@code: STA1214`. Goldens
+`tests/golden/ts|js/nested_destructure.*` match pinned Node byte-for-byte.
+
+H2 (homeless generic arrow) left open: `let`-homed / nesting slice needs
+specialization keying without a single parameter type (canonical-tuple blocked
+on dynamic-tier value semantics). The vague message sharpening is deferred with
+that slice.
+
+Gates: typecheck clean; lint pre-existing site/astro failure unrelated;
+`test` 800/800; `test:subset` 948 passed, 31 expected-fail, 0 failed;
+`test:golden --filter=nested_destructure` 2/2.
+
+## 380. Rest-in-pattern and default-in-pattern land (step 12a remainder) (2026-10-24)
+
+I1 (step 12a residue after H1's nested patterns, plan-notes 379): `isSimpleBindingPattern`
+now accepts rest elements (`...r`, identifier name only) and defaults (`= e`) at every
+nesting level. `bindPatternElement` wraps the field/index read in a `conditional` when the
+element carries a default — the read lands in a scratch, the default stays lazy behind the
+alternate arm, matching a parameter default's semantics. Array rest (`const [x, ...rest] = a`)
+lowers to `array-op slice` from the rest index. Object rest (`const { a, ...rest } = o`)
+expands the SOURCE layout minus the bound keys into an `object-literal`; the checker's
+`Omit` mapped type is not a layout `shapeTypeToHType` accepts (its symbol is the binding), so
+the expansion computes `Omit` here and types each read from the source field, not from
+`typeAt(restName)` (which would drag the file dynamic). Destructured parameters unpack
+BEFORE the body lowers, so the body sees the rest binding's constructed type.
+
+Still `STA1214`, each named at its gate site: a rest PATTERN (`...{ a }` / `...[a]`), a
+computed property name, object rest over a value with no fixed layout (optional property or
+untyped source), and object rest over a type with methods.
+
+I2 (homeless generic arrow, `const`-in-block / `let` slice) left open: `genericArrowKey`
+keys a homed arrow on its `const`/`let` variable name, but a block-scoped binding has no
+module-level home to lower the specialization under (the specialization is a file-level
+function). Forcing a key would emit a specialization that cannot see the block's bindings —
+plan-notes 280 already refuses the same capture case. A sharp not-yet for
+"`let`/block-scoped generic arrow" would need a new gate site; left with the existing
+"a generic function expression or arrow is not yet supported" rather than inventing a wrong
+specialization key.
+
+I3 (`C.name` as a string read of the descriptor) left open: `gate.ts` refuses every opaque
+class use (`using a class as a value`) uniformly. A `C.name` fold to a string literal would
+need the class descriptor's `name` without building a class object — the descriptor already
+carries the display name (`classDisplayName`), but the gate's class-value arms fire before any
+member read is typed, and splitting `C.name` out of the opaque-use refusal would leave
+`C.length`, `C.prototype` and `C.static` on the old message with no principled boundary.
+The class object must provide: a value holding the constructor function + prototype +
+static table, so member reads on it dispatch. Not built in this pass.
+
+Gates: typecheck clean; lint clean; `test` 800/800; `test:subset` 957 passed, 31
+expected-fail, 0 failed; `test:golden` 479/479 (new `destructure_rest_default` ts+js
+byte-for-byte vs pinned Node).
+
 ## 381. Tooling-left batch: clone baseline tranche, T10.3 step-5 CI smoke, Task 6.3 noise-floor notes (2026-10-24)
 
 **Plan:** §9 Tasks 6.16, 6.3 noise floor + Phase-6 Check fuzzing clause; §11b T10.3 step 5.
@@ -13756,6 +13822,41 @@ emitted but unreachable from the gate for those surfaces (plan-notes 283).
 **Gates.** typecheck clean · lint 0/0 + oxfmt clean · `pnpm run test` 801/801 ·
 `pnpm run test:subset` 973 fixtures — 942 passed, 31 expected-fail, 0 failed (was 969; +4 new).
 Not run here (disk/time): `pnpm run test:golden`, `pnpm run ci` in full.
+## 383. T29: rest patterns, static computed keys, dynamic object rest (2026-10-24)
+
+T29 (step 12a remainder after 379/380). Three shapes land:
+
+1. **Rest PATTERN** (`const [...[a]] = arr`, nested `const { items: [...[head]] } = xs`):
+   `bindArrayRest` / `bindObjectRest` compute the remainder (slice / object expansion) and
+   recurse into `lowerBindingPattern` instead of binding one identifier. An object rest
+   PATTERN (`...{ a }`) is a TypeScript parse error (the parser only accepts
+   `... BindingIdentifier` in object rest), so that spelling never reaches the gate — the
+   lower path still handles it if a future parser admits it.
+2. **Computed keys in binding patterns**, static-key only under the step-22 rule
+   (`bindingElementKey` mirrors `computedKeyStaticName`): identifier, string/number literal,
+   or a literal-typed computed key is the field the direct spelling writes. A runtime name
+   stays `STA1214` ("a computed key with a runtime name in a destructuring declaration").
+3. **Object rest over a dynamic/unknown source** routes through the shape table (the spread
+   twin): `Object.assign({}, src)` then `delete` of each bound key. Result is Unknown, which
+   is what `Omit` over an unknown source is. Still not-yet (each named): object rest over a
+   type with methods, and object rest over an array.
+
+`isSimpleBindingPattern` now takes a checker (computed keys need `computedKeyStaticName`) and
+accepts rest patterns. The STA4032 labeling vehicle moved from a rest pattern to a runtime-named
+computed key (`lower-mode-label.test.ts`).
+
+Decision tests: `subset_nested_rest_{pattern,array_pattern}_{ts,js}`,
+`subset_destructure_computed_{static,runtime}_*`, `subset_object_rest_{dynamic,untyped}` flipped
+to `dynamic`. `docs/SUBSET.md` object-destructuring row updated.
+
+T28 left open: the specialization-key rule for a block-homed generic is **not sound** as
+currently architected (specializations are file-level functions; a block-scoped binding has no
+module-level home — plan-notes 280 already refuses the capture case). Documenting that rule in
+`docs/HIR.md` and sharpening the remaining named refusals is the next slice.
+
+Gates: typecheck clean; lint clean (site installed); `gate`/`lower-mode-label` unit tests
+83/83; `test:subset` run in this batch. Full `test`/`test:golden`/`pnpm run ci` not run here
+(runtime archive absent on this worktree).
 ## 384. N1 batch: Task 6.16 clone tranche + Task 6.3 noise floor host note (2026-10-24)
 
 **Plan:** §9 Tasks 6.16 (clone baseline toward zero) and 6.3 step 7 (noise floor).
