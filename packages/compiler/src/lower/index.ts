@@ -71,6 +71,7 @@ import type {
   AccessorPlace,
   ArrayLength,
   ArrayLiteral,
+  ArrayOp,
   ArrayOpName,
   BinaryOp,
   BinaryOperator,
@@ -176,6 +177,7 @@ import {
   hArray,
   hasTypeParam,
   hFunction,
+  hObject,
   hIterator,
   hPromise,
   hTypeAssignable,
@@ -1778,9 +1780,10 @@ function lowerPatternRead(
   checker: ts.TypeChecker,
   bindings: Scope,
   diagnostics: Diagnostic[],
+  overrideType?: HType,
 ): Expression | null {
   const span = makeSpan(at.getStart(sourceFile), at.getWidth(sourceFile), sourceFile);
-  const type = typeAt(name, checker, bindings);
+  const type = overrideType ?? typeAt(name, checker, bindings);
   if (typeof field === 'number') {
     const index: Expression = { kind: 'number-literal', type: H_NUMBER, span, value: field };
     return { kind: 'index-access', type, span, target, index };
@@ -1838,11 +1841,50 @@ function bindPatternElement(
   if (read === null) {
     return false;
   }
+  // A default runs when the read is `undefined` (missing or explicit), like a parameter's.
+  // The read is evaluated once into a scratch so the conditional never re-reads it; the
+  // default expression itself stays lazy behind the alternate arm.
+  let bound = read;
+  if (el.initializer !== undefined) {
+    const fallback = lowerExpression(el.initializer, sourceFile, checker, bindings, diagnostics);
+    if (fallback === null) {
+      return false;
+    }
+    const span = makeSpan(el.getStart(sourceFile), el.getWidth(sourceFile), sourceFile);
+    const tmp = nextBindTemp();
+    const readType = read.type;
+    bindings.set(tmp, readType);
+    statements.push({
+      kind: 'declaration',
+      type: readType,
+      span,
+      name: tmp,
+      declKind: 'const',
+      value: read,
+    });
+    const held: Identifier = { kind: 'identifier', type: readType, span, name: tmp };
+    const isUndef: BinaryOp = {
+      kind: 'binary-op',
+      operator: '===',
+      type: H_BOOLEAN,
+      span,
+      left: held,
+      right: { kind: 'undefined-literal', type: H_UNDEFINED, span },
+    };
+    bound = {
+      kind: 'conditional',
+      type: fallback.type,
+      span,
+      condition: isUndef,
+      consequent: fallback,
+      alternate: held,
+    };
+  }
   if (!ts.isIdentifier(el.name)) {
     // Nested pattern: the field read becomes the source the inner pattern destructures.
     const parts = lowerBindingPattern(
       el.name,
-      read,
+      bound,
       declKind,
       el,
       sourceFile,
@@ -1867,7 +1909,7 @@ function bindPatternElement(
     span: makeSpan(el.getStart(sourceFile), el.getWidth(sourceFile), sourceFile),
     name: hirName,
     declKind,
-    value: maybeBoundary(read, type, el, sourceFile),
+    value: maybeBoundary(bound, type, el, sourceFile),
   });
   return true;
 }
@@ -1916,7 +1958,39 @@ function lowerBindingPattern(
     return null;
   }
   if (ts.isObjectBindingPattern(name)) {
+    const bound = new Set<string>();
     for (const el of name.elements) {
+      if (el.dotDotDotToken === undefined) {
+        const field =
+          el.propertyName !== undefined && ts.isIdentifier(el.propertyName)
+            ? el.propertyName.text
+            : ts.isIdentifier(el.name)
+              ? el.name.text
+              : '';
+        if (field !== '') {
+          bound.add(field);
+        }
+      }
+    }
+    for (const el of name.elements) {
+      if (el.dotDotDotToken !== undefined) {
+        if (
+          !bindObjectRest(
+            source,
+            bound,
+            el,
+            declKind,
+            sourceFile,
+            checker,
+            bindings,
+            diagnostics,
+            statements,
+          )
+        ) {
+          return null;
+        }
+        continue;
+      }
       const field =
         el.propertyName !== undefined && ts.isIdentifier(el.propertyName)
           ? el.propertyName.text
@@ -1947,6 +2021,24 @@ function lowerBindingPattern(
       index += 1;
       continue;
     }
+    if (ts.isBindingElement(el) && el.dotDotDotToken !== undefined) {
+      if (
+        !bindArrayRest(
+          source,
+          index,
+          el,
+          declKind,
+          sourceFile,
+          checker,
+          bindings,
+          diagnostics,
+          statements,
+        )
+      ) {
+        return null;
+      }
+      break;
+    }
     if (
       !bindPatternElement(
         source,
@@ -1965,6 +2057,158 @@ function lowerBindingPattern(
     index += 1;
   }
   return statements;
+}
+
+/** `const [x, ...rest] = a` / a nested array's `...rest`: the rest name binds `a.slice(i)`,
+ * where `i` is the element index the rest starts at. The rest is last by syntax, so the walk
+ * stops here. The checker's rest type is `T[]`; `slice` answers the target's own type, which
+ * for a dense array is that same `T[]`. */
+function bindArrayRest(
+  source: Expression,
+  index: number,
+  el: ts.BindingElement,
+  declKind: 'let' | 'const',
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  bindings: Scope,
+  diagnostics: Diagnostic[],
+  statements: Statement[],
+): boolean {
+  if (!ts.isIdentifier(el.name)) {
+    diagnostics.push(
+      lowerDiagnostic(
+        el,
+        sourceFile,
+        'STA1214',
+        'not-yet',
+        'a rest pattern in an array destructuring is not yet supported',
+      ),
+    );
+    return false;
+  }
+  const span = makeSpan(el.getStart(sourceFile), el.getWidth(sourceFile), sourceFile);
+  const type = typeAt(el.name, checker, bindings);
+  const start: Expression = { kind: 'number-literal', type: H_NUMBER, span, value: index };
+  const end: Expression = { kind: 'undefined-literal', type: H_UNDEFINED, span };
+  const sliced: ArrayOp = {
+    kind: 'array-op',
+    op: 'slice',
+    type,
+    span,
+    target: source,
+    args: [start, end],
+  };
+  const hirName = bindings.declare(el.name.text, type);
+  hirNameOfDeclaration.set(el, hirName);
+  statements.push({
+    kind: 'declaration',
+    type,
+    span,
+    name: hirName,
+    declKind,
+    value: sliced,
+  });
+  return true;
+}
+
+/** `const { a, ...rest } = o` / a nested object's `...rest`: the rest name binds a fresh plain
+ * object of the remaining own fields. The expansion is the SOURCE layout minus the keys the
+ * pattern already bound — `Omit<T, K>`, computed here rather than read from the checker's
+ * mapped type, whose symbol is the binding itself and so is not a layout `shapeTypeToHType`
+ * would accept. An Unknown source (no layout to subtract from), a class instance whose rest
+ * type carries methods, or a rest name that is itself a pattern stay not-yet under this
+ * message rather than inventing a shape the type does not describe. */
+function bindObjectRest(
+  source: Expression,
+  bound: ReadonlySet<string>,
+  el: ts.BindingElement,
+  declKind: 'let' | 'const',
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  bindings: Scope,
+  diagnostics: Diagnostic[],
+  statements: Statement[],
+): boolean {
+  if (!ts.isIdentifier(el.name)) {
+    diagnostics.push(
+      lowerDiagnostic(
+        el,
+        sourceFile,
+        'STA1214',
+        'not-yet',
+        'a rest pattern in an object destructuring is not yet supported',
+      ),
+    );
+    return false;
+  }
+  const span = makeSpan(el.getStart(sourceFile), el.getWidth(sourceFile), sourceFile);
+  const src = source.type;
+  if (src.kind !== 'object') {
+    diagnostics.push(
+      lowerDiagnostic(
+        el,
+        sourceFile,
+        'STA1214',
+        'not-yet',
+        'an object rest over a value with no fixed layout is not yet supported',
+      ),
+    );
+    return false;
+  }
+  if (src.methods.length > 0) {
+    diagnostics.push(
+      lowerDiagnostic(
+        el,
+        sourceFile,
+        'STA1214',
+        'not-yet',
+        'an object rest over a type with methods is not yet supported',
+      ),
+    );
+    return false;
+  }
+  const fields = src.fields.filter((f) => !bound.has(f.name));
+  const type = hObject(frontendTypes.shapeName(fields), fields, []);
+  const entries: ObjectEntry[] = [];
+  for (const field of fields) {
+    // Type the read from the SOURCE layout, not `typeAt(el.name)`: the rest binding's
+    // checker type is `Omit<T, K>`, a mapped type `shapeTypeToHType` answers Unknown for,
+    // and every entry would inherit that Unknown and drag the file dynamic.
+    const read = lowerPatternRead(
+      source,
+      field.name,
+      el.name,
+      el,
+      sourceFile,
+      checker,
+      bindings,
+      diagnostics,
+      field.type,
+    );
+    if (read === null) {
+      return false;
+    }
+    entries.push({ name: field.name, value: read });
+  }
+  const literal: ObjectLiteral = {
+    kind: 'object-literal',
+    type,
+    span,
+    entries,
+    methods: [],
+    methodCopies: [],
+  };
+  const hirName = bindings.declare(el.name.text, type);
+  hirNameOfDeclaration.set(el, hirName);
+  statements.push({
+    kind: 'declaration',
+    type,
+    span,
+    name: hirName,
+    declKind,
+    value: literal,
+  });
+  return true;
 }
 
 /** Step 17's rule, shared by every position that can name a function (plan.md §8 step 17 and
@@ -8391,10 +8635,9 @@ function lowerFunction(
       immutableSelfBindings.add(selfBinding);
       hirNameOfDeclaration.set(node.name, selfBinding);
     }
-    const body = lowerFunctionBody(node.body, sourceFile, checker, inner, diagnostics);
-    if (body === null) {
-      return null;
-    }
+    // Unpack destructured parameters BEFORE the body: a rest binding's type is the source
+    // layout minus the bound keys (the checker's `Omit` is not a layout), so the body must see
+    // that type when it lowers, not the Unknown `typeAt` answers for the mapped type.
     const unpacked: Statement[] = [];
     for (const item of destructured) {
       const src: Identifier = {
@@ -8417,6 +8660,10 @@ function lowerFunction(
         return null;
       }
       unpacked.push(...parts);
+    }
+    const body = lowerFunctionBody(node.body, sourceFile, checker, inner, diagnostics);
+    if (body === null) {
+      return null;
     }
     const bodyWithParams =
       unpacked.length === 0 ? body : { ...body, statements: [...unpacked, ...body.statements] };

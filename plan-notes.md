@@ -13678,3 +13678,43 @@ that slice.
 Gates: typecheck clean; lint pre-existing site/astro failure unrelated;
 `test` 800/800; `test:subset` 948 passed, 31 expected-fail, 0 failed;
 `test:golden --filter=nested_destructure` 2/2.
+
+## 380. Rest-in-pattern and default-in-pattern land (step 12a remainder) (2026-10-24)
+
+I1 (step 12a residue after H1's nested patterns, plan-notes 379): `isSimpleBindingPattern`
+now accepts rest elements (`...r`, identifier name only) and defaults (`= e`) at every
+nesting level. `bindPatternElement` wraps the field/index read in a `conditional` when the
+element carries a default — the read lands in a scratch, the default stays lazy behind the
+alternate arm, matching a parameter default's semantics. Array rest (`const [x, ...rest] = a`)
+lowers to `array-op slice` from the rest index. Object rest (`const { a, ...rest } = o`)
+expands the SOURCE layout minus the bound keys into an `object-literal`; the checker's
+`Omit` mapped type is not a layout `shapeTypeToHType` accepts (its symbol is the binding), so
+the expansion computes `Omit` here and types each read from the source field, not from
+`typeAt(restName)` (which would drag the file dynamic). Destructured parameters unpack
+BEFORE the body lowers, so the body sees the rest binding's constructed type.
+
+Still `STA1214`, each named at its gate site: a rest PATTERN (`...{ a }` / `...[a]`), a
+computed property name, object rest over a value with no fixed layout (optional property or
+untyped source), and object rest over a type with methods.
+
+I2 (homeless generic arrow, `const`-in-block / `let` slice) left open: `genericArrowKey`
+keys a homed arrow on its `const`/`let` variable name, but a block-scoped binding has no
+module-level home to lower the specialization under (the specialization is a file-level
+function). Forcing a key would emit a specialization that cannot see the block's bindings —
+plan-notes 280 already refuses the same capture case. A sharp not-yet for
+"`let`/block-scoped generic arrow" would need a new gate site; left with the existing
+"a generic function expression or arrow is not yet supported" rather than inventing a wrong
+specialization key.
+
+I3 (`C.name` as a string read of the descriptor) left open: `gate.ts` refuses every opaque
+class use (`using a class as a value`) uniformly. A `C.name` fold to a string literal would
+need the class descriptor's `name` without building a class object — the descriptor already
+carries the display name (`classDisplayName`), but the gate's class-value arms fire before any
+member read is typed, and splitting `C.name` out of the opaque-use refusal would leave
+`C.length`, `C.prototype` and `C.static` on the old message with no principled boundary.
+The class object must provide: a value holding the constructor function + prototype +
+static table, so member reads on it dispatch. Not built in this pass.
+
+Gates: typecheck clean; lint clean; `test` 800/800; `test:subset` 957 passed, 31
+expected-fail, 0 failed; `test:golden` 479/479 (new `destructure_rest_default` ts+js
+byte-for-byte vs pinned Node).
