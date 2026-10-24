@@ -552,6 +552,17 @@ static bool index_present(jsrt_value array, uint32_t i) {
   return i < arr(array)->length && arr(array)->elements[i] != JSRT_HOLE;
 }
 
+/* Present-index walk under the entry length. `visit` answers false to stop early (some/every).
+ * for_each / map / filter / some / every / flatMap all share this skeleton. */
+static void walk_present(jsrt_value array, uint32_t len,
+                         bool (*visit)(jsrt_value array, uint32_t i, void *ctx), void *ctx) {
+  for (uint32_t i = 0; walking(array, i, len); i++) {
+    if (index_present(array, i) && !visit(array, i, ctx)) {
+      return;
+    }
+  }
+}
+
 /* One predicate step shared by the upward and downward find walks: snapshot the element BEFORE
  * the callback (the callback may mutate the slot; the answer is the snapshot), then report a
  * hit with the snapshot and/or the index. */
@@ -614,16 +625,69 @@ static jsrt_value find_result(jsrt_value array, jsrt_value cb, bool upward, bool
   return want_index ? jsrt_number((double)index) : elem;
 }
 
+typedef struct {
+  jsrt_value cb;
+  jsrt_value out;
+  bool flag;
+} MapWalk;
+
+static bool visit_for_each(jsrt_value array, uint32_t i, void *ctx) {
+  call_cb(*(jsrt_value *)ctx, array, i);
+  return true;
+}
+
+static bool visit_map(jsrt_value array, uint32_t i, void *ctx) {
+  MapWalk *w = (MapWalk *)ctx;
+  arr(w->out)->elements[i] = call_cb(w->cb, array, i);
+  return true;
+}
+
+static bool visit_filter(jsrt_value array, uint32_t i, void *ctx) {
+  MapWalk *w = (MapWalk *)ctx;
+  /* Capture kValue before the callback. The callback receives this snapshot, and the selected
+   * value pushed into the result is that same snapshot even when the callback mutates the
+   * receiver's slot (ECMA-262 §23.1.3.8 steps 6.a–6.c). */
+  const jsrt_value element = arr(array)->elements[i];
+  if (jsrt_truthy(call_cb(w->cb, array, i))) {
+    append(w->out, element);
+  }
+  return true;
+}
+
+static bool visit_some(jsrt_value array, uint32_t i, void *ctx) {
+  MapWalk *w = (MapWalk *)ctx;
+  if (jsrt_truthy(call_cb(w->cb, array, i))) {
+    w->flag = true;
+    return false;
+  }
+  return true;
+}
+
+static bool visit_every(jsrt_value array, uint32_t i, void *ctx) {
+  MapWalk *w = (MapWalk *)ctx;
+  if (!jsrt_truthy(call_cb(w->cb, array, i))) {
+    w->flag = true;
+    return false;
+  }
+  return true;
+}
+
+static bool visit_flat_map(jsrt_value array, uint32_t i, void *ctx) {
+  MapWalk *w = (MapWalk *)ctx;
+  jsrt_value mapped = call_cb(w->cb, array, i);
+  if (jsrt_is(mapped, JSRT_TAG_ARRAY)) {
+    flatten_into(w->out, mapped, 0.0);
+  } else {
+    append(w->out, mapped);
+  }
+  return true;
+}
+
 jsrt_value jsrt_array_for_each(jsrt_value array, jsrt_value cb) {
   if (jsrt_require_array(array, "forEach") == NULL) {
     return JSRT_UNDEFINED;
   }
-  const uint32_t len = arr(array)->length;
-  for (uint32_t i = 0; walking(array, i, len); i++) {
-    if (index_present(array, i)) {
-      call_cb(cb, array, i);
-    }
-  }
+  walk_present(array, arr(array)->length, visit_for_each, &cb);
   return JSRT_UNDEFINED;
 }
 
@@ -634,61 +698,36 @@ jsrt_value jsrt_array_map(jsrt_value array, jsrt_value cb) {
   /* §23.1.3.21: the answer has the receiver's length at entry, and an index the walk skips -- a
    * hole, or one the callback cut off -- stays a hole in it. */
   const uint32_t len = arr(array)->length;
-  jsrt_value out = holes(len);
-  for (uint32_t i = 0; walking(array, i, len); i++) {
-    if (index_present(array, i)) {
-      const jsrt_value mapped = call_cb(cb, array, i);
-      arr(out)->elements[i] = mapped;
-    }
-  }
-  return out;
+  MapWalk w = {cb, holes(len), false};
+  walk_present(array, len, visit_map, &w);
+  return w.out;
 }
 
 jsrt_value jsrt_array_filter(jsrt_value array, jsrt_value cb) {
   if (jsrt_require_array(array, "filter") == NULL) {
     return JSRT_UNDEFINED;
   }
-  const uint32_t len = arr(array)->length;
-  jsrt_value out = jsrt_array_new(0, NULL);
-  for (uint32_t i = 0; walking(array, i, len); i++) {
-    /* Capture kValue before the callback. The callback receives this snapshot, and the selected
-     * value pushed into the result is that same snapshot even when the callback mutates the
-     * receiver's slot (ECMA-262 §23.1.3.8 steps 6.a–6.c). */
-    if (!index_present(array, i)) {
-      continue;
-    }
-    const jsrt_value element = arr(array)->elements[i];
-    if (jsrt_truthy(call_cb(cb, array, i))) {
-      append(out, element);
-    }
-  }
-  return out;
+  MapWalk w = {cb, jsrt_array_new(0, NULL), false};
+  walk_present(array, arr(array)->length, visit_filter, &w);
+  return w.out;
 }
 
 jsrt_value jsrt_array_some(jsrt_value array, jsrt_value cb) {
   if (jsrt_require_array(array, "some") == NULL) {
     return JSRT_UNDEFINED;
   }
-  const uint32_t len = arr(array)->length;
-  for (uint32_t i = 0; walking(array, i, len); i++) {
-    if (index_present(array, i) && jsrt_truthy(call_cb(cb, array, i))) {
-      return JSRT_TRUE;
-    }
-  }
-  return JSRT_FALSE;
+  MapWalk w = {cb, JSRT_UNDEFINED, false};
+  walk_present(array, arr(array)->length, visit_some, &w);
+  return w.flag ? JSRT_TRUE : JSRT_FALSE;
 }
 
 jsrt_value jsrt_array_every(jsrt_value array, jsrt_value cb) {
   if (jsrt_require_array(array, "every") == NULL) {
     return JSRT_UNDEFINED;
   }
-  const uint32_t len = arr(array)->length;
-  for (uint32_t i = 0; walking(array, i, len); i++) {
-    if (index_present(array, i) && !jsrt_truthy(call_cb(cb, array, i))) {
-      return JSRT_FALSE;
-    }
-  }
-  return JSRT_TRUE;
+  MapWalk w = {cb, JSRT_UNDEFINED, false};
+  walk_present(array, arr(array)->length, visit_every, &w);
+  return w.flag ? JSRT_FALSE : JSRT_TRUE;
 }
 
 jsrt_value jsrt_array_find(jsrt_value array, jsrt_value cb) {
@@ -703,20 +742,9 @@ jsrt_value jsrt_array_flat_map(jsrt_value array, jsrt_value cb) {
   if (jsrt_require_array(array, "flatMap") == NULL) {
     return JSRT_UNDEFINED;
   }
-  const uint32_t len = arr(array)->length;
-  jsrt_value out = jsrt_array_new(0, NULL);
-  for (uint32_t i = 0; walking(array, i, len); i++) {
-    if (!index_present(array, i)) {
-      continue;
-    }
-    jsrt_value mapped = call_cb(cb, array, i);
-    if (jsrt_is(mapped, JSRT_TAG_ARRAY)) {
-      flatten_into(out, mapped, 0.0);
-    } else {
-      append(out, mapped);
-    }
-  }
-  return out;
+  MapWalk w = {cb, jsrt_array_new(0, NULL), false};
+  walk_present(array, arr(array)->length, visit_flat_map, &w);
+  return w.out;
 }
 
 jsrt_value jsrt_array_find_index(jsrt_value array, jsrt_value cb) {

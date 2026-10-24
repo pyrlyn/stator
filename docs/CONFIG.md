@@ -71,8 +71,10 @@ Highest first:
 
 1. the command line;
 2. the environment (`STATOR_OPT` for `opt`), which a project `.env` may fill in for
-   `STATOR_OPT`, `STATOR_RUNTIME` and `STATOR_OTEL` only; never `CC`, `STATOR_RUNTIME_ROOT` or
-   `OTEL_*` (docs/TOOLCHAIN.md, "Environment variables and `.env`");
+   `STATOR_OPT`, `STATOR_RUNTIME` and `STATOR_OTEL` only; never `CC`, `STATOR_RUNTIME_ROOT`,
+   `OTEL_*`, `STATOR_COMPILE_JOBS` or `STATOR_COMPILE_TIMING` (docs/TOOLCHAIN.md, "Environment
+   variables and `.env`"). `STATOR_COMPILE_JOBS` has no flag and no config key: it is only the
+   host environment;
 3. the config file;
 4. the built-in default.
 

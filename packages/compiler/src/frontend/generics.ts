@@ -561,6 +561,34 @@ export function capturesEnclosingScope(
   return captured;
 }
 
+/** Declaration and member forms whose `name` is the spelling the node BINDS (so that name is
+ * not a value read). Property access / property assignment names are member labels and are
+ * excluded by the caller. */
+const SELF_NAMED_KINDS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.FunctionDeclaration,
+  ts.SyntaxKind.FunctionExpression,
+  ts.SyntaxKind.ClassDeclaration,
+  ts.SyntaxKind.ClassExpression,
+  ts.SyntaxKind.VariableDeclaration,
+  ts.SyntaxKind.Parameter,
+  ts.SyntaxKind.TypeParameter,
+  ts.SyntaxKind.InterfaceDeclaration,
+  ts.SyntaxKind.TypeAliasDeclaration,
+  ts.SyntaxKind.EnumDeclaration,
+  ts.SyntaxKind.ModuleDeclaration,
+  ts.SyntaxKind.MethodDeclaration,
+  ts.SyntaxKind.GetAccessor,
+  ts.SyntaxKind.SetAccessor,
+  ts.SyntaxKind.PropertyDeclaration,
+  ts.SyntaxKind.MethodSignature,
+  ts.SyntaxKind.PropertySignature,
+  ts.SyntaxKind.EnumMember,
+]);
+
+function bindsOwnName(parent: ts.Node, child: ts.Node): boolean {
+  return SELF_NAMED_KINDS.has(parent.kind) && (parent as ts.NamedDeclaration).name === child;
+}
+
 /** Whether an identifier in the arrow reads a value, rather than naming a member or declaring
  * one. Member names (`o.y`, `{ y: 1 }`, `class C { y() {} }`) resolve to declarations the
  * object — not the arrow — owns, so only the object side can be a capture; declaration names
@@ -584,32 +612,7 @@ function isValueReference(node: ts.Identifier): boolean {
   }
   // A declaration binds its own name: the name resolves to itself, contained wherever the
   // declaration sits, so it can never be a capture of an enclosing scope.
-  if (
-    (ts.isFunctionDeclaration(parent) ||
-      ts.isFunctionExpression(parent) ||
-      ts.isClassDeclaration(parent) ||
-      ts.isClassExpression(parent) ||
-      ts.isVariableDeclaration(parent) ||
-      ts.isParameter(parent) ||
-      ts.isTypeParameterDeclaration(parent) ||
-      ts.isInterfaceDeclaration(parent) ||
-      ts.isTypeAliasDeclaration(parent) ||
-      ts.isEnumDeclaration(parent) ||
-      ts.isModuleDeclaration(parent)) &&
-    parent.name === node
-  ) {
-    return false;
-  }
-  if (
-    (ts.isMethodDeclaration(parent) ||
-      ts.isGetAccessorDeclaration(parent) ||
-      ts.isSetAccessorDeclaration(parent) ||
-      ts.isPropertyDeclaration(parent) ||
-      ts.isMethodSignature(parent) ||
-      ts.isPropertySignature(parent) ||
-      ts.isEnumMember(parent)) &&
-    parent.name === node
-  ) {
+  if (bindsOwnName(parent, node)) {
     return false;
   }
   if (ts.isLabeledStatement(parent)) {
@@ -677,30 +680,32 @@ function containsNode(ancestor: ts.Node, descendant: ts.Node): boolean {
  * class shape, every block shape, and the declaration forms that scope their contents. Loop
  * statements are here for their headers — `for (const y of …)` scopes `y` to the loop, not
  * to any block under it. */
+const SCOPE_BOUNDARY_KINDS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.FunctionDeclaration,
+  ts.SyntaxKind.FunctionExpression,
+  ts.SyntaxKind.ArrowFunction,
+  ts.SyntaxKind.MethodDeclaration,
+  ts.SyntaxKind.Constructor,
+  ts.SyntaxKind.GetAccessor,
+  ts.SyntaxKind.SetAccessor,
+  ts.SyntaxKind.ClassDeclaration,
+  ts.SyntaxKind.ClassExpression,
+  ts.SyntaxKind.EnumDeclaration,
+  ts.SyntaxKind.ModuleDeclaration,
+  ts.SyntaxKind.Block,
+  ts.SyntaxKind.CaseBlock,
+  ts.SyntaxKind.ModuleBlock,
+  ts.SyntaxKind.CatchClause,
+  ts.SyntaxKind.ForStatement,
+  ts.SyntaxKind.ForInStatement,
+  ts.SyntaxKind.ForOfStatement,
+  ts.SyntaxKind.WhileStatement,
+  ts.SyntaxKind.DoStatement,
+  ts.SyntaxKind.SwitchStatement,
+]);
+
 function isScopeBoundary(node: ts.Node): boolean {
-  return (
-    ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isConstructorDeclaration(node) ||
-    ts.isGetAccessorDeclaration(node) ||
-    ts.isSetAccessorDeclaration(node) ||
-    ts.isClassDeclaration(node) ||
-    ts.isClassExpression(node) ||
-    ts.isEnumDeclaration(node) ||
-    ts.isModuleDeclaration(node) ||
-    ts.isBlock(node) ||
-    ts.isCaseBlock(node) ||
-    ts.isModuleBlock(node) ||
-    ts.isCatchClause(node) ||
-    ts.isForStatement(node) ||
-    ts.isForInStatement(node) ||
-    ts.isForOfStatement(node) ||
-    ts.isWhileStatement(node) ||
-    ts.isDoStatement(node) ||
-    ts.isSwitchStatement(node)
-  );
+  return SCOPE_BOUNDARY_KINDS.has(node.kind);
 }
 
 /** What a named generic resolves to where it is READ as a value: `console.log(box)`,

@@ -54,6 +54,29 @@ static jsrt_value substr(const JSString *s, uint32_t from, uint32_t to) {
   return box_str(out);
 }
 
+/* Absolute code-unit index from `i`, or -1 out of range. charAt / charCodeAt / codePointAt share
+ * the ToIntegerOrInfinity-or-zero position rule and the same open range. */
+static int64_t char_index(const JSString *str, jsrt_value i) {
+  const double pos = jsrt_int_or_inf(i, 0.0);
+  if (pos < 0.0 || pos >= (double)str->length) {
+    return -1;
+  }
+  return (int64_t)pos;
+}
+
+/* Relative code-unit index (`at`), or -1 out of range: a negative position counts back from the
+ * length, then the same open range as `char_index`. */
+static int64_t relative_char_index(const JSString *str, jsrt_value i) {
+  double pos = jsrt_int_or_inf(i, 0.0);
+  if (pos < 0.0) {
+    pos += (double)str->length;
+  }
+  if (pos < 0.0 || pos >= (double)str->length) {
+    return -1;
+  }
+  return (int64_t)pos;
+}
+
 static bool match_at(const JSString *hay, const JSString *needle, uint32_t at) {
   return needle->length == 0 ||
          memcmp(hay->data + at, needle->data, (size_t)needle->length * sizeof(uint16_t)) == 0;
@@ -73,38 +96,60 @@ static int64_t index_of_from(const JSString *hay, const JSString *needle, uint32
   return -1;
 }
 
+/* Optional start through the clamp index rule, then StringIndexOf from there. */
+static int64_t search_from(jsrt_value s, jsrt_value search, jsrt_value from) {
+  const JSString *hay = str_of(s);
+  const uint32_t start = jsrt_clamp_index(jsrt_int_or_inf(from, 0.0), hay->length);
+  return index_of_from(hay, str_of(search), start);
+}
+
+/* Two optional endpoints, then `substr`. `relative` picks slice's relative indices over
+ * substring's clamped ones; `swap` is substring's backwards-pair rule. */
+static jsrt_value substr_range(const JSString *str, jsrt_value a, jsrt_value b, bool relative,
+                               bool swap) {
+  const double from_pos = jsrt_int_or_inf(a, 0.0);
+  const double to_pos = jsrt_int_or_inf(b, (double)str->length);
+  uint32_t from =
+      relative ? jsrt_relative_index(from_pos, str->length) : jsrt_clamp_index(from_pos, str->length);
+  uint32_t to =
+      relative ? jsrt_relative_index(to_pos, str->length) : jsrt_clamp_index(to_pos, str->length);
+  if (swap && from > to) {
+    const uint32_t t = from;
+    from = to;
+    to = t;
+  }
+  return substr(str, from, to);
+}
+
 jsrt_value jsrt_string_char_at(jsrt_value s, jsrt_value i) {
   const JSString *str = str_of(s);
-  double pos = jsrt_int_or_inf(i, 0.0);
-  if (pos < 0.0 || pos >= (double)str->length) {
+  const int64_t p = char_index(str, i);
+  if (p < 0) {
     return box_str(alloc_str(0));
   }
-  return substr(str, (uint32_t)pos, (uint32_t)pos + 1);
+  return substr(str, (uint32_t)p, (uint32_t)p + 1);
 }
 
 /* `at` is charAt with a RELATIVE index and an honest out-of-range answer: undefined, where
  * charAt answers the empty string (§22.1.3.1 vs §22.1.3.2). */
 jsrt_value jsrt_string_at(jsrt_value s, jsrt_value i) {
   const JSString *str = str_of(s);
-  double pos = jsrt_int_or_inf(i, 0.0);
-  if (pos < 0.0) {
-    pos += (double)str->length;
-  }
-  if (pos < 0.0 || pos >= (double)str->length) {
+  const int64_t p = relative_char_index(str, i);
+  if (p < 0) {
     return JSRT_UNDEFINED;
   }
-  return substr(str, (uint32_t)pos, (uint32_t)pos + 1);
+  return substr(str, (uint32_t)p, (uint32_t)p + 1);
 }
 
 /* Unlike charCodeAt this answers undefined out of range (not NaN), and combines a valid
  * surrogate pair into its code point (§22.1.3.4). */
 jsrt_value jsrt_string_code_point_at(jsrt_value s, jsrt_value i) {
   const JSString *str = str_of(s);
-  double pos = jsrt_int_or_inf(i, 0.0);
-  if (pos < 0.0 || pos >= (double)str->length) {
+  const int64_t at = char_index(str, i);
+  if (at < 0) {
     return JSRT_UNDEFINED;
   }
-  const uint32_t p = (uint32_t)pos;
+  const uint32_t p = (uint32_t)at;
   const uint16_t lead = str->data[p];
   if (lead >= 0xd800 && lead <= 0xdbff && p + 1 < str->length) {
     const uint16_t trail = str->data[p + 1];
@@ -123,17 +168,15 @@ jsrt_value jsrt_string_value_of(jsrt_value s) { return s; }
 
 jsrt_value jsrt_string_char_code_at(jsrt_value s, jsrt_value i) {
   const JSString *str = str_of(s);
-  double pos = jsrt_int_or_inf(i, 0.0);
-  if (pos < 0.0 || pos >= (double)str->length) {
+  const int64_t p = char_index(str, i);
+  if (p < 0) {
     return jsrt_number(NAN);
   }
-  return jsrt_number((double)str->data[(uint32_t)pos]);
+  return jsrt_number((double)str->data[(uint32_t)p]);
 }
 
 jsrt_value jsrt_string_index_of(jsrt_value s, jsrt_value search, jsrt_value from) {
-  const JSString *hay = str_of(s);
-  uint32_t start = jsrt_clamp_index(jsrt_int_or_inf(from, 0.0), hay->length);
-  return jsrt_number((double)index_of_from(hay, str_of(search), start));
+  return jsrt_number((double)search_from(s, search, from));
 }
 
 jsrt_value jsrt_string_last_index_of(jsrt_value s, jsrt_value search, jsrt_value from) {
@@ -163,9 +206,7 @@ jsrt_value jsrt_string_last_index_of(jsrt_value s, jsrt_value search, jsrt_value
 }
 
 jsrt_value jsrt_string_includes(jsrt_value s, jsrt_value search, jsrt_value from) {
-  const JSString *hay = str_of(s);
-  uint32_t start = jsrt_clamp_index(jsrt_int_or_inf(from, 0.0), hay->length);
-  return jsrt_bool(index_of_from(hay, str_of(search), start) >= 0);
+  return jsrt_bool(search_from(s, search, from) >= 0);
 }
 
 jsrt_value jsrt_string_starts_with(jsrt_value s, jsrt_value search, jsrt_value from) {
@@ -183,24 +224,13 @@ jsrt_value jsrt_string_ends_with(jsrt_value s, jsrt_value search, jsrt_value end
 }
 
 jsrt_value jsrt_string_slice(jsrt_value s, jsrt_value a, jsrt_value b) {
-  const JSString *str = str_of(s);
-  uint32_t from = jsrt_relative_index(jsrt_int_or_inf(a, 0.0), str->length);
-  uint32_t to = jsrt_relative_index(jsrt_int_or_inf(b, (double)str->length), str->length);
-  return substr(str, from, to);
+  return substr_range(str_of(s), a, b, true, false);
 }
 
 jsrt_value jsrt_string_substring(jsrt_value s, jsrt_value a, jsrt_value b) {
-  const JSString *str = str_of(s);
-  uint32_t from = jsrt_clamp_index(jsrt_int_or_inf(a, 0.0), str->length);
-  uint32_t to = jsrt_clamp_index(jsrt_int_or_inf(b, (double)str->length), str->length);
   /* substring SWAPS a backwards pair where slice answers empty -- the one behavioural
    * difference between the two. */
-  if (from > to) {
-    uint32_t t = from;
-    from = to;
-    to = t;
-  }
-  return substr(str, from, to);
+  return substr_range(str_of(s), a, b, false, true);
 }
 
 /* The spec's TrimString whitespace: WhiteSpace (§12.2) plus LineTerminator (§12.3). The Unicode

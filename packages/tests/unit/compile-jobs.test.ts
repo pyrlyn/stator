@@ -127,6 +127,38 @@ describe('partitionTranslationUnit', () => {
   it('refuses to split a program with fewer than two functions', () => {
     assert.throws(() => partitionTranslationUnit(program(1, 2), 4), /nothing to split/);
   });
+
+  // `_jsrt_module_done` is defined and then used, with no preamble prototype. Bucketing
+  // reorders by size, so the call can precede the definition or land in another unit.
+  it('publishes a prototype for a function the emitter does not forward-declare', () => {
+    const c = `static void _jsrt_module_done(void *state, jsrt_value value, bool rejected) {
+  (void)state;
+  (void)value;
+  if (rejected) {
+    return;
+  }
+}
+
+int main(int argc, char **argv) {
+  jsrt_promise_subscribe(JSRT_LOCAL(0), _jsrt_module_done, NULL);
+  return 0;
+}
+`;
+    const parts = partitionTranslationUnit(c, 2);
+    assert.match(
+      parts.header,
+      /^void _jsrt_module_done\(void \*state, jsrt_value value, bool rejected\);$/m,
+    );
+    assert.match(parts.header, /^int main\(int argc, char \*\*argv\);$/m);
+    assert.equal(parts.header.includes('if (rejected)'), false);
+    assert.equal(parts.header.includes('static '), false);
+    const defining = parts.units.find((unit) => unit.source.includes('_jsrt_module_done('));
+    assert.ok(defining);
+    assert.match(
+      defining.source,
+      /^void _jsrt_module_done\(void \*state, jsrt_value value, bool rejected\) \{$/m,
+    );
+  });
 });
 
 /* T10.3 step 5: the CI smoke that makes a race in the parallel clang path fail the build. The

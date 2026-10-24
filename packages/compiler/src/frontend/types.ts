@@ -2006,20 +2006,23 @@ function isAnyKeyword(typeNode: ts.TypeNode): boolean {
   return ts.isToken(typeNode) && typeNode.kind === ts.SyntaxKind.AnyKeyword;
 }
 
+/** Nodes that can carry a type annotation on their own `type` slot. */
+const ANNOTATION_SITE_KINDS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.VariableDeclaration,
+  ts.SyntaxKind.Parameter,
+  ts.SyntaxKind.PropertyDeclaration,
+  ts.SyntaxKind.PropertySignature,
+  ts.SyntaxKind.FunctionDeclaration,
+  ts.SyntaxKind.MethodDeclaration,
+  ts.SyntaxKind.ArrowFunction,
+  ts.SyntaxKind.FunctionExpression,
+]);
+
 /** `null` = this node is not a place an annotation can go. `undefined` = it is, and there is none.
  * Otherwise the annotation itself. The three-way answer is what lets the caller tell "annotated
  * with something else" apart from "nothing to annotate". */
 function annotationSiteOf(node: ts.Node): ts.TypeNode | null | undefined {
-  if (
-    ts.isVariableDeclaration(node) ||
-    ts.isParameter(node) ||
-    ts.isPropertyDeclaration(node) ||
-    ts.isPropertySignature(node) ||
-    ts.isFunctionDeclaration(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isFunctionExpression(node)
-  ) {
+  if (ANNOTATION_SITE_KINDS.has(node.kind)) {
     // A `for-of` binding cannot carry an annotation (`for (const x: T of ...)` is a grammar
     // error), so it can never be *implicit* any in the sense this question asks: when iteration
     // itself is refused (TS2488/TS2571, plan.md §8 step 2a(c)) the checker types the binding `any`
@@ -2034,7 +2037,7 @@ function annotationSiteOf(node: ts.Node): ts.TypeNode | null | undefined {
     ) {
       return null;
     }
-    return node.type;
+    return (node as { readonly type?: ts.TypeNode }).type;
   }
   return null;
 }
