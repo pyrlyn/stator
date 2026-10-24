@@ -14022,3 +14022,30 @@ Node wrapper modules plus 13 Node goldens. No diagnostic allowance was increased
 and ASan/UBSan; all six native concurrency tests passed under sanitizers, including forced
 collection across four workers. Leak probes plateaued at 4384/4480/4432 KB (65536 KB cap).
 T10.2's card and full command evidence moved to done.md; normative Design B stays in plan.md.
+
+## 389. Reusable filesystem workers (2026-10-25)
+
+The creator requests the pool deferred by T10.2. Reuse `jsrt_thread.zig`'s pthread workers,
+active-job roots, completion queue and main Promise settlement; the shared-package search found
+no Stator GC-aware executor to reuse. A separate third-party pool would
+still need these lifecycle/GC hooks and adds no useful primitive over libc pthreads. Extend
+the private spawn ABI with a pooled flag, preserving the public dedicated-thread API. The
+filesystem wrappers remain TypeScript and submit to a lazy pool capped at four OS threads.
+Pending jobs queue without blocking main; the worker count is bounded, not queue length.
+Each completed job runs the existing std cleanup and clears transient roots before waiting.
+Main stops/joins workers only once both ordinary microtasks and external work are drained;
+a later drain may start a fresh pool. Tests must measure actual reuse and bounded creation.
+
+The direct filesystem submission helper removes the intermediate `Thread<T>` wrapper with
+its unknown handle field. `explain` now reports static for the six sync/descriptor/Promise
+filesystem fixtures in both modes (exactly those six mismatched the old dynamic expectations).
+The private boxed ABI remains in use; this corrects the earlier explanation in note 388 that
+its mere presence makes a graph dynamic. Update those verdicts and the fs selfhost baseline;
+no compiler diagnostic allowance increases.
+
+**Check completed 2026-10-25:** `mise exec node zig just -- pnpm run ci` exited 0: 809 unit
+tests, subset 968 passed / 31 expected-fail / 0 failed, 483/483 goldens both plain and under
+ASan/UBSan, seven sanitized concurrency fixtures, all selfhost/coverage/leak gates. The pool
+probe proves 32 sequential writes create one worker and 96 reads stay within four workers;
+error recovery, forced GC, reuse across waves and shutdown/restart all passed. T10.2a's card
+and full command evidence moved to done.md.

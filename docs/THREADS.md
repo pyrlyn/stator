@@ -88,8 +88,15 @@ reading layouts. It is not a public callback ABI.
 ## Filesystem offload
 
 The six `std/fs` Promise twins run the corresponding sync function in a worker and await its
-join. This first implementation uses one OS thread per job; it does not implement a worker pool.
-The runtime drains outstanding jobs before exit. Callers should bound concurrent submissions.
+join. They share a lazy pool with at most four OS workers. Sequential operations reuse one
+worker; overlapping work may grow the pool up to that limit. Excess jobs queue FIFO without
+blocking main. Queue length is not capped, so callers should still bound large submissions.
+Each job gets its own result/exception and runs std cleanup on both success and failure; idle
+workers retain no transient allocation roots from the completed job. Promise continuations
+reuse the same pool. Once the main drain has no microtasks, completions or active jobs left,
+it stops and joins the idle workers. A later drain may create a fresh pool. Outstanding jobs
+finish before program exit, even if their Promises were not awaited. Public `spawn` continues
+to create a dedicated OS thread; its lifetime is independent of the filesystem pool.
 
 ## Verification
 

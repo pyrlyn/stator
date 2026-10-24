@@ -1,6 +1,10 @@
 // Private boxed runtime ABI (docs/THREADS.md); never a user FFI extension.
 /** @statorExtern jsrt_thread_spawn */
-export declare function threadSpawn(work: () => unknown, cleanup: () => void): unknown;
+export declare function threadSpawn(
+  work: () => unknown,
+  cleanup: () => void,
+  pooled: boolean,
+): unknown;
 /** @statorExtern jsrt_thread_join */
 export declare function threadJoin(handle: unknown): unknown;
 /** @statorExtern jsrt_thread_run_on_main */

@@ -1,5 +1,5 @@
 import { threadSpawn, threadJoin, threadRunOnMain } from './native/concurrency.js';
-import { jsrtStdThreadCleanup } from './native/core.js';
+import { cleanup } from './internal/thread.ts';
 import { cpuCount } from './os.ts';
 
 /** An OS thread; its result and exception are delivered on the main microtask queue. */
@@ -7,7 +7,7 @@ export class Thread<T> {
   private handle: unknown;
 
   constructor(work: () => T) {
-    this.handle = threadSpawn(work, cleanup);
+    this.handle = threadSpawn(work, cleanup, false);
   }
 
   join(): Promise<T> {
@@ -30,8 +30,4 @@ export function availableParallelism(): number {
 /** Posts a synchronous callback; only main may touch Promise reactions. */
 export function runOnMain(work: () => void): void {
   threadRunOnMain(work);
-}
-
-function cleanup(): void {
-  jsrtStdThreadCleanup();
 }

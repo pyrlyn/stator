@@ -1,5 +1,5 @@
 // @mode: js
-// @verdict: dynamic
+// @verdict: static
 import { writeTextAsync } from "std/fs";
 
 async function main() {

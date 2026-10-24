@@ -1763,6 +1763,7 @@ jsrt_value jsrt_promise_construct(jsrt_value executor); /* new Promise(executor)
 /* Internal std/thread bridge; main alone owns Promise state. */
 bool jsrt_thread_poll(void);
 bool jsrt_thread_is_worker(void);
+double jsrt_thread_pool_started(void); /* internal lifecycle probe, main-only */
 void jsrt_thread_require_main(void);
 void jsrt_gc_safepoint(void);
 void jsrt_gc_collect(void);
