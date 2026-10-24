@@ -47,6 +47,10 @@ typescript API (parse + type-check, in-process; the vendor module joins as __sta
   → native binary
 ```
 
+`STATOR_COMPILE_JOBS` (docs/TOOLCHAIN.md) can compile that C as several units. The emitter
+still writes one C string; the split happens after emit, and `1` keeps the single clang
+invocation.
+
 Package layout:
 
 - `packages/compiler` (`statorc`) — CLI, frontend, HIR, passes, C emitter

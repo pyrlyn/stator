@@ -980,12 +980,7 @@ function lowerStatement(
     // that one exists, so this skips unconditionally — a lone signature never reaches lowering.
     // (The class arms skip the same way; hoisting already bound the name to the implementation.)
     if (node.body === undefined) {
-      return {
-        kind: 'block',
-        type: H_UNDEFINED,
-        span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
-        statements: [],
-      };
+      return emptyBlockAt(node, sourceFile);
     }
     const lowered = lowerFunction(node, sourceFile, checker, bindings, diagnostics);
     if (lowered === null) {
@@ -1028,26 +1023,14 @@ function lowerStatement(
   if (ts.isEmptyStatement(node)) {
     // Empty statements are acceptable but we don't generate an HIR node for them
     // Instead, return a no-op block
-    const stmt: Block = {
-      kind: 'block',
-      type: H_UNDEFINED,
-      span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
-      statements: [],
-    };
-    return stmt;
+    return emptyBlockAt(node, sourceFile);
   }
 
   // A nested type-only declaration (block or function scope) erases the same way a top-level
   // one does -- the top-level loop skips those outright, but a nested one reaches this
   // function, so it lowers to the same nothing `;` does rather than an internal error.
   if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) {
-    const erased: Block = {
-      kind: 'block',
-      type: H_UNDEFINED,
-      span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
-      statements: [],
-    };
-    return erased;
+    return emptyBlockAt(node, sourceFile);
   }
 
   // Anything else is an internal error
@@ -2774,6 +2757,22 @@ function hirClassName(declaration: ts.ClassDeclaration | ts.ClassExpression): st
   return hirNameOf(declaration) ?? classDisplayName(declaration) ?? '';
 }
 
+/** The class a `C.name` receiver names — a declaration, a `const K = C` alias chain, or a bound
+ * class expression (docs/VALUE.md §4.26). `undefined` for anything else, including an unbound
+ * expression, which the gate refused before the lowering asked. */
+function classObjectOwner(
+  receiver: ts.Expression,
+  checker: ts.TypeChecker,
+): ts.ClassDeclaration | ts.ClassExpression | undefined {
+  if (!ts.isIdentifier(receiver)) {
+    return undefined;
+  }
+  return (
+    frontendTypes.aliasedClassDeclaration(receiver, checker) ??
+    frontendTypes.classExpressionTarget(receiver, checker)
+  );
+}
+
 /** The storage a `#private` USE resolves to: the mangled slot/property plus the class that
  * declares it.
  *
@@ -3198,13 +3197,7 @@ function memberAssignment(
 ): Statement | null | undefined {
   const span = makeSpan(at.getStart(sourceFile), at.getWidth(sourceFile), sourceFile);
 
-  const compound =
-    ts.isBinaryExpression(expr) && expr.operatorToken.kind !== ts.SyntaxKind.EqualsToken
-      ? COMPOUND_OPERATORS.get(expr.operatorToken.kind)
-      : undefined;
-  const logicalAssign = ts.isBinaryExpression(expr)
-    ? LOGICAL_ASSIGN_OPERATORS.get(expr.operatorToken.kind)
-    : undefined;
+  const { compound, logical: logicalAssign } = assignOperatorKinds(expr);
   const update = updateOperator(expr);
   const plain =
     ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.EqualsToken;
@@ -3671,13 +3664,7 @@ function lowerUpdateExpression(
   const update = updateOperator(node);
   const plain =
     ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken;
-  const compound =
-    ts.isBinaryExpression(node) && node.operatorToken.kind !== ts.SyntaxKind.EqualsToken
-      ? COMPOUND_OPERATORS.get(node.operatorToken.kind)
-      : undefined;
-  const logical = ts.isBinaryExpression(node)
-    ? LOGICAL_ASSIGN_OPERATORS.get(node.operatorToken.kind)
-    : undefined;
+  const { compound, logical } = assignOperatorKinds(node);
   if (update === undefined && compound === undefined && logical === undefined && !plain) {
     return undefined;
   }
@@ -4439,29 +4426,20 @@ function lowerClassMethodCall(
     const privateOwner = mangleClassName(callPriv.owner, obj, checker, bindings);
     const privateSlot = target.type.methods.findIndex((m) => m.name === callPriv.property);
     if (privateOwner === null || privateSlot < 0) {
-      diagnostics.push(
-        lowerDiagnostic(
-          at,
-          sourceFile,
-          'STA4067',
-          'internal',
-          `method '${callPriv.property}' has no slot in the layout of ${hTypeName(target.type)}`,
-        ),
-      );
-      return null;
+      return missingMethodSlot(at, sourceFile, diagnostics, callPriv.property, target);
     }
-    const call: MethodCall = {
-      kind: 'method-call',
-      type: typeAt(node, checker, bindings),
-      span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
+    return methodCallAtSlot(
+      node,
+      sourceFile,
+      checker,
+      bindings,
       target,
-      className: privateOwner,
-      method: callPriv.property,
-      slot: privateSlot,
-      dispatch: 'direct',
-      args: checkCallArgs(target.type.methods[privateSlot]?.type, args, node, sourceFile, checker),
-    };
-    return call;
+      privateOwner,
+      callPriv.property,
+      privateSlot,
+      'direct',
+      args,
+    );
   }
   const owner = declaringClassName(obj, propName, checker, bindings, sourceFile);
   if (owner !== null) {
@@ -4470,32 +4448,22 @@ function lowerClassMethodCall(
     // with its base's, in the base's order.
     const slot = target.type.methods.findIndex((m) => m.name === propName);
     if (slot < 0) {
-      diagnostics.push(
-        lowerDiagnostic(
-          at,
-          sourceFile,
-          'STA4067',
-          'internal',
-          `method '${propName}' has no slot in the layout of ${hTypeName(target.type)}`,
-        ),
-      );
-      return null;
+      return missingMethodSlot(at, sourceFile, diagnostics, propName, target);
     }
-    const call: MethodCall = {
-      kind: 'method-call',
-      type: typeAt(node, checker, bindings),
-      span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
+    // Skipping the override is what `super` MEANS, so this one call stays direct even where
+    // every other call to the same method is virtual.
+    return methodCallAtSlot(
+      node,
+      sourceFile,
+      checker,
+      bindings,
       target,
-      className: owner,
-      method: propName,
+      owner,
+      propName,
       slot,
-      // Skipping the override is what `super` MEANS, so this one call stays direct even where
-      // every other call to the same method is virtual.
-      dispatch:
-        !viaSuper && isOverridden(target.type.name, propName, checker) ? 'virtual' : 'direct',
-      args: checkCallArgs(target.type.methods[slot]?.type, args, node, sourceFile, checker),
-    };
-    return call;
+      !viaSuper && isOverridden(target.type.name, propName, checker) ? 'virtual' : 'direct',
+      args,
+    );
   }
   // A name the class does not declare at all is js mode's suppressed TS2339, not a method
   // the table lost: `c.missing()` answers Node's catchable `TypeError` (plan.md §8 step
@@ -5070,6 +5038,23 @@ function lowerExpression(
   if (numberValue !== undefined) {
     const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
     return { kind: 'number-literal', type: H_NUMBER, span, value: numberValue };
+  }
+
+  // `C.name` / `K.name` on a class NAME or alias folds to Node's display name (docs/VALUE.md
+  // §4.26, T27 narrow slice): the declared name, a class expression's inner name, else the bound
+  // variable, and `default` for the anonymous default export. No class object is built. The gate
+  // admitted exactly this spelling; `C.prototype` and the rest of the surface stay refused there.
+  if (ts.isPropertyAccessExpression(node) && node.name.text === 'name') {
+    const owner = classObjectOwner(node.expression, checker);
+    const display = owner === undefined ? undefined : classDisplayName(owner);
+    if (display !== undefined) {
+      return {
+        kind: 'string-literal',
+        type: H_STRING,
+        span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
+        value: display === DEFAULT_EXPORT_BINDING ? 'default' : display,
+      };
+    }
   }
 
   // `c?.m` on a nullable single-class receiver: the static twin of the dynamic read below.
@@ -8636,9 +8621,7 @@ function declaringClassName(
   if (bindings !== undefined && sourceFile !== undefined) {
     const substituted = typeAt(receiver, checker, bindings);
     if (substituted.kind === 'object' && substituted.methods.some((m) => m.name === method)) {
-      const namesake = classesIn(sourceFile).find(
-        (candidate) => candidate.name?.text === substituted.name && isGenericClass(candidate),
-      );
+      const namesake = genericNamesakeOf(substituted.name, sourceFile);
       if (namesake !== undefined) {
         return mangleClassName(namesake, receiver, checker, bindings);
       }
@@ -9031,11 +9014,7 @@ function accessorOwner(
   bindings?: Scope,
   sourceFile?: ts.SourceFile,
 ): string | undefined {
-  const receiverType = checker.getTypeAtLocation(receiver);
-  const declaration =
-    receiverClassLike(receiverType) ?? constraintDeclaration(receiverType, checker);
-  const found =
-    declaration === undefined ? undefined : accessorDeclaringClass(declaration, property, checker);
+  const found = declaringClassOfProperty(receiver, property, checker);
   if (found?.owner !== undefined && classDisplayName(found.owner) !== undefined) {
     return mangleClassName(found.owner, receiver, checker, bindings) ?? undefined;
   }
@@ -9049,9 +9028,7 @@ function accessorOwner(
         (m) => m.name === accessorName('get', property) || m.name === accessorName('set', property),
       );
     if (isAccessor) {
-      const namesake = classesIn(sourceFile).find(
-        (candidate) => candidate.name?.text === substituted.name && isGenericClass(candidate),
-      );
+      const namesake = genericNamesakeOf(substituted.name, sourceFile);
       if (namesake !== undefined) {
         return mangleClassName(namesake, receiver, checker, bindings) ?? undefined;
       }
@@ -9071,11 +9048,7 @@ function hasAccessorHalf(
   bindings?: Scope,
   sourceFile?: ts.SourceFile,
 ): boolean {
-  const receiverType = checker.getTypeAtLocation(receiver);
-  const declaration =
-    receiverClassLike(receiverType) ?? constraintDeclaration(receiverType, checker);
-  const found =
-    declaration === undefined ? undefined : accessorDeclaringClass(declaration, property, checker);
+  const found = declaringClassOfProperty(receiver, property, checker);
   if (found !== undefined) {
     return found[half];
   }
@@ -10224,6 +10197,117 @@ function makeSpan(start: number, width: number, sourceFile: ts.SourceFile): Span
   };
 }
 
+/** The no-op block an empty statement, a type-only declaration, or a bodiless overload
+ * signature lowers to. */
+function emptyBlockAt(at: ts.Node, sourceFile: ts.SourceFile): Block {
+  return {
+    kind: 'block',
+    type: H_UNDEFINED,
+    span: makeSpan(at.getStart(sourceFile), at.getWidth(sourceFile), sourceFile),
+    statements: [],
+  };
+}
+
+/** Compound and logical assignment operators on an expression, if any. Shared by the two
+ * assignment paths that must recognize the same operator set. */
+function assignOperatorKinds(expr: ts.Expression): {
+  compound: BinaryOperator | undefined;
+  logical: LogicalOp['operator'] | undefined;
+} {
+  const compound =
+    ts.isBinaryExpression(expr) && expr.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+      ? COMPOUND_OPERATORS.get(expr.operatorToken.kind)
+      : undefined;
+  const logical = ts.isBinaryExpression(expr)
+    ? LOGICAL_ASSIGN_OPERATORS.get(expr.operatorToken.kind)
+    : undefined;
+  return { compound, logical };
+}
+
+/** Type arguments with the enclosing specialization's substitution applied. Every
+ * `request*` collector maps through the same substitution before enqueueing. */
+function substitutedTypeArguments(
+  typeArguments: readonly HType[],
+  substitution: ReadonlyMap<string, HType>,
+): HType[] {
+  return typeArguments.map((t) => substituteHType(t, (name) => substitution.get(name)));
+}
+
+/** The generic class whose name matches a substituted object shape, if any. Shared by the
+ * method-call and accessor nameake rules. */
+function genericNamesakeOf(
+  shapeName: string,
+  sourceFile: ts.SourceFile,
+): ts.ClassDeclaration | ts.ClassExpression | undefined {
+  return classesIn(sourceFile).find(
+    (candidate) => candidate.name?.text === shapeName && isGenericClass(candidate),
+  );
+}
+
+/** The class declaration that owns `property` as an accessor on this receiver, or `undefined`.
+ * Shared by `accessorOwner` and `hasAccessorHalf`. */
+function declaringClassOfProperty(
+  receiver: ts.Expression,
+  property: string,
+  checker: ts.TypeChecker,
+): { owner: ts.ClassDeclaration | ts.ClassExpression; get: boolean; set: boolean } | undefined {
+  const receiverType = checker.getTypeAtLocation(receiver);
+  const declaration =
+    receiverClassLike(receiverType) ?? constraintDeclaration(receiverType, checker);
+  return declaration === undefined
+    ? undefined
+    : accessorDeclaringClass(declaration, property, checker);
+}
+
+/** The `method-call` node both the private-field and named-method paths build after resolving
+ * a slot. One constructor so span, type and argument checking cannot drift. */
+function methodCallAtSlot(
+  node: ts.CallExpression,
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  bindings: Scope,
+  target: Expression,
+  className: string,
+  method: string,
+  slot: number,
+  dispatch: 'direct' | 'virtual',
+  args: Expression[],
+): MethodCall {
+  const methods = target.type.kind === 'object' ? target.type.methods : [];
+  return {
+    kind: 'method-call',
+    type: typeAt(node, checker, bindings),
+    span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
+    target,
+    className,
+    method,
+    slot,
+    dispatch,
+    args: checkCallArgs(methods[slot]?.type, args, node, sourceFile, checker),
+  };
+}
+
+/** The STA4067 a resolved class name with no slot in the receiver layout produces. Always
+ * answers `null` so a call site can `return missingMethodSlot(...)`. */
+function missingMethodSlot(
+  at: ts.Node,
+  sourceFile: ts.SourceFile,
+  diagnostics: Diagnostic[],
+  method: string,
+  target: Expression,
+): null {
+  diagnostics.push(
+    lowerDiagnostic(
+      at,
+      sourceFile,
+      'STA4067',
+      'internal',
+      `method '${method}' has no slot in the layout of ${hTypeName(target.type)}`,
+    ),
+  );
+  return null;
+}
+
 /** One function to emit: a generic declaration — or a generic arrow or function expression
  * under its variable's name — plus the tuple it is being built for.
  *
@@ -10382,9 +10466,7 @@ function collectSpecializations(
     if (instantiation.kind !== 'generic') {
       return;
     }
-    const typeArguments = instantiation.typeArguments.map((t) =>
-      substituteHType(t, (name) => substitution.get(name)),
-    );
+    const typeArguments = substitutedTypeArguments(instantiation.typeArguments, substitution);
     enqueueSpecialization(
       call,
       'call',
@@ -10406,9 +10488,7 @@ function collectSpecializations(
     if (instantiation.kind !== 'generic') {
       return;
     }
-    const typeArguments = instantiation.typeArguments.map((t) =>
-      substituteHType(t, (name) => substitution.get(name)),
-    );
+    const typeArguments = substitutedTypeArguments(instantiation.typeArguments, substitution);
     enqueueSpecialization(
       created,
       'construction',
@@ -10432,9 +10512,7 @@ function collectSpecializations(
     if (instantiation === undefined) {
       return;
     }
-    const typeArguments = instantiation.typeArguments.map((t) =>
-      substituteHType(t, (name) => substitution.get(name)),
-    );
+    const typeArguments = substitutedTypeArguments(instantiation.typeArguments, substitution);
     enqueueSpecialization(
       argument,
       'argument',
@@ -10467,9 +10545,7 @@ function collectSpecializations(
     if (value === undefined) {
       return;
     }
-    const typeArguments = value.typeArguments.map((t) =>
-      substituteHType(t, (name) => substitution.get(name)),
-    );
+    const typeArguments = substitutedTypeArguments(value.typeArguments, substitution);
     enqueueSpecialization(
       argument,
       'value',

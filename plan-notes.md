@@ -13652,3 +13652,150 @@ Linux x64 (image digest
 `sha256:4db36457f406501e6f608802e5da617e5fbd0e80b75901b6a09de1ae5a667d32`)
 produces an identical document (`diff -u` exits 0), and its read-only `--check`
 reports `node-coverage: docs/NODE.md is current`. Strict typecheck and lint pass.
+
+## 381. Tooling-left batch: clone baseline tranche, T10.3 step-5 CI smoke, Task 6.3 noise-floor notes (2026-10-24)
+
+**Plan:** §9 Tasks 6.16, 6.3 noise floor + Phase-6 Check fuzzing clause; §11b T10.3 step 5.
+Branch `j1-tooling-left`. Host for every measurement below is **darwin-arm64, Apple M3 Max,
+Node v26.7.0** — not the weekly job's ubuntu-24.04 runner.
+
+### J2 — T10.3 step 5: `STATOR_COMPILE_JOBS=2` CI smoke
+
+`ci.yml` gains one non-required job, **`compile jobs smoke`** (`compile-jobs-smoke`). It builds
+the runtime archive, then with `STATOR_COMPILE_JOBS=2` (1) builds and runs the multi-module
+golden fixture `packages/tests/golden/ts/modules` (`init c / init b / init a / 30 / base=20`)
+and (2) runs `packages/tests/unit/compile-jobs.test.ts`. The unit file also gained a
+`NATIVE_ONLY` smoke that itself spawns that build with `STATOR_COMPILE_JOBS=2`, so the
+parallel path is exercised by `pnpm run test` as well. Default CI stays serial for log
+readability. Required checks (`static analysis`, `frontend (linux/x64)`,
+`frontend (windows/x64)`, `frontend (windows/arm64)`, `pipeline / gate`) keep their names and
+steps. `jactionlint` clean. `docs/TOOLCHAIN.md` documents the smoke beside the
+`STATOR_COMPILE_JOBS` row.
+
+Local proof: `vitest run packages/tests/unit/compile-jobs.test.ts` — **16/16 green** (15 pure
++ the new smoke, 1.97 s for the build). Job-level CI green is observable after merge.
+
+### J1 — Task 6.16 second tranche: clone baseline toward zero
+
+Shared helpers at the responsible layer, no behavior change (unit **801** green; runtime rebuild
+clean):
+
+| Helper | File | Family it removes |
+| --- | --- | --- |
+| `emptyBlockAt` | `lower/index.ts` | empty-statement / type-alias / bodiless-overload empty block |
+| `assignOperatorKinds` | `lower/index.ts` | compound + logical assignment detection (2 sites) |
+| `substitutedTypeArguments` | `lower/index.ts` | type-args substitution before `enqueueSpecialization` (4 sites) |
+| `genericNamesakeOf` | `lower/index.ts` | generic-class namesake lookup (method call + accessor) |
+| `declaringClassOfProperty` | `lower/index.ts` | receiver class + accessor owner (`accessorOwner` / `hasAccessorHalf`) |
+| `methodCallAtSlot` + `missingMethodSlot` | `lower/index.ts` | private / named method-call construction after slot resolve |
+| `parameterDefaults` | `frontend/generics.ts` | type-parameter default list for `finishTuple` (2 sites) |
+| `isSingleConstList` | `frontend/generics.ts` | single-`const` declarator check (2 sites) |
+| `unifyNamedMembers` | `frontend/generics.ts` | fields/methods unify (2 sites) |
+| `collect_varargs` | `runtime/src/jsrt_array_ops.c` | va_list collect (push/unshift/concat/splice) |
+| `find_result` | `runtime/src/jsrt_array_ops.c` | find / findIndex / findLast / findLastIndex |
+| `array_search_forward` | `runtime/src/jsrt_array_ops.c` | indexOf / includes forward search |
+| `array_half_open_range` | `runtime/src/jsrt_array_ops.c` | slice / fill relative range |
+
+`.jscpd-baseline.json` **shrank 143 → 129 fingerprints** (`pnpm run dupes:baseline` in the same
+change). `pnpm run dupes` green at 129 clones / 2.0%. The Check wants the baseline empty; this is
+the second tranche, not the whole job. Remaining leaders: `lower/index.ts` (operator maps, dispatch
+chains, substitute-HType object walk), `jsrt_array_ops.c` switch cases, `gate.ts` / `generics.ts`
+`ts.is*` lists, `jsrt_string_ops.c`, `hir/verify.ts`, `jsrt_print.c`, `jsrt_date.c`.
+
+### J3 — Task 6.3 noise floor + Phase-6 Check fuzzing clause
+
+**Noise floor (no new bench run this batch).** plan-notes 374 already measured five repeats of one
+commit on darwin-arm64 (Apple M3 Max — **not** the weekly ubuntu-24.04 runner): stator geomeans
+25.784–29.497 ms, **14.4%** range spread; a sixth tripped the 20% gate at +53.9% on short-program
+jitter. The **20% gate is unchanged**. The Check still wants the spread measured on the machine
+that runs the weekly job; that measurement is not run here.
+
+**Fuzzing clause — cited.** `nightly.yml` runs `pnpm run differential -- --minutes=60`. Run
+**40072874719** (2026-10-24T07:07Z, schedule, `main`, completed success, 1h11m) logged
+`differential: seed=50 modes=ts,js` then `differential: 5177 cases — 0 divergences` after a full
+hour (07:08→08:08). That is the Phase-6 Check's *≥1 h nightly with zero unexplained divergences*
+clause, on the nightly run's own output.
+
+### Gates (J1+J2)
+
+`pnpm install --frozen-lockfile` · typecheck · lint · `pnpm run test` (801) · `pnpm run dupes`
+(129, baseline 143→129) · runtime rebuild · jactionlint (J2). Not run here: `pnpm run ci` in full.
+
+## 382. T27 narrow slice (class-object `C.name` + static reads) and T32 confirmed already landed (2026-10-24)
+
+**Plan:** T27 (plan.md T27–T34 card, §8 step 12(d)/(e) class-object residue) narrow slice, and
+T32 (abstract/virtual accessors) verification.
+
+**T32 — already landed, card was stale.** Abstract accessors (`abstract get`/`set` throw-stubs,
+plan-notes 275 model), pair-whole override dispatch (get-only/set-only/pair), and base-typed
+virtual accessor calls all landed with plan-notes 283 and the 12(d) slices (plan-notes 373).
+Evidence already in-tree: goldens `ts|js/abstract_accessor`, `ts/inherited_accessor`; subset rows
+`subset_abstract_accessor_*` (`static`) and `subset_accessor_override_*` (`static`/`dynamic`);
+SUBSET.md "Classes with getters/setters" row. No code change here. T32's Check is met by the
+existing tree.
+
+**T27 narrow slice — landed.** Docs first (`docs/VALUE.md` §4.26 class-object model: closure +
+`klass`, identity, statics table, v0 read surface; `docs/SUBSET.md` new "Class-object reads" row).
+Gate: `C.name` / `K.name` (class name, `const K = C` alias chain, bound class expression) is
+accepted in the `classConstructorTypeOf` arm and in the in-place helpers (`namesAClassInPlace`,
+`isClassAliasUseInPlace`) so the receiver identifier is not separately refused. Lowering folds the
+read to a string-literal of `classDisplayName` (`*default*` → `default`) — no class object is
+built. `C.static` / `K.static` is the existing alias erasure, unchanged. `C.prototype` /
+`K.prototype` keeps its named code ("the prototype surface", Phase 8). Fixtures:
+`subset_class_object_name_{ts,js}` (`static`), `subset_class_object_prototype_{ts,js}`
+(`not-yet STA1214`), goldens `ts|js/class_object_name`, `class_default_anon` both modes now also
+read `Anon.name`/`Named.name`. `gate.test.ts` pin updated (`C.name` now `[]`).
+
+**Not in this change (T27 remainder, recorded on the card).** Materializing a class object as a
+value (`f(C)`, `console.log(K)`, `typeof C`, `K.length`, `C === D` observability), static reads
+through a *materialized* class value (`ClassValue` + `JSRTClass.statics` population /
+`staticProps`), `this` in a static method (step 4 of the card), and `C.prototype` itself. HIR
+`ClassValue`/`NewValue`/`InstanceOfValue` and the runtime class-object entries remain declared and
+emitted but unreachable from the gate for those surfaces (plan-notes 283).
+
+**Gates.** typecheck clean · lint 0/0 + oxfmt clean · `pnpm run test` 801/801 ·
+`pnpm run test:subset` 973 fixtures — 942 passed, 31 expected-fail, 0 failed (was 969; +4 new).
+Not run here (disk/time): `pnpm run test:golden`, `pnpm run ci` in full.
+## 384. N1 batch: Task 6.16 clone tranche + Task 6.3 noise floor host note (2026-10-24)
+
+**Plan:** §9 Tasks 6.16 (clone baseline toward zero) and 6.3 step 7 (noise floor).
+Branch `n1-batch`. Host for every local measurement: **darwin-arm64, Apple M3 Max, Node v26.7.0**.
+
+### T30 — Task 6.16 third tranche: named families
+
+Shared helpers at the responsible layer, no behavior change (unit **801** green; runtime rebuild
+clean with `-Wall -Wextra -Werror`):
+
+| Helper | File | Family it removes |
+| --- | --- | --- |
+| `hasModifierKind` | `frontend/export.ts` | export/default modifier predicates |
+| `SELF_NAMED_KINDS` + `bindsOwnName` | `frontend/generics.ts` | declaration/member name-binding `ts.is*` lists |
+| `SCOPE_BOUNDARY_KINDS` | `frontend/generics.ts` | scope-boundary `ts.is*` list |
+| `ANNOTATION_SITE_KINDS` | `frontend/types.ts` | annotation-site `ts.is*` list |
+| `opProblem` + `verifyReceiverOpShape` | `hir/verify.ts` | string-op / array-op receiver+arity+result checks |
+| `verifyShapeCoverage` | `hir/verify.ts` | object-literal field/method cover loops |
+| `char_index` / `relative_char_index` / `search_from` / `substr_range` | `runtime/src/jsrt_string_ops.c` | charAt/at/charCodeAt/codePointAt, indexOf/includes, slice/substring |
+| `DATE_GETTER_FIELDS` X-macro | `runtime/src/jsrt_date.c` | sixteen `DATE_GETTER(...)` invocations |
+| `append_quoted_escape` | `runtime/src/jsrt_print.c` | quoted UTF-16 / UTF-8 escape tails |
+| `walk_present` + `visit_*` | `runtime/src/jsrt_array_ops.c` | for_each/map/filter/some/every/flatMap walk skeleton |
+
+`.jscpd-baseline.json` **shrank 129 → 117 fingerprints** (`pnpm run dupes:baseline` in the same
+change). `pnpm run dupes` green at 117 clones / 1.9%. Remaining leaders: `lower/index.ts`
+(operator maps, dispatch chains), `jsrt_array_ops.c` dispatch switch + enum, `gate.ts` SyntaxKind
+case lists, `jsrt_numeric.c`/`jsrt_print.c` scalar tails, `MATH_ARITY`/`COLLECTION_ARITY` tables.
+
+### T31 — Task 6.3 noise floor: weekly-job host unreachable
+
+The Check wants a handful of repeats of one commit **on the machine that runs the weekly job**.
+That job (`nightly.yml`, `0 3 * * 0`) runs on a **GitHub-hosted `ubuntu-24.04` runner** — an
+ephemeral VM with no SSH endpoint from this workstation. No measurement was taken there and **no
+numbers are invented**. The **20% gate stands unchanged**, on the existing local spreads
+(plan-notes 246: 7.4%; 374: 14.4% geomean on darwin-arm64). Closing this residue still requires
+either a self-hosted runner for the weekly bench or a workflow_dispatch that records five repeats
+on the runner itself and posts the spread.
+
+### Gates (T30+T31)
+
+`pnpm install --frozen-lockfile` · `pnpm --dir site install --frozen-lockfile` · typecheck ·
+lint · `pnpm run test` (**801** green) · `pnpm run dupes` (**117**, baseline **129 → 117**) ·
+runtime rebuild. Not run here: `pnpm run ci` in full.

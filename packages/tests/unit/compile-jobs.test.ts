@@ -1,7 +1,13 @@
 /* `STATOR_COMPILE_JOBS` (plan.md §11b T10.3): resolution, the split threshold, and the
- * partition. The parallel path itself is exercised by `build` on the T10.3 fixture; these
- * tests pin the pure pieces so a regression cannot silently change what gets split. */
+ * partition. The pure pieces are pinned so a regression cannot silently change what gets split;
+ * the last test builds the multi-module `modules` fixture under `STATOR_COMPILE_JOBS=2` so a
+ * shared-state race in the parallel clang path fails the unit gate (T10.3 step 5). */
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it } from 'vitest';
 import {
   PARALLEL_MIN_CHARS,
@@ -11,6 +17,7 @@ import {
   resolveCompileJobs,
   shouldSplitTranslationUnit,
 } from '../../compiler/src/cli/compile-jobs.ts';
+import { NATIVE_ONLY } from './helpers.ts';
 
 const PREAMBLE = ['#include <jsrt.h>', '', 'JSRT_GLOBALS(2);', '', 'static jsrt_value g;'].join(
   '\n',
@@ -120,4 +127,70 @@ describe('partitionTranslationUnit', () => {
   it('refuses to split a program with fewer than two functions', () => {
     assert.throws(() => partitionTranslationUnit(program(1, 2), 4), /nothing to split/);
   });
+
+  // `_jsrt_module_done` is defined and then used, with no preamble prototype. Bucketing
+  // reorders by size, so the call can precede the definition or land in another unit.
+  it('publishes a prototype for a function the emitter does not forward-declare', () => {
+    const c = `static void _jsrt_module_done(void *state, jsrt_value value, bool rejected) {
+  (void)state;
+  (void)value;
+  if (rejected) {
+    return;
+  }
+}
+
+int main(int argc, char **argv) {
+  jsrt_promise_subscribe(JSRT_LOCAL(0), _jsrt_module_done, NULL);
+  return 0;
+}
+`;
+    const parts = partitionTranslationUnit(c, 2);
+    assert.match(
+      parts.header,
+      /^void _jsrt_module_done\(void \*state, jsrt_value value, bool rejected\);$/m,
+    );
+    assert.match(parts.header, /^int main\(int argc, char \*\*argv\);$/m);
+    assert.equal(parts.header.includes('if (rejected)'), false);
+    assert.equal(parts.header.includes('static '), false);
+    const defining = parts.units.find((unit) => unit.source.includes('_jsrt_module_done('));
+    assert.ok(defining);
+    assert.match(
+      defining.source,
+      /^void _jsrt_module_done\(void \*state, jsrt_value value, bool rejected\) \{$/m,
+    );
+  });
+});
+
+/* T10.3 step 5: the CI smoke that makes a race in the parallel clang path fail the build. The
+ * fixture is the golden `ts/modules` graph (three modules, several top-level functions) — more
+ * than the two-function floor an explicit `STATOR_COMPILE_JOBS=2` needs to split. */
+describe('STATOR_COMPILE_JOBS=2 smoke', () => {
+  it(
+    'builds and runs the multi-module golden fixture',
+    { ...NATIVE_ONLY, timeout: 120_000 },
+    () => {
+      const here = dirname(fileURLToPath(import.meta.url));
+      const entry = join(here, '..', 'golden', 'ts', 'modules', 'main.ts');
+      assert.ok(existsSync(entry), `fixture missing: ${entry}`);
+      const cli = join(here, '..', '..', 'compiler', 'src', 'cli', 'main.ts');
+      const outDir = mkdtempSync(join(tmpdir(), 'stator-compile-jobs-'));
+      try {
+        const binary = join(outDir, 'modules');
+        const build = spawnSync(
+          process.execPath,
+          [cli, 'build', entry, '-o', binary, '--mode=ts'],
+          {
+            encoding: 'utf8',
+            env: { ...process.env, STATOR_COMPILE_JOBS: '2' },
+          },
+        );
+        assert.equal(build.status, 0, `build failed:\n${build.stdout}${build.stderr}`);
+        const run = spawnSync(binary, [], { encoding: 'utf8' });
+        assert.equal(run.status, 0, `run failed:\n${run.stdout}${run.stderr}`);
+        assert.equal(run.stdout, 'init c\ninit b\ninit a\n30\nbase=20\n');
+      } finally {
+        rmSync(outDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
