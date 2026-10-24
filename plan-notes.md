@@ -13756,3 +13756,49 @@ emitted but unreachable from the gate for those surfaces (plan-notes 283).
 **Gates.** typecheck clean · lint 0/0 + oxfmt clean · `pnpm run test` 801/801 ·
 `pnpm run test:subset` 973 fixtures — 942 passed, 31 expected-fail, 0 failed (was 969; +4 new).
 Not run here (disk/time): `pnpm run test:golden`, `pnpm run ci` in full.
+
+## 387. T27 `typeof C` fold + T30 clone tranche (2026-10-25)
+
+**Plan:** T27 remainder (plan.md T27–T34 card) narrow slice, and T30 (Task 6.16) third tranche.
+
+### T27 — `typeof C` / `typeof K` folds to `"function"`
+
+Docs first (`docs/VALUE.md` §4.26 read table; `docs/SUBSET.md` Class-object reads row).
+Gate: `namesAClassInPlace` and `isClassAliasUseInPlace` accept `typeof C` / `typeof K` / `typeof Expr`
+beside the `C.name` fold — no class object is built. Lowering: the generic-`typeof` fold and the
+new class fold share one `'function'` string-literal arm (`classObjectOwner`, now also resolving
+`innerClassExpression`). Fixtures `subset_class_typeof_{ts,js}` flip `not-yet` → `static`; goldens
+`ts|js/class_typeof` (declarations, aliases, chained aliases, class expressions, subclass,
+default export) byte-for-byte vs pinned Node. `C.prototype` stays `STA1214` (Phase 8). The opaque
+value surface (`f(C)`, `console.log(K)`) stays `STA1214` — materialization is the card remainder.
+
+**Gates (T27).** typecheck clean · lint 0/0 + oxfmt clean · `pnpm run test` 801/801 ·
+`pnpm run test:subset` 973 — 942 passed, 31 expected-fail, 0 failed (typeof rows now assert
+`static`; the expected-fail count is unchanged because those fixtures were never marker-fails) ·
+`node packages/tests/golden/run.ts --filter=class` **56/56** (includes `class_typeof` both modes).
+
+### T30 — clone baseline 129 → 125
+
+Shared structure at the responsible layer, no behavior change (unit **801** green; `rewrite.ts`
+cases merged, not re-wrapped):
+
+| Change | File | Family it removes |
+| --- | --- | --- |
+| merge `new`/`console-log` + `date-*`/`global-call`/… (args-only) case arms | `passes/rewrite.ts` | 3-way args-rewrite clone |
+| merge `new-value` + `array-op`/`method-call`/… + `promise-method` (target+args) | `passes/rewrite.ts` | 3-way target+args clone |
+| merge `method-value` into the `instanceof`/`field-access`/… (target-only) arm | `passes/rewrite.ts` | target-only twin |
+| `genericValueExempt` predicate | `frontend/gate.ts` | generic-as-value refusal trio |
+| `bindOneParameter` | `lower/index.ts` | function + `abstractMemberStub` parameter bind |
+
+`.jscpd-baseline.json` **shrank 129 → 125 fingerprints** (`pnpm run dupes:baseline` in the same
+change). `pnpm run dupes` green at 125 clones / 2.0%. The Check wants the baseline empty; this is
+the third tranche, not the whole job. Remaining leaders: `jsrt_array_ops.c` (method switch,
+forEach/some/every walks), `lower/index.ts` (Date/String/Array receiver-op prologues, operator
+maps), `gate.ts` SyntaxKind accept lists, `jsrt_string_ops.c`, `hir/verify.ts`, `jsrt_print.c`,
+`jsrt_date.c`. A `withTableReceiverCall` helper for the Date/String/Array prologue was drafted and
+dropped unused (lint) — it is the next obvious cut.
+
+**Gates (both).** `pnpm install --frozen-lockfile` · `pnpm --dir site install --frozen-lockfile`
+(lint type-checks `site/`) · typecheck · lint · `pnpm run test` (801) · `pnpm run test:subset` ·
+`pnpm run dupes` (125, baseline 129→125) · goldens `--filter=class` (56/56). Not run here:
+`pnpm run ci` in full, `pnpm run test:golden` beyond the class filter.
