@@ -1,8 +1,8 @@
 // @mode: js
-// @verdict: not-yet
-// @code: STA1214
+// @verdict: dynamic
 // SUBSET.md: Nested destructuring
-// Rest-in-pattern stays not-yet (H1 residue); the diagnostic names it precisely.
+// Rest-in-pattern lands in I1 (step 12a remainder). js mode is dynamic because an
+// untyped array's element type is Unknown and `slice` answers the same.
 
 const arr = [1, 2, 3];
 const [a, ...rest] = arr;

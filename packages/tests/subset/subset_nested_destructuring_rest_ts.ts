@@ -1,8 +1,7 @@
 // @mode: ts
-// @verdict: not-yet
-// @code: STA1214
+// @verdict: dynamic
 // SUBSET.md: Nested destructuring
-// Rest-in-pattern stays not-yet (H1 residue); the diagnostic names it precisely.
+// Rest-in-pattern lands in I1 (step 12a remainder): `...rest` binds `a.slice(i)`.
 
 const arr: number[] = [1, 2, 3];
 const [a, ...rest] = arr;

@@ -5,12 +5,12 @@
  * prints as `[ts]`/`[js]`, and it was hardcoded to `'ts'` at every call site. A js-mode build
  * that died in lowering therefore blamed `[ts]`.
  *
- * The pin below uses rest-in-pattern (`const [a, ...rest] = arr`): the declaration gate helper
+ * The pin below uses a rest PATTERN (`const { ...{ a } } = o`): the declaration gate helper
  * `isSimpleBindingPattern` rejects it in lowering with STA4032, a path no other open step
  * touches (step 39 owns spread, not patterns), and one that fires identically in both modes when
  * the gate is bypassed -- so the only thing under test is the label. The gate is bypassed
- * deliberately: these are labeling tests, not accepted input. (Nested patterns landed in H1;
- * rest-in-pattern remains the STA4032 vehicle.)
+ * deliberately: these are labeling tests, not accepted input. (Nested patterns, rest-in-pattern
+ * and default-in-pattern landed; a rest PATTERN is the remaining STA4032 vehicle.)
  */
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
@@ -18,8 +18,7 @@ import { test } from 'vitest';
 import { lowerSourceFile } from '../../compiler/src/lower/index.ts';
 import { createProgram } from './helpers.ts';
 
-const REST_PATTERN =
-  'const arr: number[] = [1, 2, 3];\nconst [a, ...rest] = arr;\n';
+const REST_PATTERN = 'const o: { a: number } = { a: 1 };\nconst { ...{ a } } = o;\n';
 
 function lowerModes(): { tsMode: string | undefined; jsMode: string | undefined } {
   let tsMode: string | undefined;

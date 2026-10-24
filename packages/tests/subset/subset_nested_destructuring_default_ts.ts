@@ -1,8 +1,8 @@
 // @mode: ts
-// @verdict: not-yet
-// @code: STA1214
+// @verdict: dynamic
 // SUBSET.md: Nested destructuring
-// Default-in-pattern stays not-yet (H1 residue); the diagnostic names it precisely.
+// Default-in-pattern lands in I1 (step 12a remainder): the default runs when the
+// read is `undefined`, like a parameter's.
 
 const o: { a?: number } = {};
 const { a = 1 } = o;
