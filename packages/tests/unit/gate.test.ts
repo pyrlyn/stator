@@ -447,8 +447,12 @@ test('statics are accepted; what has no class object to read is not', () => {
     ),
     ['STA1214'],
   );
-  // The rest of the class object -- `C.name`, `C.prototype` -- is a member no static declares.
-  assert.deepEqual(codesFor('class C {\n  static n = 1;\n}\nconsole.log(C.name);'), ['STA1214']);
+  // `C.name` folds to the display name (docs/VALUE.md §4.26); `C.prototype` is the named
+  // Phase-8 residue T27 leaves behind.
+  assert.deepEqual(codesFor('class C {\n  static n = 1;\n}\nconsole.log(C.name);'), []);
+  assert.deepEqual(codesFor('class C {\n  static n = 1;\n}\nconsole.log(C.prototype);'), [
+    'STA1214',
+  ]);
 });
 
 test('a class alias erases in place and stays not-yet as a value', () => {

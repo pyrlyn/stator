@@ -13787,6 +13787,41 @@ clause, on the nightly run's own output.
 `pnpm install --frozen-lockfile` · typecheck · lint · `pnpm run test` (801) · `pnpm run dupes`
 (129, baseline 143→129) · runtime rebuild · jactionlint (J2). Not run here: `pnpm run ci` in full.
 
+## 382. T27 narrow slice (class-object `C.name` + static reads) and T32 confirmed already landed (2026-10-24)
+
+**Plan:** T27 (plan.md T27–T34 card, §8 step 12(d)/(e) class-object residue) narrow slice, and
+T32 (abstract/virtual accessors) verification.
+
+**T32 — already landed, card was stale.** Abstract accessors (`abstract get`/`set` throw-stubs,
+plan-notes 275 model), pair-whole override dispatch (get-only/set-only/pair), and base-typed
+virtual accessor calls all landed with plan-notes 283 and the 12(d) slices (plan-notes 373).
+Evidence already in-tree: goldens `ts|js/abstract_accessor`, `ts/inherited_accessor`; subset rows
+`subset_abstract_accessor_*` (`static`) and `subset_accessor_override_*` (`static`/`dynamic`);
+SUBSET.md "Classes with getters/setters" row. No code change here. T32's Check is met by the
+existing tree.
+
+**T27 narrow slice — landed.** Docs first (`docs/VALUE.md` §4.26 class-object model: closure +
+`klass`, identity, statics table, v0 read surface; `docs/SUBSET.md` new "Class-object reads" row).
+Gate: `C.name` / `K.name` (class name, `const K = C` alias chain, bound class expression) is
+accepted in the `classConstructorTypeOf` arm and in the in-place helpers (`namesAClassInPlace`,
+`isClassAliasUseInPlace`) so the receiver identifier is not separately refused. Lowering folds the
+read to a string-literal of `classDisplayName` (`*default*` → `default`) — no class object is
+built. `C.static` / `K.static` is the existing alias erasure, unchanged. `C.prototype` /
+`K.prototype` keeps its named code ("the prototype surface", Phase 8). Fixtures:
+`subset_class_object_name_{ts,js}` (`static`), `subset_class_object_prototype_{ts,js}`
+(`not-yet STA1214`), goldens `ts|js/class_object_name`, `class_default_anon` both modes now also
+read `Anon.name`/`Named.name`. `gate.test.ts` pin updated (`C.name` now `[]`).
+
+**Not in this change (T27 remainder, recorded on the card).** Materializing a class object as a
+value (`f(C)`, `console.log(K)`, `typeof C`, `K.length`, `C === D` observability), static reads
+through a *materialized* class value (`ClassValue` + `JSRTClass.statics` population /
+`staticProps`), `this` in a static method (step 4 of the card), and `C.prototype` itself. HIR
+`ClassValue`/`NewValue`/`InstanceOfValue` and the runtime class-object entries remain declared and
+emitted but unreachable from the gate for those surfaces (plan-notes 283).
+
+**Gates.** typecheck clean · lint 0/0 + oxfmt clean · `pnpm run test` 801/801 ·
+`pnpm run test:subset` 973 fixtures — 942 passed, 31 expected-fail, 0 failed (was 969; +4 new).
+Not run here (disk/time): `pnpm run test:golden`, `pnpm run ci` in full.
 ## 383. T29: rest patterns, static computed keys, dynamic object rest (2026-10-24)
 
 T29 (step 12a remainder after 379/380). Three shapes land:

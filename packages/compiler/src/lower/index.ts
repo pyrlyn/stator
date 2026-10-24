@@ -3079,6 +3079,22 @@ function hirClassName(declaration: ts.ClassDeclaration | ts.ClassExpression): st
   return hirNameOf(declaration) ?? classDisplayName(declaration) ?? '';
 }
 
+/** The class a `C.name` receiver names — a declaration, a `const K = C` alias chain, or a bound
+ * class expression (docs/VALUE.md §4.26). `undefined` for anything else, including an unbound
+ * expression, which the gate refused before the lowering asked. */
+function classObjectOwner(
+  receiver: ts.Expression,
+  checker: ts.TypeChecker,
+): ts.ClassDeclaration | ts.ClassExpression | undefined {
+  if (!ts.isIdentifier(receiver)) {
+    return undefined;
+  }
+  return (
+    frontendTypes.aliasedClassDeclaration(receiver, checker) ??
+    frontendTypes.classExpressionTarget(receiver, checker)
+  );
+}
+
 /** The storage a `#private` USE resolves to: the mangled slot/property plus the class that
  * declares it.
  *
@@ -5344,6 +5360,23 @@ function lowerExpression(
   if (numberValue !== undefined) {
     const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
     return { kind: 'number-literal', type: H_NUMBER, span, value: numberValue };
+  }
+
+  // `C.name` / `K.name` on a class NAME or alias folds to Node's display name (docs/VALUE.md
+  // §4.26, T27 narrow slice): the declared name, a class expression's inner name, else the bound
+  // variable, and `default` for the anonymous default export. No class object is built. The gate
+  // admitted exactly this spelling; `C.prototype` and the rest of the surface stay refused there.
+  if (ts.isPropertyAccessExpression(node) && node.name.text === 'name') {
+    const owner = classObjectOwner(node.expression, checker);
+    const display = owner === undefined ? undefined : classDisplayName(owner);
+    if (display !== undefined) {
+      return {
+        kind: 'string-literal',
+        type: H_STRING,
+        span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
+        value: display === DEFAULT_EXPORT_BINDING ? 'default' : display,
+      };
+    }
   }
 
   // `c?.m` on a nullable single-class receiver: the static twin of the dynamic read below.
