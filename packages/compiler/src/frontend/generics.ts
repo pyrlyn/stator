@@ -108,13 +108,7 @@ export function genericCallInstantiation(
   // No argument (and no return position) determined this parameter. The checker falls back
   // to the declared default, and to nothing when there is none — so this does the same;
   // see `finishTuple` for why the default (never the constraint) and why `Unknown`.
-  const typeArguments = finishTuple(
-    typeParameters.map((parameter) => ({
-      name: parameter.getSymbol()?.getName() ?? '',
-      defaultType: typeParameterDefault(parameter, checker),
-    })),
-    substitution,
-  );
+  const typeArguments = finishTuple(parameterDefaults(typeParameters, checker), substitution);
   return { kind: 'generic', declaration: target, key, typeArguments, substitution };
 }
 
@@ -145,6 +139,44 @@ function finishTuple(
     typeArguments.push(substituteHType(bound, (n) => substitution.get(n)));
   }
   return typeArguments;
+}
+
+/** The `{ name, defaultType }` list every `finishTuple` call builds from type parameters. */
+function parameterDefaults(
+  typeParameters: readonly ts.TypeParameter[],
+  checker: ts.TypeChecker,
+): { name: string; defaultType: HType | undefined }[] {
+  return typeParameters.map((typeParameter) => ({
+    name: typeParameter.getSymbol()?.getName() ?? '',
+    defaultType: typeParameterDefault(typeParameter, checker),
+  }));
+}
+
+/** A `const` declaration list with exactly one declarator — the shape a named generic
+ * function/arrow must sit in to have a stable key. */
+function isSingleConstList(list: ts.Node | undefined): list is ts.VariableDeclarationList {
+  return (
+    list !== undefined &&
+    ts.isVariableDeclarationList(list) &&
+    (list.flags & ts.NodeFlags.Const) !== 0 &&
+    list.declarations.length === 1
+  );
+}
+
+/** Unify same-named members of two object layouts (fields against fields, methods against
+ * methods). Shared by the two halves of object unification. */
+function unifyNamedMembers<T extends { readonly name: string; readonly type: HType }>(
+  declared: readonly T[],
+  concrete: readonly T[],
+  out: Map<string, HType>,
+  seen: Set<string>,
+): void {
+  for (const member of declared) {
+    const match = concrete.find((m) => m.name === member.name);
+    if (match !== undefined) {
+      unify(member.type, match.type, out, seen);
+    }
+  }
 }
 
 /** What a `new` expression resolves to, when its class is generic.
@@ -665,13 +697,7 @@ export function genericValueInstantiation(
     return undefined;
   }
   const substitution = new Map<string, HType>();
-  const typeArguments = finishTuple(
-    typeParameters.map((typeParameter) => ({
-      name: typeParameter.getSymbol()?.getName() ?? '',
-      defaultType: typeParameterDefault(typeParameter, checker),
-    })),
-    substitution,
-  );
+  const typeArguments = finishTuple(parameterDefaults(typeParameters, checker), substitution);
   return { declaration: target, key, typeArguments, substitution };
 }
 
@@ -732,12 +758,7 @@ export function genericArrowKey(node: ts.Expression): string | undefined {
     return undefined;
   }
   const list = parent.parent;
-  if (
-    list === undefined ||
-    !ts.isVariableDeclarationList(list) ||
-    (list.flags & ts.NodeFlags.Const) === 0 ||
-    list.declarations.length !== 1
-  ) {
+  if (!isSingleConstList(list)) {
     return undefined;
   }
   const statement = list.parent;
@@ -820,12 +841,7 @@ export function genericAliasTarget(
       return undefined;
     }
     const list = declaration.parent;
-    if (
-      list === undefined ||
-      !ts.isVariableDeclarationList(list) ||
-      (list.flags & ts.NodeFlags.Const) === 0 ||
-      list.declarations.length !== 1
-    ) {
+    if (!isSingleConstList(list)) {
       return undefined;
     }
     current = declaration.initializer;
@@ -1058,18 +1074,8 @@ function unify(declared: HType, concrete: HType, out: Map<string, HType>, seen: 
       return;
     }
     seen.add(pair);
-    for (const field of declared.fields) {
-      const match = concrete.fields.find((f) => f.name === field.name);
-      if (match !== undefined) {
-        unify(field.type, match.type, out, seen);
-      }
-    }
-    for (const method of declared.methods) {
-      const match = concrete.methods.find((m) => m.name === method.name);
-      if (match !== undefined) {
-        unify(method.type, match.type, out, seen);
-      }
-    }
+    unifyNamedMembers(declared.fields, concrete.fields, out, seen);
+    unifyNamedMembers(declared.methods, concrete.methods, out, seen);
   }
   // Anything else — a scalar against anything, or two layouts that never agreed — binds nothing.
   // The fallback (default, then `Unknown`) decides those parameters, not this walk.

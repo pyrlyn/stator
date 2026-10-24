@@ -13674,3 +13674,49 @@ steps. `jactionlint` clean. `docs/TOOLCHAIN.md` documents the smoke beside the
 
 Local proof: `vitest run packages/tests/unit/compile-jobs.test.ts` — **16/16 green** (15 pure
 + the new smoke, 1.97 s for the build). Job-level CI green is observable after merge.
+
+### J1 — Task 6.16 second tranche: clone baseline toward zero
+
+Shared helpers at the responsible layer, no behavior change (unit **801** green; runtime rebuild
+clean):
+
+| Helper | File | Family it removes |
+| --- | --- | --- |
+| `emptyBlockAt` | `lower/index.ts` | empty-statement / type-alias / bodiless-overload empty block |
+| `assignOperatorKinds` | `lower/index.ts` | compound + logical assignment detection (2 sites) |
+| `substitutedTypeArguments` | `lower/index.ts` | type-args substitution before `enqueueSpecialization` (4 sites) |
+| `genericNamesakeOf` | `lower/index.ts` | generic-class namesake lookup (method call + accessor) |
+| `declaringClassOfProperty` | `lower/index.ts` | receiver class + accessor owner (`accessorOwner` / `hasAccessorHalf`) |
+| `methodCallAtSlot` + `missingMethodSlot` | `lower/index.ts` | private / named method-call construction after slot resolve |
+| `parameterDefaults` | `frontend/generics.ts` | type-parameter default list for `finishTuple` (2 sites) |
+| `isSingleConstList` | `frontend/generics.ts` | single-`const` declarator check (2 sites) |
+| `unifyNamedMembers` | `frontend/generics.ts` | fields/methods unify (2 sites) |
+| `collect_varargs` | `runtime/src/jsrt_array_ops.c` | va_list collect (push/unshift/concat/splice) |
+| `find_result` | `runtime/src/jsrt_array_ops.c` | find / findIndex / findLast / findLastIndex |
+| `array_search_forward` | `runtime/src/jsrt_array_ops.c` | indexOf / includes forward search |
+| `array_half_open_range` | `runtime/src/jsrt_array_ops.c` | slice / fill relative range |
+
+`.jscpd-baseline.json` **shrank 143 → 129 fingerprints** (`pnpm run dupes:baseline` in the same
+change). `pnpm run dupes` green at 129 clones / 2.0%. The Check wants the baseline empty; this is
+the second tranche, not the whole job. Remaining leaders: `lower/index.ts` (operator maps, dispatch
+chains, substitute-HType object walk), `jsrt_array_ops.c` switch cases, `gate.ts` / `generics.ts`
+`ts.is*` lists, `jsrt_string_ops.c`, `hir/verify.ts`, `jsrt_print.c`, `jsrt_date.c`.
+
+### J3 — Task 6.3 noise floor + Phase-6 Check fuzzing clause
+
+**Noise floor (no new bench run this batch).** plan-notes 374 already measured five repeats of one
+commit on darwin-arm64 (Apple M3 Max — **not** the weekly ubuntu-24.04 runner): stator geomeans
+25.784–29.497 ms, **14.4%** range spread; a sixth tripped the 20% gate at +53.9% on short-program
+jitter. The **20% gate is unchanged**. The Check still wants the spread measured on the machine
+that runs the weekly job; that measurement is not run here.
+
+**Fuzzing clause — cited.** `nightly.yml` runs `pnpm run differential -- --minutes=60`. Run
+**40072874719** (2026-10-24T07:07Z, schedule, `main`, completed success, 1h11m) logged
+`differential: seed=50 modes=ts,js` then `differential: 5177 cases — 0 divergences` after a full
+hour (07:08→08:08). That is the Phase-6 Check's *≥1 h nightly with zero unexplained divergences*
+clause, on the nightly run's own output.
+
+### Gates (J1+J2)
+
+`pnpm install --frozen-lockfile` · typecheck · lint · `pnpm run test` (801) · `pnpm run dupes`
+(129, baseline 143→129) · runtime rebuild · jactionlint (J2). Not run here: `pnpm run ci` in full.
