@@ -518,6 +518,8 @@ stay here so `§6 Task 3.N` references resolve:
 - ~~**Task 3.11** — Modules.~~ ✅
 - ~~**Task 3.12** — Tree-shaking builtins.~~ ✅
 
+### ~~Task 3.9a. Avoid temporary arrays in unchanged HIR walks~~ — completed; record in [done.md](done.md).
+
 ---
 
 ## 7. Phase 4 — Runtime v1 ✅ COMPLETE (2026-09-01)
