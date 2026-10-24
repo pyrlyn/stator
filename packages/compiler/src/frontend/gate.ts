@@ -328,7 +328,7 @@ function gateConstruct(
     case ts.SyntaxKind.CatchClause: {
       const clause = node as ts.CatchClause;
       const binding = clause.variableDeclaration;
-      return binding === undefined || isSimpleBindingPattern(binding.name)
+      return binding === undefined || isSimpleBindingPattern(binding.name, typeChecker)
         ? { kind: 'accept' }
         : notYet('destructuring a caught value is not yet supported', 5);
     }
@@ -349,7 +349,7 @@ function gateConstruct(
       return { kind: 'accept' };
 
     case ts.SyntaxKind.Parameter:
-      return gateParameter(node as ts.ParameterDeclaration);
+      return gateParameter(node as ts.ParameterDeclaration, typeChecker);
 
     // `<T>` itself. It is not a type NODE -- it DECLARES one -- so it reaches this switch rather
     // than the annotation skip above. A constraint is enforced by the checker at every call site
@@ -592,6 +592,16 @@ function gateConstruct(
       }
       if (
         isClassMemberComputedKey(node as ts.ComputedPropertyName) &&
+        frontendTypes.computedKeyStaticName(node as ts.ComputedPropertyName, typeChecker) !== null
+      ) {
+        return { kind: 'accept' };
+      }
+      // A binding-pattern computed key (`const { [k]: v } = o`) is a field name under the same
+      // step-22 rule: a literal-typed key is the name the direct spelling writes. A runtime name
+      // is refused by `isSimpleBindingPattern` / the declaration arm, not here.
+      if (
+        ts.isBindingElement(node.parent) &&
+        node.parent.propertyName === node &&
         frontendTypes.computedKeyStaticName(node as ts.ComputedPropertyName, typeChecker) !== null
       ) {
         return { kind: 'accept' };
@@ -1705,18 +1715,35 @@ function gateDeclarationList(list: ts.VariableDeclarationList, mode: Mode): Gate
   return { kind: 'accept' };
 }
 
-/** Identifier, or a shallow object/array pattern of identifiers with no rest, default, or nest. */
-export function isSimpleBindingPattern(name: ts.BindingName): boolean {
+/** The compile-time field name a binding element reads, or `null` when the key is a runtime value.
+ *
+ * Mirrors the object-literal rule (`staticPropertyName` / step 22): an identifier, a string
+ * literal, or a number literal is its own name; a computed key is a name only when the checker
+ * types its expression as a single string/number literal. Anything wider is a runtime key and
+ * stays not-yet. */
+export function bindingElementKey(el: ts.BindingElement, checker: ts.TypeChecker): string | null {
+  const name = el.propertyName;
+  if (name === undefined) {
+    return ts.isIdentifier(el.name) ? el.name.text : null;
+  }
+  return frontendTypes.staticPropertyName(name, checker);
+}
+
+/** Identifier, or an object/array pattern whose elements bind identifiers or nested patterns,
+ * including rest (`...r` or a rest PATTERN `...{ a }`) and defaults (`= e`). A rest takes no
+ * default (the checker refuses one). Keys resolve like an object literal's: a static name
+ * (identifier, string/number literal, or a literal-typed computed key) is a field; a computed
+ * key whose name is only known at run time is not. */
+export function isSimpleBindingPattern(name: ts.BindingName, checker: ts.TypeChecker): boolean {
   if (ts.isIdentifier(name)) {
     return true;
   }
   if (ts.isObjectBindingPattern(name)) {
-    return name.elements.every(
-      (el) =>
-        el.dotDotDotToken === undefined &&
-        el.initializer === undefined &&
-        ts.isIdentifier(el.name) &&
-        (el.propertyName === undefined || ts.isIdentifier(el.propertyName)),
+    return name.elements.every((el) =>
+      el.dotDotDotToken !== undefined
+        ? (ts.isIdentifier(el.name) || isSimpleBindingPattern(el.name, checker)) &&
+          el.initializer === undefined
+        : bindingElementKey(el, checker) !== null && isSimpleBindingPattern(el.name, checker),
     );
   }
   if (ts.isArrayBindingPattern(name)) {
@@ -1724,9 +1751,10 @@ export function isSimpleBindingPattern(name: ts.BindingName): boolean {
       (el) =>
         ts.isOmittedExpression(el) ||
         (ts.isBindingElement(el) &&
-          el.dotDotDotToken === undefined &&
-          el.initializer === undefined &&
-          ts.isIdentifier(el.name)),
+          (el.dotDotDotToken !== undefined
+            ? (ts.isIdentifier(el.name) || isSimpleBindingPattern(el.name, checker)) &&
+              el.initializer === undefined
+            : isSimpleBindingPattern(el.name, checker))),
     );
   }
   return false;
@@ -1758,8 +1786,11 @@ function isStatementPosition(node: ts.Expression): boolean {
 }
 
 function gateDeclaration(decl: ts.VariableDeclaration, checker: ts.TypeChecker): GateResult {
-  if (!isSimpleBindingPattern(decl.name)) {
-    return notYet('destructuring declarations are not yet supported', 5);
+  if (!isSimpleBindingPattern(decl.name, checker)) {
+    return notYet(
+      'a computed key with a runtime name in a destructuring declaration is not yet supported',
+      5,
+    );
   }
   // Out-slot annotations must agree with the initializer (docs/FFI.md §2): an `Out<T>`
   // name holding anything else — or a non-`Out` name initialized by a slot — is a
@@ -3632,15 +3663,18 @@ function mentionsTypeParameter(root: ts.Node, name: string): boolean {
 
 /** A value parameter the HIR can bind: one plain identifier. Rest packs extras; a default runs
  * when the argument is `undefined`. Destructuring patterns stay not-yet. */
-function gateParameter(param: ts.ParameterDeclaration): GateResult {
+function gateParameter(param: ts.ParameterDeclaration, checker: ts.TypeChecker): GateResult {
   if (param.dotDotDotToken !== undefined) {
     if (!ts.isIdentifier(param.name) || param.initializer !== undefined) {
-      return notYet('rest parameters are not yet supported', 5);
+      return notYet('a rest parameter with a pattern or a default is not yet supported', 5);
     }
     return { kind: 'accept' };
   }
-  if (!isSimpleBindingPattern(param.name)) {
-    return notYet('destructuring parameters are not yet supported', 5);
+  if (!isSimpleBindingPattern(param.name, checker)) {
+    return notYet(
+      'a computed key with a runtime name in a destructuring parameter is not yet supported',
+      5,
+    );
   }
   if (ts.isIdentifier(param.name) && param.name.text === 'this') {
     return notYet('a `this` parameter is not yet supported', 5);

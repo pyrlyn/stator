@@ -706,6 +706,29 @@ export function elementStaticKey(expr: ts.Expression, checker: ts.TypeChecker): 
   return null;
 }
 
+/** The compile-time name of a `PropertyName`, or `null` when the key is a runtime value.
+ *
+ * An identifier or a string/template literal is its own name. A numeric name is its value's
+ * spelling, not the source text: `{ 0x10: 1 }` declares `16`, exactly as the checker spells
+ * the property. A computed key is a name only when `computedKeyStaticName` can read one.
+ * Shared by object-literal members and binding-element keys. */
+export function staticPropertyName(name: ts.PropertyName, checker: ts.TypeChecker): string | null {
+  if (
+    ts.isIdentifier(name) ||
+    ts.isStringLiteral(name) ||
+    ts.isNoSubstitutionTemplateLiteral(name)
+  ) {
+    return name.text;
+  }
+  if (ts.isNumericLiteral(name)) {
+    return String(Number(name.text));
+  }
+  if (ts.isComputedPropertyName(name)) {
+    return computedKeyStaticName(name, checker);
+  }
+  return null;
+}
+
 function computedKeyIsLayoutKey(name: ts.ComputedPropertyName, checker: ts.TypeChecker): boolean {
   return computedKeyStaticName(name, checker) !== null;
 }
