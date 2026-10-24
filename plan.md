@@ -1012,7 +1012,10 @@ geomeans 25.784–29.497 ms (**14.4%** range spread); a sixth run tripped the 20
 **+53.9%** on the same commit, driven by `json-roundtrip` (53.9% per-program spread) and
 `startup` (62.4%) jitter at the millisecond scale. The **20% gate is unchanged**: the measured
 geomean spread sits under it, and raising the gate to hide the outlier would be the "alarm that
-fires on noise" this residue names. **Check:** a handful of repeats of one commit
+fires on noise" this residue names. **Host unavailability recorded 2026-10-24** (plan-notes 384):
+the weekly job runs on an ephemeral GitHub-hosted `ubuntu-24.04` runner with no SSH endpoint from
+a workstation, so the Check's on-host repeats were not taken and no numbers were invented; the
+20% gate stands on the local spreads above. **Check:** a handful of repeats of one commit
 on the machine that runs the weekly job, the observed spread recorded in `plan-notes.md`, and the
 gate set from it. A gate below the noise floor fires on noise, and an alarm that fires on noise is
 one people learn to ignore — which costs more than having no gate at all.
@@ -1055,8 +1058,16 @@ helpers across `lower/index.ts`, `frontend/generics.ts` and `runtime/src/jsrt_ar
 `declaringClassOfProperty`, `methodCallAtSlot`/`missingMethodSlot`, `parameterDefaults`,
 `isSingleConstList`, `unifyNamedMembers`, `collect_varargs`, `find_result`,
 `array_search_forward`, `array_half_open_range`); the baseline shrank **143 → 129** fingerprints.
-The `gate.ts`/`generics.ts` `ts.is*` lists, the `jsrt_array_ops.c` switch cases and the rest of
-the list are still open.
+**Third tranche landed 2026-10-24** (plan-notes 384): ten helpers across `frontend/export.ts`,
+`frontend/generics.ts`, `frontend/types.ts`, `hir/verify.ts`,
+`runtime/src/jsrt_string_ops.c`, `runtime/src/jsrt_date.c`, `runtime/src/jsrt_print.c` and
+`runtime/src/jsrt_array_ops.c` (`hasModifierKind`, `bindsOwnName`/`SELF_NAMED_KINDS`,
+`SCOPE_BOUNDARY_KINDS`, `ANNOTATION_SITE_KINDS`, `opProblem`/`verifyReceiverOpShape`,
+`verifyShapeCoverage`, `char_index`/`relative_char_index`/`search_from`/`substr_range`,
+`DATE_GETTER_FIELDS`, `append_quoted_escape`, `walk_present` + `visit_*`); the baseline shrank
+**129 → 117** fingerprints. Still open: `lower/index.ts` operator maps and dispatch chains, the
+`jsrt_array_ops.c` method dispatch switch, `gate.ts` SyntaxKind case lists, and the
+`MATH_ARITY`/`COLLECTION_ARITY` data tables.
 
 ~~**Task 6.17 — Test impact: build and run only what a change reaches.**~~ ✅ **landed 2026-10-02**
 (steps 1–3 and 5; Check (a)–(e) passed) — evidence in [done.md](done.md) → Phase 6 Task 6.17
