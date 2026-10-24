@@ -50,6 +50,8 @@ function isFunctionOpen(line: string): boolean {
     line.endsWith(' {') &&
     line.includes('(') &&
     !line.startsWith('#') &&
+    !line.startsWith(' ') &&
+    !line.startsWith('\t') &&
     !line.startsWith('static const ')
   );
 }
@@ -174,6 +176,39 @@ test('partition publishes shared data once and each function in one unit', () =>
   assert.match(joined, /^int main\(int argc, char \*\*argv\) \{$/m);
 });
 
+/* CI asan/golden: an async module defines `_jsrt_module_done` and calls it from `main`
+ * with no preamble prototype. Split across units, that call is an undeclared identifier
+ * unless the header carries the prototype. An indented `if (…) {` must not become one. */
+test('a function with no preamble prototype is declared in the shared header', () => {
+  const c = `static void _jsrt_module_done(void *state, jsrt_value value, bool rejected) {
+  (void)state;
+  (void)value;
+  if (rejected) {
+    return;
+  }
+}
+
+int main(int argc, char **argv) {
+  jsrt_promise_subscribe(JSRT_LOCAL(0), _jsrt_module_done, NULL);
+  return 0;
+}
+`;
+  const parts = partitionTranslationUnit(c, 2);
+  assert.match(
+    parts.header,
+    /^void _jsrt_module_done\(void \*state, jsrt_value value, bool rejected\);$/m,
+  );
+  assert.match(parts.header, /^int main\(int argc, char \*\*argv\);$/m);
+  assert.equal(parts.header.includes('if (rejected)'), false);
+  assert.equal(parts.header.includes('static '), false);
+  const defining = parts.units.find((unit) => unit.source.includes('_jsrt_module_done('));
+  assert.ok(defining);
+  assert.match(
+    defining.source,
+    /^void _jsrt_module_done\(void \*state, jsrt_value value, bool rejected\) \{$/m,
+  );
+});
+
 test('every lowered golden with two functions partitions without dropping one', () => {
   const problems: string[] = [];
   let checked = 0;
@@ -204,6 +239,10 @@ test('every lowered golden with two functions partitions without dropping one', 
         const hits = joined.split(signature).length - 1;
         if (hits !== 1) {
           problems.push(`${name}: ${signature} appears ${String(hits)} times`);
+        }
+        const prototype = signature.endsWith(' {') ? `${signature.slice(0, -2)};` : signature;
+        if (!parts.header.includes(prototype)) {
+          problems.push(`${name}: header missing ${prototype}`);
         }
       }
       const shared = parts.units[0]?.source ?? '';

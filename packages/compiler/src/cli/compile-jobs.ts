@@ -132,7 +132,19 @@ export function partitionTranslationUnit(c: string, jobs: number): PartitionedC 
   const units: TranslationUnit[] = [
     { name: 'stator_shared.c', source: `${sharedLines.join('\n')}\n` },
   ];
-  for (const [index, lines] of bucketFunctions(walked.functions, bucketCount).entries()) {
+  const buckets = bucketFunctions(walked.functions, bucketCount);
+  // A call from one unit to a function parked in another is an undeclared
+  // identifier unless the shared header publishes the prototype. The emitter
+  // only forward-declares some functions (`_jsrt_module_done` is defined and
+  // then used), so the definition itself is the declaration the other unit sees.
+  for (const group of buckets) {
+    for (const line of group) {
+      if (isFunctionOpen(line)) {
+        headerLines.push(line.endsWith(' {') ? `${line.slice(0, -2)};` : line);
+      }
+    }
+  }
+  for (const [index, lines] of buckets.entries()) {
     units.push({
       name: `stator_unit_${String(index)}.c`,
       source: `#include "${HEADER_NAME}"\n\n${lines.join('\n')}\n`,
@@ -179,10 +191,14 @@ function walkEmittedC(c: string): WalkedC {
 }
 
 function isFunctionOpen(line: string): boolean {
+  // Column zero is the emitter's layout: only file-scope functions open there.
+  // An indented `if (…) {` is a body statement and must not become a unit or a prototype.
   return (
     line.endsWith(' {') &&
     line.includes('(') &&
     !line.startsWith('#') &&
+    !line.startsWith(' ') &&
+    !line.startsWith('\t') &&
     !line.startsWith('static const ')
   );
 }
