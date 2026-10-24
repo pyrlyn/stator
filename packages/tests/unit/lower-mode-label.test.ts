@@ -5,11 +5,12 @@
  * prints as `[ts]`/`[js]`, and it was hardcoded to `'ts'` at every call site. A js-mode build
  * that died in lowering therefore blamed `[ts]`.
  *
- * The pin below uses nested destructuring (`const { a: { b } } = o`): the declaration gate
- * helper `isSimpleBindingPattern` rejects it in lowering with STA4032, a path no other open
- * step touches (step 39 owns spread, not patterns), and one that fires identically in both
- * modes when the gate is bypassed -- so the only thing under test is the label. The gate is
- * bypassed deliberately: these are labeling tests, not accepted input.
+ * The pin below uses rest-in-pattern (`const [a, ...rest] = arr`): the declaration gate helper
+ * `isSimpleBindingPattern` rejects it in lowering with STA4032, a path no other open step
+ * touches (step 39 owns spread, not patterns), and one that fires identically in both modes when
+ * the gate is bypassed -- so the only thing under test is the label. The gate is bypassed
+ * deliberately: these are labeling tests, not accepted input. (Nested patterns landed in H1;
+ * rest-in-pattern remains the STA4032 vehicle.)
  */
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
@@ -17,14 +18,14 @@ import { test } from 'vitest';
 import { lowerSourceFile } from '../../compiler/src/lower/index.ts';
 import { createProgram } from './helpers.ts';
 
-const NESTED_PATTERN =
-  'const o: { a: { b: number } } = { a: { b: 1 } };\nconst { a: { b } } = o;\n';
+const REST_PATTERN =
+  'const arr: number[] = [1, 2, 3];\nconst [a, ...rest] = arr;\n';
 
 function lowerModes(): { tsMode: string | undefined; jsMode: string | undefined } {
   let tsMode: string | undefined;
   let jsMode: string | undefined;
   for (const mode of ['ts', 'js'] as const) {
-    const { program, sourceFile } = createProgram(NESTED_PATTERN, '/t.ts');
+    const { program, sourceFile } = createProgram(REST_PATTERN, '/t.ts');
     const { diagnostics } = lowerSourceFile(sourceFile, program.getTypeChecker(), mode);
     assert.equal(diagnostics.length, 1, `expected one diagnostic in ${mode} mode`);
     const diagnostic = diagnostics[0];

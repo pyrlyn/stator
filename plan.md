@@ -573,9 +573,9 @@ bundle — evidence: done.md → Phase 5).~~ ✅
     expected-fail in the commit that lands it, never in bulk:
     ~~(a) **Parameter and binding forms** first, because every later family calls functions: rest,
     default, optional, uninitialized `let`, and shallow destructuring of parameters/declarations/
-    catch.~~ ✅ **landed 2026-09-02** (plan-notes 158–161). **Residue:** nested patterns,
-    rest-in-pattern, and default-in-pattern stay not-yet in this family (F1 left nested
-    patterns open; the gate's message is still the shallow destructuring refusal).
+    catch.~~ ✅ **landed 2026-09-02** (plan-notes 158–161). **Residue:** ~~nested patterns~~
+    **landed 2026-10-24** (plan-notes 379; H1). Rest-in-pattern and default-in-pattern stay
+    not-yet; the gate message names them precisely.
     ~~(b) **Expression-position residue**: labels on anything but a loop or switch, capturing a
     variable declared inside a loop, `instanceof` against anything but a class name, assignment and
     compound assignment to a non-variable, `++`/`--` on a non-variable and in value position, and
