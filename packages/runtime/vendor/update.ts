@@ -24,7 +24,9 @@ interface VendorPort {
 
 interface Vendor {
   readonly repo: string;
+  /** Upstream paths, repo-root-relative. `strip` drops a leading directory for the local drop. */
   readonly files: readonly string[];
+  readonly strip?: string;
   readonly port?: VendorPort;
 }
 
@@ -52,7 +54,33 @@ const VENDORS: Readonly<Record<string, Vendor>> = {
     files: [],
     port: { from: 'src/base/ieee754.cc', to: 'fdlibm.c', with: 'port.ts' },
   },
+  ryu: {
+    repo: 'ulfjack/ryu',
+    // Upstream keeps the C drop under `ryu/`; it lands flat here. The sources `#include
+    // "ryu/<file>"`, so `VENDOR_INC` carries `-Ivendor` and the drop name matches that path.
+    // Deliberately NOT taken: f2s (float), s2d/s2f (parse), d2fixed (fixed-point), generic_128.
+    files: [
+      'LICENSE-Apache2',
+      'LICENSE-Boost',
+      'ryu/common.h',
+      'ryu/d2s.c',
+      'ryu/d2s.h',
+      'ryu/d2s_full_table.h',
+      'ryu/d2s_intrinsics.h',
+      'ryu/digit_table.h',
+      'ryu/ryu.h',
+    ],
+    strip: 'ryu/',
+  },
 };
+
+/** Local drop path: upstream path with `strip` removed, written under vendor/<name>/. */
+function localPath(v: Vendor, file: string): string {
+  if (v.strip !== undefined && file.startsWith(v.strip)) {
+    return file.slice(v.strip.length);
+  }
+  return file;
+}
 
 function vendorOf(name: string): Vendor {
   const found = VENDORS[name];
@@ -96,7 +124,7 @@ async function resolveCommit(repo: string, ref: string): Promise<string> {
 function check(): void {
   for (const [name, v] of Object.entries(VENDORS)) {
     const ref = pinnedRef(name);
-    const named = [...v.files, v.port?.to, v.port?.with];
+    const named = [...v.files.map((f) => localPath(v, f)), v.port?.to, v.port?.with];
     const missing = named.filter((f): f is string => f !== undefined && !existsSync(join(HERE, name, f)));
     if (missing.length > 0) {
       throw new Error(`${name}: manifest names files that are not vendored: ${missing.join(' ')}`);
@@ -110,8 +138,8 @@ async function update(name: string, ref: string): Promise<void> {
   const dir = join(HERE, name);
 
   for (const file of v.files) {
-    writeFileSync(join(dir, file), await fetchText(raw(v.repo, ref, file)));
-    process.stdout.write(`fetched ${name}/${file}\n`);
+    writeFileSync(join(dir, localPath(v, file)), await fetchText(raw(v.repo, ref, file)));
+    process.stdout.write(`fetched ${name}/${localPath(v, file)}\n`);
   }
 
   if (v.port !== undefined) {
