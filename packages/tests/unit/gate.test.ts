@@ -184,8 +184,9 @@ test('var is a permanent rejection in ts mode and is accepted in js mode', () =>
   );
 });
 
-// Nested patterns lower; rest-in-pattern and default-in-pattern stay not-yet (step 12a residue).
-test('destructuring is accepted including nested, rest and default; rest patterns stay deferred', () => {
+// Nested patterns, rest-in-pattern, default-in-pattern and rest PATTERNs land (T29). A computed
+// key with a runtime name stays not-yet: the field the pattern reads is not known until run time.
+test('destructuring is accepted including nested, rest, default and rest patterns', () => {
   assert.deepEqual(
     codesFor('const p: { x: number; y: number } = { x: 1, y: 2 }; const { x, y } = p;'),
     [],
@@ -199,8 +200,24 @@ test('destructuring is accepted including nested, rest and default; rest pattern
   assert.deepEqual(codesFor('const { a = 1 }: { a?: number } = {};'), []);
   assert.deepEqual(codesFor('const { a: { ...r } }: { a: { b: number } } = { a: { b: 1 } };'), []);
   assert.deepEqual(codesFor('function f({ k = 2 }: { k?: number }): number { return k; }'), []);
-  // A rest PATTERN (`...{ a }`) is a further destructuring this slice does not lower.
-  assert.deepEqual(codesFor('const { ...{ a } }: { a: number } = { a: 1 };'), ['STA1214']);
+  // A rest PATTERN (`...[a]`) destructures the remainder. (An object rest PATTERN `...{ a }`
+  // is a TypeScript parse error — the parser only accepts `... BindingIdentifier` there.)
+  assert.deepEqual(codesFor('const [...[a]]: number[] = [1, 2];'), []);
+  assert.deepEqual(
+    codesFor('const { items: [...[head]] }: { items: number[] } = { items: [1] };'),
+    [],
+  );
+  // A computed key with a STATIC name is the name the direct spelling writes (step 22 rule).
+  assert.deepEqual(
+    codesFor('const k = "a"; const o: { a: number } = { a: 1 }; const { [k]: v } = o;'),
+    [],
+  );
+  assert.deepEqual(codesFor('const o: { a: number } = { a: 1 }; const { ["a"]: v } = o;'), []);
+  // A computed key whose name is only known at run time stays not-yet.
+  assert.deepEqual(
+    codesFor('declare const k: string; const o: { a: number } = { a: 1 }; const { [k]: v } = o;'),
+    ['STA1214'],
+  );
 });
 
 // Mirrors the compound-assignment-to-non-identifier test above, but for plain `=`: HIR Assignment

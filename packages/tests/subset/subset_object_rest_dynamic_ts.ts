@@ -1,9 +1,8 @@
 // @mode: ts
-// @verdict: not-yet
-// @code: STA1214
+// @verdict: dynamic
 // SUBSET.md: Object destructuring
-// Object rest over a value with no fixed layout stays not-yet (I1 residue); the
-// diagnostic names it precisely.
+// Object rest over a dynamic/unknown source lands in T29: the remainder copies through
+// the shape table (`Object.assign` + `delete` of the bound keys), the spread twin.
 
 const o: { a?: number; b: number } = { b: 1 };
 const { a, ...rest } = o;

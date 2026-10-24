@@ -13786,3 +13786,39 @@ clause, on the nightly run's own output.
 
 `pnpm install --frozen-lockfile` · typecheck · lint · `pnpm run test` (801) · `pnpm run dupes`
 (129, baseline 143→129) · runtime rebuild · jactionlint (J2). Not run here: `pnpm run ci` in full.
+
+## 383. T29: rest patterns, static computed keys, dynamic object rest (2026-10-24)
+
+T29 (step 12a remainder after 379/380). Three shapes land:
+
+1. **Rest PATTERN** (`const [...[a]] = arr`, nested `const { items: [...[head]] } = xs`):
+   `bindArrayRest` / `bindObjectRest` compute the remainder (slice / object expansion) and
+   recurse into `lowerBindingPattern` instead of binding one identifier. An object rest
+   PATTERN (`...{ a }`) is a TypeScript parse error (the parser only accepts
+   `... BindingIdentifier` in object rest), so that spelling never reaches the gate — the
+   lower path still handles it if a future parser admits it.
+2. **Computed keys in binding patterns**, static-key only under the step-22 rule
+   (`bindingElementKey` mirrors `computedKeyStaticName`): identifier, string/number literal,
+   or a literal-typed computed key is the field the direct spelling writes. A runtime name
+   stays `STA1214` ("a computed key with a runtime name in a destructuring declaration").
+3. **Object rest over a dynamic/unknown source** routes through the shape table (the spread
+   twin): `Object.assign({}, src)` then `delete` of each bound key. Result is Unknown, which
+   is what `Omit` over an unknown source is. Still not-yet (each named): object rest over a
+   type with methods, and object rest over an array.
+
+`isSimpleBindingPattern` now takes a checker (computed keys need `computedKeyStaticName`) and
+accepts rest patterns. The STA4032 labeling vehicle moved from a rest pattern to a runtime-named
+computed key (`lower-mode-label.test.ts`).
+
+Decision tests: `subset_nested_rest_{pattern,array_pattern}_{ts,js}`,
+`subset_destructure_computed_{static,runtime}_*`, `subset_object_rest_{dynamic,untyped}` flipped
+to `dynamic`. `docs/SUBSET.md` object-destructuring row updated.
+
+T28 left open: the specialization-key rule for a block-homed generic is **not sound** as
+currently architected (specializations are file-level functions; a block-scoped binding has no
+module-level home — plan-notes 280 already refuses the capture case). Documenting that rule in
+`docs/HIR.md` and sharpening the remaining named refusals is the next slice.
+
+Gates: typecheck clean; lint clean (site installed); `gate`/`lower-mode-label` unit tests
+83/83; `test:subset` run in this batch. Full `test`/`test:golden`/`pnpm run ci` not run here
+(runtime archive absent on this worktree).

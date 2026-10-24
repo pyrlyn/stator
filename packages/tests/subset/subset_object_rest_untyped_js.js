@@ -1,9 +1,8 @@
 // @mode: js
-// @verdict: not-yet
-// @code: STA1214
+// @verdict: dynamic
 // SUBSET.md: Object destructuring
-// Object rest over a value with no fixed layout stays not-yet (I1 residue); the
-// diagnostic names it precisely.
+// Object rest over an untyped source lands in T29: the remainder copies through the
+// shape table, the spread twin. js mode is dynamic because the source has no layout.
 
 function g({ k, ...more }) {
   return more;

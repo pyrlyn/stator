@@ -8,6 +8,7 @@
 
 import * as ts from 'typescript';
 import {
+  bindingElementKey,
   brandDeclaringClass,
   constraintDeclaration,
   errorCtorName,
@@ -119,6 +120,7 @@ import type {
   NewValue,
   ObjectEntry,
   ObjectLiteral,
+  ObjectStaticCall,
   ObjectStaticMethod,
   Parameter,
   PromiseInstanceMethod,
@@ -1944,13 +1946,8 @@ function lowerBindingPattern(
     const bound = new Set<string>();
     for (const el of name.elements) {
       if (el.dotDotDotToken === undefined) {
-        const field =
-          el.propertyName !== undefined && ts.isIdentifier(el.propertyName)
-            ? el.propertyName.text
-            : ts.isIdentifier(el.name)
-              ? el.name.text
-              : '';
-        if (field !== '') {
+        const field = bindingElementKey(el, checker);
+        if (field !== null) {
           bound.add(field);
         }
       }
@@ -1974,12 +1971,19 @@ function lowerBindingPattern(
         }
         continue;
       }
-      const field =
-        el.propertyName !== undefined && ts.isIdentifier(el.propertyName)
-          ? el.propertyName.text
-          : ts.isIdentifier(el.name)
-            ? el.name.text
-            : '';
+      const field = bindingElementKey(el, checker);
+      if (field === null) {
+        diagnostics.push(
+          lowerDiagnostic(
+            el,
+            sourceFile,
+            'STA1214',
+            'not-yet',
+            'a computed key with a runtime name in a destructuring pattern is not yet supported',
+          ),
+        );
+        return null;
+      }
       if (
         !bindPatternElement(
           source,
@@ -2042,10 +2046,10 @@ function lowerBindingPattern(
   return statements;
 }
 
-/** `const [x, ...rest] = a` / a nested array's `...rest`: the rest name binds `a.slice(i)`,
- * where `i` is the element index the rest starts at. The rest is last by syntax, so the walk
- * stops here. The checker's rest type is `T[]`; `slice` answers the target's own type, which
- * for a dense array is that same `T[]`. */
+/** `const [x, ...rest] = a` / a nested array's `...rest`: the rest binds `a.slice(i)`, where `i`
+ * is the element index the rest starts at. The rest is last by syntax, so the walk stops here.
+ * The checker's rest type is `T[]`; `slice` answers the target's own type, which for a dense
+ * array is that same `T[]`. A rest PATTERN (`...[a, b]`) destructures that slice further. */
 function bindArrayRest(
   source: Expression,
   index: number,
@@ -2057,20 +2061,10 @@ function bindArrayRest(
   diagnostics: Diagnostic[],
   statements: Statement[],
 ): boolean {
-  if (!ts.isIdentifier(el.name)) {
-    diagnostics.push(
-      lowerDiagnostic(
-        el,
-        sourceFile,
-        'STA1214',
-        'not-yet',
-        'a rest pattern in an array destructuring is not yet supported',
-      ),
-    );
-    return false;
-  }
   const span = makeSpan(el.getStart(sourceFile), el.getWidth(sourceFile), sourceFile);
-  const type = typeAt(el.name, checker, bindings);
+  const type = ts.isIdentifier(el.name)
+    ? typeAt(el.name, checker, bindings)
+    : typeAt(el, checker, bindings);
   const start: Expression = { kind: 'number-literal', type: H_NUMBER, span, value: index };
   const end: Expression = { kind: 'undefined-literal', type: H_UNDEFINED, span };
   const sliced: ArrayOp = {
@@ -2081,6 +2075,24 @@ function bindArrayRest(
     target: source,
     args: [start, end],
   };
+  if (!ts.isIdentifier(el.name)) {
+    // Rest pattern: the slice is the source the inner pattern destructures.
+    const parts = lowerBindingPattern(
+      el.name,
+      sliced,
+      declKind,
+      el,
+      sourceFile,
+      checker,
+      bindings,
+      diagnostics,
+    );
+    if (parts === null) {
+      return false;
+    }
+    statements.push(...parts);
+    return true;
+  }
   const hirName = bindings.declare(el.name.text, type);
   hirNameOfDeclaration.set(el, hirName);
   statements.push({
@@ -2094,13 +2106,14 @@ function bindArrayRest(
   return true;
 }
 
-/** `const { a, ...rest } = o` / a nested object's `...rest`: the rest name binds a fresh plain
- * object of the remaining own fields. The expansion is the SOURCE layout minus the keys the
- * pattern already bound — `Omit<T, K>`, computed here rather than read from the checker's
- * mapped type, whose symbol is the binding itself and so is not a layout `shapeTypeToHType`
- * would accept. An Unknown source (no layout to subtract from), a class instance whose rest
- * type carries methods, or a rest name that is itself a pattern stay not-yet under this
- * message rather than inventing a shape the type does not describe. */
+/** `const { a, ...rest } = o` / a nested object's `...rest`: the rest binds a fresh plain object
+ * of the remaining own fields. A fixed source expands the SOURCE layout minus the bound keys —
+ * `Omit<T, K>`, computed here rather than read from the checker's mapped type, whose symbol is
+ * the binding itself and so is not a layout `shapeTypeToHType` would accept. An Unknown source
+ * (no layout to subtract from) copies through the shape table: `Object.assign({}, src)` then
+ * `delete` of each bound key, the same shape-table walk a dynamic object spread takes. A class
+ * instance whose rest type carries methods, or an array source, stay not-yet. A rest PATTERN
+ * (`...{ a }`) destructures the remainder further. */
 function bindObjectRest(
   source: Expression,
   bound: ReadonlySet<string>,
@@ -2112,33 +2125,10 @@ function bindObjectRest(
   diagnostics: Diagnostic[],
   statements: Statement[],
 ): boolean {
-  if (!ts.isIdentifier(el.name)) {
-    diagnostics.push(
-      lowerDiagnostic(
-        el,
-        sourceFile,
-        'STA1214',
-        'not-yet',
-        'a rest pattern in an object destructuring is not yet supported',
-      ),
-    );
-    return false;
-  }
   const span = makeSpan(el.getStart(sourceFile), el.getWidth(sourceFile), sourceFile);
   const src = source.type;
-  if (src.kind !== 'object') {
-    diagnostics.push(
-      lowerDiagnostic(
-        el,
-        sourceFile,
-        'STA1214',
-        'not-yet',
-        'an object rest over a value with no fixed layout is not yet supported',
-      ),
-    );
-    return false;
-  }
-  if (src.methods.length > 0) {
+  let restValue: Expression;
+  if (src.kind === 'object' && src.methods.length > 0) {
     diagnostics.push(
       lowerDiagnostic(
         el,
@@ -2150,37 +2140,113 @@ function bindObjectRest(
     );
     return false;
   }
-  const fields = src.fields.filter((f) => !bound.has(f.name));
-  const type = hObject(frontendTypes.shapeName(fields), fields, []);
-  const entries: ObjectEntry[] = [];
-  for (const field of fields) {
-    // Type the read from the SOURCE layout, not `typeAt(el.name)`: the rest binding's
-    // checker type is `Omit<T, K>`, a mapped type `shapeTypeToHType` answers Unknown for,
-    // and every entry would inherit that Unknown and drag the file dynamic.
-    const read = lowerPatternRead(
-      source,
-      field.name,
+  if (src.kind === 'object') {
+    const fields = src.fields.filter((f) => !bound.has(f.name));
+    const type = hObject(frontendTypes.shapeName(fields), fields, []);
+    const entries: ObjectEntry[] = [];
+    for (const field of fields) {
+      // Type the read from the SOURCE layout, not `typeAt(el.name)`: the rest binding's
+      // checker type is `Omit<T, K>`, a mapped type `shapeTypeToHType` answers Unknown for,
+      // and every entry would inherit that Unknown and drag the file dynamic.
+      const read = lowerPatternRead(
+        source,
+        field.name,
+        el.name,
+        el,
+        sourceFile,
+        checker,
+        bindings,
+        diagnostics,
+        field.type,
+      );
+      if (read === null) {
+        return false;
+      }
+      entries.push({ name: field.name, value: read });
+    }
+    restValue = {
+      kind: 'object-literal',
+      type,
+      span,
+      entries,
+      methods: [],
+      methodCopies: [],
+    };
+  } else if (src.kind === 'unknown') {
+    // Dynamic/unknown source: copy own keys through the shape table, then drop the bound ones.
+    // `Object.assign` is the spread twin's copy; `delete` is the exclusion. The result is a
+    // dynamic object (Unknown), which is exactly what `Omit` over an unknown source is.
+    const empty: DynObjectLiteral = {
+      kind: 'dyn-object-literal',
+      type: hUnknown(false),
+      span,
+      entries: [],
+    };
+    const assign: ObjectStaticCall = {
+      kind: 'object-static',
+      method: 'assign',
+      type: hUnknown(false),
+      span,
+      args: [empty, source],
+    };
+    const tmp = nextBindTemp();
+    const restType = hUnknown(false);
+    bindings.set(tmp, restType);
+    statements.push({
+      kind: 'declaration',
+      type: restType,
+      span,
+      name: tmp,
+      declKind: 'const',
+      value: assign,
+    });
+    const held: Identifier = { kind: 'identifier', type: restType, span, name: tmp };
+    for (const key of bound) {
+      statements.push({
+        kind: 'expression-statement',
+        type: H_BOOLEAN,
+        span,
+        expression: {
+          kind: 'delete-prop',
+          type: H_BOOLEAN,
+          span,
+          target: held,
+          key: { kind: 'string-literal', type: H_STRING, span, value: key },
+        },
+      });
+    }
+    restValue = held;
+  } else {
+    diagnostics.push(
+      lowerDiagnostic(
+        el,
+        sourceFile,
+        'STA1214',
+        'not-yet',
+        'an object rest over a value with no fixed layout is not yet supported',
+      ),
+    );
+    return false;
+  }
+  if (!ts.isIdentifier(el.name)) {
+    // Rest pattern: the remainder is the source the inner pattern destructures.
+    const parts = lowerBindingPattern(
       el.name,
+      restValue,
+      declKind,
       el,
       sourceFile,
       checker,
       bindings,
       diagnostics,
-      field.type,
     );
-    if (read === null) {
+    if (parts === null) {
       return false;
     }
-    entries.push({ name: field.name, value: read });
+    statements.push(...parts);
+    return true;
   }
-  const literal: ObjectLiteral = {
-    kind: 'object-literal',
-    type,
-    span,
-    entries,
-    methods: [],
-    methodCopies: [],
-  };
+  const type = restValue.type;
   const hirName = bindings.declare(el.name.text, type);
   hirNameOfDeclaration.set(el, hirName);
   statements.push({
@@ -2189,7 +2255,7 @@ function bindObjectRest(
     span,
     name: hirName,
     declKind,
-    value: literal,
+    value: restValue,
   });
   return true;
 }
@@ -2288,7 +2354,7 @@ function lowerDeclarator(
   fail: (target: ts.Node, message: string) => null,
 ): Statement | null {
   if (!ts.isIdentifier(decl.name)) {
-    if (!isSimpleBindingPattern(decl.name) || decl.initializer === undefined) {
+    if (!isSimpleBindingPattern(decl.name, checker) || decl.initializer === undefined) {
       return fail(decl, 'destructuring declaration without initializer');
     }
     const lowered = lowerExpression(decl.initializer, sourceFile, checker, bindings, diagnostics);
