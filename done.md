@@ -4794,3 +4794,83 @@ The empty-receiver `repeat` fixtures and the computed-key leak row were already 
 The program cache keyed on the entry's sha256 and the overlay key. An edit to an on-disk import left the entry hash unchanged, so a later watch mode would have served a stale `ts.Program`. The key now also hashes every other on-disk source file the program loaded. Default libs are omitted. Overlay files are omitted, because their bytes are the overlay key and a vendor module is not on disk. A dependency that cannot be re-read is a miss. That hash is the invalidation a watch mode must keep using (`docs/BUNDLER.md` §7).
 
 Check: `pnpm exec vitest run --config packages/tests/vitest.config.ts packages/tests/unit/toolchain-sdk.test.ts packages/tests/unit/program-cache.test.ts packages/tests/unit/graph.test.ts` — `Test Files  3 passed (3)`, `Tests  15 passed (15)` (the new rows are the non-SDK rank and a transitive leaf edit that must miss). `pnpm exec tsc --noEmit -p packages/compiler/tsconfig.json` and `-p packages/tests/tsconfig.json` were clean. `pnpm exec oxlint --deny-warnings` on the touched sources was clean. `pnpm run dupes` reported 180 clones and exited 0 (no new clone). `stator explain` of `packages/compiler` reports `1844 × STA1214` (was 1845): the old `match[1] ?? ''` was one not-yet nullish coalescing, and the rank helper does not need it. The baseline records that shrink.
+
+
+### Task 3.9a. Avoid temporary arrays in unchanged HIR walks
+
+Owner-requested compiler performance work. Preserve HIR contents, identity, callback order and
+the public rewriter API; do not change optimization rules.
+
+**Steps.**
+1. Measure the shared rewriter on unchanged, sparsely changed and fully changed HIR lists.
+2. Reuse `rewriteEach` and copy lists only after their first change; avoid singleton statement
+   wrappers when there is no statement hook. Add regression tests for order, sharing and splicing.
+3. Document the allocation policy in `docs/HIR.md` and record same-host results in `done.md`.
+
+**Check.** `mise exec node -- pnpm run ci` passes. Run
+`mise exec node -- node --expose-gc --max-semi-space-size=128 packages/tests/bench/hir-rewrite.ts`
+against both revisions: unchanged/sparse walks must reduce temporary heap growth and time without
+changing the results; fully changed walks must retain correctness and avoid a material slowdown.
+
+**Completed 2026-10-25.** The shared HIR walker now allocates list replacements only at the
+first change. Fixed-length child lists copy once at their final size and overwrite entries;
+statement lists retain their variable-length splicing behavior. Walks without a statement hook
+reuse `rewriteEach` and avoid one-element result arrays per statement. Expanded statement lists
+use iteration rather than a variadic push, so a 150,000-element expansion works without hitting
+Node's argument limit.
+
+Reuse: extended the existing `rewriteEach`, `rebuildStatement` and HIR test constructors rather
+than adding another walker or dependency. Tests preserve frozen inputs, unchanged identities,
+sibling sharing, bottom-up hook order, whole-list hooks, deletion and expansion. `docs/HIR.md`
+records the allocation policy and benchmark procedure. No plan-notes entry or baseline growth
+was needed.
+
+**Measurements.** Apple M3 Max, Darwin arm64, Node v26.7.0, reference source at
+`47e1d01a02e0329e59629526bce2357665459218`. Two runs of:
+
+```
+mise exec node -- node --expose-gc --max-semi-space-size=128 packages/tests/bench/hir-rewrite.ts /Users/listepo/GitHub/listepo/apps/stator
+```
+
+Each run alternates the current and reference implementations in one process: 15 samples of
+25 walks, after 20 warmups, on 10,000 statements with eight numeric arguments each. Every sampled
+result is checked against the other implementation's result. The shared host also runs CI;
+paired measurements reduce that load bias. These are walker measurements, not whole-compiler
+or native-program speed claims. Heap growth is temporary allocation plus any changed result,
+not retained memory or process RSS.
+
+| Scenario | Before ms, runs 1 / 2 | After ms, runs 1 / 2 | Heap growth bytes, before → after |
+|---|---:|---:|---:|
+| Unchanged expressions | 1.2353 / 1.1809 | 1.1525 / 1.0874 | 12,801,632 → 10,404,624 |
+| Sparse expression changes | 1.5459 / 1.5905 | 1.4692 / 1.4436 | 12,814,624 → 10,511,232 |
+| All expressions changed | 2.5045 / 2.5575 | 2.5162 / 2.5329 | 19,760,056 → 18,567,608 |
+| Identity statement hook | 1.6129 / 1.2565 | 1.3984 / 1.0620 | 13,375,088 → 10,404,000 |
+
+Geometric-mean elapsed time falls **6.25% / 8.54%** across the four cases. Unchanged/sparse walks
+improve in both runs; fully changing walks remain within 1% of the original time. Heap growth
+falls **6.03–22.21%**, with **17.97–22.21%** savings on unchanged/sparse cases.
+
+**Check output.** `mise exec node -- pnpm run ci` exited **0** on the final implementation:
+
+```
+Test Files  63 passed (63)
+Tests  804 passed (804)
+runtime: print corpus matches Node
+subset: 969 fixtures — 938 passed, 31 expected-fail, 0 failed
+golden: 475 fixtures — 475 passed, 0 failed
+selfhost: 15 targets match the baseline
+node-coverage: docs/NODE.md is current
+leak: 10M objects — peak RSS 3872 KB of a 65536 KB cap, 36 samples, plateau
+leak: 10M FFI strings — peak RSS 3904 KB of a 65536 KB cap, 719 samples, plateau
+leak: 2M computed-key reads — peak RSS 3936 KB of a 65536 KB cap, 81 samples, plateau
+runtime: print corpus matches Node (ASan/UBSan)
+ffi static-lib: ok (asan, two libraries, forced Boehm collections)
+golden: 475 fixtures — 475 passed, 0 failed
+asan: golden-asan green
+```
+
+Typecheck and lint passed; duplication stayed at 143 clones with no baseline change. The default
+gate skips two `intl_*` fixtures as usual. The untracked local `.claude/settings.local.json`
+seeded by worktree setup was temporarily parked because its formatting failed lint, then restored
+byte-for-byte; no repository configuration was changed. Raw paired measurements and the final
+CI log are retained locally under `.cache/perf-hir-arrays/` in the task worktree.

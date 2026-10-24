@@ -59,14 +59,23 @@ export function rewriteStatements(
   statements: readonly Statement[],
   rewriter: Rewriter,
 ): readonly Statement[] {
-  const out: Statement[] = [];
-  let changed = false;
+  if (rewriter.statement === undefined) {
+    const rebuilt = rewriteEach(statements, (stmt) => rebuildStatement(stmt, rewriter));
+    return rewriter.statements === undefined ? rebuilt : rewriter.statements(rebuilt);
+  }
+  let out: Statement[] | undefined;
+  let index = 0;
   for (const stmt of statements) {
     const replacement = rewriteStatement(stmt, rewriter);
-    changed = changed || replacement.length !== 1 || replacement[0] !== stmt;
-    out.push(...replacement);
+    if (out === undefined && (replacement.length !== 1 || replacement[0] !== stmt)) {
+      out = statements.slice(0, index);
+    }
+    if (out !== undefined) {
+      for (const next of replacement) out.push(next);
+    }
+    index++;
   }
-  const rebuilt = changed ? out : statements;
+  const rebuilt = out ?? statements;
   return rewriter.statements === undefined ? rebuilt : rewriter.statements(rebuilt);
 }
 
@@ -97,15 +106,19 @@ function rewriteMethod(method: ClassMethod, rewriter: Rewriter): ClassMethod {
   return fn === method.fn ? method : { ...method, fn };
 }
 
-/** `===` to the input array when every element came back identical. */
+/** Copy only on the first change: analysis-only walks must not allocate discarded lists. */
 function rewriteEach<T>(items: readonly T[], f: (item: T) => T): readonly T[] {
-  let changed = false;
-  const out = items.map((item) => {
+  let out: T[] | undefined;
+  let index = 0;
+  for (const item of items) {
     const next = f(item);
-    changed = changed || next !== item;
-    return next;
-  });
-  return changed ? out : items;
+    if (out === undefined && next !== item) {
+      out = items.slice();
+    }
+    if (out !== undefined) out[index] = next;
+    index++;
+  }
+  return out ?? items;
 }
 
 export function rewriteStatement(stmt: Statement, rewriter: Rewriter): readonly Statement[] {
