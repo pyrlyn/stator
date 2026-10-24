@@ -276,23 +276,25 @@ jsrt_value jsrt_date_get_timezone_offset(jsrt_value v) {
 #define DATE_GETTER(name, field, local)                                                            \
   jsrt_value jsrt_date_get_##name(jsrt_value v) { return jsrt_number(field_of(reading(v, local), field)); }
 
-DATE_GETTER(utc_full_year, F_FULL_YEAR, false)
-DATE_GETTER(utc_month, F_MONTH, false)
-DATE_GETTER(utc_date, F_DATE, false)
-DATE_GETTER(utc_day, F_DAY, false)
-DATE_GETTER(utc_hours, F_HOURS, false)
-DATE_GETTER(utc_minutes, F_MINUTES, false)
-DATE_GETTER(utc_seconds, F_SECONDS, false)
-DATE_GETTER(utc_milliseconds, F_MILLISECONDS, false)
+#define DATE_GETTER_FIELDS(X)                                                                      \
+  X(utc_full_year, F_FULL_YEAR, false)                                                             \
+  X(utc_month, F_MONTH, false)                                                                     \
+  X(utc_date, F_DATE, false)                                                                       \
+  X(utc_day, F_DAY, false)                                                                         \
+  X(utc_hours, F_HOURS, false)                                                                     \
+  X(utc_minutes, F_MINUTES, false)                                                                 \
+  X(utc_seconds, F_SECONDS, false)                                                                 \
+  X(utc_milliseconds, F_MILLISECONDS, false)                                                       \
+  X(full_year, F_FULL_YEAR, true)                                                                  \
+  X(month, F_MONTH, true)                                                                          \
+  X(date, F_DATE, true)                                                                            \
+  X(day, F_DAY, true)                                                                              \
+  X(hours, F_HOURS, true)                                                                          \
+  X(minutes, F_MINUTES, true)                                                                      \
+  X(seconds, F_SECONDS, true)                                                                      \
+  X(milliseconds, F_MILLISECONDS, true)
 
-DATE_GETTER(full_year, F_FULL_YEAR, true)
-DATE_GETTER(month, F_MONTH, true)
-DATE_GETTER(date, F_DATE, true)
-DATE_GETTER(day, F_DAY, true)
-DATE_GETTER(hours, F_HOURS, true)
-DATE_GETTER(minutes, F_MINUTES, true)
-DATE_GETTER(seconds, F_SECONDS, true)
-DATE_GETTER(milliseconds, F_MILLISECONDS, true)
+DATE_GETTER_FIELDS(DATE_GETTER)
 
 /* ============================================================================
  * MakeDay / MakeTime / MakeDate (§21.4.1.27-29), which the setters and Date.UTC share
