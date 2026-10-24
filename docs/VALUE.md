@@ -1593,6 +1593,56 @@ binary used to die of SIGSEGV with nothing printed (QA audit F6). Two layers now
   faulting instruction re-runs into it. An alternate stack someone already installed (ASan does)
   is kept.
 
+## 4.26 The class object — a closure-shaped value whose `klass` names the descriptor (plan.md §8 step 12(d)/(e), T27)
+
+A class evaluates to a **class object**: the value `const K = C` would store, `f(C)` would pass,
+and `C.name` / `C.static` read through. It is one file-scope `JSRTClosure` per class
+(`_jsrt_class_object_N` in generated C), the same shape §4.20 gives an ordinary function, with
+two fields that make it a class:
+
+| Field | Meaning |
+|---|---|
+| `klass` | The class's `JSRTClass` descriptor (§4.5). NULL for every ordinary function. This is how the runtime answers `.name`/`.length`/`typeof`, statics, construction and `instanceof`. |
+| `fn` | The constructor, or NULL when the class declares none. Reachable only through `jsrt_construct`; `jsrt_call` refuses a class object with Node's `Class constructor K cannot be invoked without 'new'`. |
+| `name` | Node's display name (the closure's own `name` field): the declared name, else a class expression's inner name, else the bound variable, else `default` for `export default class {}`. |
+| `arity` | The constructor's declared arity — `Function.prototype.length`. |
+| `constructible` | False. A class's construction is `klass`'s, never the function-prototype path. |
+| `props` | NULL always. A class object never grows own properties: its statics are the descriptor's (below). |
+
+**Identity.** `C === D` is a pointer comparison on the two closures — one constant per class, so
+two spellings of one declaration are one object. A class whose evaluation can repeat (inside a
+function or a loop) has no one constant and stays refused at the gate rather than lowered here.
+
+**Statics hang off the descriptor.** A static stays an ordinary binding wherever the compiler can
+name it (`C.count` reads the declaring class's unspellable binding directly, §4.5 / SUBSET.md).
+`JSRTClass.statics` is the parallel table a *runtime* class value answers through — an untyped
+`v.count`, or `this.count` inside a static method whose receiver may be absent. One row per own
+static (`JSRTStaticEntry`: name, slot pointer, kind field/method/getter/setter); inherited statics
+are the `parent` walk, sound because the gate refuses a static override. A write through the table
+and a write through the binding are the same write: the row's `slot` points at the binding's
+storage. Accessor half-rows CALL the slot's closure with the class object as receiver.
+
+**What v0 admits as reads (T27 narrow slice).**
+
+| Read | Answer | How |
+|---|---|---|
+| `C.name`, `K.name` (`const K = C`, chained aliases, class expressions) | Node's display name | Folds to a string-literal at the lowering — no class object is built. |
+| `C.static`, `K.static` | The static's value | Alias erasure to the declaring class's binding (already landed). A static read through a *materialized* class value routes to `JSRTClass.statics` (the runtime path above). |
+| `C.prototype`, `K.prototype` | — | `not-yet(STA1214)`, "the prototype surface", Phase 8. |
+| `C.length`, any other member | — | `not-yet(STA1214)`, "a member read through a class object". |
+| `f(C)`, `console.log(K)`, `typeof C` | — | `not-yet(STA1214)`: the opaque class-value surface (step 12(e)). Printing needs `inspect_class` (already in the runtime) behind a materialized value. |
+
+**HIR.** `ClassValue` names one file-scope class object by its HIR name (`className` is the key
+`ClassDeclaration` registers under). `NewValue` / `InstanceOfValue` are the value-spelling twins
+of `new` and `instanceof` (they dispatch through `jsrt_construct` / `jsrt_instanceof_ctor`).
+`ClassDeclaration.staticProps` carries the statics table rows. All four landed as declared,
+verified, rewritten and emitted (plan-notes 283); the gate admits the narrow slice above, and the
+remainder of the surface stays `STA1214` until the value path is widened.
+
+**Known divergences (narrow slice).** `C.name` is a compile-time fold, so a program that mutates
+`C.name` (Node allows it on a function) cannot be expressed here. `C === D` across two distinct
+declarations is not yet observable — the opaque identity surface (`f(C)`, printing) is refused.
+
 ## 5. What Phase 2 actually implements
 
 The layout above is complete, but the walking skeleton uses only part of it. Recorded so the gap
