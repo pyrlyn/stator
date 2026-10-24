@@ -437,12 +437,9 @@ static inline int to_chars(const floating_decimal_64 v, const bool sign, char* c
 #endif
 
   // Print the decimal digits.
-  // The following code is equivalent to:
-  // for (uint32_t i = 0; i < olength - 1; ++i) {
-  //   const uint32_t c = output % 10; output /= 10;
-  //   result[index + olength - i] = (char) ('0' + c);
-  // }
-  // result[index] = '0' + output % 10;
+  // This block writes the mantissa digits into `result` from right to left,
+  // extracting base-10 chunks and emitting characters using lookup-table-assisted paths.
+  // The logic below is optimized but produces the same decimal digit sequence.
 
   uint32_t i = 0;
   // We prefer 32-bit operations, even on 64-bit platforms.
