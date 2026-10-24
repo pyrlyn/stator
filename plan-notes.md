@@ -13900,3 +13900,48 @@ on the runner itself and posts the spread.
 `pnpm install --frozen-lockfile` · `pnpm --dir site install --frozen-lockfile` · typecheck ·
 lint · `pnpm run test` (**801** green) · `pnpm run dupes` (**117**, baseline **129 → 117**) ·
 runtime rebuild. Not run here: `pnpm run ci` in full.
+## 385. T33 Ryū vendored and swapped; T34 bind left open (2026-10-24)
+
+Branch `o1-batch` (worktree `stator-o1`). Host: darwin-arm64, pinned Node 26.7.0.
+
+### T33 — Ryū shortest-round-trip printer
+
+Vendored **Ryū `v2.0`** (`72e18e8d14d4392a4a3261f37cde248e4fbedbec`) into
+`packages/runtime/vendor/ryu/` through `packages/runtime/vendor/update.ts` (new `ryu` entry;
+`strip: 'ryu/'` flattens upstream's `ryu/` drop so `#include "ryu/<file>"` resolves under
+`-Ivendor`). Files: `d2s.c`, `d2s.h`, `d2s_full_table.h`, `d2s_intrinsics.h`, `common.h`,
+`digit_table.h`, `ryu.h`, both upstream licenses. `VENDOR.md` pins the tag and commit.
+`update.ts --check` is green for all three vendors.
+
+`shortest_digits()` in `runtime/src/jsrt_print.c` now calls `d2s_buffered` once and parses
+Ryū's `D[.DDD]E±X` shape (uppercase `E`, no `+` on a non-negative exponent, no point when
+there is one digit) into the same `(s, k, n)` the `%.*e` round-trip search produced — up to
+18 `snprintf`+`strtod` pairs per number removed. Sign/NaN/Inf/±0 stay in `format_double`.
+`justfile` `VENDOR_INC` gains `-Ivendor`. No `--check`/build temp files left behind.
+
+Gates: `pnpm run runtime` clean (Boehm); `pnpm run test:runtime` —
+`runtime: print corpus matches Node`; `pnpm run test:golden` — **475/475 passed**.
+Docs: `docs/TOOLCHAIN.md` (library table + the "not yet required" bullet),
+`AGENTS.md` repo map, `plan.md` §12 / candidate table / v4.86.
+
+**Plan contradiction recorded:** plan.md §12 had Ryū as a ladder rung gated on Task 6.3's
+measured noise floor (owner's call, plan-notes 190). The directed T33 card landed the vendor
+drop and the swap without a §12 before/after — the corpus already matched Node byte-for-byte,
+so this is a pure speed change with no correctness risk. §12's Ryū rung is retired.
+
+### T34 — `Function.prototype.bind` two-slot env — NOT landed
+
+Left open. Design is settled (docs/VALUE.md §4.16): a bound `JSRTClosure` whose `env` holds
+the receiver in slot 0 and the target in slot 1, one shared thunk that inserts slot 0 at
+`argv[0]`, `has_receiver` false so the call site does not shift. Partial args need slots 2+
+(`env->count - 2`); `new BoundF()` must construct through the **target** (target's prototype,
+bound this ignored, bound args prepended) — `construct_function` currently builds the object
+from `jsrt_function_prototype(ctor)` of the bound closure itself, which is wrong for bind, so
+the construct path needs a bound-thunk discriminator.
+
+Still to do: runtime `jsrt_function_bind` + thunk; `jsrt_get_prop` answers `bind` (and
+`call`/`apply`, plan §8 step 9a) on any closure via `jsrt_bound_method`; gate admits the
+member on a function-typed receiver in both modes (`functionMemberResult` currently accepts
+own properties only in `js`); flip `subset_function_bind_{ts,js}` off not-yet; goldens
+`bind_receiver` / `bind_partial_args` / `bind_new` in both modes; do not regress
+`has_receiver` method values (§4.16). Plan §8 step 12(e) and 9a stay open.

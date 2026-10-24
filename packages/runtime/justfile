@@ -61,7 +61,7 @@ _runtime flavor:
     fi
     CC_ID="$(${CC} --version | head -1)"
     VENDOR_POSIX='{{vendor_posix}}'
-    VENDOR_INC='-Ivendor/quickjs-ng -Ivendor/fdlibm'
+    VENDOR_INC='-Ivendor -Ivendor/quickjs-ng -Ivendor/fdlibm'
     # The runtime sources use POSIX clock/time APIs too; glibc hides them under strict C11
     # unless the feature revision is requested before any system header (the vendor sources
     # need the same flag). Apple's SDK does not need it and selects different declarations when
@@ -265,7 +265,7 @@ _runtime-test flavor:
     CORPORA=(print_numbers print_arrays print_objects print_maps print_shapes print_typeof print_regexp print_promise print_dates print_accessors print_iterators print_ffi_strings)
 
     VENDOR_POSIX='{{vendor_posix}}'
-    VENDOR_INC='-Ivendor/quickjs-ng -Ivendor/fdlibm'
+    VENDOR_INC='-Ivendor -Ivendor/quickjs-ng -Ivendor/fdlibm'
     CFLAGS_COMMON="-std=c11 -Wall -Wextra -Werror ${VENDOR_POSIX} -Iinclude ${VENDOR_INC}"
 
     case "${FLAVOR}" in
