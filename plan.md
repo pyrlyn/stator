@@ -751,11 +751,12 @@ The tasks are independent and the phase's Check has one clause per task.
 
 **All four tasks have landed** (6.1, 6.2, 6.2a, 6.3); their evidence is in [done.md](done.md) →
 Phase 6, and the titles stay here so `§9 Task 6.N` references resolve. The phase is **not closed**:
-its Check's fuzzing clause says *≥1 h nightly with zero unexplained divergences*, and what exists is
-the scheduled job plus local runs — the clause passes on a nightly run's own output, cited here.
-Task 6.3 also carries one named residue (its regression threshold's noise floor). Test262 tracking
-is the standing output of 6.1 and does not close. Difficulty (§14 legend): the fuzzing clause is
-**D1** (cite a nightly run's own output), the noise-floor residue **D2**.
+its Check's fuzzing clause says *≥1 h nightly with zero unexplained divergences*. **Cited
+2026-10-24** (plan-notes 381): nightly run 40072874719 (`main`, schedule, success, 1h11m) logged
+`differential: 5177 cases — 0 divergences` after `--minutes=60`. Task 6.3 also carries one named
+residue (its regression threshold's noise floor). Test262 tracking is the standing output of 6.1
+and does not close. Difficulty (§14 legend): the fuzzing clause is **D1** (cite a nightly run's
+own output), the noise-floor residue **D2**.
 
 ~~**Task 6.1 — Test262 runner.**~~ ✅ **landed 2026-09-03** — evidence in [done.md](done.md) → Phase 6.
 First pinned number: **2379 passed, 10,513 failed, 40,688 skipped — 18.5%** over `passed + failed`,
@@ -858,8 +859,14 @@ which 1.1% exact) as debt. Extract a shared helper per clone family at the respo
 then runs with no baseline at all. **First tranche landed 2026-10-23** (plan-notes 374): six
 helpers in `lower/` + `codegen/` (`emitLoopBody`/`emitLoopEpilogue`, `emitWhileOpen`,
 `emitRouteDispatch`, `resetToModuleLevel`, `flushCallSlots`, `lowerNewCallArgs`); the baseline
-shrank 180 → 171 fingerprints. The `runtime/src/jsrt_array_ops.c` family and the rest of the
-list are still open.
+shrank 180 → 171 fingerprints. **Second tranche landed 2026-10-24** (plan-notes 381): thirteen
+helpers across `lower/index.ts`, `frontend/generics.ts` and `runtime/src/jsrt_array_ops.c`
+(`emptyBlockAt`, `assignOperatorKinds`, `substitutedTypeArguments`, `genericNamesakeOf`,
+`declaringClassOfProperty`, `methodCallAtSlot`/`missingMethodSlot`, `parameterDefaults`,
+`isSingleConstList`, `unifyNamedMembers`, `collect_varargs`, `find_result`,
+`array_search_forward`, `array_half_open_range`); the baseline shrank **143 → 129** fingerprints.
+The `gate.ts`/`generics.ts` `ts.is*` lists, the `jsrt_array_ops.c` switch cases and the rest of
+the list are still open.
 
 ~~**Task 6.17 — Test impact: build and run only what a change reaches.**~~ ✅ **landed 2026-10-02**
 (steps 1–3 and 5; Check (a)–(e) passed) — evidence in [done.md](done.md) → Phase 6 Task 6.17
@@ -1442,12 +1449,15 @@ Steps:
 3. C2 — parallel emit if emit shows in the profile. **Not taken** (plan-notes 374: emit 10 ms).
 4. C3 — sharded lower/verify via process pool if typecheck/HIR dominate; document the Program
    isolation choice. **Not taken** (plan-notes 374: `hir/verify` 3 ms).
-5. CI: one job runs `STATOR_COMPILE_JOBS=2` smoke so races fail the build; default CI may stay
-   serial for log readability.
+5. ✅ **CI smoke (2026-10-24, plan-notes 381):** one non-required job (`compile jobs smoke`)
+   builds the multi-module `tests/golden/ts/modules` fixture and runs
+   `packages/tests/unit/compile-jobs.test.ts` with `STATOR_COMPILE_JOBS=2` so races fail the
+   build; default CI stays serial for log readability. Required checks keep their names.
 
 **Check:** documented before/after numbers in plan-notes; `STATOR_COMPILE_JOBS=1` preserves
 byte-identical emitted C for the fixture; CI green. **Met 2026-10-23** (plan-notes 374) except
-the step-5 CI smoke, which is still open.
+the step-5 CI smoke, which **landed 2026-10-24** (plan-notes 381) — CI green on the job itself
+is observable after merge.
 
 ---
 
