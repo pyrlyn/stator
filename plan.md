@@ -1537,7 +1537,7 @@ the existing pipeline (`node:worker_threads` / a process pool), not Zig/Rust/Go 
    | `std/env` | `get`/`set`/`has`/`unset`, `cwd` | `args` moved to T11.3 as `std/process.argv` (plan-notes 294), which landed: the generated `main` takes `argc`/`argv` |
    | `std/process` | `exit`, `pid`, `abort`; T11.3 added `argv`, `execPath`, `platform`, `arch`, `ppid`, `hrtimeNs`, `memoryUsage`, `exitCode`/`setExitCode` | no signals yet |
    | `std/path` | `join`/`dirname`/`basename`/`isAbsolute` | pure TS or tiny C; UTF-16 ↔ bytes at the FS edge only |
-   | `std/fs` | sync read/write/stat/mkdir/unlink/rmdir; T11.3 added descriptors, `readBytes`, `readdir`, `realpath`, `utimes`, `exists`; Promise twins | Promise twins (`readTextAsync`, … — the sync name plus `Async`) are thin `async` wrappers that `await` a thread-pool job (see B) once T10.2 exists; until then importing one is not-yet naming Phase 10 (T10.1 step 5) |
+   | `std/fs` | sync read/write/stat/mkdir/unlink/rmdir; T11.3 added descriptors, `readBytes`, `readdir`, `realpath`, `utimes`, `exists`; Promise twins | Promise twins (`readTextAsync`, … — the sync name plus `Async`) offload to OS workers and return the join Promise (see B; plan-notes 388); a reusable bounded pool is deferred |
    | `std/time` | `nowMs`, `sleepMs` (sync) | timers in the microtask sense stay out until a macrotask phase exists |
    | `std/sync` | `Mutex`, `CondVar`, `Channel` | with T10.2 |
    | `std/thread` | `spawn`, `join`, `availableParallelism` | with T10.2 |
@@ -1547,8 +1547,9 @@ the existing pipeline (`node:worker_threads` / a process pool), not Zig/Rust/Go 
 3. **Implementation layers:** `packages/std/*.ts` (types + thin wrappers users import) →
    compiler recognizes `std/*` as a value-import edge into runtime symbols → Zig backings exporting
    `jsrt_std_*` (§0.5; plan-notes 289). The package layout is §11c's: `packages/std` holds both
-   the TS surface and the Zig, and builds `libjsrt_std.a`, linked only when a program imports `std/*`. No second RegExp, no
-   Node `fs` semantics chase: match POSIX + document deltas in `STD.md`.
+   the TS surface and the Zig, and builds `libjsrt_std.a`, linked only when a program imports `std/*`. Thread/sync primitives are the exception: they live in the runtime Zig core because they
+   manage GC-visible values, with their public wrappers in `std` (plan-notes 388). No second
+   RegExp, no Node `fs` semantics chase: match POSIX + document deltas in `STD.md`.
 4. **Gate:** unknown `std/foo` is a hard error; partial modules use `not-yet` codes that name
    **Phase 10** as the blocker owner (§15.9).
 
@@ -1562,7 +1563,7 @@ green-thread M:N (second scheduler beside Task 4.6).
 Rules that make async ↔ threads sound:
 
 1. **The main thread owns `jsrt_run_microtasks()`.** Worker threads never drain it.
-2. **`std.thread.spawn(fn, ...args)`** runs `fn` on an OS thread. `fn` must be a Stator function
+2. **`std.thread.spawn(fn)`** runs a synchronous zero-argument closure on an OS thread; arguments are captured (plan-notes 388). `fn` must be a Stator function
    whose environment is heap-reachable (same discipline as async/generator envs). It may use
    `std/sync` and may call sync `std/fs`. It must not assume TLS frame state from main without
    installing its own `JSRT_FRAME`.
@@ -1570,10 +1571,10 @@ Rules that make async ↔ threads sound:
    fulfills/rejects by pushing a completion into a **thread-safe MPSC queue**. Main's drain
    (already called after module body / at await boundaries) also pops that queue and settles the
    promises — one mechanism, no second loop.
-4. **`std.async.runOnMain(fn)`** (name TBD in the doc) lets a worker schedule a thunk onto the
+4. **`std.thread.runOnMain(fn)`** (docs/THREADS.md) lets a worker schedule a thunk onto the
    main microtask queue. That is the only supported way for a worker to touch Promise reactions
    or non-thread-safe builtins.
-5. **Blocking I/O from async code:** prefer `await std.fs.readFile(path)` implemented as
+5. **Blocking I/O from async code:** prefer `await std.fs.readTextAsync(path)` implemented as
    spawn-join under the hood, so the main thread stays responsive. Do not block main inside an
    async function's sync prefix.
 6. **GC:** build/link Boehm with threads; every spawn registers the thread with the collector;
@@ -1615,27 +1616,9 @@ step remains). `pnpm run ci` green.
 ~~**T10.1. `std` low-level API (sans threads).**~~ ✅ **landed 2026-10-02** — evidence in
 [done.md](done.md) → Phase 10 T10.1 (plan-notes 284, 294, 307).
 `std/env`, `std/path`, `std/process`, sync `std/fs` and `std/time` live in `packages/std`. The
-`std/fs` Promise twins (`readTextAsync`, …) are `STA1214` naming Phase 10 until T10.2 implements
-them as `async` wrappers over the thread pool (docs/STD.md §2).
+`std/fs` Promise twins (`readTextAsync`, …) offload through T10.2 (docs/STD.md §2).
 
-### T10.2. OS threads + async bridge — **[D5]**
-
-Depends on: T10.1's docs (threads chapters), Task 4.6 machinery, threads-enabled GC.
-
-Steps:
-
-1. Write `docs/THREADS.md` — the seven rules in Design B, plus Boehm build flags.
-2. Runtime: thread registry, MPSC completion queue, `jsrt_thread_spawn` / `join` promise.
-3. `std/sync` (`Mutex`, `CondVar`, bounded `Channel`).
-4. `std/thread.spawn` / `join` / `availableParallelism`.
-5. Bridge: `await join` + `runOnMain`; golden where a worker resolves a Promise the main `await`s,
-   and an async function offloads CPU work via spawn-join.
-6. Update Phase 7 Task 7.2 step 6 text/header when foreign threads may call in **only** via the
-   bridge (or keep "undefined" until a 7.2 follow-up — record the choice in plan-notes).
-7. Stress: N threads allocating under GC; ASan/UBSan where available.
-
-**Check:** goldens byte-stable where Node has an analogue (Promise side); thread-only fixtures
-use Stator's own oracle. Multi-thread GC stress does not crash under ASan.
+~~**T10.2. OS threads + async bridge — [D5].**~~ ✅ **completed 2026-10-25** — evidence in [done.md](done.md) → Phase 10 T10.2 (plan-notes 388).
 
 ### T10.3. Threaded / parallel host compiler — **[D4]**
 

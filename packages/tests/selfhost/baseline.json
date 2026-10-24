@@ -36,7 +36,7 @@
     "codes": {}
   },
   "packages/std/src/fs.ts": {
-    "verdict": "static",
+    "verdict": "dynamic",
     "codes": {}
   },
   "packages/std/src/hash.ts": {
@@ -56,6 +56,14 @@
     "codes": {}
   },
   "packages/std/src/process.ts": {
+    "verdict": "static",
+    "codes": {}
+  },
+  "packages/std/src/sync.ts": {
+    "verdict": "dynamic",
+    "codes": {}
+  },
+  "packages/std/src/thread.ts": {
     "verdict": "static",
     "codes": {}
   },

@@ -92,6 +92,9 @@ function emitFinallyDispatch(
 }
 
 export function emitStatement(emitter: Emitter, stmt: Statement): void {
+  if (emitter.externDecls.has('jsrt_thread_spawn')) {
+    emitter.appendLine('jsrt_gc_safepoint();', stmt.span);
+  }
   switch (stmt.kind) {
     case 'declaration': {
       if (stmt.value !== undefined) {
@@ -419,7 +422,10 @@ export function emitStatement(emitter: Emitter, stmt: Statement): void {
         emitter.emitGeneratorSettle(slot, stmt.span);
         break;
       }
-      emitter.appendLine(`return (${slot} = ${value}, JSRT_FRAME_POP(), ${slot});`, stmt.span);
+      emitter.appendLine(
+        `return (${slot} = ${value}, ${emitter.externDecls.has('jsrt_thread_spawn') ? `jsrt_gc_handoff(${slot}), ` : ''}JSRT_FRAME_POP(), ${slot});`,
+        stmt.span,
+      );
       break;
     }
 
@@ -946,7 +952,10 @@ export function emitReturnJump(emitter: Emitter, span: Span): void {
       emitter.emitGeneratorSettle(slot, span);
       return;
     }
-    emitter.appendLine(`return (JSRT_FRAME_POP(), ${slot});`, span);
+    emitter.appendLine(
+      `return (${emitter.externDecls.has('jsrt_thread_spawn') ? `jsrt_gc_handoff(${slot}), ` : ''}JSRT_FRAME_POP(), ${slot});`,
+      span,
+    );
     return;
   }
   emitter.routeJump(scope, 'return', span, () => emitter.emitReturnJump(span));

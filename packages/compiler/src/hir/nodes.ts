@@ -1238,6 +1238,7 @@ export interface CallExpr extends Node {
  * `void` is a return position only — a `void` parameter is STA1119, and `cstring-owned` or
  * `bytes` as a return is STA1119, all refused where the signature is classified, never here. */
 export type ExternAbiKind =
+  | 'value' // Private runtime bridge: already boxed and rooted.
   | 'number'
   | 'boolean'
   | 'cstring'
@@ -1307,6 +1308,7 @@ export function externKindHType(kind: ExternAbiKind): HType {
     case 'cstring-owned':
       return H_STRING;
     case 'pointer':
+    case 'value':
       return hUnknown(false);
     case 'out-pointer':
       // Same opaque bits as a `pointer`: the HIR has no vocabulary for an out-slot either,

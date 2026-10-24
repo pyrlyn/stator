@@ -27,11 +27,7 @@ const undefined_value: Value = c.JSRT_UNDEFINED;
 /// 2^53 - 1: the largest length ToIndex accepts (ECMA-262 §7.1.22).
 const max_index: f64 = 9007199254740991.0;
 
-fn descriptor(comptime name: [*:0]const u8) c.JSRTClass {
-    var k = std.mem.zeroes(c.JSRTClass);
-    k.name = name;
-    return k;
-}
+const descriptor = mem.classDescriptor;
 
 export const jsrt_class_arraybuffer: c.JSRTClass = descriptor("ArrayBuffer");
 export const jsrt_class_uint8array: c.JSRTClass = descriptor("Uint8Array");
@@ -227,24 +223,7 @@ fn freshView(len: usize) ?*View {
     return @ptrCast(@alignCast(c.jsrt_ptr(newView(buffer, 0, len))));
 }
 
-/// A frame of `n` runtime-held values, published to the shadow stack so the collector traces them
-/// -- a boxed value in a Zig local is invisible to the conservative scan (jsrt_gc.zig). The caller
-/// pops it with `pop` on every exit path, which `defer` makes structural.
-fn Frame(comptime n: usize) type {
-    return struct {
-        slots: [n]Value = [_]Value{undefined_value} ** n,
-        frame: c.JSRTFrame = undefined,
-
-        fn push(self: *@This()) void {
-            self.frame = .{ .prev = c.jsrt_frame_top, .count = n, .slots = &self.slots, .env = null };
-            c.jsrt_frame_top = &self.frame;
-        }
-
-        fn pop(self: *@This()) void {
-            c.jsrt_frame_top = self.frame.prev;
-        }
-    };
-}
+const Frame = mem.Frame;
 
 // ------------------------------------------------------------------------- ArrayBuffer
 

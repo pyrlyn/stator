@@ -1,8 +1,8 @@
 // @mode: ts
-// @verdict: not-yet
-// @code: STA1214
-// SUBSET.md: std/* imports — `std/thread` and `std/sync` need T10.2's OS threads (docs/STD.md
-// §5), so they are not-yet naming Phase 10 rather than unknown.
-import { spawn } from "std/thread";
-
-console.log(spawn);
+// @verdict: dynamic
+// docs/THREADS.md: OS threads and synchronization use the private boxed runtime bridge.
+import { spawn } from 'std/thread';
+import { Mutex } from 'std/sync';
+const mutex = new Mutex();
+const thread = spawn(() => { mutex.lock(); mutex.unlock(); return 42; });
+thread.join().then((value) => console.log(value));

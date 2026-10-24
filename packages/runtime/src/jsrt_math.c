@@ -195,8 +195,8 @@ jsrt_value jsrt_math_hypot(jsrt_value va, jsrt_value vb) {
  * oversight: a reproducible program is worth more than an unpredictable one while the compiler is
  * being differentially tested, and nothing here is security-bearing. It must NOT be used for
  * anything that needs unpredictability. */
-static uint64_t rng_state0 = 0x853c49e6748fea9bULL;
-static uint64_t rng_state1 = 0xda3e39cb94b95bdbULL;
+static _Thread_local uint64_t rng_state0 = 0x853c49e6748fea9bULL;
+static _Thread_local uint64_t rng_state1 = 0xda3e39cb94b95bdbULL;
 
 jsrt_value jsrt_math_random(void) {
   uint64_t s1 = rng_state0;

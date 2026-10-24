@@ -52,10 +52,43 @@ pub fn reallocOrPanic(ptr: ?*anyopaque, bytes: usize, what: [*:0]const u8) *anyo
 
 comptime {
     _ = @import("jsrt_gc.zig");
+    _ = @import("jsrt_thread.zig");
+    _ = @import("jsrt_sync.zig");
     _ = @import("jsrt_buf.zig");
     _ = @import("jsrt_shape.zig");
     _ = @import("jsrt_alloc.zig");
     _ = @import("jsrt_typed.zig");
     _ = @import("jsrt_stack.zig");
     _ = @import("jsrt_string_mem.zig");
+}
+
+/// Empty native class layout shared by typed arrays and internal synchronization handles.
+pub fn classDescriptor(comptime name: [*:0]const u8) c.JSRTClass {
+    var result = std.mem.zeroes(c.JSRTClass);
+    result.name = name;
+    return result;
+}
+
+/// A frame of `n` runtime-held values, published to the shadow stack so the collector traces them
+/// -- a boxed value in a Zig local is invisible to the conservative scan (jsrt_gc.zig). The caller
+/// pops it with `pop` on every exit path, which `defer` makes structural.
+pub fn Frame(comptime n: usize) type {
+    return struct {
+        slots: [n]c.jsrt_value = [_]c.jsrt_value{c.JSRT_UNDEFINED} ** n,
+        frame: c.JSRTFrame = undefined,
+
+        pub fn open(self: *@This(), values: [n]c.jsrt_value) void {
+            self.slots = values;
+            self.push();
+        }
+
+        pub fn push(self: *@This()) void {
+            self.frame = .{ .prev = c.jsrt_frame_top, .count = n, .slots = &self.slots, .env = null };
+            c.jsrt_frame_top = &self.frame;
+        }
+
+        pub fn pop(self: *@This()) void {
+            c.jsrt_frame_top = self.frame.prev;
+        }
+    };
 }

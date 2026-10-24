@@ -1,5 +1,5 @@
 // @mode: js
-// @verdict: static
+// @verdict: dynamic
 // SUBSET.md: std/* imports — sync, path-only `std/fs` (docs/STD.md §5); proved by the `std_fs`
 // golden.
 import { readText, stat } from "std/fs";

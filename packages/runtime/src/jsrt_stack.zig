@@ -94,7 +94,7 @@ fn currentBounds() ?Bounds {
 
 /// Called from jsrt_init. Safe to call again (a second `stator_<unit>_init`, another thread): the
 /// limit is re-measured for the calling thread, and the handler is installed once per process.
-export fn jsrt_stack_init() void {
+pub export fn jsrt_stack_init() void {
     const bounds = currentBounds() orelse return;
     if (bounds.high - bounds.low <= 2 * headroom) return;
     jsrt_stack_limit = bounds.low + headroom;

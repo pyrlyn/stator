@@ -19,6 +19,9 @@
 //! keeps the buffer alive through the header without depending on interior-pointer recognition.
 //! The header is therefore a scanned allocation; the buffer is pointer-free and atomic.
 
+const std = @import("std");
+const concurrent = @import("jsrt_concurrent.zig");
+var append_lock: std.c.pthread_mutex_t = .{};
 const mem = @import("jsrt_mem.zig");
 const gc = @import("jsrt_gc.zig");
 const c = mem.c;
@@ -83,6 +86,8 @@ fn newBuffer(len: u32) *Buffer {
 /// `RangeError: Invalid string length` pending and answers the empty string, so a caller that
 /// reads the answer before its pending check still holds a string.
 export fn jsrt_string_concat(a: c.jsrt_value, b: c.jsrt_value) c.jsrt_value {
+    concurrent.lock(&append_lock);
+    defer concurrent.unlock(&append_lock);
     // The emitter and jsrt_op_add reach here only with two strings; anything else is a compiler bug.
     if (!c.jsrt_is(a, c.JSRT_TAG_STRING) or !c.jsrt_is(b, c.JSRT_TAG_STRING)) {
         c.jsrt_panic("jsrt_string_concat: an operand is not a string");

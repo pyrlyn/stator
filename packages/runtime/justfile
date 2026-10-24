@@ -83,7 +83,7 @@ _runtime flavor:
       GC_LIBS=''
       GC_STATUS='plain malloc (no collection)'
     fi
-    SYS_LIBS='-lm'
+    SYS_LIBS='-lm -pthread'
 
     # LTO: the archive's objects are LLVM bitcode, so the final link sees the runtime and the
     # generated C as one module and inlines across that boundary (plan-notes 162). Probed, not

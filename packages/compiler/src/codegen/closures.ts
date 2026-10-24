@@ -329,6 +329,9 @@ export function emitSuspendEntry(emitter: Emitter, unit: FunctionUnit, produce: 
   emitter.appendLine('JSRT_FRAME_ENV(_jsrt_env);', fn.span);
   emitter.emitParameterPrologue(fn);
   emitter.appendLine(`jsrt_value _jsrt_r = ${produce};`, fn.span);
+  if (emitter.externDecls.has('jsrt_thread_spawn')) {
+    emitter.appendLine('jsrt_gc_handoff(_jsrt_r);', fn.span);
+  }
   emitter.appendLine('JSRT_FRAME_POP();', fn.span);
   emitter.appendLine('return _jsrt_r;', fn.span);
   emitter.indent--;

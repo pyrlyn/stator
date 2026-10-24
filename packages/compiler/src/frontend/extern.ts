@@ -13,6 +13,7 @@ import * as ts from 'typescript';
 import { dirname, resolve } from 'node:path';
 import type { ExternAbiKind, ExternErrorConvention } from '../hir/nodes.ts';
 import { externConventionMismatch, isExternErrorConvention } from '../hir/nodes.ts';
+import { STD_ROOT } from './std.ts';
 import { hTypeName } from '../hir/types.ts';
 import { isBrandedPointer, isOutAlias, outSlotInner, tsTypeToHType } from './types.ts';
 
@@ -436,6 +437,37 @@ function classifyPosition(
   }
 }
 
+const CONCURRENCY_SYMBOLS: readonly string[] = [
+  'jsrt_thread_spawn',
+  'jsrt_thread_join',
+  'jsrt_thread_run_on_main',
+  'jsrt_sync_mutex_new',
+  'jsrt_sync_mutex_lock',
+  'jsrt_sync_mutex_try_lock',
+  'jsrt_sync_mutex_unlock',
+  'jsrt_sync_mutex_destroy',
+  'jsrt_sync_cond_new',
+  'jsrt_sync_cond_wait',
+  'jsrt_sync_cond_signal',
+  'jsrt_sync_cond_destroy',
+  'jsrt_sync_channel_new',
+  'jsrt_sync_channel_send',
+  'jsrt_sync_channel_receive',
+  'jsrt_sync_channel_close',
+];
+
+/** Boxed values are a private runtime ABI, never inferred from a user extern signature. */
+function concurrencyPosition(
+  type: ts.Type,
+  checker: ts.TypeChecker,
+  position: 'param' | 'return',
+): ExternAbiKind | ExternClassified {
+  const mapped = tsTypeToHType(type, checker);
+  return mapped.kind === 'unknown' || mapped.kind === 'fn'
+    ? 'value'
+    : classifyPosition(type, checker, position);
+}
+
 const C_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** One `@statorLink` line in a `.d.ts` (docs/FFI.md §9): the per-file half of step 7's link
@@ -679,12 +711,17 @@ export function classifyExternDeclaration(
         'function type (docs/FFI.md)',
     );
   }
+  const classify =
+    resolve(decl.getSourceFile().fileName) === resolve(STD_ROOT, 'src/native/concurrency.d.ts') &&
+    CONCURRENCY_SYMBOLS.includes(cName)
+      ? concurrencyPosition
+      : classifyPosition;
   const params: ExternAbiKind[] = [];
   for (const param of decl.parameters) {
     // The DECLARED type, not the use-site one: this is the contract the call must meet, and
     // narrowing at a call site must not renegotiate it.
     const paramType = checker.getTypeAtLocation(param);
-    const kind = classifyPosition(paramType, checker, 'param');
+    const kind = classify(paramType, checker, 'param');
     if (typeof kind !== 'string') {
       return kind;
     }
@@ -721,7 +758,7 @@ export function classifyExternDeclaration(
       `'${tsName}' has no call signature, so there is no ABI tuple to map (docs/FFI.md)`,
     );
   }
-  const ret = classifyPosition(signature.getReturnType(), checker, 'return');
+  const ret = classify(signature.getReturnType(), checker, 'return');
   if (typeof ret !== 'string') {
     return ret;
   }
