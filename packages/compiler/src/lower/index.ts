@@ -2734,6 +2734,34 @@ function bindPatternNames(name: ts.BindingName, checker: ts.TypeChecker, binding
   }
 }
 
+/** Bind one parameter into `inner` and push its `Parameter`. A named parameter declares under
+ * its source spelling (shadow-aware, plan.md §8 step 14); a pattern takes a temp and the caller
+ * unpacks it into the body. Returns the temp when the pattern destructured, else `undefined`. */
+function bindOneParameter(
+  param: ts.ParameterDeclaration,
+  type: HType,
+  inner: Scope,
+  sourceFile: ts.SourceFile,
+  defaultExpr: Expression | undefined,
+  params: Parameter[],
+): string | undefined {
+  const span = makeSpan(param.getStart(sourceFile), param.getWidth(sourceFile), sourceFile);
+  const extra = {
+    ...(param.dotDotDotToken !== undefined ? { rest: true as const } : {}),
+    ...(defaultExpr !== undefined ? { default: defaultExpr } : {}),
+  };
+  if (ts.isIdentifier(param.name)) {
+    const hirName = inner.declare(param.name.text, type);
+    hirNameOfDeclaration.set(param, hirName);
+    params.push({ name: hirName, type, span, ...extra });
+    return undefined;
+  }
+  const tmp = nextBindTemp();
+  inner.set(tmp, type);
+  params.push({ name: tmp, type, span, ...extra });
+  return tmp;
+}
+
 /** The binding name a static member gets: `C.count`.
  *
  * A dot is what makes it unspellable, the same trick `RECEIVER` uses with a leading space -- no
@@ -2769,7 +2797,8 @@ function classObjectOwner(
   }
   return (
     frontendTypes.aliasedClassDeclaration(receiver, checker) ??
-    frontendTypes.classExpressionTarget(receiver, checker)
+    frontendTypes.classExpressionTarget(receiver, checker) ??
+    frontendTypes.innerClassExpression(receiver, checker)
   );
 }
 
@@ -6295,11 +6324,14 @@ function lowerExpression(
     while (ts.isParenthesizedExpression(operandNode)) {
       operandNode = operandNode.expression;
     }
-    // `typeof id` on a named generic answers "function" for every specialization, so it folds
-    // without naming one: no value is built, and the gate accepts exactly this position.
+    // `typeof id` on a named generic answers "function" for every specialization, and
+    // `typeof C` / `typeof K` on a class NAME, alias, or bound expression answers the same
+    // for every class object (docs/VALUE.md §4.26). Both fold without naming one: no value is
+    // built, and the gate accepts exactly these positions.
     if (
       ts.isIdentifier(operandNode) &&
-      genericValueInstantiation(operandNode, checker) !== undefined
+      (genericValueInstantiation(operandNode, checker) !== undefined ||
+        classObjectOwner(operandNode, checker) !== undefined)
     ) {
       return {
         kind: 'string-literal',
@@ -8315,31 +8347,11 @@ function lowerFunction(
         }
         defaultExpr = lowered;
       }
-      if (ts.isIdentifier(param.name)) {
-        // A parameter is a declaration of the function's scope, and it shadows: a parameter named
-        // after a module-level binding takes a name of its own, so the two cannot be confused for
-        // one slot by anything downstream (plan.md §8 step 14).
-        const hirName = inner.declare(param.name.text, type);
-        hirNameOfDeclaration.set(param, hirName);
-        params.push({
-          name: hirName,
-          type,
-          span: makeSpan(param.getStart(sourceFile), param.getWidth(sourceFile), sourceFile),
-          ...(param.dotDotDotToken !== undefined ? { rest: true as const } : {}),
-          ...(defaultExpr !== undefined ? { default: defaultExpr } : {}),
-        });
-        continue;
+      const tmp = bindOneParameter(param, type, inner, sourceFile, defaultExpr, params);
+      if (tmp !== undefined) {
+        destructured.push({ name: param.name, tmp });
+        bindPatternNames(param.name, checker, inner);
       }
-      const tmp = nextBindTemp();
-      inner.set(tmp, type);
-      params.push({
-        name: tmp,
-        type,
-        span: makeSpan(param.getStart(sourceFile), param.getWidth(sourceFile), sourceFile),
-        ...(defaultExpr !== undefined ? { default: defaultExpr } : {}),
-      });
-      destructured.push({ name: param.name, tmp });
-      bindPatternNames(param.name, checker, inner);
     }
 
     const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
@@ -9312,26 +9324,7 @@ function abstractMemberStub(
   inner.set(RECEIVER, receiver);
   for (const param of member.parameters) {
     const type = typeAt(param, checker, bindings);
-    const at = makeSpan(param.getStart(sourceFile), param.getWidth(sourceFile), sourceFile);
-    if (ts.isIdentifier(param.name)) {
-      const hirName = inner.declare(param.name.text, type);
-      hirNameOfDeclaration.set(param, hirName);
-      params.push({
-        name: hirName,
-        type,
-        span: at,
-        ...(param.dotDotDotToken !== undefined ? { rest: true as const } : {}),
-      });
-      continue;
-    }
-    const tmp = nextBindTemp();
-    inner.set(tmp, type);
-    params.push({
-      name: tmp,
-      type,
-      span: at,
-      ...(param.dotDotDotToken !== undefined ? { rest: true as const } : {}),
-    });
+    bindOneParameter(param, type, inner, sourceFile, undefined, params);
   }
   const declared = typeAt(member, checker, bindings);
   const type = hFunction(
