@@ -1755,7 +1755,7 @@ function lengthRead(operand: Expression, span: Span): Expression {
 function lowerPatternRead(
   target: Expression,
   field: string | number,
-  name: ts.Identifier,
+  name: ts.BindingName,
   at: ts.Node,
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
@@ -1808,12 +1808,6 @@ function bindPatternElement(
   diagnostics: Diagnostic[],
   statements: Statement[],
 ): boolean {
-  if (!ts.isIdentifier(el.name)) {
-    diagnostics.push(
-      lowerDiagnostic(el, sourceFile, 'STA4031', 'internal', 'unexpected nested pattern'),
-    );
-    return false;
-  }
   const read = lowerPatternRead(
     source,
     key,
@@ -1826,6 +1820,24 @@ function bindPatternElement(
   );
   if (read === null) {
     return false;
+  }
+  if (!ts.isIdentifier(el.name)) {
+    // Nested pattern: the field read becomes the source the inner pattern destructures.
+    const parts = lowerBindingPattern(
+      el.name,
+      read,
+      declKind,
+      el,
+      sourceFile,
+      checker,
+      bindings,
+      diagnostics,
+    );
+    if (parts === null) {
+      return false;
+    }
+    statements.push(...parts);
+    return true;
   }
   const type = typeAt(el.name, checker, bindings);
   // A destructured element is a binding like any other, so it can shadow -- and then it needs a
