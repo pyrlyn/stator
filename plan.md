@@ -12,6 +12,14 @@ An ahead-of-time compiler from TypeScript and JavaScript to native binaries.
 | T18 | done | P1 | 3 | 100% | Cursor / grok 4.7 |
 | T19 | done | P3 | 1 | 100% | Cursor / grok 4.7 |
 | T20 | done | P2 | 2 | 100% | Cursor / grok 4.7 |
+| T27 | open (narrow slice landed) | P1 | 5 | 100% | plan-notes 382 |
+| T28 | open | P2 | 4 | 100% | — |
+| T29 | open | P2 | 2 | 100% | — |
+| T30 | open | P2 | 3 | 100% | — |
+| T31 | open | P3 | 1 | 100% | — |
+| ~~T32~~ | done (already landed) | P2 | 3 | 100% | plan-notes 283, 373, 382 |
+| T33 | open | P3 | 2 | 100% | — |
+| T34 | open | P2 | 3 | 100% | — |
 
 ### ~~T15. Required root docs~~
 
@@ -54,16 +62,230 @@ New bugs, dead code and moves from a read-only Cursor cloud review of `main` at 
 | ID | Priority | Kind | Status | Where | Fix |
 | --- | --- | --- | --- | --- | --- |
 | ~~T20~~ | P0 | bug | fixed | plan-notes 353, 364 | `ci.yml` runs on `push` to `main`, so a merge has a test workflow and `revert-on-failure` can fire. |
-| T21 | P0 | bug | confirmed | PR CI run 37692965170 vs `ccf9818` on `main` | T17 was merged with red CI (`pipeline` failed in 0 s, `frontend (windows/arm64)` failed), so required checks are missing or bypassable. Require `static`, `frontend-coverage` and the Windows/macOS jobs (or a smaller set you actually enforce); do not merge on SonarCloud green alone. |
+| ~~T21~~ | P0 | bug | fixed | plan-notes 370 | T17 was merged with red CI (`pipeline` failed in 0 s, `frontend (windows/arm64)` failed), so required checks were missing or bypassable. `protect-main` now requires `pipeline / gate`, `static analysis`, `frontend (linux/x64)` and both Windows frontend legs; the desktop matrix name bug that made those legs unmatchable is fixed. |
 | ~~T22~~ | P0 | move | fixed | plan-notes 353, 364; #158 | `pipeline.yml` calls `pyrlyn/ci/.github/workflows/ci.yml@main`. A SHA pin of that caller fails `no-pinned-ci`. |
 | ~~T23~~ | P1 | bug | fixed | plan-notes 354 | The official win-arm64 Node is cross-compiled without a startup snapshot, so `util.format` sees seven later globals. The test follows `node_use_node_snapshot` and still fails on any other difference. |
-| T24 | P1 | move | confirmed | `packages/compiler/src/codegen/index.ts` (6,276 lines, the only file in `codegen/`) → files under `packages/compiler/src/codegen/` | Split the C emitter by HIR family (expressions, statements, classes, closures, runtime calls); it is the merge bottleneck. |
+| ~~T24~~ | P1 | move | fixed | plan-notes 371 | Split the C emitter by HIR family (expressions, statements, classes, closures, runtime calls); it is the merge bottleneck. |
 | ~~T25~~ | P2 | bug | fixed | plan-notes 353, 364 | The repo map names QuickJS-NG only. `docs/TOOLCHAIN.md` says Ryū is not vendored; fetching it stays on §12. |
 | ~~T26~~ | P2 | dead code | fixed | plan-notes 353, 364 | `memfs` is gone from both package manifests. The custom-host comments say "in-memory CompilerHost". |
 
 Already tracked here, not added again: moving number printing to the vendored Ryū C code (the review's move M3) is in §12, "Ryū rides here too".
 
+### T21. Required status checks on `main` (cloud review)
+
+The other cloud-review rows were struck without Steps and a Check because they needed no change.
+T21 is a live GitHub-state change, so it gets both.
+
+**Steps.**
+
+1. Fix the `frontend-desktop` matrix in `.github/workflows/ci.yml`: a leading space in the JSON
+   key (`" platform"`) left `matrix.platform` empty, so the Windows/macOS legs reported as
+   `frontend (/x64)` / `frontend (/arm64)` — names no ruleset context can match. Trailing spaces
+   in the `os` labels go in the same edit.
+2. Update the `protect-main` ruleset (`pyrlyn/stator`, id 24341905) so
+   `required_status_checks` is exactly: `pipeline / gate`, `static analysis`,
+   `frontend (linux/x64)`, `frontend (windows/x64)`, `frontend (windows/arm64)`.
+   (Apply via `gh api -X PUT repositories/1353641814/rulesets/24341905` — the `listepo/stator`
+   alias 307-redirects and `gh` will not follow a redirected PUT.)
+3. Leave `frontend (macos/arm64)` and the `-macos` twins **unrequired**: when the org variable
+   `MACOS_CI_DISABLED` is true, the macOS matrix entry is removed (not skipped), so a required
+   macOS context would block every PR with a check that never reports. The `if:`-gated
+   `-macos` jobs report `skipped` (success for a required check) when the variable is true;
+   the matrix-excluded desktop legs report nothing.
+4. Do **not** reintroduce the `repo-settings` caller (#170/#171): it never had
+   `REPO_ADMIN_TOKEN` and failed HTTP 401. Re-applying the ruleset after an accidental edit is
+   the `gh api` PUT above, not a workflow.
+
+**Check.**
+
+```
+gh api repos/pyrlyn/stator/rulesets/24341905 \
+  --jq '[.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context]'
+```
+
+Must print exactly `["pipeline / gate","static analysis","frontend (linux/x64)","frontend (windows/x64)","frontend (windows/arm64)"]`, and a PR whose `static analysis` or a Windows `frontend` leg is red must show merge blocked (admin bypass remains available on PRs only — actor `RepositoryRole` admin, `bypass_mode: pull_request`).
+
 Not added: exposing `ffi-gen` as a `stator ffi-gen` subcommand is optional, and the review says to keep it in-tree as it is; the identity string methods (`jsrt_string_to_string`, `jsrt_string_value_of`) are used through the method table.
+
+---
+
+## Open work cards from the 2026-10-24 roadmap/ideas sweep (T27–T34)
+
+`roadmap.md` held no unfiled approved work and `ideas.md` holds no unapproved ideas. What the
+roadmap *pointed at* was open residue still living only as prose inside finished phases. Each
+card below is one of those residues promoted to a task with Steps and a Check (§15). Difficulty
+is the `[Dn]` legend in §14. These cards are **not** a new phase: work them in card order
+unless a dependency line says otherwise. Phase 8 (§11) stays gated and is not carded here.
+
+### T27. The class object — opaque class values and `this` in a static method **[D5 · P1]**
+
+Phase 5 step 12(d)/(e) residue. The in-place spellings (`new K`, `K.static`, `o instanceof K`,
+alias formation) work; anything else that needs to *hold* a class is refused at the gate
+(`gate.ts` "using a class as a value"). `this` inside a static **method** is the same object
+(field initializers and `static {}` already erase to static bindings — plan-notes 373).
+
+Steps:
+1. **Design first (§15.6):** `docs/SUBSET.md` + `docs/VALUE.md` gain the class-object model —
+   what a class value *is* (descriptor + constructor function + prototype slot + static table),
+   identity (`C === D`), and which members a class object exposes in v0 (`name`, `prototype`,
+   static fields/methods; `length` optional).
+2. HIR: a `class-object` expression node (or a documented refusal list if v0 admits only
+   `C.name` / `C.static` as reads — decide and write it down).
+3. Lowering + codegen: materialize the descriptor as a value; `C.name` folds to the display
+   name; a static read through a class value routes to the static table.
+4. `this` in a static method erases to the defining class's static binding **only** when the
+   method cannot be reached through a subclass (`S.m()` vs `T.m()`); otherwise the call passes
+   the reached-through class. Document the rule; implement it.
+5. Decision tests both modes + goldens (`class_object_name`, `static_this_method`) byte-for-byte
+   vs Node. Flip every `@expected-fail` in the same commit.
+
+**Check:** `stator explain` on a fixture that stores `const K = C` and reads `K.name` reports
+`static` (or `dynamic` if the card chose the value path) with no `STA1214`; goldens match the
+pinned Node; `pnpm run test:subset` shows the 12(d)/(e) class-value rows out of expected-fail.
+
+**Blocked on nothing.** Narrow slice allowed: land `C.name` + static reads first and leave
+`C.prototype` not-yet with a named code (then the Check covers the landed subset and the
+remainder is recorded here).
+
+**Narrow slice landed 2026-10-24 (plan-notes 382).** `docs/VALUE.md` §4.26 + `docs/SUBSET.md`
+class-object row; `C.name` / `K.name` folds to the display name (verdict `static`); `K.static`
+keeps alias erasure; `C.prototype` stays `STA1214` ("the prototype surface", Phase 8). Fixtures
+`subset_class_object_name_*` / `subset_class_object_prototype_*`, goldens `class_object_name` both
+modes. **Remainder (this card keeps its number and title):** materializing a class object as a
+value (`f(C)`, `console.log(K)`, `typeof C`, `K.length`, `C === D` observability), static reads
+through a *materialized* value (`ClassValue` + `staticProps` / `JSRTClass.statics` population),
+`this` in a static method (step 4), and `C.prototype` itself. HIR `ClassValue`/`NewValue`/
+`InstanceOfValue` and the runtime class-object entries stay declared but unreachable for those
+surfaces (plan-notes 283).
+
+### T28. Generics residue: homeless arrows, self-application, `instanceof` a generic class **[D4]**
+
+Phase 5 step 12(f) residue. Module-scope `const f = <T>(x: T) => x` already specializes
+(plan-notes 280/379). Still refused with named `STA1214`s: an arrow in `let` / a branch / a
+spread / a constructor argument (no single parameter type); a generic that is returned or
+stored (dynamic tier); a generic call at a generic type; `instanceof` against a generic class
+(one descriptor per tuple).
+
+Steps:
+1. Write the specialization-key rule for a **block-homed** generic (block `const`/`let` with
+   exactly one assignment) in `docs/HIR.md` — what the key is when no parameter type exists
+   (the variable's declared/inferred generic signature, or a canonical tuple). If that rule
+   cannot be sound, keep the refusal and say so in the doc rather than in code comments.
+2. Land the block-`const`/single-assignment-`let` slice under that rule (or confirm the refusal
+   and skip to 3).
+3. `instanceof` against a generic class: specialize the descriptor per tuple at the comparison
+   site, or refuse with a code that names the one-descriptor-per-tuple blocker.
+4. Decision tests both modes; goldens where landed; every remaining shape's message names its
+   blocker (never a bare "not yet supported").
+
+**Check:** `gate.ts` emits no unnamed `STA1214` for the shapes in this card's list; goldens for
+any landed slice match Node byte-for-byte; `docs/HIR.md` §on generics states the keying rule.
+
+### T29. Nested rest-patterns and defaults beyond one level **[D2]**
+
+Step 12a remainder after plan-notes 379/380. `isSimpleBindingPattern` accepts nested
+object/array + rest + defaults at any depth; still refused precisely: a rest *pattern*
+(`...{a}` / `...[a]`), a computed key in a pattern, object rest over a no-fixed-layout value.
+
+Steps:
+1. Land rest-pattern (`const { a: { ...r } } = o` already landed as object rest; the remainder
+   is array/object **rest elements inside nested patterns** and rest-pattern as a whole).
+2. Computed keys in binding patterns (`const { [k]: v } = o`) — decide static-key only or
+   dynamic; write it in `docs/SUBSET.md`.
+3. Object rest over a dynamic/unknown source: route through the shape table (the spread twin).
+
+**Check:** `subset_nested_destructuring_*` and new `subset_nested_rest_*` rows are `static` or
+`dynamic` (not `expected-fail`) for every shape this card names; goldens match Node; any
+still-refused shape has a message naming the construct.
+
+### T30. Task 6.16 — clone baseline to zero **[D3]**
+
+`.jscpd-baseline.json` is still debt (last measured **129** fingerprints after plan-notes 381;
+the Check wants the baseline *empty*). Families still open per that note: `gate.ts`/`generics.ts`
+`ts.is*` lists, array switch cases, `jsrt_string_ops`, `hir/verify`, `jsrt_print`, `jsrt_date`.
+
+Steps:
+1. One PR per family: extract the helper at the responsible layer (no `dupes` baseline growth
+   in any commit; each PR runs `pnpm run dupes:baseline` and the file must shrink).
+2. When the last family is gone, **delete** `.jscpd-baseline.json` and the `dupes:baseline`
+   script path's baseline argument (or leave the script running with a missing/empty baseline —
+   whatever `jscpd` treats as "no baseline"; document the choice in `AGENTS.md` golden rule 10).
+3. Keep `pnpm run dupes` in `ci` green with zero clones.
+
+**Check:** `pnpm run dupes` exits 0 with no baseline file (or an empty one); the clone count in
+its output is 0; `pnpm run test` still green.
+
+### T31. Task 6.3 noise floor on the weekly runner's machine **[D1]**
+
+The 20% perf gate stands on a 7.4%–14.4% spread measured on **other** hosts (plan-notes 246/374).
+The Check wants repeats on the machine that runs the weekly job.
+
+Steps:
+1. On that host: one commit, ≥5 `pnpm run bench` repeats; record geomeans + spread in
+   `plan-notes.md` (host, CPU, commit sha).
+2. Set `thresholdPercent` in the bench gate from that spread (keep ≥2× headroom; do not lower
+   it onto the noise floor). If the weekly host is unavailable indefinitely, record that fact
+   and leave the gate at 20% — a named "unmeasured" is better than a guessed number.
+
+**Check:** plan-notes cites the weekly-host numbers (or the unavailability record) and the gate
+value in `packages/tests/bench/` matches that decision.
+
+### T32. Abstract accessors and the virtual-accessor rule **[D3]**
+
+Step 12(d) residue (`gate.ts` override arm). Accessors already work as get/set method pairs
+(plan-notes 373 landed the static and compound slices); an `abstract get`/`set` override and
+an accessor override that must dispatch virtually through a base-typed receiver are still
+refused.
+
+Steps:
+1. Finish the virtual rule from plan-notes 373's landed pair-whole override: a base-typed
+   `o.x` on a receiver whose class overrides the accessor must call the override.
+2. `abstract` accessors: throw-stub pattern from plan-notes 275 (already used for abstract
+   members) applied to the get/set pair; subclass supplies the implementation.
+3. Goldens `abstract_accessor`, `accessor_override_virtual` both modes; subset rows flip.
+
+**Check:** goldens match Node; `pnpm run test:subset` has no `expected-fail` row for abstract
+or overridden accessors; the `statics`/`class-members` unit suites stay green.
+
+~~✅ **already landed** (plan-notes 283, 373; confirmed 2026-10-24, plan-notes 382).**~~ The
+card was written from stale roadmap residue: `abstract get`/`set` throw-stubs, pair-whole
+override dispatch and base-typed virtual accessor calls were already in-tree (goldens
+`ts|js/abstract_accessor`, subset `subset_abstract_accessor_*` / `subset_accessor_override_*`).
+No code change; evidence is plan-notes 283.
+
+### T33. Vendor Ryū for number printing **[D2]**
+
+§12 rung and §15.4's settled "Ryū-exact number printing". `docs/TOOLCHAIN.md` records Ryū as
+fetchable but not vendored; the review's move M3 is this card.
+
+Steps:
+1. Vendor the Ryū C sources via the `packages/runtime/vendor/update.ts` route; `VENDOR.md`
+   pins the commit (same rule as QuickJS-NG).
+2. Replace the number printer's shortest-round-trip path with Ryū; keep `-0.0`, non-finites
+   and the `console.log` formatting contract (plan-notes 372's print corpus).
+3. `pnpm run test:runtime` + golden print corpus byte-for-byte vs Node.
+
+**Check:** `pnpm run test:runtime` and `pnpm run test:golden` pass; `docs/TOOLCHAIN.md`'s Ryū
+row flips from "fetchable and unfetched" to "vendored at <commit>"; the vendor script
+regenerates from the pin without network drift.
+
+### T34. `Function.prototype.bind` and the two-slot environment **[D3]**
+
+Step 12(e) residue: method values use `has_receiver` (drop the receiver); `bind` *inserts* one
+and needs the two-slot `JSRTEnv` `docs/VALUE.md` §4.16 reserved.
+
+Steps:
+1. Runtime: `JSRTBound` / env layout with inserted receiver + partial args; `jsrt_call` handles
+   the shift (documented beside `has_receiver`).
+2. `bind` as a builtin method; `length`/`name` of a bound function per spec (or a named
+   not-yet if v0 skips them — decide in `docs/SUBSET.md`).
+3. Goldens `bind_receiver`, `bind_partial_args`, `bind_new` (`new` on a bound function) both
+   modes; decision tests.
+
+**Check:** goldens match Node; `subset_bind_*` rows leave `expected-fail`; no regression in the
+existing `has_receiver` method-value goldens.
+
+---
 
 ---
 
@@ -540,13 +762,16 @@ bundle — evidence: done.md → Phase 5).~~ ✅
     ~~(a) **Parameter and binding forms** first, because every later family calls functions: rest,
     default, optional, uninitialized `let`, and shallow destructuring of parameters/declarations/
     catch.~~ ✅ **landed 2026-09-02** (plan-notes 158–161). **Residue:** nested patterns,
-    rest-in-pattern, and default-in-pattern stay not-yet in this family.
+    rest-in-pattern, and default-in-pattern stay not-yet in this family (F1 left nested
+    patterns open; the gate's message is still the shallow destructuring refusal).
     ~~(b) **Expression-position residue**: labels on anything but a loop or switch, capturing a
     variable declared inside a loop, `instanceof` against anything but a class name, assignment and
     compound assignment to a non-variable, `++`/`--` on a non-variable and in value position, and
     the binary/unary/statement catch-alls (`describeKind`).~~ ✅ **landed 2026-09-02**
-    (plan-notes 164). **Residue:** accessor compound and `#n in o` stay not-yet (families (d) /
-    private).
+    (plan-notes 164). Accessor compound landed in both positions (plan-notes 373).
+    ~~`#n in o`~~ ✅ **landed** — the brand check lowers to `instanceof` against the
+    lexically-resolved declaring class (`brandDeclaringClass`), goldens `class_private_accessor`
+    and `class_private_redeclare` both modes.
     (c) **[D3] Object literal forms**: shorthand, spread, method and accessor members; keys that are not
     identifiers. **Shorthand, non-identifier keys, and spread landed 2026-09-03** (plan-notes 181;
     evidence in [done.md](done.md) → Phase 5 step 12c, including the LAYOUT-vs-ENUMERATION order
@@ -560,7 +785,9 @@ bundle — evidence: done.md → Phase 5).~~ ✅
     step 12c computed keys).
     **A spread of an untyped value into a literal the checker types `any` landed** (plan-notes
     297: the operand folds through the shape-table `assign`, beside the array spread).
-    **Residue:** a dropped `as` assertion's unknown operand, a value with no fixed shape in a
+    ~~**A dropped `as` assertion's unknown operand**~~ ✅ **landed (F1 residue)** — the
+    result takes the dynamic path and folds through the shape-table `assign` (plan-notes 297).
+    **Residue:** a value with no fixed shape in a
     fixed-typed literal (`{ ...null }`, an array beside an own key), and the methods-order
     shapes (`gate.ts` spread-prefix arms) stay `STA1214` — all need the dynamic tier (step 39),
     not this slice. Spread of any
@@ -581,12 +808,13 @@ bundle — evidence: done.md → Phase 5).~~ ✅
     blocks in source order (276), branch `super` in init-free derived ctors with exactly-once
     refusal (273), and bound class expressions via descriptor erasure (278). **Residue:**
     abstract accessors (`gate.ts:3670` override arm — need virtual accessor dispatch),
-    switch-guarded supers (the branch rule's `checkCtorList` covers `if`/`else`/blocks only —
-    a `switch` stays `STA1214`), `super` in a static block (`gate.ts:3730`), `this` in a static
-    member or block (`gate.ts:4711,4715`), bare `super` (`gate.ts:482,4984` — a JavaScript
-    SyntaxError, stays refused), opaque class values (`gate.ts:904,919,940,5283` — need the
-    class object), and anonymous default classes (`export default class {}` — default imports
-    landed with §11c T11.5a; what is left is a descriptor for a declaration with no name).
+    ~~switch-guarded supers~~ **landed** (plan-notes 373; `checkCtorList` covers `switch`),
+    ~~`super` in a static block~~ **landed** (plan-notes 373; `super.x` naming a base static
+    erases to that binding), `this` in a static METHOD (`this.x` in a static field initializer
+    or block landed — plan-notes 373; a method's `this` is the reached-through class object),
+    bare `super` (`gate.ts:482,4984` — a JavaScript SyntaxError, stays refused), opaque class
+    values (`gate.ts:904,919,940,5283` — need the class object), and ~~anonymous default
+    classes~~ **landed** (plan-notes 373; `export default class {}` keys on `*default*`).
     (e) **[D3] Values that need a closure or a class object**: ~~calling an arbitrary expression~~,
     ~~function declarations inside a block/loop/branch~~, ~~method values (`const f = o.m`)~~,
     ~~calling a class field~~, and ~~named function expressions~~ **landed** (evidence in
@@ -711,11 +939,12 @@ The tasks are independent and the phase's Check has one clause per task.
 
 **All four tasks have landed** (6.1, 6.2, 6.2a, 6.3); their evidence is in [done.md](done.md) →
 Phase 6, and the titles stay here so `§9 Task 6.N` references resolve. The phase is **not closed**:
-its Check's fuzzing clause says *≥1 h nightly with zero unexplained divergences*, and what exists is
-the scheduled job plus local runs — the clause passes on a nightly run's own output, cited here.
-Task 6.3 also carries one named residue (its regression threshold's noise floor). Test262 tracking
-is the standing output of 6.1 and does not close. Difficulty (§14 legend): the fuzzing clause is
-**D1** (cite a nightly run's own output), the noise-floor residue **D2**.
+its Check's fuzzing clause says *≥1 h nightly with zero unexplained divergences*. **Cited
+2026-10-24** (plan-notes 381): nightly run 40072874719 (`main`, schedule, success, 1h11m) logged
+`differential: 5177 cases — 0 divergences` after `--minutes=60`. Task 6.3 also carries one named
+residue (its regression threshold's noise floor). Test262 tracking is the standing output of 6.1
+and does not close. Difficulty (§14 legend): the fuzzing clause is **D1** (cite a nightly run's
+own output), the noise-floor residue **D2**.
 
 ~~**Task 6.1 — Test262 runner.**~~ ✅ **landed 2026-09-03** — evidence in [done.md](done.md) → Phase 6.
 First pinned number: **2379 passed, 10,513 failed, 40,688 skipped — 18.5%** over `passed + failed`,
@@ -775,7 +1004,13 @@ threshold to sit above a **measured** spread; what has been measured is one repe
 (22.358 → 21.458 ms, **4.0%**, same commit — done.md) plus five repeats on a second host
 (21.215–22.778 ms, **7.4%** max spread — plan-notes 246), and the 20% gate stands on both with
 ~3× headroom. Still open, narrowed: the Check names the machine that runs the weekly job, and
-neither host is it. **Check:** a handful of repeats of one commit
+neither host is it. **Local evidence (plan-notes 374, 2026-10-23):** five repeats of one commit
+on darwin-arm64 (Apple M3 Max, **not** the weekly job's ubuntu-24.04 runner) gave stator
+geomeans 25.784–29.497 ms (**14.4%** range spread); a sixth run tripped the 20% gate at
+**+53.9%** on the same commit, driven by `json-roundtrip` (53.9% per-program spread) and
+`startup` (62.4%) jitter at the millisecond scale. The **20% gate is unchanged**: the measured
+geomean spread sits under it, and raising the gate to hide the outlier would be the "alarm that
+fires on noise" this residue names. **Check:** a handful of repeats of one commit
 on the machine that runs the weekly job, the observed spread recorded in `plan-notes.md`, and the
 gate set from it. A gate below the noise floor fires on noise, and an alarm that fires on noise is
 one people learn to ignore — which costs more than having no gate at all.
@@ -809,15 +1044,27 @@ records 224 clones (identifier-insensitive, tests/vendor/docs excluded — 4.6% 
 which 1.1% exact) as debt. Extract a shared helper per clone family at the responsible layer
 (`lower/`, `codegen/`, `runtime/src/jsrt_array_ops.c` lead the list) and shrink the baseline with
 `pnpm run dupes:baseline` in the same change. **Check:** the baseline is empty; `pnpm run dupes`
-then runs with no baseline at all.
+then runs with no baseline at all. **First tranche landed 2026-10-23** (plan-notes 374): six
+helpers in `lower/` + `codegen/` (`emitLoopBody`/`emitLoopEpilogue`, `emitWhileOpen`,
+`emitRouteDispatch`, `resetToModuleLevel`, `flushCallSlots`, `lowerNewCallArgs`); the baseline
+shrank 180 → 171 fingerprints. **Second tranche landed 2026-10-24** (plan-notes 381): thirteen
+helpers across `lower/index.ts`, `frontend/generics.ts` and `runtime/src/jsrt_array_ops.c`
+(`emptyBlockAt`, `assignOperatorKinds`, `substitutedTypeArguments`, `genericNamesakeOf`,
+`declaringClassOfProperty`, `methodCallAtSlot`/`missingMethodSlot`, `parameterDefaults`,
+`isSingleConstList`, `unifyNamedMembers`, `collect_varargs`, `find_result`,
+`array_search_forward`, `array_half_open_range`); the baseline shrank **143 → 129** fingerprints.
+The `gate.ts`/`generics.ts` `ts.is*` lists, the `jsrt_array_ops.c` switch cases and the rest of
+the list are still open.
 
 ~~**Task 6.17 — Test impact: build and run only what a change reaches.**~~ ✅ **landed 2026-10-02**
 (steps 1–3 and 5; Check (a)–(e) passed) — evidence in [done.md](done.md) → Phase 6 Task 6.17
-(plan-notes 293). **Still open — step 4, CI:** after PR #45's staged pipeline, `main` and the
-nightly run `pnpm run test:impact:record` and upload `.cache/impact/impact-map.json` as an
-artifact; pull requests download the newest `main` map and run `pnpm run test:impact` (it falls
-back to the full run, saying why, when that map is missing or not an ancestor). Done when a pull
-request's CI log shows a selection made from a `main` map.
+(plan-notes 293). **Step 4, CI — wiring landed 2026-10-23** (plan-notes 374): `main` and the
+nightly run `pnpm run test:impact:record` and publish `.cache/impact/impact-map.json` as an
+artifact **and** a cache entry `impact-map-<sha>`; pull requests restore the newest `main` map
+(`restore-keys: impact-map-`) and run `pnpm run test:impact` in the `impact select` job (it
+falls back to the full run, saying why, when that map is missing or not an ancestor). Local
+selection from a clean map is proved in plan-notes 374. **Done when a pull request's CI log
+shows a selection made from a `main` map** — not yet observable from this branch.
 
 ~~**Task 6.18 — `stator.config.json`: every CLI option in one validated file.**~~ ✅ **landed 2026-10-02** — evidence in [done.md](done.md) → Phase 6 Task 6.18 (plan-notes 303; `docs/CONFIG.md`).
 
@@ -837,7 +1084,7 @@ built yet:
   **Growth may be recorded** (creator, 2026-10-02, plan-notes 306): a change that grows a count
   runs `--update` in the same change, so the increase shows in `baseline.json`'s diff for review.
   This differs from `dupes:baseline`, which only ever shrinks.
-  Whether growth may be recorded is open for the creator (plan-notes 306). When a target reaches
+  When a target reaches
   zero, that is its milestone, and from then on its build and smoke check are part of the gate.
 - **Stage-2 check (not built).** When the compiler's verdict becomes `static` or `dynamic`, its
   binary compiles a hello-world fixture. That C output must be **byte-identical** to the C the
@@ -1345,8 +1592,7 @@ without before/after numbers on the same machine.
 compile and run; one golden shows `spawn` + `await join` interleaving with `Promise` reactions;
 `stator build` on a multi-file fixture is ≥1.5× faster wall-clock with `STATOR_COMPILE_JOBS>1`
 than with `=1` on a quiet machine (or the note explains why the floor was not met and which
-step remains). T10.3's fixture met that bar (1.63× at 4 jobs, plan-notes 368). What this check
-still waits on is T10.2: `docs/THREADS.md` and the spawn/join golden. `pnpm run ci` green.
+step remains). `pnpm run ci` green.
 
 ---
 
@@ -1375,9 +1621,31 @@ Steps:
 **Check:** goldens byte-stable where Node has an analogue (Promise side); thread-only fixtures
 use Stator's own oracle. Multi-thread GC stress does not crash under ASan.
 
-### ~~T10.3. Threaded / parallel host compiler~~ — **[D4]**
+### T10.3. Threaded / parallel host compiler — **[D4]**
 
-Done — evidence in `done.md` (plan-notes 368).
+Independent of T10.1/T10.2. Host Node only.
+
+Steps:
+
+1. ✅ **Baseline (2026-10-23, plan-notes 374):** wall time of `stator build` on a fixed multi-file
+   fixture at `STATOR_COMPILE_JOBS=1` with spans (frontend / lower / verify / emit / clang / link).
+   `STATOR_COMPILE_TIMING=1` prints the span line.
+2. ✅ **C1 — parallel clang (2026-10-23, plan-notes 374):** `STATOR_COMPILE_JOBS` partitions the
+   emitted C and compiles the units concurrently. **2.11×** on the 556KB fixture (jobs=8 vs 1);
+   `STATOR_COMPILE_JOBS=1` keeps byte-identical C. `STA0021` for a bad value. C2 below was not
+   taken (emit is 10 ms of a 2.4 s build).
+3. C2 — parallel emit if emit shows in the profile. **Not taken** (plan-notes 374: emit 10 ms).
+4. C3 — sharded lower/verify via process pool if typecheck/HIR dominate; document the Program
+   isolation choice. **Not taken** (plan-notes 374: `hir/verify` 3 ms).
+5. ✅ **CI smoke (2026-10-24, plan-notes 381):** one non-required job (`compile jobs smoke`)
+   builds the multi-module `tests/golden/ts/modules` fixture and runs
+   `packages/tests/unit/compile-jobs.test.ts` with `STATOR_COMPILE_JOBS=2` so races fail the
+   build; default CI stays serial for log readability. Required checks keep their names.
+
+**Check:** documented before/after numbers in plan-notes; `STATOR_COMPILE_JOBS=1` preserves
+byte-identical emitted C for the fixture; CI green. **Met 2026-10-23** (plan-notes 374) except
+the step-5 CI smoke, which **landed 2026-10-24** (plan-notes 381) — CI green on the job itself
+is observable after merge.
 
 ---
 
@@ -1400,6 +1668,9 @@ built-in modules. The first target is TypeScript 6.0.3's own `tsc` bundle.
   deferred; N3 (net/http/tls/zlib, `worker_threads`, `vm`) is not planned.
 - Coverage is tracked in **`docs/NODE.md`**, generated from the pinned Node and checked in `ci`
   (AGENTS.md golden rule 11).
+  Platform-specific exports use the measured union of Linux/macOS surfaces for that pin;
+  generation validates the host variant and both platforms must reproduce the same document
+  (plan-notes 378).
 
 **Packages.** The work is decomposed by package; each card names the one package it changes
 (tests and docs ride along). Dependencies point one way only:
@@ -1567,10 +1838,15 @@ it). **Second slice landed** (plan-notes 317): the `node:fs` sync subset, 12 of 
 functions `tsc` calls (`closeSync`, `existsSync`, `mkdirSync`, `openSync`, `readFileSync`,
 `readdirSync`, `realpathSync`, `statSync`, `unlinkSync`, `utimesSync`, `writeFileSync`,
 `writeSync`) plus `rmdirSync`, with Node's `SystemError` shape. `watch`, `watchFile` and
-`unwatchFile` wait on the event loop (N2) and stay `STA1214`. **Next**, in the order `tsc` needs
-them: `process`, `node:os`, `Buffer.from`/`toString` (then `readFileSync` without an encoding
-answers a `Buffer`), `crypto.createHash`, `perf_hooks.performance`, timers; `path.win32` is its
-own slice (13 of T11.7's `path` tests need it).
+`unwatchFile` wait on the event loop (N2) and stay `STA1214`. **`process` slice landed
+2026-10-23** (plan-notes 374): `packages/node/src/process.ts` answers `argv`, `env` (startup
+snapshot via new `std/env.names()`), `cwd`, `exit`, `exitCode`, `pid`, `ppid`, `platform`,
+`arch`, `execPath`, `hrtime()` and `memoryUsage()` (rss), with goldens `ts/node_process.ts` and
+`js/node_process.js`, three decision tests, and `docs/NODE.md` at 12/68 for `node:process`.
+`hrtime.bigint`, `stdout`/`stderr`, `nextTick` and the free `process` global stay open. **Next**,
+in the order `tsc` needs them: `node:os`, `Buffer.from`/`toString` (then `readFileSync` without an
+encoding answers a `Buffer`), `crypto.createHash`, `perf_hooks.performance`, timers; `path.win32` is
+its own slice (13 of T11.7's `path` tests need it).
 
 **Check:** `tsc --version` and `tsc -p` on a small fixture project, compiled by Stator, print
 byte-for-byte what `node _tsc.js` prints on Node 26.7.0; `docs/NODE.md` slice N1 at 100%.
@@ -2447,4 +2723,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.84** (2026-10-19): **Task 6.31 lands** (plan-notes 363). `pipeline / sonarcloud / sonarcloud` on run 39297920890 ran Setup and, with `SONAR_TOKEN` set, Coverage; the scanner read `coverage/lcov.info`. The card moves to done.md.
 
 - **v4.82** (2026-10-19): **Cloud-review rows T20, T22, T25 and T26 were already fixed** (plan-notes 364). The table still said confirmed. `ci.yml` pushes `main`, `pipeline.yml` calls `pyrlyn/ci` at `@main` (#158), the repo map no longer lists Ryū as vendored, and `memfs` is gone. T21 (required checks) and T24 (split the C emitter) stay open. These rows were never given Steps and a Check, so they are struck in the table the way T23 was, not moved to `done.md`.
-- **v4.85** (2026-10-19): **T10.3 lands: parallel clang via `STATOR_COMPILE_JOBS`** (plan-notes 368). Unset uses the host's parallelism but stays one translation unit under 8 functions or 40,000 characters of C. An explicit value above 1 splits at two functions. `1` is the old single clang line, and the emitted C does not change. A bad value is `STA0021`. On the clang-heavy fixture, 4 jobs were 1.63× the serial wall (clang itself 3.4×). Emit and verify were too small to shard; typecheck did not dominate that fixture, so there is no process pool. The CI smoke is `packages/tests/unit/compile-jobs.test.ts` in the existing frontend jobs.
+- **v4.85** (2026-10-23): **Cloud-review T21 lands: `protect-main` requires the real test jobs** (plan-notes 370). The ruleset required only `pipeline / gate`, which is why T17 merged with red CI. It now also requires `static analysis`, `frontend (linux/x64)`, `frontend (windows/x64)` and `frontend (windows/arm64)`. A leading-space key in the `frontend-desktop` `fromJSON` matrix had been reporting those legs as `frontend (/x64)` — unmatchable as check contexts — and is fixed in the same change. macOS legs stay unrequired because `MACOS_CI_DISABLED=true` removes them from the matrix instead of skipping them.

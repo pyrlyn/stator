@@ -1,8 +1,9 @@
 // @mode: js
 // @verdict: static
 // SUBSET.md: Classes with getters/setters
-// `o.x += 1` is a get AND a set of one property. In statement position the member place
-// machinery evaluates the receiver once into a temporary and threads it through both calls.
+// `o.x += 1` is a get AND a set of one property. The member place machinery evaluates the
+// receiver once into a temporary and threads it through both calls — statement position
+// discards the fold's answer, value position yields it (plan.md §8 step 12b).
 
 class C {
   constructor() {
@@ -18,4 +19,9 @@ class C {
 const c = new C();
 c.value += 1;
 c.value++;
-export const x = c.value;
+export const s = c.value;
+export const a = (c.value += 2);
+export const b = c.value++;
+export const d = ++c.value;
+export const e = c.value--;
+export const f = --c.value;

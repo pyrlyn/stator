@@ -102,7 +102,7 @@ differ, `std` answers one way and says so (§5).
 
 | Module | v0 surface | Notes |
 |---|---|---|
-| `std/env` | `has(name): boolean`, `get(name): string \| undefined`, `set(name, value)`, `unset(name)`, `cwd(): string` | `setenv`/`unsetenv` semantics: an empty name or one containing `=` is `EINVAL`; unsetting an unset name succeeds. `args` moved to T11.3 as `std/process.argv` (plan-notes 294) |
+| `std/env` | `has(name): boolean`, `get(name): string \| undefined`, `set(name, value)`, `unset(name)`, `cwd(): string`, `names(): string[]` | `setenv`/`unsetenv` semantics: an empty name or one containing `=` is `EINVAL`; unsetting an unset name succeeds. `names` walks libc `environ` (names only — a value may be a secret). `args` moved to T11.3 as `std/process.argv` (plan-notes 294) |
 | `std/process` | `argv(): string[]`, `execPath()`, `platform()`, `arch()`, `pid()`, `ppid()`, `hrtimeNs()`, `memoryUsage(): MemoryUsage`, `exitCode()`, `setExitCode(code)`, `exit(code)`, `abort()` | `exit` takes an integer `0..255` (else `EINVAL`, and nothing exits) and runs libc `exit`, so buffered output is flushed. `abort` raises `SIGABRT`. No signals yet (see below) |
 | `std/path` | `isAbsolute`, `basename`, `dirname`, `join(a, b)` | pure TypeScript, no backing (see below) |
 | `std/fs` | `readText(path)`, `writeText(path, text)`, `readBytes(path): Uint8Array`, `stat(path): Stat`, `exists(path)`, `realpath(path)`, `utimes(path, atimeMs, mtimeMs)`, `readdir(path): string[]`, `mkdir(path)`, `unlink(path)`, `rmdir(path)`; on descriptors `open(path, flags)`, `read(fd, length, position)`, `write(fd, data, position)`, `close(fd)` | sync (see below); the `…Async` Promise twins are not-yet, T10.2 (§2) |

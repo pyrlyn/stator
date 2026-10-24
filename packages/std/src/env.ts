@@ -6,13 +6,16 @@
 
 import { jsrtStdResult, type CString } from './native/core.js';
 import {
+  jsrtStdEnvCount,
   jsrtStdEnvCwd,
   jsrtStdEnvGet,
   jsrtStdEnvHas,
+  jsrtStdEnvName,
   jsrtStdEnvSet,
   jsrtStdEnvUnset,
 } from './native/env.js';
 import { __stdFailure, __stdQuote } from './internal/error.ts';
+import { __stdStrings } from './internal/strings.ts';
 
 /** Whether `name` is set (to any value, the empty string included). */
 export function has(name: string): boolean {
@@ -48,4 +51,15 @@ export function cwd(): string {
     throw __stdFailure('std/env.cwd', '');
   }
   return jsrtStdResult();
+}
+
+/** Every variable's name, in the environment's own order (Node's `Object.keys(process.env)`).
+ * The names only: a value may be a secret, and nothing here prints one. */
+export function names(): string[] {
+  return __stdStrings(jsrtStdEnvCount(), (i: number): string => {
+    if (jsrtStdEnvName(i) !== 0) {
+      throw __stdFailure('std/env.names', '');
+    }
+    return jsrtStdResult();
+  });
 }

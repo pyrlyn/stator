@@ -8,6 +8,10 @@
  *
  * A telemetry misconfiguration must never break a compile: init failures degrade to a warning
  * and no tracing, because the compiler's output correctness never depends on its observability.
+ *
+ * `STATOR_COMPILE_TIMING` is a second, independent observability path: wall time per span name
+ * printed as one `stator: timing` line (T10.3's measurement). It does not need OTel and never
+ * changes what the build emits.
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -27,8 +31,8 @@ function noteStage(name: string, start: number, stages: Map<string, number> | un
   stages.set(name, (stages.get(name) ?? 0) + (performance.now() - start));
 }
 
-/** Run `fn` with stage timing and print one `stator: timing` line on the way out,
- * including when `fn` throws — a failed build's profile is the evidence. */
+/** Run `fn` with stage timing and print one `stator: timing` line on the way out, including when
+ * `fn` throws — a failed build's profile is the evidence. */
 export async function runStageTimings<T>(fn: () => Promise<T>): Promise<T> {
   const stages = new Map<string, number>();
   try {
@@ -44,8 +48,8 @@ export async function runStageTimings<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** Add time that is not itself a `withSpan` (the parallel clang pool's compile
- * versus the final link). No-op outside `runStageTimings`. */
+/** Add time that is not itself a `withSpan` (the parallel clang pool's compile versus the final
+ * link). No-op outside `runStageTimings`. */
 export function addStageTime(name: string, ms: number): void {
   const stages = stageTimings.getStore();
   if (stages === undefined) {

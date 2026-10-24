@@ -98,11 +98,10 @@ test('BigInt is not-yet STA1213 in both modes, never an internal error', () => {
   );
 });
 
-// Index access is admitted only where the target is genuinely an array. `s[0]` and `o['k']` are
-// the same syntax reaching a different runtime operation, and neither has an HIR node yet.
-test('index access is accepted on an array and not-yet on anything else', () => {
+// String indices share the dynamic property operation so out-of-range reads stay undefined.
+test('array and string index access are accepted', () => {
   assert.deepEqual(codesFor('const a: number[] = [1];\nconsole.log(a[0]);'), []);
-  assert.deepEqual(codesFor("const s: string = 'ab';\nconsole.log(s[0]);"), ['STA1214']);
+  assert.deepEqual(codesFor("const s: string = 'ab';\nconsole.log(s[0]);"), []);
   // A hole is rejected: a dense array cannot be absent. Array spread of a typed array is accepted.
   assert.deepEqual(codesFor('const a: number[] = [1, , 3];'), ['STA1214']);
   assert.deepEqual(codesFor('const a: number[] = [1];\nconst b: number[] = [...a];'), []);
@@ -114,8 +113,8 @@ test('index access is accepted on an array and not-yet on anything else', () => 
 // An array-literal spread drains any operand that is not an array through the `...` row, the
 // iterator protocol at run time (plan.md §11c T11.4 step 5, docs/VALUE.md §4.23): the `concat`
 // the lowering folds into always receives an array, so the verifier's STA4082 cannot fire. The
-// object twin still needs a shape and stays refused.
-test('spread of an unknown value drains at run time; an object spread of one is not-yet', () => {
+// object twin enumerates its run-time keys because an assertion cannot prove a fixed shape.
+test('array and object spreads accept unknown operands at run time', () => {
   assert.deepEqual(codesFor('const u = JSON.parse("[1]");\nconst b = [...u];', 'js'), []);
   // An `as` assertion to an array type is never checkable, so the lowering drops it and spreads
   // the unknown operand -- which the drain then checks for iterability.
@@ -125,11 +124,10 @@ test('spread of an unknown value drains at run time; an object spread of one is 
   );
   // A tuple is a checker-level array the HType model calls Unknown.
   assert.deepEqual(codesFor('const t: [number, string] = [1, "a"];\nconst b = [...t];', 'js'), []);
-  // The object twin: a dropped assertion to a fixed shape names the unknown value, not the
-  // missing shape (which the assertion itself supplies).
+  // A dropped object assertion cannot establish the keys the run-time value actually owns.
   assert.deepEqual(
     codesFor('declare const u: unknown;\nconst b = { ...(u as { x: number }) };', 'js'),
-    ['STA1214'],
+    [],
   );
   // A directly-`unknown` operand stays the checker's (TS2488) in ts mode, and js mode suppresses
   // that code: the gate is silent either way.
@@ -139,13 +137,13 @@ test('spread of an unknown value drains at run time; an object spread of one is 
   assert.deepEqual(codesFor('const a: unknown[] = [1];\nconst b: unknown[] = [...a];', 'js'), []);
 });
 
-test('an object spread of an unknown carries its own message', () => {
-  const { program: objectProgram } = createProgram(
-    'declare const u: unknown;\nconst b = { ...(u as { x: number }) };',
-    '/test.ts',
-  );
+test('an object spread of a primitive still needs a fixed shape', () => {
+  const { program: objectProgram } = createProgram('const b = { ...null };', '/test.ts');
   const objectDiags = gateProgram(objectProgram, 'js');
-  assert.match(objectDiags[0]?.message ?? '', /an object spread of an unknown value/);
+  assert.deepEqual(
+    objectDiags.map((diagnostic) => diagnostic.code),
+    ['STA1214'],
+  );
 });
 
 test('switch, case, default and do/while are all accepted syntax', () => {
@@ -409,13 +407,17 @@ test('statics are accepted; what has no class object to read is not', () => {
   assert.deepEqual(codesFor(`${cls}console.log(C.m());`), []);
   // A static initialization block runs at class-definition time against the statics, which are
   // plain bindings initialized where the class declaration sits -- so its statements lower
-  // right after it. `this` inside one is still the class object, which does not exist here.
+  // right after it. `this.x` naming a static erases to that binding; bare `this` stays refused.
   assert.deepEqual(
     codesFor('class C {\n  static n = 1;\n  static {\n    C.n = 2;\n  }\n}\nconsole.log(C.n);'),
     [],
   );
   assert.deepEqual(
     codesFor('class C {\n  static n = 1;\n  static {\n    this.n = 2;\n  }\n}\nconsole.log(C.n);'),
+    [],
+  );
+  assert.deepEqual(
+    codesFor('class C {\n  static n = 1;\n  static {\n    console.log(this);\n  }\n}\n'),
     ['STA1214'],
   );
   assert.deepEqual(
@@ -424,8 +426,12 @@ test('statics are accepted; what has no class object to read is not', () => {
     ),
     ['STA1214'],
   );
-  // The rest of the class object -- `C.name`, `C.prototype` -- is a member no static declares.
-  assert.deepEqual(codesFor('class C {\n  static n = 1;\n}\nconsole.log(C.name);'), ['STA1214']);
+  // `C.name` folds to the display name (docs/VALUE.md §4.26); `C.prototype` is the named
+  // Phase-8 residue T27 leaves behind.
+  assert.deepEqual(codesFor('class C {\n  static n = 1;\n}\nconsole.log(C.name);'), []);
+  assert.deepEqual(codesFor('class C {\n  static n = 1;\n}\nconsole.log(C.prototype);'), [
+    'STA1214',
+  ]);
 });
 
 test('a class alias erases in place and stays not-yet as a value', () => {
@@ -581,17 +587,10 @@ test('a bound class expression is vetted like a declaration and compiles', () =>
     ),
     ['STA1214'],
   );
-  // An anonymous DECLARATION keeps its own message (plan.md §8 step 12(d) residue).
-  const { program: declProgram } = createProgram(
-    'export default class { m() { return 7; } }\n',
-    '/test.ts',
-  );
-  const decl = gateProgram(declProgram, 'ts');
-  assert.deepEqual(
-    decl.map((d) => d.code),
-    ['STA1214'],
-  );
-  assert.match(decl[0]?.message ?? '', /an anonymous class is not yet supported/);
+  // An anonymous default DECLARATION takes Node's `.name` (`default`) and is accepted
+  // (plan.md §8 step 12(d)); a named default class is accepted as before.
+  assert.deepEqual(codesFor('export default class { m() { return 7; } }\n'), []);
+  assert.deepEqual(codesFor('export default class N { m() { return 7; } }\n'), []);
 });
 
 test('this is gated, not left to the lowering', () => {
@@ -650,10 +649,9 @@ test('accessors are accepted, in statement position and as statics', () => {
     codesFor(`class C {\n${body}}\nconst c = new C();\nc.value = 1;\nconsole.log(c.value);`),
     [],
   );
-  // A read-modify-write is a get AND a set of one property. In statement position the member
-  // place machinery evaluates the receiver once into a temporary and threads it through both
-  // calls; in value position the target lowers to the getter call, which is not an update
-  // place.
+  // A read-modify-write is a get AND a set of one property. The member place machinery
+  // evaluates the receiver once into a temporary and threads it through both calls --
+  // statement position discards the fold's answer, value position yields it (step 12b).
   assert.deepEqual(
     codesFor(`class C {\n${body}}\nconst c = new C();\nc.value += 1;\nconsole.log(c.value);`),
     [],
@@ -664,7 +662,7 @@ test('accessors are accepted, in statement position and as statics', () => {
   );
   assert.deepEqual(
     codesFor(`class C {\n${body}}\nconst c = new C();\nconst y = c.value++;\nconsole.log(y);`),
-    ['STA1214'],
+    [],
   );
   // A static accessor is a pair of plain functions under mangled static bindings: reading
   // `C.value` runs the getter, writing it runs the setter.

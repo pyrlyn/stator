@@ -1,20 +1,18 @@
 /** `STATOR_COMPILE_JOBS` (plan.md §11b T10.3).
  *
- * `1` is one translation unit and one clang invocation — the path every build
- * took before this knob, so emitted C at jobs=1 stays byte-identical.
- * Above 1, file-scope functions are compiled as separate units that share one
- * header of external declarations. The default (unset) is the host's
- * parallelism, but a small program stays one unit: process startup costs more
- * than it returns until the generated C is large enough (the thresholds below).
- * An explicit value above 1 always splits when there are at least two functions,
- * which is how CI smokes the parallel path on a small fixture.
+ * `1` is one translation unit and one clang invocation — the path every build took before this
+ * knob, so emitted C at jobs=1 stays byte-identical. Above 1, file-scope functions are compiled
+ * as separate units that share one header of external declarations. The default (unset) is the
+ * host's parallelism, but a small program stays one unit: process startup costs more than it
+ * returns until the generated C is large enough (the thresholds below). An explicit value above
+ * 1 always splits when there are at least two functions, which is how CI smokes the parallel path.
  */
 
 import { availableParallelism } from 'node:os';
 
-/** Unset `STATOR_COMPILE_JOBS` splits only at or above both of these.
- * Tuned against the T10.3 fixtures in plan-notes 368: a 31KB program did not
- * get faster, and the clang-heavy program that did is well above both. */
+/** Unset `STATOR_COMPILE_JOBS` splits only at or above both of these. Tuned against the T10.3
+ * fixtures: a 31KB program did not get faster, and the clang-heavy program that did is well
+ * above both (plan-notes 374). */
 export const PARALLEL_MIN_FUNCTIONS = 8;
 export const PARALLEL_MIN_CHARS = 40_000;
 
@@ -24,8 +22,8 @@ export type ResolvedJobs =
   | { readonly ok: true; readonly jobs: number; readonly explicit: boolean }
   | { readonly ok: false; readonly message: string };
 
-/** `override` is the in-process test seam. The CLI leaves it unset and the
- * environment variable decides. */
+/** `override` is the in-process test seam. The CLI leaves it unset and the environment variable
+ * decides. */
 export function resolveCompileJobs(
   envValue: string | undefined,
   override: number | undefined,
@@ -78,10 +76,10 @@ export function shouldSplitTranslationUnit(c: string, jobs: number, explicit: bo
   return functions >= PARALLEL_MIN_FUNCTIONS && c.length >= PARALLEL_MIN_CHARS;
 }
 
-/** Split emitted C into a shared data unit plus up to `jobs` function units.
- * Requires `jobs >= 2` and at least two top-level functions — the caller
- * checked `shouldSplitTranslationUnit`. A function that never closes is an
- * emitter bug, not a reason to link a partial program. */
+/** Split emitted C into a shared data unit plus up to `jobs` function units. Requires
+ * `jobs >= 2` and at least two top-level functions — the caller checked
+ * `shouldSplitTranslationUnit`. A function that never closes is an emitter bug, not a reason
+ * to link a partial program. */
 export function partitionTranslationUnit(c: string, jobs: number): PartitionedC {
   const walked = walkEmittedC(c);
   if (jobs < 2 || walked.functions.length < 2) {
@@ -102,8 +100,8 @@ export function partitionTranslationUnit(c: string, jobs: number): PartitionedC 
         if (slots === undefined) {
           throw new Error('JSRT_GLOBALS line did not name a slot count');
         }
-        // The macro defines these `static`. Across units they have to be one
-        // object: `JSRT_GLOBAL` in a function unit reads the array `main` fills.
+        // The macro defines these `static`. Across units they have to be one object:
+        // `JSRT_GLOBAL` in a function unit reads the array `main` fills.
         headerLines.push('extern jsrt_value _jsrt_globals[];');
         headerLines.push('extern JSRTFrame _jsrt_global_frame;');
         sharedLines.push(`jsrt_value _jsrt_globals[${slots}];`);
@@ -133,10 +131,8 @@ export function partitionTranslationUnit(c: string, jobs: number): PartitionedC 
     { name: 'stator_shared.c', source: `${sharedLines.join('\n')}\n` },
   ];
   const buckets = bucketFunctions(walked.functions, bucketCount);
-  // A call from one unit to a function parked in another is an undeclared
-  // identifier unless the shared header publishes the prototype. The emitter
-  // only forward-declares some functions (`_jsrt_module_done` is defined and
-  // then used), so the definition itself is the declaration the other unit sees.
+  // Every published function needs a prototype in the header: a call from one unit to a
+  // function the partition parked in another is otherwise an undeclared identifier.
   for (const group of buckets) {
     for (const line of group) {
       if (isFunctionOpen(line)) {
@@ -163,8 +159,8 @@ interface WalkedC {
   readonly functions: readonly (readonly string[])[];
 }
 
-/** Every generated function opens at column zero and its closing `}` is the
- * only unindented brace. That is the emitter's layout, not a C parser. */
+/** Every generated function opens at column zero and its closing `}` is the only unindented
+ * brace. That is the emitter's layout, not a C parser. */
 function walkEmittedC(c: string): WalkedC {
   const preamble: string[] = [];
   const functions: string[][] = [];
@@ -191,8 +187,8 @@ function walkEmittedC(c: string): WalkedC {
 }
 
 function isFunctionOpen(line: string): boolean {
-  // Column zero is the emitter's layout: only file-scope functions open there.
-  // An indented `if (…) {` is a body statement and must not become a unit or a prototype.
+  // Column zero is the emitter's layout: only file-scope functions open there. An indented
+  // `if (…) {` is a body statement and must not start a unit.
   return (
     line.endsWith(' {') &&
     line.includes('(') &&
@@ -231,8 +227,8 @@ function isPrototype(line: string): boolean {
   return line.endsWith(';') && line.includes('(') && initializerAt(line) === -1;
 }
 
-/** Index of the ` = ` that starts a file-scope initializer, ignoring one
- * inside a string. `-1` when the line is a declaration. */
+/** Index of the ` = ` that starts a file-scope initializer, ignoring one inside a string.
+ * `-1` when the line is a declaration. */
 function initializerAt(line: string): number {
   let quoted = false;
   for (let i = 0; i < line.length - 2; i++) {
@@ -259,8 +255,8 @@ function asExtern(bare: string): string {
   return decl.startsWith('extern ') ? decl : `extern ${decl}`;
 }
 
-/** Largest functions first, each into the lightest bucket, so `jobs` clang
- * processes get about the same amount of C. Empty buckets are dropped. */
+/** Largest functions first, each into the lightest bucket, so `jobs` clang processes get about
+ * the same amount of C. Empty buckets are dropped. */
 function bucketFunctions(functions: readonly (readonly string[])[], buckets: number): string[][] {
   const groups: string[][] = Array.from({ length: buckets }, () => []);
   const weight: number[] = Array.from({ length: buckets }, () => 0);
@@ -290,8 +286,8 @@ function bucketFunctions(functions: readonly (readonly string[])[], buckets: num
   return groups.filter((group) => group.length > 0);
 }
 
-/** File-scope `static` hides the function from every other unit. The first
- * real line is the signature; a body-local `static` stays. */
+/** File-scope `static` hides the function from every other unit. The first real line is the
+ * signature; a body-local `static` stays. */
 function publishFunction(lines: readonly string[]): string[] {
   let stripped = false;
   return lines.map((line) => {

@@ -228,7 +228,8 @@ function checkIndexable(
   if (
     target.type.kind !== 'array' &&
     target.type.kind !== 'unknown' &&
-    target.type.kind !== 'uint8array'
+    target.type.kind !== 'uint8array' &&
+    target.type.kind !== 'string'
   ) {
     if (
       target.type.kind === 'object' &&
@@ -1632,6 +1633,27 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
           span: expr.span,
           code: 'STA4059',
           message: `dynamic object literal has type '${hTypeName(expr.type)}', not Unknown`,
+        });
+      }
+      break;
+    }
+
+    case 'accessor-place': {
+      verifyExpression(expr.target, problems, bindings);
+      if (expr.target.type.kind !== 'object') {
+        problems.push({
+          kind: 'accessor-place',
+          span: expr.span,
+          code: 'STA4049',
+          message: 'accessor-place receiver must be an object',
+        });
+      }
+      if (expr.getSlot < 0 && expr.setSlot < 0) {
+        problems.push({
+          kind: 'accessor-place',
+          span: expr.span,
+          code: 'STA4067',
+          message: `accessor '${expr.property}' has neither half in ${expr.owner}`,
         });
       }
       break;

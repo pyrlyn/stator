@@ -4,7 +4,7 @@
     "codes": {
       "STA1207": 1,
       "STA1213": 2,
-      "STA1214": 1844
+      "STA1214": 1831
     }
   },
   "packages/node/src/assert.ts": {
@@ -20,6 +20,10 @@
     "codes": {}
   },
   "packages/node/src/path.ts": {
+    "verdict": "dynamic",
+    "codes": {}
+  },
+  "packages/node/src/process.ts": {
     "verdict": "dynamic",
     "codes": {}
   },

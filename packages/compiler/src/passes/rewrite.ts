@@ -359,7 +359,8 @@ function rebuildExpression(expr: Expression, rewriter: Rewriter): Expression {
         target.kind !== 'identifier' &&
         target.kind !== 'index-access' &&
         target.kind !== 'field-access' &&
-        target.kind !== 'dyn-field-access'
+        target.kind !== 'dyn-field-access' &&
+        target.kind !== 'accessor-place'
       ) {
         throw new Error(`rewriteExpression: update target became ${target.kind}`);
       }
@@ -408,7 +409,8 @@ function rebuildExpression(expr: Expression, rewriter: Rewriter): Expression {
     case 'match-read':
     case 'regexp-read':
     case 'get-iterator':
-    case 'dyn-field-access': {
+    case 'dyn-field-access':
+    case 'accessor-place': {
       const target = sub(expr.target);
       return target === expr.target ? expr : { ...expr, target };
     }

@@ -1,12 +1,12 @@
 # Stator benchmark page
 
-Generated: 2026-09-02T13:37:14.941Z
+Generated: 2026-10-23T14:44:12.385Z
 
 | Engine | Version | Geomean runtime (ms) |
 |---|---|---:|
-| stator | working tree | 22.99 |
-| node | v26.7.0 | 59.47 |
-| bun | 1.3.14 | 21.05 |
+| stator | working tree | 26.24 |
+| node | v26.7.0 | 57.54 |
+| bun | 1.3.14 | 19.90 |
 | qjs | absent | — |
 | perry | absent | — |
 | scriptc | absent | — |

@@ -32,3 +32,8 @@ export function unset(name: string): void {
 export function cwd(): string {
   return process.cwd();
 }
+
+/** Node's `Object.keys(process.env)`: the live key list, names only. */
+export function names(): string[] {
+  return Object.keys(process.env);
+}
