@@ -166,6 +166,16 @@ spread / a constructor argument (no single parameter type); a generic that is re
 stored (dynamic tier); a generic call at a generic type; `instanceof` against a generic class
 (one descriptor per tuple).
 
+**Landed 2026-10-24 (plan-notes 386).** `docs/HIR.md` §7 states the specialization-key rule
+(position key `name@file#offset` for block-homed `const` / single-assignment `let`; module-scope
+keeps the plain name). Block-homed slice is `static` (`subset_generic_block_const_*`; nesting
+and single-assignment-let fixtures flipped). Every remaining shape's message names its blocker.
+**Remainder (this card keeps its number and title):** `instanceof` against a generic class —
+the comparison-site tuple slice was tried and reverted (STA4054/STA4048 under a generic
+subclass; plan-notes 386); branch / spread / ctor-argument homeless arrows stay refused with
+their named blockers; goldens for the landed slice not added (subset decision tests cover it).
+**Check is met for the landed subset and the named refusals.**
+
 Steps:
 1. Write the specialization-key rule for a **block-homed** generic (block `const`/`let` with
    exactly one assignment) in `docs/HIR.md` — what the key is when no parameter type exists
