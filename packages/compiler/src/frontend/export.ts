@@ -185,6 +185,7 @@ function abiCType(kind: ExternAbiKind, position: 'param' | 'return'): string {
       // rendered. The case exists only because the switch is exhaustive — a slot address has
       // no C-observable meaning, so there is no honest type to print here.
       return 'void *';
+    case 'value':
     case 'bytes':
       // Unreachable: `exportAbiKindOf` never answers `bytes`, so a `Uint8Array` position keeps
       // the `jsrt_value` form. Exhaustiveness only, and the value form is the honest fallback.

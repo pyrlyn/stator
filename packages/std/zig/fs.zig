@@ -26,9 +26,9 @@ export fn jsrt_std_fs_write_text(path: [*:0]const u8, text: [*:0]const u8) f64 {
 
 const Kind = enum(u8) { other = 0, file = 1, directory = 2 };
 
-var stat_size: f64 = 0;
-var stat_kind: Kind = .other;
-var stat_mtime_ms: f64 = 0;
+threadlocal var stat_size: f64 = 0;
+threadlocal var stat_kind: Kind = .other;
+threadlocal var stat_mtime_ms: f64 = 0;
 
 /// Follows symlinks (`stat`, not `lstat`). The fields are parked for the three readers below,
 /// which the TS wrapper calls immediately after a successful call.
@@ -71,7 +71,7 @@ export fn jsrt_std_fs_rmdir(path: [*:0]const u8) f64 {
 }
 
 /// The file `jsrt_std_fs_read_bytes` read, until `jsrt_std_fs_read_bytes_take` copies it out.
-var parked: []u8 = &.{};
+threadlocal var parked: []u8 = &.{};
 
 /// Reads the whole file and parks it: the byte count, or -1 with the code recorded. The size is
 /// known only after the read, so the surface cannot allocate the answer first (docs/STD.md §6).
@@ -131,7 +131,7 @@ export fn jsrt_std_fs_utimes(path: [*:0]const u8, atime_ms: f64, mtime_ms: f64) 
 }
 
 /// The last `readdir`'s names, freed when the next one replaces them.
-var dir_names: [][:0]u8 = &.{};
+threadlocal var dir_names: [][:0]u8 = &.{};
 
 fn freeNames() void {
     for (dir_names) |name| root.allocator.free(name);
@@ -265,4 +265,10 @@ export fn jsrt_std_fs_write(fd: f64, position: f64, data: [*]const u8, len: usiz
         .at => |at| io.writeAll(f, data[0..len], at),
         .invalid => root.fail("EINVAL"),
     };
+}
+
+pub fn cleanup() void {
+    root.allocator.free(parked);
+    parked = &.{};
+    freeNames();
 }
