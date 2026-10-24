@@ -69,7 +69,7 @@ New bugs, dead code and moves from a read-only Cursor cloud review of `main` at 
 | ~~T25~~ | P2 | bug | fixed | plan-notes 353, 364 | The repo map names QuickJS-NG only. `docs/TOOLCHAIN.md` says Ryū is not vendored; fetching it stays on §12. |
 | ~~T26~~ | P2 | dead code | fixed | plan-notes 353, 364 | `memfs` is gone from both package manifests. The custom-host comments say "in-memory CompilerHost". |
 
-Already tracked here, not added again: moving number printing to the vendored Ryū C code (the review's move M3) is in §12, "Ryū rides here too".
+Already tracked here, not added again: moving number printing to the vendored Ryū C code (the review's move M3) landed as T33 (plan-notes 385).
 
 ### T21. Required status checks on `main` (cloud review)
 
@@ -761,9 +761,12 @@ bundle — evidence: done.md → Phase 5).~~ ✅
     expected-fail in the commit that lands it, never in bulk:
     ~~(a) **Parameter and binding forms** first, because every later family calls functions: rest,
     default, optional, uninitialized `let`, and shallow destructuring of parameters/declarations/
-    catch.~~ ✅ **landed 2026-09-02** (plan-notes 158–161). **Residue:** nested patterns,
-    rest-in-pattern, and default-in-pattern stay not-yet in this family (F1 left nested
-    patterns open; the gate's message is still the shallow destructuring refusal).
+    catch.~~ ✅ **landed 2026-09-02** (plan-notes 158–161). **Residue:** ~~nested patterns~~
+    **landed 2026-10-24** (plan-notes 379; H1). ~~Rest-in-pattern and default-in-pattern~~
+    **landed 2026-10-24** (plan-notes 380; I1). ~~Rest PATTERN, static computed key, dynamic
+    object rest~~ **landed 2026-10-24** (plan-notes 383; T29). Still not-yet, each named at its
+    gate site: a computed key with a runtime name, object rest over a type with methods, and
+    object rest over an array.
     ~~(b) **Expression-position residue**: labels on anything but a loop or switch, capturing a
     variable declared inside a loop, `instanceof` against anything but a class name, assignment and
     compound assignment to a non-variable, `++`/`--` on a non-variable and in value position, and
@@ -1476,7 +1479,7 @@ Existing C builtins, math and regexp stay C until a card ports them; codegen nev
 
 | Candidate | When |
 |---|---|
-| Ryū C vendor | §12 ladder (already scheduled; number print) |
+| ~~Ryū C vendor~~ | landed T33 (plan-notes 385) |
 | mimalloc/jemalloc | §12 rung 1, non-GC / post-precise-GC paths |
 | simdutf (or similar) | only if UTF-16 ops profile hot |
 | oxc-parser via napi | only if the `typescript` tripwire (§13) fires |
@@ -2343,13 +2346,11 @@ above is a claim about a number; without the harness there is no way for one to 
 ladder of unfalsifiable claims is a wish list. When a rung is scheduled it becomes a numbered task in
 a phase, with Steps and a Check like any other — this table is an ordering, not a backlog.
 
-**Ryū rides here too** (owner's call, 2026-09-04, plan-notes 190, closing note 188's unclaimed
-follow-up). §15.4 lists Ryū-exact number printing as settled and `docs/TOOLCHAIN.md` now records it
-as fetchable and unfetched; what is NOT settled is when. `shortest_digits()` costs up to 18
-`snprintf`+`strtod` pairs per number printed, and note 28 kept the swap contained to that one
-function's body — but the corpus it would replace already matches Node byte-for-byte, so this is a
-pure speed change with no correctness argument for jumping the entry criterion above. It becomes a
-rung with a measured before/after when the harness exists, not a task now.
+**Ryū landed as T33** (2026-10-24, plan-notes 385). §15.4 lists Ryū-exact number printing as settled
+and `docs/TOOLCHAIN.md` recorded it as fetchable and unfetched; T33 vendored `v2.0` (`72e18e8…`)
+into `packages/runtime/vendor/ryu/` and swapped `shortest_digits()` to `d2s_buffered`. This rung
+leaves the ladder: the swap is a pure speed change against a corpus that already matched Node
+byte-for-byte, and the directed card landed it without a §12 before/after (plan-notes 385).
 
 **The discipline every rung shares:**
 - **Baseline, change, re-measure on the same host**, recording version, flags, hardware and the exact
@@ -2735,3 +2736,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 
 - **v4.82** (2026-10-19): **Cloud-review rows T20, T22, T25 and T26 were already fixed** (plan-notes 364). The table still said confirmed. `ci.yml` pushes `main`, `pipeline.yml` calls `pyrlyn/ci` at `@main` (#158), the repo map no longer lists Ryū as vendored, and `memfs` is gone. T21 (required checks) and T24 (split the C emitter) stay open. These rows were never given Steps and a Check, so they are struck in the table the way T23 was, not moved to `done.md`.
 - **v4.85** (2026-10-23): **Cloud-review T21 lands: `protect-main` requires the real test jobs** (plan-notes 370). The ruleset required only `pipeline / gate`, which is why T17 merged with red CI. It now also requires `static analysis`, `frontend (linux/x64)`, `frontend (windows/x64)` and `frontend (windows/arm64)`. A leading-space key in the `frontend-desktop` `fromJSON` matrix had been reporting those legs as `frontend (/x64)` — unmatchable as check contexts — and is fixed in the same change. macOS legs stay unrequired because `MACOS_CI_DISABLED=true` removes them from the matrix instead of skipping them.
+- **v4.86** (2026-10-24): **T33 lands: Ryū is vendored and `shortest_digits()` uses it** (plan-notes 385). `packages/runtime/vendor/ryu/` pins `v2.0` (`72e18e8…`) through `update.ts`; `d2s_buffered` replaces the `%.*e` round-trip search. `test:runtime` and 475 goldens stay byte-for-byte against the pinned Node. §12 loses the Ryū rung — the directed card landed the swap without a bench before/after, which plan-notes 385 records.
