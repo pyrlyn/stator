@@ -12,6 +12,14 @@ An ahead-of-time compiler from TypeScript and JavaScript to native binaries.
 | T18 | done | P1 | 3 | 100% | Cursor / grok 4.7 |
 | T19 | done | P3 | 1 | 100% | Cursor / grok 4.7 |
 | T20 | done | P2 | 2 | 100% | Cursor / grok 4.7 |
+| T27 | open | P1 | 5 | 100% | — |
+| T28 | open | P2 | 4 | 100% | — |
+| T29 | open | P2 | 2 | 100% | — |
+| T30 | open | P2 | 3 | 100% | — |
+| T31 | open | P3 | 1 | 100% | — |
+| T32 | open | P2 | 3 | 100% | — |
+| T33 | open | P3 | 2 | 100% | — |
+| T34 | open | P2 | 3 | 100% | — |
 
 ### ~~T15. Required root docs~~
 
@@ -98,6 +106,169 @@ gh api repos/pyrlyn/stator/rulesets/24341905 \
 Must print exactly `["pipeline / gate","static analysis","frontend (linux/x64)","frontend (windows/x64)","frontend (windows/arm64)"]`, and a PR whose `static analysis` or a Windows `frontend` leg is red must show merge blocked (admin bypass remains available on PRs only — actor `RepositoryRole` admin, `bypass_mode: pull_request`).
 
 Not added: exposing `ffi-gen` as a `stator ffi-gen` subcommand is optional, and the review says to keep it in-tree as it is; the identity string methods (`jsrt_string_to_string`, `jsrt_string_value_of`) are used through the method table.
+
+---
+
+## Open work cards from the 2026-10-24 roadmap/ideas sweep (T27–T34)
+
+`roadmap.md` held no unfiled approved work and `ideas.md` holds no unapproved ideas. What the
+roadmap *pointed at* was open residue still living only as prose inside finished phases. Each
+card below is one of those residues promoted to a task with Steps and a Check (§15). Difficulty
+is the `[Dn]` legend in §14. These cards are **not** a new phase: work them in card order
+unless a dependency line says otherwise. Phase 8 (§11) stays gated and is not carded here.
+
+### T27. The class object — opaque class values and `this` in a static method **[D5 · P1]**
+
+Phase 5 step 12(d)/(e) residue. The in-place spellings (`new K`, `K.static`, `o instanceof K`,
+alias formation) work; anything else that needs to *hold* a class is refused at the gate
+(`gate.ts` "using a class as a value"). `this` inside a static **method** is the same object
+(field initializers and `static {}` already erase to static bindings — plan-notes 373).
+
+Steps:
+1. **Design first (§15.6):** `docs/SUBSET.md` + `docs/VALUE.md` gain the class-object model —
+   what a class value *is* (descriptor + constructor function + prototype slot + static table),
+   identity (`C === D`), and which members a class object exposes in v0 (`name`, `prototype`,
+   static fields/methods; `length` optional).
+2. HIR: a `class-object` expression node (or a documented refusal list if v0 admits only
+   `C.name` / `C.static` as reads — decide and write it down).
+3. Lowering + codegen: materialize the descriptor as a value; `C.name` folds to the display
+   name; a static read through a class value routes to the static table.
+4. `this` in a static method erases to the defining class's static binding **only** when the
+   method cannot be reached through a subclass (`S.m()` vs `T.m()`); otherwise the call passes
+   the reached-through class. Document the rule; implement it.
+5. Decision tests both modes + goldens (`class_object_name`, `static_this_method`) byte-for-byte
+   vs Node. Flip every `@expected-fail` in the same commit.
+
+**Check:** `stator explain` on a fixture that stores `const K = C` and reads `K.name` reports
+`static` (or `dynamic` if the card chose the value path) with no `STA1214`; goldens match the
+pinned Node; `pnpm run test:subset` shows the 12(d)/(e) class-value rows out of expected-fail.
+
+**Blocked on nothing.** Narrow slice allowed: land `C.name` + static reads first and leave
+`C.prototype` not-yet with a named code (then the Check covers the landed subset and the
+remainder is recorded here).
+
+### T28. Generics residue: homeless arrows, self-application, `instanceof` a generic class **[D4]**
+
+Phase 5 step 12(f) residue. Module-scope `const f = <T>(x: T) => x` already specializes
+(plan-notes 280/379). Still refused with named `STA1214`s: an arrow in `let` / a branch / a
+spread / a constructor argument (no single parameter type); a generic that is returned or
+stored (dynamic tier); a generic call at a generic type; `instanceof` against a generic class
+(one descriptor per tuple).
+
+Steps:
+1. Write the specialization-key rule for a **block-homed** generic (block `const`/`let` with
+   exactly one assignment) in `docs/HIR.md` — what the key is when no parameter type exists
+   (the variable's declared/inferred generic signature, or a canonical tuple). If that rule
+   cannot be sound, keep the refusal and say so in the doc rather than in code comments.
+2. Land the block-`const`/single-assignment-`let` slice under that rule (or confirm the refusal
+   and skip to 3).
+3. `instanceof` against a generic class: specialize the descriptor per tuple at the comparison
+   site, or refuse with a code that names the one-descriptor-per-tuple blocker.
+4. Decision tests both modes; goldens where landed; every remaining shape's message names its
+   blocker (never a bare "not yet supported").
+
+**Check:** `gate.ts` emits no unnamed `STA1214` for the shapes in this card's list; goldens for
+any landed slice match Node byte-for-byte; `docs/HIR.md` §on generics states the keying rule.
+
+### T29. Nested rest-patterns and defaults beyond one level **[D2]**
+
+Step 12a remainder after plan-notes 379/380. `isSimpleBindingPattern` accepts nested
+object/array + rest + defaults at any depth; still refused precisely: a rest *pattern*
+(`...{a}` / `...[a]`), a computed key in a pattern, object rest over a no-fixed-layout value.
+
+Steps:
+1. Land rest-pattern (`const { a: { ...r } } = o` already landed as object rest; the remainder
+   is array/object **rest elements inside nested patterns** and rest-pattern as a whole).
+2. Computed keys in binding patterns (`const { [k]: v } = o`) — decide static-key only or
+   dynamic; write it in `docs/SUBSET.md`.
+3. Object rest over a dynamic/unknown source: route through the shape table (the spread twin).
+
+**Check:** `subset_nested_destructuring_*` and new `subset_nested_rest_*` rows are `static` or
+`dynamic` (not `expected-fail`) for every shape this card names; goldens match Node; any
+still-refused shape has a message naming the construct.
+
+### T30. Task 6.16 — clone baseline to zero **[D3]**
+
+`.jscpd-baseline.json` is still debt (last measured **129** fingerprints after plan-notes 381;
+the Check wants the baseline *empty*). Families still open per that note: `gate.ts`/`generics.ts`
+`ts.is*` lists, array switch cases, `jsrt_string_ops`, `hir/verify`, `jsrt_print`, `jsrt_date`.
+
+Steps:
+1. One PR per family: extract the helper at the responsible layer (no `dupes` baseline growth
+   in any commit; each PR runs `pnpm run dupes:baseline` and the file must shrink).
+2. When the last family is gone, **delete** `.jscpd-baseline.json` and the `dupes:baseline`
+   script path's baseline argument (or leave the script running with a missing/empty baseline —
+   whatever `jscpd` treats as "no baseline"; document the choice in `AGENTS.md` golden rule 10).
+3. Keep `pnpm run dupes` in `ci` green with zero clones.
+
+**Check:** `pnpm run dupes` exits 0 with no baseline file (or an empty one); the clone count in
+its output is 0; `pnpm run test` still green.
+
+### T31. Task 6.3 noise floor on the weekly runner's machine **[D1]**
+
+The 20% perf gate stands on a 7.4%–14.4% spread measured on **other** hosts (plan-notes 246/374).
+The Check wants repeats on the machine that runs the weekly job.
+
+Steps:
+1. On that host: one commit, ≥5 `pnpm run bench` repeats; record geomeans + spread in
+   `plan-notes.md` (host, CPU, commit sha).
+2. Set `thresholdPercent` in the bench gate from that spread (keep ≥2× headroom; do not lower
+   it onto the noise floor). If the weekly host is unavailable indefinitely, record that fact
+   and leave the gate at 20% — a named "unmeasured" is better than a guessed number.
+
+**Check:** plan-notes cites the weekly-host numbers (or the unavailability record) and the gate
+value in `packages/tests/bench/` matches that decision.
+
+### T32. Abstract accessors and the virtual-accessor rule **[D3]**
+
+Step 12(d) residue (`gate.ts` override arm). Accessors already work as get/set method pairs
+(plan-notes 373 landed the static and compound slices); an `abstract get`/`set` override and
+an accessor override that must dispatch virtually through a base-typed receiver are still
+refused.
+
+Steps:
+1. Finish the virtual rule from plan-notes 373's landed pair-whole override: a base-typed
+   `o.x` on a receiver whose class overrides the accessor must call the override.
+2. `abstract` accessors: throw-stub pattern from plan-notes 275 (already used for abstract
+   members) applied to the get/set pair; subclass supplies the implementation.
+3. Goldens `abstract_accessor`, `accessor_override_virtual` both modes; subset rows flip.
+
+**Check:** goldens match Node; `pnpm run test:subset` has no `expected-fail` row for abstract
+or overridden accessors; the `statics`/`class-members` unit suites stay green.
+
+### T33. Vendor Ryū for number printing **[D2]**
+
+§12 rung and §15.4's settled "Ryū-exact number printing". `docs/TOOLCHAIN.md` records Ryū as
+fetchable but not vendored; the review's move M3 is this card.
+
+Steps:
+1. Vendor the Ryū C sources via the `packages/runtime/vendor/update.ts` route; `VENDOR.md`
+   pins the commit (same rule as QuickJS-NG).
+2. Replace the number printer's shortest-round-trip path with Ryū; keep `-0.0`, non-finites
+   and the `console.log` formatting contract (plan-notes 372's print corpus).
+3. `pnpm run test:runtime` + golden print corpus byte-for-byte vs Node.
+
+**Check:** `pnpm run test:runtime` and `pnpm run test:golden` pass; `docs/TOOLCHAIN.md`'s Ryū
+row flips from "fetchable and unfetched" to "vendored at <commit>"; the vendor script
+regenerates from the pin without network drift.
+
+### T34. `Function.prototype.bind` and the two-slot environment **[D3]**
+
+Step 12(e) residue: method values use `has_receiver` (drop the receiver); `bind` *inserts* one
+and needs the two-slot `JSRTEnv` `docs/VALUE.md` §4.16 reserved.
+
+Steps:
+1. Runtime: `JSRTBound` / env layout with inserted receiver + partial args; `jsrt_call` handles
+   the shift (documented beside `has_receiver`).
+2. `bind` as a builtin method; `length`/`name` of a bound function per spec (or a named
+   not-yet if v0 skips them — decide in `docs/SUBSET.md`).
+3. Goldens `bind_receiver`, `bind_partial_args`, `bind_new` (`new` on a bound function) both
+   modes; decision tests.
+
+**Check:** goldens match Node; `subset_bind_*` rows leave `expected-fail`; no regression in the
+existing `has_receiver` method-value goldens.
+
+---
 
 ---
 
