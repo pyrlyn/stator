@@ -13945,3 +13945,53 @@ member on a function-typed receiver in both modes (`functionMemberResult` curren
 own properties only in `js`); flip `subset_function_bind_{ts,js}` off not-yet; goldens
 `bind_receiver` / `bind_partial_args` / `bind_new` in both modes; do not regress
 `has_receiver` method values (§4.16). Plan §8 step 12(e) and 9a stay open.
+## 386. T28 generics residue: specialization-key rule + block-homed slice; T34 bind left open (2026-10-24)
+
+Branch `q1-batch` (worktree `stator-q1`, from origin/main incl. T27 #191). Host: darwin-arm64,
+pinned Node 26.7.0. Disc: ~8G free at start.
+
+### T28 — specialization-key rule (docs/HIR.md §7) + block-homed `const`/single-assignment `let`
+
+**Rule written first (§15.6).** New `docs/HIR.md` §7 "Generic specialization keys": three key
+forms (declared name / module-scope `const` name / position `name@file#offset`), the three
+soundness conditions for a block-homed generic (single assignment, no capture, stable identity),
+and a table of every remaining homeless shape with the blocker its message names. §7.3 is the
+Check's "docs/HIR.md §on generics states the keying rule".
+
+**Rule is sound; slice landed.** `genericArrowKey` now accepts a block-scope `const` (and a
+`let`/`var` whose only write is its initializer — `isSingleAssignmentBinding`) and returns a
+position-derived key for those (`positionGenericKey`, shared with the inline path). Module-scope
+`const` keeps its plain name (unique per file; cross-file already takes `@ordinal`). Print name
+recovers the variable (`genericArrowPrintName`) so `.name` stays `g`, not `g@file#off`.
+Capture analysis already refused the unsound bodies (`capturesEnclosingScope`).
+
+**Messages sharpened** (Check: no unnamed STA1214 on this card's list):
+- homeless arrow → names "no specialization home: no parameter type / no stable key"
+- generic as value → names "no call site determines its type tuple"
+- self-application → names "self-application infers a generic tuple no monomorphic copy can spell"
+- `instanceof` generic class → names "one descriptor per tuple, and the bare name identifies no
+  descriptor to compare against"
+
+**`instanceof` against a generic class: slice NOT landed.** The comparison-site slice (left type
+`Box<number>` → `Box<number>` descriptor via `mangleClassName` + `requestInstanceOf` collection)
+was implemented and **reverted**: `s instanceof Box` on `s: Sub extends Box<number>` lowered to
+STA4054 (unsubstituted `T` in a specialization) and STA4048 (`new Box<number>` typed `Sub`) —
+the generic-subclass specialization path is not yet sound for this use. Per the card's "or name
+that blocker", the refusal now names one-descriptor-per-tuple. Reopen when generic subclass
+specialization collection is fixed.
+
+**Tests.** New `subset_generic_block_const_{ts,js}` (`static`); flipped
+`subset_generic_homeless_nesting_*` and `subset_generic_homeless_let_*` to `static` (the let
+fixture's single write is the initializer, which the rule admits). `subset_generic_instanceof_*`
+stays `not-yet STA1214` with the named message.
+
+**Gates.** `pnpm run typecheck` clean · `pnpm run lint` 0/0 + oxfmt clean ·
+`node packages/tests/subset/run.ts --filter=generic` — **74 fixtures, 74 passed, 0 expected-fail,
+0 failed**. Not run here (wrap-up): `pnpm run test`, `test:subset` full, `test:golden`.
+
+### T34 — `Function.prototype.bind` two-slot env — NOT landed
+
+Left open (design settled in plan-notes 385 / docs/VALUE.md §4.16). Runtime bind thunk +
+`construct_function` special case, `jsrt_get_prop` `bind`/`call`/`apply`, gate `.bind` on a
+function-typed receiver, goldens `bind_receiver` / `bind_partial_args` / `bind_new` both modes
+remain to do. Do not regress `has_receiver` method values when this lands.
