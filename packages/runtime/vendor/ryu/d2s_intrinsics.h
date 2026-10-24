@@ -203,7 +203,6 @@ static inline bool multipleOfPowerOf5(const uint64_t value, const uint32_t p) {
 // Returns true if value is divisible by 2^p.
 static inline bool multipleOfPowerOf2(const uint64_t value, const uint32_t p) {
   assert(value != 0);
-  // return __builtin_ctzll(value) >= p;
   return (value & ((1ull << p) - 1)) == 0;
 }
 
