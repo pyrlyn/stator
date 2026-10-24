@@ -12,12 +12,12 @@ An ahead-of-time compiler from TypeScript and JavaScript to native binaries.
 | T18 | done | P1 | 3 | 100% | Cursor / grok 4.7 |
 | T19 | done | P3 | 1 | 100% | Cursor / grok 4.7 |
 | T20 | done | P2 | 2 | 100% | Cursor / grok 4.7 |
-| T27 | open | P1 | 5 | 100% | — |
+| T27 | open (narrow slice landed) | P1 | 5 | 100% | plan-notes 382 |
 | T28 | open | P2 | 4 | 100% | — |
 | T29 | open | P2 | 2 | 100% | — |
 | T30 | open | P2 | 3 | 100% | — |
 | T31 | open | P3 | 1 | 100% | — |
-| T32 | open | P2 | 3 | 100% | — |
+| ~~T32~~ | done (already landed) | P2 | 3 | 100% | plan-notes 283, 373, 382 |
 | T33 | open | P3 | 2 | 100% | — |
 | T34 | open | P2 | 3 | 100% | — |
 
@@ -147,6 +147,17 @@ pinned Node; `pnpm run test:subset` shows the 12(d)/(e) class-value rows out of 
 `C.prototype` not-yet with a named code (then the Check covers the landed subset and the
 remainder is recorded here).
 
+**Narrow slice landed 2026-10-24 (plan-notes 382).** `docs/VALUE.md` §4.26 + `docs/SUBSET.md`
+class-object row; `C.name` / `K.name` folds to the display name (verdict `static`); `K.static`
+keeps alias erasure; `C.prototype` stays `STA1214` ("the prototype surface", Phase 8). Fixtures
+`subset_class_object_name_*` / `subset_class_object_prototype_*`, goldens `class_object_name` both
+modes. **Remainder (this card keeps its number and title):** materializing a class object as a
+value (`f(C)`, `console.log(K)`, `typeof C`, `K.length`, `C === D` observability), static reads
+through a *materialized* value (`ClassValue` + `staticProps` / `JSRTClass.statics` population),
+`this` in a static method (step 4), and `C.prototype` itself. HIR `ClassValue`/`NewValue`/
+`InstanceOfValue` and the runtime class-object entries stay declared but unreachable for those
+surfaces (plan-notes 283).
+
 ### T28. Generics residue: homeless arrows, self-application, `instanceof` a generic class **[D4]**
 
 Phase 5 step 12(f) residue. Module-scope `const f = <T>(x: T) => x` already specializes
@@ -235,6 +246,12 @@ Steps:
 
 **Check:** goldens match Node; `pnpm run test:subset` has no `expected-fail` row for abstract
 or overridden accessors; the `statics`/`class-members` unit suites stay green.
+
+~~✅ **already landed** (plan-notes 283, 373; confirmed 2026-10-24, plan-notes 382).**~~ The
+card was written from stale roadmap residue: `abstract get`/`set` throw-stubs, pair-whole
+override dispatch and base-typed virtual accessor calls were already in-tree (goldens
+`ts|js/abstract_accessor`, subset `subset_abstract_accessor_*` / `subset_accessor_override_*`).
+No code change; evidence is plan-notes 283.
 
 ### T33. Vendor Ryū for number printing **[D2]**
 
