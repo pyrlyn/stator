@@ -1802,6 +1802,77 @@ function lowerPatternRead(
   return access;
 }
 
+/** Evaluate `value` once into a scratch binding and return the identifier that reads it, so a
+ * later read (a default test, a rest copy, a delete walk) never re-evaluates the source. */
+function holdInTemp(
+  value: Expression,
+  span: Span,
+  bindings: Scope,
+  statements: Statement[],
+): Identifier {
+  const tmp = nextBindTemp();
+  const type = value.type;
+  bindings.set(tmp, type);
+  statements.push({
+    kind: 'declaration',
+    type,
+    span,
+    name: tmp,
+    declKind: 'const',
+    value,
+  });
+  return { kind: 'identifier', type, span, name: tmp };
+}
+
+/** Bind one pattern element's already-evaluated source: recurse when the target is a nested
+ * pattern, else declare the identifier. A destructured element is a binding like any other, so
+ * it can shadow — and then it needs a name of its own for the same reason a plain `let` does.
+ * `value` is what the identifier declares (already boundary-checked when needed); `type` is the
+ * binding's declared type, which a default's conditional does not carry. */
+function finishPatternBind(
+  el: ts.BindingElement,
+  source: Expression,
+  value: Expression,
+  type: HType,
+  declKind: 'let' | 'const',
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  bindings: Scope,
+  diagnostics: Diagnostic[],
+  statements: Statement[],
+): boolean {
+  if (!ts.isIdentifier(el.name)) {
+    // Nested pattern: the field read becomes the source the inner pattern destructures.
+    const parts = lowerBindingPattern(
+      el.name,
+      source,
+      declKind,
+      el,
+      sourceFile,
+      checker,
+      bindings,
+      diagnostics,
+    );
+    if (parts === null) {
+      return false;
+    }
+    statements.push(...parts);
+    return true;
+  }
+  const span = makeSpan(el.getStart(sourceFile), el.getWidth(sourceFile), sourceFile);
+  const hirName = bindings.declare(el.name.text, type);
+  hirNameOfDeclaration.set(el, hirName);
+  statements.push({
+    kind: 'declaration',
+    type,
+    span,
+    name: hirName,
+    declKind,
+    value,
+  });
+  return true;
+}
+
 function bindPatternElement(
   source: Expression,
   key: string | number,
@@ -1836,18 +1907,7 @@ function bindPatternElement(
       return false;
     }
     const span = makeSpan(el.getStart(sourceFile), el.getWidth(sourceFile), sourceFile);
-    const tmp = nextBindTemp();
-    const readType = read.type;
-    bindings.set(tmp, readType);
-    statements.push({
-      kind: 'declaration',
-      type: readType,
-      span,
-      name: tmp,
-      declKind: 'const',
-      value: read,
-    });
-    const held: Identifier = { kind: 'identifier', type: readType, span, name: tmp };
+    const held = holdInTemp(read, span, bindings, statements);
     const isUndef: BinaryOp = {
       kind: 'binary-op',
       operator: '===',
@@ -1865,38 +1925,19 @@ function bindPatternElement(
       alternate: held,
     };
   }
-  if (!ts.isIdentifier(el.name)) {
-    // Nested pattern: the field read becomes the source the inner pattern destructures.
-    const parts = lowerBindingPattern(
-      el.name,
-      bound,
-      declKind,
-      el,
-      sourceFile,
-      checker,
-      bindings,
-      diagnostics,
-    );
-    if (parts === null) {
-      return false;
-    }
-    statements.push(...parts);
-    return true;
-  }
   const type = typeAt(el.name, checker, bindings);
-  // A destructured element is a binding like any other, so it can shadow -- and then it needs a
-  // name of its own for the same reason a plain `let` does.
-  const hirName = bindings.declare(el.name.text, type);
-  hirNameOfDeclaration.set(el, hirName);
-  statements.push({
-    kind: 'declaration',
+  return finishPatternBind(
+    el,
+    bound,
+    maybeBoundary(bound, type, el, sourceFile),
     type,
-    span: makeSpan(el.getStart(sourceFile), el.getWidth(sourceFile), sourceFile),
-    name: hirName,
     declKind,
-    value: maybeBoundary(bound, type, el, sourceFile),
-  });
-  return true;
+    sourceFile,
+    checker,
+    bindings,
+    diagnostics,
+    statements,
+  );
 }
 
 /** What a pattern reads its parts from: `rhs` itself when it is a variable, a temporary holding it
@@ -1910,17 +1951,7 @@ function patternSource(
   if (rhs.kind === 'identifier') {
     return rhs;
   }
-  const tmp = nextBindTemp();
-  bindings.set(tmp, rhs.type);
-  statements.push({
-    kind: 'declaration',
-    type: rhs.type,
-    span,
-    name: tmp,
-    declKind: 'const',
-    value: rhs,
-  });
-  return { kind: 'identifier', type: rhs.type, span, name: tmp };
+  return holdInTemp(rhs, span, bindings, statements);
 }
 
 function lowerBindingPattern(
@@ -2075,35 +2106,18 @@ function bindArrayRest(
     target: source,
     args: [start, end],
   };
-  if (!ts.isIdentifier(el.name)) {
-    // Rest pattern: the slice is the source the inner pattern destructures.
-    const parts = lowerBindingPattern(
-      el.name,
-      sliced,
-      declKind,
-      el,
-      sourceFile,
-      checker,
-      bindings,
-      diagnostics,
-    );
-    if (parts === null) {
-      return false;
-    }
-    statements.push(...parts);
-    return true;
-  }
-  const hirName = bindings.declare(el.name.text, type);
-  hirNameOfDeclaration.set(el, hirName);
-  statements.push({
-    kind: 'declaration',
+  return finishPatternBind(
+    el,
+    sliced,
+    sliced,
     type,
-    span,
-    name: hirName,
     declKind,
-    value: sliced,
-  });
-  return true;
+    sourceFile,
+    checker,
+    bindings,
+    diagnostics,
+    statements,
+  );
 }
 
 /** `const { a, ...rest } = o` / a nested object's `...rest`: the rest binds a fresh plain object
@@ -2189,18 +2203,7 @@ function bindObjectRest(
       span,
       args: [empty, source],
     };
-    const tmp = nextBindTemp();
-    const restType = hUnknown(false);
-    bindings.set(tmp, restType);
-    statements.push({
-      kind: 'declaration',
-      type: restType,
-      span,
-      name: tmp,
-      declKind: 'const',
-      value: assign,
-    });
-    const held: Identifier = { kind: 'identifier', type: restType, span, name: tmp };
+    const held = holdInTemp(assign, span, bindings, statements);
     for (const key of bound) {
       statements.push({
         kind: 'expression-statement',
@@ -2228,36 +2231,18 @@ function bindObjectRest(
     );
     return false;
   }
-  if (!ts.isIdentifier(el.name)) {
-    // Rest pattern: the remainder is the source the inner pattern destructures.
-    const parts = lowerBindingPattern(
-      el.name,
-      restValue,
-      declKind,
-      el,
-      sourceFile,
-      checker,
-      bindings,
-      diagnostics,
-    );
-    if (parts === null) {
-      return false;
-    }
-    statements.push(...parts);
-    return true;
-  }
-  const type = restValue.type;
-  const hirName = bindings.declare(el.name.text, type);
-  hirNameOfDeclaration.set(el, hirName);
-  statements.push({
-    kind: 'declaration',
-    type,
-    span,
-    name: hirName,
+  return finishPatternBind(
+    el,
+    restValue,
+    restValue,
+    restValue.type,
     declKind,
-    value: restValue,
-  });
-  return true;
+    sourceFile,
+    checker,
+    bindings,
+    diagnostics,
+    statements,
+  );
 }
 
 /** Step 17's rule, shared by every position that can name a function (plan.md §8 step 17 and
@@ -4516,21 +4501,6 @@ function isProtoSetterName(name: ts.PropertyName): boolean {
   );
 }
 
-function staticObjectLiteralKey(name: ts.PropertyName, checker: ts.TypeChecker): string | null {
-  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) {
-    return name.text;
-  }
-  // A numeric name is its value's spelling, not the source text: `{ 0x10: 1 }` declares `16`,
-  // exactly as the checker spells the property, so the entry and the shape agree.
-  if (ts.isNumericLiteral(name)) {
-    return String(Number(name.text));
-  }
-  if (ts.isComputedPropertyName(name)) {
-    return frontendTypes.computedKeyStaticName(name, checker);
-  }
-  return null;
-}
-
 /** A link of an optional chain: `.x`, `[k]` or `(args)`, each optionally `?.`. `new` never
  * appears — `new a?.b()` is a grammar error — and a parenthesized chain is a closed value, so
  * the spine walk below stops at one. */
@@ -5996,7 +5966,7 @@ function lowerExpression(
       if (value === null) {
         return null;
       }
-      const staticKey = staticObjectLiteralKey(property.name, checker);
+      const staticKey = frontendTypes.staticPropertyName(property.name, checker);
       if (staticKey !== null) {
         // `{ __proto__: v }` (and the quoted spelling) is the prototype setter, not an own
         // data property (plan.md §8 step 33): the entry keeps its written position so the

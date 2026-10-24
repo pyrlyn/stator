@@ -1717,7 +1717,7 @@ function gateDeclarationList(list: ts.VariableDeclarationList, mode: Mode): Gate
 
 /** The compile-time field name a binding element reads, or `null` when the key is a runtime value.
  *
- * Mirrors the object-literal rule (`computedKeyStaticName` / step 22): an identifier, a string
+ * Mirrors the object-literal rule (`staticPropertyName` / step 22): an identifier, a string
  * literal, or a number literal is its own name; a computed key is a name only when the checker
  * types its expression as a single string/number literal. Anything wider is a runtime key and
  * stays not-yet. */
@@ -1726,19 +1726,7 @@ export function bindingElementKey(el: ts.BindingElement, checker: ts.TypeChecker
   if (name === undefined) {
     return ts.isIdentifier(el.name) ? el.name.text : null;
   }
-  if (ts.isIdentifier(name)) {
-    return name.text;
-  }
-  if (ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) {
-    return name.text;
-  }
-  if (ts.isNumericLiteral(name)) {
-    return String(Number(name.text));
-  }
-  if (ts.isComputedPropertyName(name)) {
-    return frontendTypes.computedKeyStaticName(name, checker);
-  }
-  return null;
+  return frontendTypes.staticPropertyName(name, checker);
 }
 
 /** Identifier, or an object/array pattern whose elements bind identifiers or nested patterns,
