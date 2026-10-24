@@ -884,6 +884,25 @@ function notYet(message: string, phase: number): GateResult {
   };
 }
 
+/** A generic has no value — only its specializations do. The declaration's own name is exempt,
+ * and so is a callee (the one position with a type tuple) and an import specifier's spelling
+ * (which merely binds the name). */
+function isGenericValueEscape(node: ts.Node, self: ts.Node | undefined): boolean {
+  return (
+    self !== node &&
+    !ts.isImportSpecifier(node.parent) &&
+    !(ts.isCallExpression(node.parent) && node.parent.expression === node)
+  );
+}
+
+function refuseGenericValue(): GateResult {
+  return notYet(
+    'using a generic function as a value is not yet supported: no call site determines ' +
+      'its type tuple, so no monomorphic specialization can be chosen',
+    5,
+  );
+}
+
 /** A BigInt literal, or a value whose type may be a bigint (plan.md §9 Task 6.25).
  *
  * A name is judged by its DECLARED type, not the narrowed one: `typeof u === 'bigint'` narrows an
@@ -1240,15 +1259,9 @@ function gateIdentifier(
     ts.isFunctionDeclaration(aliased) &&
     aliased.typeParameters !== undefined &&
     aliased.typeParameters.length > 0 &&
-    ts.getNameOfDeclaration(aliased) !== node &&
-    !ts.isImportSpecifier(node.parent) &&
-    !(ts.isCallExpression(node.parent) && node.parent.expression === node)
+    isGenericValueEscape(node, ts.getNameOfDeclaration(aliased))
   ) {
-    return notYet(
-      'using a generic function as a value is not yet supported: no call site determines ' +
-        'its type tuple, so no monomorphic specialization can be chosen',
-      5,
-    );
+    return refuseGenericValue();
   }
   // A `const` holding a generic arrow has no value either — only its specializations do. The
   // declarator's own name is exempt, and so is a callee, the one position with a tuple.
@@ -1257,15 +1270,9 @@ function gateIdentifier(
     ts.isVariableDeclaration(aliased) &&
     aliased.initializer !== undefined &&
     genericArrowKey(aliased.initializer, typeChecker) !== undefined &&
-    aliased.name !== node &&
-    !ts.isImportSpecifier(node.parent) &&
-    !(ts.isCallExpression(node.parent) && node.parent.expression === node)
+    isGenericValueEscape(node, aliased.name)
   ) {
-    return notYet(
-      'using a generic function as a value is not yet supported: no call site determines ' +
-        'its type tuple, so no monomorphic specialization can be chosen',
-      5,
-    );
+    return refuseGenericValue();
   }
   // An alias has no value either — only the calls through it do. The declarator's own name is
   // exempt, and so is a callee; formation and argument positions were accepted above, so what
@@ -1273,16 +1280,10 @@ function gateIdentifier(
   if (
     decl !== undefined &&
     ts.isVariableDeclaration(decl) &&
-    decl.name !== node &&
-    !ts.isImportSpecifier(node.parent) &&
-    !(ts.isCallExpression(node.parent) && node.parent.expression === node) &&
+    isGenericValueEscape(node, decl.name) &&
     genericAliasTarget(node, typeChecker) !== undefined
   ) {
-    return notYet(
-      'using a generic function as a value is not yet supported: no call site determines ' +
-        'its type tuple, so no monomorphic specialization can be chosen',
-      5,
-    );
+    return refuseGenericValue();
   }
   // An extern name (docs/FFI.md §1): the call arm already decided the direct call, so the
   // callee position accepts here and every other position is refused — an extern has no VALUE

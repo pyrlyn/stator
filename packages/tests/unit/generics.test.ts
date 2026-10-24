@@ -287,9 +287,8 @@ test('explicit type arguments on a non-generic call are refused', () => {
 });
 
 test('a generic arrow or function expression assigned to a const specializes', () => {
-  // Only a `const` at module scope can be specialized: the variable names the specializations
-  // the way a declaration names its own. Anything else — inline, callback, `let`, nested —
-  // has no home to build a second copy for and stays refused below.
+  // A `const` (module scope or block) names the specializations the way a declaration names its
+  // own. Module scope keeps the plain name; a block-homed one takes a position key (docs/HIR.md §7).
   const source = `
     const box = <T,>(item: T): T => item;
     console.log(box(1));
@@ -299,24 +298,32 @@ test('a generic arrow or function expression assigned to a const specializes', (
   assert.deepEqual(emittedFunctions(source), ['box<number>', 'box<string>']);
 });
 
-test('a generic arrow in a let or a nesting is still refused', () => {
-  // A `let` could be reassigned under a collected tuple, and a nested `const` lives in a scope
-  // the module-level specializations would leak — neither has a home to specialize under. An
-  // inline arrow at a direct call argument is the exception: it takes the parameter's tuple
-  // under a position-derived key (tested below), so the callback shape is no longer here.
+test('a generic arrow in a single-assignment let or a nesting specializes', () => {
+  // Block-homed under the specialization-key rule (docs/HIR.md §7): a `let` whose only write is
+  // the initializer and a nested `const` both take a position-derived key, so the specializations
+  // have a stable home. A `let` that is reassigned still has no home (tested below).
   assert.deepEqual(
     gateCodes(`
       let box = <T,>(item: T): T => item;
       console.log(box(1));
     `),
-    ['STA1214'],
+    [],
   );
   assert.deepEqual(
     gateCodes(`
       function f() { const box = <T,>(item: T): T => item; return box(1); }
       console.log(f());
     `),
-    ['STA1214'],
+    [],
+  );
+  // A reassigned `let` has no single assignment to key the specializations to.
+  assert.deepEqual(
+    gateCodes(`
+      let box = <T,>(item: T): T => item;
+      box = <T,>(item: T): T => item;
+      console.log(box(1));
+    `).length > 0,
+    true,
   );
 });
 
