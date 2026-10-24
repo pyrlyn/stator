@@ -14,6 +14,7 @@ const Event = struct {
     value: Value = c.JSRT_UNDEFINED,
     rejected: bool = false,
     callback: bool = false,
+    pooled: bool = false,
     thread: std.c.pthread_t = undefined,
     next: ?*Event = null,
     active_next: ?*Event = null,
@@ -23,7 +24,20 @@ var changed: std.c.pthread_cond_t = .{};
 var first: ?*Event = null;
 var last: ?*Event = null;
 var active: ?*Event = null;
+const pool_limit = 4;
+var pool_threads: [pool_limit]std.c.pthread_t = undefined;
+var pool_count: usize = 0;
+var pool_started: usize = 0;
+var pool_pending: usize = 0;
+var pool_first: ?*Event = null;
+var pool_last: ?*Event = null;
+var pool_stopping = false;
 threadlocal var worker = false;
+
+// Internal lifecycle probe: counts successful OS worker creation, not submitted jobs.
+export fn jsrt_thread_pool_started() f64 {
+    return @floatFromInt(pool_started);
+}
 
 export fn jsrt_thread_is_worker() bool {
     return worker;
@@ -33,19 +47,34 @@ export fn jsrt_thread_require_main() void {
     if (worker) common.fail("std/thread.promise(): EPERM");
 }
 
+fn append(head: *?*Event, tail: *?*Event, event: *Event) void {
+    if (tail.*) |item| item.next = event else head.* = event;
+    tail.* = event;
+}
+
+fn take(head: *?*Event, tail: *?*Event) ?*Event {
+    const event = head.* orelse return null;
+    head.* = event.next;
+    if (head.* == null) tail.* = null;
+    event.next = null;
+    return event;
+}
+
 fn post(event: *Event) void {
     common.lock(&gate);
     defer common.unlock(&gate);
-    if (last) |tail| tail.next = event else first = event;
-    last = event;
+    if (event.pooled) pool_pending -= 1;
+    append(&first, &last, event);
     common.wake(&changed);
 }
 
-fn run(raw: ?*anyopaque) callconv(.c) ?*anyopaque {
-    const event: *Event = @ptrCast(@alignCast(raw.?));
+fn enterWorker() void {
     gc.enterThread();
     worker = true;
     stack.jsrt_stack_init();
+}
+
+fn execute(event: *Event) void {
     var roots: common.Roots(2) = .{};
     roots.open(.{ event.work, c.JSRT_UNDEFINED });
     const done = c.jsrt_call_protected(roots.slots[0], 0, null);
@@ -61,11 +90,48 @@ fn run(raw: ?*anyopaque) callconv(.c) ?*anyopaque {
     // Publication happens while both the active list and this thread's roots keep values live.
     post(event);
     roots.pop();
-    gc.leaveThread();
+    // A reused worker must not retain the previous job's transient roots while idle.
+    gc.jsrt_gc_safepoint();
+}
+
+fn run(raw: ?*anyopaque) callconv(.c) ?*anyopaque {
+    enterWorker();
+    defer gc.leaveThread();
+    execute(@ptrCast(@alignCast(raw.?)));
     return null;
 }
 
-export fn jsrt_thread_spawn(work: Value, cleanup: Value) Value {
+fn runPool(_: ?*anyopaque) callconv(.c) ?*anyopaque {
+    enterWorker();
+    defer gc.leaveThread();
+    while (true) {
+        common.lock(&gate);
+        while (pool_first == null and !pool_stopping) common.wait(&changed, &gate);
+        const event = take(&pool_first, &pool_last);
+        common.unlock(&gate);
+        execute(event orelse return null);
+    }
+}
+
+// Main holds gate; workers cannot observe a job until its active-list root is published.
+fn enqueue(event: *Event) bool {
+    if (pool_pending >= pool_count and pool_count < pool_limit) {
+        if (std.c.pthread_create(&pool_threads[pool_count], null, runPool, null) == .SUCCESS) {
+            pool_count += 1;
+            pool_started += 1;
+        } else if (pool_count == 0) return false;
+    }
+    pool_pending += 1;
+    append(&pool_first, &pool_last, event);
+    common.wake(&changed);
+    return true;
+}
+
+fn joinWorker(thread: std.c.pthread_t) void {
+    if (std.c.pthread_join(thread, null) != .SUCCESS) c.jsrt_panic("thread join failed");
+}
+
+export fn jsrt_thread_spawn(work: Value, cleanup: Value, pooled: bool) Value {
     if (worker or !c.jsrt_is(work, c.JSRT_TAG_CLOSURE) or !c.jsrt_is(cleanup, c.JSRT_TAG_CLOSURE)) {
         common.fail("std/thread.spawn(): EINVAL");
         return c.JSRT_UNDEFINED;
@@ -75,16 +141,16 @@ export fn jsrt_thread_spawn(work: Value, cleanup: Value) Value {
     roots.open(.{ work, c.JSRT_UNDEFINED, cleanup });
     defer roots.pop();
     const event = common.allocate(Event);
-    event.* = .{ .work = roots.slots[0], .cleanup = roots.slots[2] };
+    event.* = .{ .work = roots.slots[0], .cleanup = roots.slots[2], .pooled = pooled };
     roots.slots[1] = common.box(event);
     event.promise = c.jsrt_promise_new();
     common.lock(&gate);
     event.active_next = active;
     active = event;
-    const result = std.c.pthread_create(&event.thread, null, run, event);
-    if (result != .SUCCESS) active = event.active_next;
+    const started = if (pooled) enqueue(event) else std.c.pthread_create(&event.thread, null, run, event) == .SUCCESS;
+    if (!started) active = event.active_next;
     common.unlock(&gate);
-    if (result != .SUCCESS) {
+    if (!started) {
         common.fail("std/thread.spawn(): EAGAIN");
         return c.JSRT_UNDEFINED;
     }
@@ -115,16 +181,19 @@ export fn jsrt_thread_poll() bool {
     if (worker) c.jsrt_panic("worker attempted to drain microtasks");
     common.lock(&gate);
     while (first == null and active != null) common.wait(&changed, &gate);
-    const event = first orelse {
+    const event = take(&first, &last) orelse {
+        // Only quiescence ends the pool: Promise continuations may submit the next wave.
+        pool_stopping = true;
+        common.wake(&changed);
         common.unlock(&gate);
+        for (pool_threads[0..pool_count]) |thread| joinWorker(thread);
+        pool_count = 0;
+        pool_stopping = false;
         return false;
     };
     var roots: common.Roots(1) = undefined;
     roots.open(.{common.box(event)});
     defer roots.pop();
-    first = event.next;
-    if (first == null) last = null;
-    event.next = null;
     if (!event.callback) {
         var link = &active;
         while (link.*) |item| {
@@ -141,7 +210,7 @@ export fn jsrt_thread_poll() bool {
         const result = c.jsrt_call_protected(event.work, 0, null);
         if (result.threw) c.jsrt_throw(result.value);
     } else {
-        if (std.c.pthread_join(event.thread, null) != .SUCCESS) c.jsrt_panic("thread join failed");
+        if (!event.pooled) joinWorker(event.thread);
         c.jsrt_promise_settle(event.promise, event.value, event.rejected);
     }
     event.work = c.JSRT_UNDEFINED;

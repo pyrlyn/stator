@@ -1,5 +1,5 @@
 // @mode: ts
-// @verdict: dynamic
+// @verdict: static
 // SUBSET.md: std/* imports — `std/fs`'s T11.3 members: descriptors and bytes (docs/STD.md §5);
 // proved by the `std_fs` golden.
 import { close, exists, open, read, readBytes, readdir, realpath, utimes, write } from "std/fs";

@@ -54,7 +54,7 @@ fn retain(pointer: *anyopaque) *anyopaque {
     }
     return pointer;
 }
-export fn jsrt_gc_safepoint() void {
+pub export fn jsrt_gc_safepoint() void {
     var record = allocations;
     allocations = null;
     handoff = c.JSRT_UNDEFINED;

@@ -1,5 +1,5 @@
 // @mode: ts
-// @verdict: dynamic
+// @verdict: static
 import { readTextAsync } from "std/fs";
 
 async function main(): Promise<void> {

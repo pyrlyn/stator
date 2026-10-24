@@ -485,6 +485,55 @@ test('std/fs Promise twins perform native worker I/O and reject failures', NATIV
   assert.equal(result.stdout, 'thread I/O\n10\nmissing\n');
 });
 
+test('std/fs Promise pool reuses workers across waves, errors and collection', NATIVE_ONLY, () => {
+  const result = buildAndRun(
+    `
+    import { writeTextAsync, readTextAsync, unlinkAsync } from 'std/fs';
+    import { pid } from 'std/process';
+    import { tmpdir } from 'std/os';
+    import { started, collect, drain } from './native.js';
+    const file = tmpdir() + '/stator-pool-' + pid();
+    const text = 'pool-'.repeat(4096);
+    async function main(): Promise<void> {
+      for (let i = 0; i < 32; i++) await writeTextAsync(file, text);
+      console.log(started() === 1);
+      try { await readTextAsync(file + '-missing'); } catch { console.log('missing'); }
+      console.log(await readTextAsync(file) === text, started() === 1);
+      const jobs: Promise<string>[] = [];
+      for (let i = 0; i < 96; i++) jobs.push(readTextAsync(file));
+      for (let i = 0; i < 100; i++) collect();
+      const values = await Promise.all(jobs);
+      console.log(values.length, values.every((value) => value === text));
+      console.log(started() >= 1 && started() <= 4);
+      const before = started();
+      for (let i = 0; i < 16; i++) await readTextAsync(file);
+      console.log(started() === before);
+      await unlinkAsync(file);
+    }
+    main();
+    drain();
+    const beforeRestart = started();
+    // A later drain starts a fresh pool; exit also waits for this unawaited chain.
+    writeTextAsync(file, 'restart').then(() => {
+      console.log(started() === beforeRestart + 1);
+      return unlinkAsync(file);
+    }).then(() => { console.log('drained'); });
+    `,
+    {
+      bindings: `
+        /** @statorExtern jsrt_thread_pool_started */
+        export declare function started(): number;
+        /** @statorExtern jsrt_gc_collect */
+        export declare function collect(): void;
+        /** @statorExtern jsrt_run_microtasks */
+        export declare function drain(): void;
+      `,
+    },
+  );
+  assert.equal(result.status, 0, result.stderr.toString());
+  assert.equal(result.stdout, 'true\nmissing\ntrue true\n96 true\ntrue\ntrue\ntrue\ndrained\n');
+});
+
 test('std/thread enforces worker restrictions and drains unjoined work', NATIVE_ONLY, () => {
   const result = buildAndRun(`
     import { spawn, runOnMain } from 'std/thread';

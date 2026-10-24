@@ -1537,7 +1537,7 @@ the existing pipeline (`node:worker_threads` / a process pool), not Zig/Rust/Go 
    | `std/env` | `get`/`set`/`has`/`unset`, `cwd` | `args` moved to T11.3 as `std/process.argv` (plan-notes 294), which landed: the generated `main` takes `argc`/`argv` |
    | `std/process` | `exit`, `pid`, `abort`; T11.3 added `argv`, `execPath`, `platform`, `arch`, `ppid`, `hrtimeNs`, `memoryUsage`, `exitCode`/`setExitCode` | no signals yet |
    | `std/path` | `join`/`dirname`/`basename`/`isAbsolute` | pure TS or tiny C; UTF-16 ↔ bytes at the FS edge only |
-   | `std/fs` | sync read/write/stat/mkdir/unlink/rmdir; T11.3 added descriptors, `readBytes`, `readdir`, `realpath`, `utimes`, `exists`; Promise twins | Promise twins (`readTextAsync`, … — the sync name plus `Async`) offload to OS workers and return the join Promise (see B; plan-notes 388); a reusable bounded pool is deferred |
+   | `std/fs` | sync read/write/stat/mkdir/unlink/rmdir; T11.3 added descriptors, `readBytes`, `readdir`, `realpath`, `utimes`, `exists`; Promise twins | Promise twins (`readTextAsync`, … — the sync name plus `Async`) offload through a reusable pool of up to four OS workers and return the join Promise (see B; T10.2a, plan-notes 389) |
    | `std/time` | `nowMs`, `sleepMs` (sync) | timers in the microtask sense stay out until a macrotask phase exists |
    | `std/sync` | `Mutex`, `CondVar`, `Channel` | with T10.2 |
    | `std/thread` | `spawn`, `join`, `availableParallelism` | with T10.2 |
@@ -1619,6 +1619,8 @@ step remains). `pnpm run ci` green.
 `std/fs` Promise twins (`readTextAsync`, …) offload through T10.2 (docs/STD.md §2).
 
 ~~**T10.2. OS threads + async bridge — [D5].**~~ ✅ **completed 2026-10-25** — evidence in [done.md](done.md) → Phase 10 T10.2 (plan-notes 388).
+
+~~**T10.2a. Reuse OS workers for asynchronous filesystem operations — [D3].**~~ ✅ **completed 2026-10-25** — evidence in [done.md](done.md) → Phase 10 T10.2a (plan-notes 389).
 
 ### T10.3. Threaded / parallel host compiler — **[D4]**
 

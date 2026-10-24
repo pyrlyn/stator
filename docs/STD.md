@@ -38,8 +38,10 @@ frontend nothing knows a file came from `std`, except the link (§6).
 
 The six filesystem twins `readTextAsync`, `writeTextAsync`, `statAsync`, `mkdirAsync`,
 `unlinkAsync` and `rmdirAsync` return Promises. Each executes its sync operation on an OS
-worker and settles on main's existing microtask queue. This version starts one worker per
-call; callers should bound concurrency. See [THREADS.md](THREADS.md).
+worker and settles on main's existing microtask queue. A shared lazy pool reuses up to four
+OS threads; excess jobs queue without blocking main. Sequential calls reuse one worker.
+Idle workers stop once the drain is quiescent; callers should bound large queued workloads.
+See [THREADS.md](THREADS.md).
 
 ## 3. Error model
 
@@ -198,10 +200,11 @@ OS's secure source through `std.Io`, and a `size` outside `0..2^31-1` is `EINVAL
 like any other file in the graph: everything is `static` except `std/env.get`, whose
 `string | undefined` answer is a union the HIR boxes, and `std/hash`'s digests, whose
 `Uint8Array | string` parameter is one. An importer of `std/env` or `std/hash` therefore
-explains as `dynamic` (docs/SUBSET.md). `std/fs`, `std/thread` and `std/sync` also explain as
-`dynamic`: their module graphs include the private boxed concurrency ABI, including when the
-importer uses only synchronous filesystem operations. Their typed numeric operations retain
-the same static lowering.
+explains as `dynamic` (docs/SUBSET.md). `std/thread` and `std/sync` importers explain as
+`dynamic` because their wrapper classes store unknown native handles. `std/fs` imports the
+internal typed submission helper directly and explains as `static`, for both sync operations
+and Promise twins. The private boxed ABI still carries native jobs/results; the verdict does
+not promise that every runtime value is unboxed.
 
 ## 6. Implementation layers
 
