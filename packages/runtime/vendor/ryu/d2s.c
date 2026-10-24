@@ -220,9 +220,8 @@ static inline floating_decimal_64 d2d(const uint64_t ieeeMantissa, const uint32_
   const uint64_t mv = 4 * m2;
   // Implicit bool -> int conversion. True is 1, false is 0.
   const uint32_t mmShift = ieeeMantissa != 0 || ieeeExponent <= 1;
-  // We would compute mp and mm like this:
-  // uint64_t mp = 4 * m2 + 2;
-  // uint64_t mm = mv - 1 - mmShift;
+  // Conceptually, the upper and lower bounds are derived from
+  // (4 * m2 + 2) and (mv - 1 - mmShift), respectively.
 
   // Step 3: Convert to a decimal power base using 128-bit arithmetic.
   uint64_t vr, vp, vm;
