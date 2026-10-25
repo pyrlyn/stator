@@ -289,6 +289,95 @@ existing `has_receiver` method-value goldens.
 
 ---
 
+## Open work cards: self-hosting bootstrap, V-style (T35–T40)
+
+Requested by the creator on 2026-10-25. Today `statorc` is TypeScript run on Node: source ->
+program -> gate -> HIR -> **C** -> `clang` -> executable (`packages/compiler/src/cli/build.ts`).
+Task 6.19 only *explains* the compiler with itself (`packages/compiler` is `not-yet`: STA1214
+×1887, STA1213 ×2, STA1207 ×1 in `packages/tests/selfhost/baseline.json`) and reserves a
+stage-2 check that is not built. These cards take the compiler from "explained by itself" to
+"built by itself", the way V does it: the compiler is written in the language, a generated C
+snapshot (`vlang/vc`'s `v.c`) bootstraps it with any C compiler, and the result rebuilds itself
+(`make`: `cc v.c -> v1`, `v1 -> v2`, `v2 -> v`; `v self`). Design and usage live in
+`docs/SELF-HOSTING.md`. §1's "self-hosting the compiler" non-goal is for v1; these cards are
+post-v1 and are worked in card order.
+
+### T35. Compiler subset: drive `packages/compiler` to `static`/`dynamic` **[D5 · P2]**
+
+Steps:
+1. Group the 1887 STA1214 sites by construct; card the top constructs as gate/lowering work or
+   rewrite the compiler code into the admitted subset (documented choice per construct).
+2. Replace or wrap Node-only dependencies of the compiler (`node:child_process`, `node:fs`,
+   `typescript`/tsgo program APIs) behind an interface that `packages/std` / `packages/node`
+   can satisfy; list what cannot and why.
+3. Run `--update` on the selfhost baseline in every change that shrinks a count.
+
+**Check:** `pnpm run test:selfhost` reports `packages/compiler` as `static` or `dynamic` with
+zero codes; the stage-2 guard from Task 6.19 then fires, which T37 resolves.
+
+### T36. Bootstrap C snapshot (`statorc.c`) **[D3 · P2]**
+
+Steps:
+1. `stator build --emit-c-only` writes the compiler's C plus the runtime sources it needs into
+   one reproducible tree (`bootstrap/` or a separate `pyrlyn/stator-c` repo, like `vlang/vc`;
+   decide and document).
+2. No absolute paths, timestamps or host-specific defines in the output; one header stamps the
+   source commit.
+3. Script `scripts/bootstrap/regen-snapshot.ts` regenerates it; CI fails when the committed
+   snapshot is stale.
+
+**Check:** on a clean macOS arm64 and Linux x64 box, `cc -O2 -o statorc0 <snapshot>/*.c -lm`
+(plus the documented GC link) produces a binary that compiles `examples/hello` to a running
+executable, with no Node installed.
+
+### T37. Stage0/1/2 bootstrap with a fixed-point check **[D3 · P2]**
+
+Steps:
+1. `scripts/bootstrap/stages.ts`: stage0 = Node-hosted `statorc` (or `statorc0` from T36);
+   stage1 = stage0 builds the compiler; stage2 = stage1 builds the compiler.
+2. Fixed point: stage1 and stage2 emit **byte-identical C** for the compiler and for every
+   golden fixture; stage2's C for hello-world equals the Node-hosted compiler's C (Task 6.19's
+   stage-2 check).
+3. `stator self` (like `v self`): rebuilds the running compiler from source via stage1->stage2
+   and atomically replaces the binary only when the fixed point holds.
+
+**Check:** `pnpm run bootstrap:stages` exits 0 and prints matching SHA-256 for stage1/stage2 C;
+a deliberately non-deterministic emitter change makes it exit non-zero.
+
+### T38. C compiler driver detection **[D2 · P2]**
+
+Steps:
+1. Replace the hard-wired `clang` in `build.ts` with a resolver: `--cc` / `STATOR_CC` / `CC`,
+   then `clang`, `cc`, `gcc` on `PATH` (V order: `-cc`, then system cc; a bundled tcc is a
+   later option, not in this card).
+2. Probe once per build (`--version`), map flags per family (clang/gcc; `-flto`, ASan, `-O`),
+   refuse unknown families with a named diagnostic.
+3. Keep the macOS ASan `/usr/bin/clang` override (plan-notes for conda-clang 21.1.8).
+
+**Check:** goldens pass with `STATOR_CC=gcc` on Linux and `STATOR_CC=clang`; `STATOR_CC=/bin/false`
+gives the named diagnostic, not a stack trace.
+
+### T39. CI job `bootstrap` **[D2 · P2]**
+
+Steps:
+1. Job on macOS arm64 + Linux x64: build from the T36 snapshot with system cc, run T37 stages,
+   run the goldens with the stage2 binary.
+2. Skipped (green) until T35 lands, via a flag in `packages/tests/selfhost/targets.json`;
+   required on `main` after.
+
+**Check:** the job is green on a PR that only touches docs and red on a PR that breaks the
+fixed point.
+
+### T40. Docs: `docs/SELF-HOSTING.md` kept true **[D1 · P2]**
+
+Steps: each of T35–T39 updates `docs/SELF-HOSTING.md` (how it works, enable/disable, test,
+limitations) in the same change; `docs/HOW-IT-WORKS.md` and `docs/DEVELOPMENT.md` link to it.
+
+**Check:** every command in `docs/SELF-HOSTING.md` runs as written on `main`.
+
+---
+
+
 ---
 
 ## 0. Prime directives (read before anything)
@@ -304,7 +393,7 @@ existing `has_receiver` method-value goldens.
 9. **The compiler itself is strict TypeScript.** Locked `tsconfig` (§4 Task 1.0), no `any` in compiler source, vitest for unit tests (dev-only, run on Node's own type stripping — plan-notes 285), runtime dependency budget: the `typescript` package only — **owner-directed exception (2026-09-04, plan-notes 187):** `src/cli/` may use ink + react (human-facing rendering plus per-command help, long-form flags) and dotenv (environment loading), and `typebox` + `jsonc-parser` for `stator.config.json` (`src/cli/config.ts` only, plan-notes 303), and OpenTelemetry tracing (`@opentelemetry/*`, opt-in via `STATOR_OTEL`, standard OTLP env config — works with Maple and any OTLP backend) is wired through `src/support/telemetry.ts`; execa is dev-only for `tests/unit/cli.test.ts`. The budget still rules everything else: no pass, lowering, or codegen code may depend on these. The compiler must always pass its own `ts` mode's *philosophy*: fully typed, no dynamic escape hatches.
 10. **No JavaScript in the project's own source** (creator's direction 2026-10-02, plan-notes 289). The compiler, runtime, `std`, the `node:*` wrappers, test harnesses, oracle shims and scripts are strict TypeScript, C or Zig. `.js` / `.mjs` / `.cjs` files exist only as: `js`-mode test inputs and examples (the thing under test), vendored upstream code, generated output, and assets a browser loads as-is (`site/public/`). Tracked files outside that set fail `scripts/check-js-sources.ts`, which `pnpm run ci` runs (Task 6.15, plan-notes 369).
 
-**Non-goals (v1):** npm-ecosystem compatibility (Phase 11 targets Node *programs* such as `tsc`, not the npm ecosystem at large); `eval`/`new Function` (never in `ts` mode; `js` mode not before Phase 8); `Proxy`; `with`; prototype mutation after construction; decorators; full Intl; Node API emulation outside Phase 11's `--node` platform (§11c); Windows (POSIX + clang first); self-hosting the compiler.
+**Non-goals (v1):** npm-ecosystem compatibility (Phase 11 targets Node *programs* such as `tsc`, not the npm ecosystem at large); `eval`/`new Function` (never in `ts` mode; `js` mode not before Phase 8); `Proxy`; `with`; prototype mutation after construction; decorators; full Intl; Node API emulation outside Phase 11's `--node` platform (§11c); Windows (POSIX + clang first); self-hosting the compiler (post-v1, carded as T35–T40).
 
 ---
 
