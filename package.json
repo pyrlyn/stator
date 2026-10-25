@@ -22,6 +22,7 @@
     "test:node-suite": "node packages/tests/node-suite/fetch.ts && vitest run --config packages/tests/node-suite/vitest.config.ts --reporter=verbose",
     "differential": "node packages/tests/differential/run.ts",
     "bench:record": "node packages/tests/bench/record.ts",
+    "bench:memory": "node packages/tests/bench/memory/run.ts",
     "test:runtime": "just -f packages/runtime/justfile -d packages/runtime runtime-test",
     "test:leak": "node packages/tests/leak/run.ts",
     "test:asan": "node packages/tests/golden/asan-gate.ts",
