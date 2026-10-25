@@ -69,11 +69,10 @@ Pinned toolchain, every test harness and the runtime builds: [docs/DEVELOPMENT.m
 
 ## License
 
-You can use this project under **any** of the following licenses, at your choice:
+You can use this project under **either** of the following licenses, at your choice:
 
 1. [GNU GPLv3](LICENSE): free for open source applications on any platform, including embedded systems.
-2. [Royalty-free License](LICENSE-ROYALTY-FREE.md): free for proprietary desktop, mobile, and web applications, as long as you disclose that your application uses this project. Embedded systems are not covered.
-3. [Commercial license](PRICING.md): for proprietary applications, including embedded systems, without the attribution requirement.
+2. [Commercial license](PRICING.md): for proprietary applications, including embedded systems.
 
 The typed standard library includes filesystem, environment, process, time, I/O, encoding and
 hashing modules, plus OS threads (`std/thread`) and `Mutex`, `CondVar`, bounded `Channel<T>`
