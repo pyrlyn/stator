@@ -27,6 +27,8 @@ import { arch, cpus, hostname, platform, release, tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { nodePath } from '../../support/node-path.ts';
+import { onPath } from '../../support/on-path.ts';
+import { type TimedRun, timedRun } from '../../support/timed-run.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '..', '..', '..', 'compiler', 'src', 'cli', 'main.ts');
@@ -34,54 +36,25 @@ const RUNS = Number(process.env['BENCH_RUNS'] ?? '5');
 if (process.env['BENCH_TOOLS_BIN'])
   process.env['PATH'] = `${process.env['BENCH_TOOLS_BIN']}${delimiter}${process.env['PATH'] ?? ''}`;
 
-interface Exec {
-  status: number | null;
-  stdout: string;
-  stderr: string;
-  rss: number;
-  ms: number;
-}
-
 function sh(
   cmd: string,
   args: readonly string[],
   opts: { cwd?: string; timeout?: number } = {},
-): Exec {
-  const started = process.hrtime.bigint();
-  const timed = platform() === 'darwin' ? ['-l', cmd, ...args] : ['-f', '%M', cmd, ...args];
-  const r = spawnSync('/usr/bin/time', timed, {
-    encoding: 'utf8',
-    cwd: opts.cwd,
+): TimedRun {
+  return timedRun(cmd, args, {
+    ...opts,
     timeout: opts.timeout ?? 300_000,
     env: { ...process.env, NO_COLOR: '1' },
-    maxBuffer: 64 << 20,
   });
-  const stderr = r.stderr ?? '';
-  // hrtime, not `time`'s `real` (10 ms resolution); includes the ~1 ms /usr/bin/time wrapper.
-  const ms = Number(process.hrtime.bigint() - started) / 1e6;
-  const m =
-    platform() === 'darwin'
-      ? /(\d+)\s+maximum resident set size/.exec(stderr)
-      : /(\d+)\s*$/.exec(stderr.trim());
-  const raw = m ? Number(m[1]) : 0;
-  return {
-    status: r.status,
-    stdout: r.stdout ?? '',
-    stderr,
-    rss: platform() === 'darwin' ? raw : raw * 1024,
-    ms,
-  };
 }
 
-function which(name: string): string | undefined {
-  const r = spawnSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' });
-  const p = r.stdout.trim();
-  return r.status === 0 && p ? p : undefined;
-}
 function firstLine(cmd: string, args: string[]): string {
   const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 30_000 });
   return `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split('\n')[0] ?? 'unknown';
 }
+/** `available` for a tool on PATH whose version is the first line of `bin --version`. */
+const versionOf = (bin: string) => (): string | undefined =>
+  onPath(bin) && firstLine(bin, ['--version']);
 
 /** A compiler: `build` turns (ts source, js source, work dir) into an executable path. */
 interface Tool {
@@ -91,90 +64,89 @@ interface Tool {
   build(ts: string, js: string, work: string): { exe: string; args?: string[] };
 }
 
+/** A tool that is one command writing `<work>/app`; `argv` maps (ts, js, exe) to its arguments. */
+function oneCommand(
+  name: string,
+  kind: string,
+  available: () => string | undefined,
+  cmd: string,
+  argv: (ts: string, js: string, exe: string) => string[],
+  timeout?: number,
+): Tool {
+  return {
+    name,
+    kind,
+    available,
+    build: (ts, js, w) => {
+      const exe = join(w, 'app');
+      must(sh(cmd, argv(ts, js, exe), timeout === undefined ? { cwd: w } : { cwd: w, timeout }));
+      return { exe };
+    },
+  };
+}
+
 const node = nodePath();
 const tools: Tool[] = [
-  {
-    name: 'stator',
-    kind: 'TS/JS -> C -> native (this repo)',
-    available: () => 'working tree',
-    build: (ts, _js, w) => {
-      const exe = join(w, 'app');
-      must(sh(process.execPath, [CLI, 'build', ts, '-o', exe]));
-      return { exe };
-    },
-  },
-  {
-    name: 'perry',
-    kind: 'TS -> LLVM native',
-    available: () => which('perry') && firstLine('perry', ['--version']),
-    build: (ts, _js, w) => {
-      const exe = join(w, 'app');
-      must(sh('perry', ['compile', ts, '-o', exe], { cwd: w }));
-      return { exe };
-    },
-  },
-  {
-    name: 'scriptc',
-    kind: 'TS -> LLVM native (Vercel Labs)',
-    available: () => which('scriptc') && firstLine('scriptc', ['--version']),
-    build: (ts, _js, w) => {
-      const exe = join(w, 'app');
-      must(sh('scriptc', ['build', ts, '-o', exe], { cwd: w }));
-      return { exe };
-    },
-  },
+  oneCommand(
+    'stator',
+    'TS/JS -> C -> native (this repo)',
+    () => 'working tree',
+    process.execPath,
+    (ts, _js, exe) => [CLI, 'build', ts, '-o', exe],
+  ),
+  oneCommand('perry', 'TS -> LLVM native', versionOf('perry'), 'perry', (ts, _js, exe) => [
+    'compile',
+    ts,
+    '-o',
+    exe,
+  ]),
+  oneCommand(
+    'scriptc',
+    'TS -> LLVM native (Vercel Labs)',
+    versionOf('scriptc'),
+    'scriptc',
+    (ts, _js, exe) => ['build', ts, '-o', exe],
+  ),
   {
     name: 'porffor',
     kind: 'JS -> Wasm -> C -> native',
-    available: () => which('porf') && firstLine('porf', ['--version']),
+    available: versionOf('porf'),
     build: (_ts, js, w) => {
       // porf writes <input-basename> next to the input regardless of the output argument.
       must(sh('porf', ['native', basename(js), 'app'], { cwd: w }));
       return { exe: join(w, basename(js, '.js')) };
     },
   },
-  {
-    name: 'qjsc',
-    kind: 'JS -> QuickJS bytecode in C -> native',
-    available: () => which('qjsc') && firstLine('qjs', ['-h']).replace(/^usage:\s*/i, ''),
-    build: (_ts, js, w) => {
-      const exe = join(w, 'app');
-      must(sh('qjsc', ['-o', exe, js], { cwd: w }));
-      return { exe };
-    },
-  },
-  {
-    name: 'shermes',
-    kind: 'JS -> Static Hermes native',
-    available: () =>
-      which('shermes') &&
+  oneCommand(
+    'qjsc',
+    'JS -> QuickJS bytecode in C -> native',
+    () => onPath('qjsc') && firstLine('qjs', ['-h']).replace(/^usage:\s*/i, ''),
+    'qjsc',
+    (_ts, js, exe) => ['-o', exe, js],
+  ),
+  oneCommand(
+    'shermes',
+    'JS -> Static Hermes native',
+    () =>
+      onPath('shermes') &&
       (process.env['SHERMES_VERSION'] ?? 'Static Hermes (static_h branch build)'),
-    build: (_ts, js, w) => {
-      const exe = join(w, 'app');
-      must(sh('shermes', ['-O', '-o', exe, js], { cwd: w }));
-      return { exe };
-    },
-  },
-  {
-    name: 'bun-compile',
-    kind: 'bundle + embedded JSC runtime',
-    available: () => which('bun') && firstLine('bun', ['--version']),
-    build: (ts, _js, w) => {
-      const exe = join(w, 'app');
-      must(sh('bun', ['build', '--compile', ts, '--outfile', exe], { cwd: w }));
-      return { exe };
-    },
-  },
-  {
-    name: 'deno-compile',
-    kind: 'bundle + embedded V8 runtime',
-    available: () => which('deno') && firstLine('deno', ['--version']),
-    build: (ts, _js, w) => {
-      const exe = join(w, 'app');
-      must(sh('deno', ['compile', '-q', '-o', exe, ts], { cwd: w }));
-      return { exe };
-    },
-  },
+    'shermes',
+    (_ts, js, exe) => ['-O', '-o', exe, js],
+  ),
+  oneCommand(
+    'bun-compile',
+    'bundle + embedded JSC runtime',
+    versionOf('bun'),
+    'bun',
+    (ts, _js, exe) => ['build', '--compile', ts, '--outfile', exe],
+  ),
+  oneCommand(
+    'deno-compile',
+    'bundle + embedded V8 runtime',
+    versionOf('deno'),
+    'deno',
+    (ts, _js, exe) => ['compile', '-q', '-o', exe, ts],
+  ),
   {
     name: 'node-sea',
     kind: 'Node single executable (embedded V8)',
@@ -191,55 +163,43 @@ const tools: Tool[] = [
       return { exe };
     },
   },
-  {
-    name: 'pkg',
-    kind: '@yao-pkg/pkg (Node base binary + snapshot fs)',
-    available: () => which('pkg') && firstLine('pkg', ['--version']),
-    build: (_ts, js, w) => {
-      const exe = join(w, 'app');
-      must(
-        sh(
-          'pkg',
-          ['-t', `node22-${platform() === 'darwin' ? 'macos' : 'linux'}-${arch()}`, '-o', exe, js],
-          { cwd: w },
-        ),
-      );
-      return { exe };
-    },
-  },
-  {
-    name: 'nexe',
-    kind: 'nexe (Node base binary + payload)',
-    available: () => which('nexe') && firstLine('nexe', ['--version']),
-    build: (_ts, js, w) => {
-      const exe = join(w, 'app');
-      must(sh('nexe', ['-i', js, '-o', exe], { cwd: w, timeout: 600_000 }));
-      return { exe };
-    },
-  },
+  oneCommand(
+    'pkg',
+    '@yao-pkg/pkg (Node base binary + snapshot fs)',
+    versionOf('pkg'),
+    'pkg',
+    (_ts, js, exe) => [
+      '-t',
+      `node22-${platform() === 'darwin' ? 'macos' : 'linux'}-${arch()}`,
+      '-o',
+      exe,
+      js,
+    ],
+  ),
+  oneCommand(
+    'nexe',
+    'nexe (Node base binary + payload)',
+    versionOf('nexe'),
+    'nexe',
+    (_ts, js, exe) => ['-i', js, '-o', exe],
+    600_000,
+  ),
 ];
 
-function must(r: Exec): void {
+function must(r: TimedRun): void {
   const text = `${r.stdout}\n${r.stderr}`;
   const err = text.split('\n').find((l) => /error/i.test(l));
   if (r.status !== 0 && err) throw new Error(err.trim().slice(0, 300));
   if (r.status !== 0)
-    throw new Error(
-      (r.stderr || r.stdout)
-        .replace(/\s+\d+\s+[a-z ]+\n/g, '\n')
-        .trim()
-        .split('\n')
-        .slice(-3)
-        .join(' | ')
-        .slice(0, 300),
-    );
+    throw new Error((r.stderr || r.stdout).trim().split('\n').slice(-3).join(' | ').slice(0, 300));
 }
 /** Non-system shared libraries the executable needs at run time (it is not fully standalone). */
 function sharedLibs(exe: string): string[] {
+  // Absolute paths: PATH is user-extended above (BENCH_TOOLS_BIN) and must not pick these.
   const r =
     platform() === 'darwin'
-      ? spawnSync('otool', ['-L', exe], { encoding: 'utf8' })
-      : spawnSync('ldd', [exe], { encoding: 'utf8' });
+      ? spawnSync('/usr/bin/otool', ['-L', exe], { encoding: 'utf8' })
+      : spawnSync('/usr/bin/ldd', [exe], { encoding: 'utf8' });
   return (r.stdout ?? '')
     .split('\n')
     .slice(1)
@@ -335,7 +295,7 @@ function main(): void {
             throw new Error(
               `wrong output: ${JSON.stringify(r.stdout.slice(0, 40))} != ${JSON.stringify(expected.slice(0, 40))}`,
             );
-          rss.push(r.rss);
+          rss.push(r.maxRssBytes);
           ms.push(r.ms);
         }
         cells.push({
