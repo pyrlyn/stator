@@ -1846,7 +1846,10 @@ functions `tsc` calls (`closeSync`, `existsSync`, `mkdirSync`, `openSync`, `read
 snapshot via new `std/env.names()`), `cwd`, `exit`, `exitCode`, `pid`, `ppid`, `platform`,
 `arch`, `execPath`, `hrtime()` and `memoryUsage()` (rss), with goldens `ts/node_process.ts` and
 `js/node_process.js`, three decision tests, and `docs/NODE.md` at 12/68 for `node:process`.
-`hrtime.bigint`, `stdout`/`stderr`, `nextTick` and the free `process` global stay open. **Next**,
+**Follow-up slice** (plan-notes 390, #168): `argv0`, `execArgv`, `stdout`/`stderr`
+(`write`, `fd`, `isTTY`, `columns`, `rows`), `nextTick`, and the free `process` global under `--node`
+(rewritten to `import process from "node:process"`); `node:process` 17/68, slice N1 25/37. `hrtime.bigint`
+stays open. The task stays open: N1 is not 100%. **Next**,
 in the order `tsc` needs them: `node:os`, `Buffer.from`/`toString` (then `readFileSync` without an
 encoding answers a `Buffer`), `crypto.createHash`, `perf_hooks.performance`, timers; `path.win32` is
 its own slice (13 of T11.7's `path` tests need it).
@@ -2726,3 +2729,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.82** (2026-10-19): **Cloud-review rows T20, T22, T25 and T26 were already fixed** (plan-notes 364). The table still said confirmed. `ci.yml` pushes `main`, `pipeline.yml` calls `pyrlyn/ci` at `@main` (#158), the repo map no longer lists Ryū as vendored, and `memfs` is gone. T21 (required checks) and T24 (split the C emitter) stay open. These rows were never given Steps and a Check, so they are struck in the table the way T23 was, not moved to `done.md`.
 - **v4.85** (2026-10-23): **Cloud-review T21 lands: `protect-main` requires the real test jobs** (plan-notes 370). The ruleset required only `pipeline / gate`, which is why T17 merged with red CI. It now also requires `static analysis`, `frontend (linux/x64)`, `frontend (windows/x64)` and `frontend (windows/arm64)`. A leading-space key in the `frontend-desktop` `fromJSON` matrix had been reporting those legs as `frontend (/x64)` — unmatchable as check contexts — and is fixed in the same change. macOS legs stay unrequired because `MACOS_CI_DISABLED=true` removes them from the matrix instead of skipping them.
 - **v4.86** (2026-10-24): **T33 lands: Ryū is vendored and `shortest_digits()` uses it** (plan-notes 385). `packages/runtime/vendor/ryu/` pins `v2.0` (`72e18e8…`) through `update.ts`; `d2s_buffered` replaces the `%.*e` round-trip search. `test:runtime` and 475 goldens stay byte-for-byte against the pinned Node. §12 loses the Ryū rung — the directed card landed the swap without a bench before/after, which plan-notes 385 records.
+- **v4.87** (2026-10-25): **T11.6: `node:process` follow-up slice** (plan-notes 390). The members `tsc` reads (`argv`, `cwd`, `env`, `execArgv`, `exit`, `memoryUsage`, `nextTick`, `pid`, `platform`, `stdout`) plus `argv0`, `execPath`, `exitCode`, `arch`, `ppid` and `stderr`. A free `process` under `--node` is rewritten to `import process from "node:process"`. `std/env.names()` lists libc's `environ`. A js-mode spread into `unknown` or rest `unknown[]` is accepted. Slice N1 is 25 / 37 (68%). The Check stays open.

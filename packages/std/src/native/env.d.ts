@@ -22,3 +22,9 @@ export declare function jsrtStdEnvName(index: number): number;
 
 /** @statorExtern jsrt_std_env_cwd */
 export declare function jsrtStdEnvCwd(): number;
+
+/** @statorExtern jsrt_std_env_count */
+export declare function jsrtStdEnvCount(): number;
+
+/** @statorExtern jsrt_std_env_name */
+export declare function jsrtStdEnvName(index: number): number;

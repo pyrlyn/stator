@@ -68,7 +68,8 @@ same driver.
 Under `--node` one more frontend step follows: every `import.meta.url`, `.filename` and
 `.dirname`, and every free `__filename`/`__dirname` the bundler left in the vendor module, is
 rewritten in place into a call to `packages/node`'s location helpers, which answer relative to the
-executable when the program runs (`src/frontend/location.ts`, [`MODES.md`](MODES.md) §6). The
+executable when the program runs. A free `process` in the same files becomes
+`import process from "node:process"` (`src/frontend/location.ts`, [`MODES.md`](MODES.md) §6). The
 program reloads over the rewrite, so no build-machine path reaches the binary.
 
 Invariants that matter when reading code or docs:

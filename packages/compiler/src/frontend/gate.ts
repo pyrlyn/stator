@@ -3382,11 +3382,24 @@ function gateCall(call: ts.CallExpression, typeChecker: ts.TypeChecker, mode: Mo
   return { kind: 'accept' };
 }
 
+/** A parameter annotated `unknown`, or a rest parameter annotated `unknown[]`: every value meets
+ * it, so there is no claim for a spread to slip past (plan-notes 390). `node:process`'s
+ * `nextTick(callback: (...args: unknown[]) => void, ...args: unknown[])` calls its callback so. */
+function claimsNothing(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker): boolean {
+  const type = checker.getTypeAtLocation(parameter);
+  const element =
+    parameter.dotDotDotToken !== undefined && checker.isArrayType(type)
+      ? checker.getTypeArguments(type as ts.TypeReference)[0]
+      : type;
+  return element !== undefined && (element.flags & ts.TypeFlags.Unknown) !== 0;
+}
+
 /** What every spread call is still refused for (plan.md §11c T11.4 step 5): a call inside an
  * optional chain, whose short-circuit the spread lowering does not build, and -- in js mode -- a
- * callee with a TypeScript-annotated parameter. That annotation is a claim the edge check keeps
- * (`STA2001`, plan-notes 308), and a spread's elements reach parameters by position only at run
- * time, where no check stands. ts mode's checker proved the spread against the parameters itself. */
+ * callee with a TypeScript-annotated parameter that claims a type. That annotation is a claim the
+ * edge check keeps (`STA2001`, plan-notes 308), and a spread's elements reach parameters by
+ * position only at run time, where no check stands. An `unknown` parameter claims nothing
+ * (plan-notes 390). ts mode's checker proved the spread against the parameters itself. */
 function spreadCallRefusal(
   call: ts.CallExpression,
   checker: ts.TypeChecker,
@@ -3401,7 +3414,9 @@ function spreadCallRefusal(
   const declaration = checker.getResolvedSignature(call)?.declaration;
   return declaration !== undefined &&
     !ts.isJSDocSignature(declaration) &&
-    declaration.parameters.some((parameter) => hasTypeScriptAnnotation(parameter))
+    declaration.parameters.some(
+      (parameter) => hasTypeScriptAnnotation(parameter) && !claimsNothing(parameter, checker),
+    )
     ? notYet(
         'a spread argument to a function with annotated TypeScript parameters is not yet supported in js mode',
         5,
