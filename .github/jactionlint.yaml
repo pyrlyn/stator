@@ -2,3 +2,19 @@
 # The default profile applies. `baseline: auto` hides the findings recorded in
 # .github/jactionlint-baseline.json; refresh it with `mise x -- jactionlint --baseline-write`.
 baseline: auto
+
+# pyrlyn/ci's no-pinned-ci job fails a pull request that pins these callers to a
+# commit. @main is the reference on purpose (plan-notes 361, 362).
+ignores:
+  - rule: unpinned-uses
+    uses: pyrlyn/ci/.github/workflows/ci.yml@main
+    file: .github/workflows/pipeline.yml
+    reason: pyrlyn/ci no-pinned-ci rejects a SHA pin; @main is required
+  - rule: unpinned-uses
+    uses: pyrlyn/ci/.github/workflows/sync-docs.yml@main
+    file: .github/workflows/sync-docs.yml
+    reason: pyrlyn/ci no-pinned-ci rejects a SHA pin; @main is required
+  - rule: unpinned-uses
+    uses: pyrlyn/ci/.github/actions/macos-runner@main
+    file: .github/workflows/ci.yml
+    reason: pyrlyn/ci no-pinned-ci rejects a SHA pin; @main is required

@@ -1,6 +1,6 @@
 /* print_numbers.c — prints a fixed corpus of doubles through jsrt_print.
  *
- * Ground truth is Node, not a table hand-written here: runtime/tests/print_numbers.mjs prints
+ * Ground truth is Node, not a table hand-written here: runtime/tests/print_numbers.ts prints
  * the SAME corpus with console.log, and `just runtime-test` diffs the two byte-for-byte.
  * Hand-written expectations would only encode whatever this file already believes.
  *

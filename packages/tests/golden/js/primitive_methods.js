@@ -63,3 +63,19 @@ function badRadix(n) {
   }
 }
 console.log(badRadix(8));
+
+// Boolean.prototype on an Unknown receiver (plan-notes 372): toString/valueOf/toLocaleString
+// resolve instead of aborting STA2006.
+function booleans(b) {
+  return [b.toString(), b.valueOf(), b.toLocaleString(), typeof b.valueOf()].join(" ");
+}
+console.log(booleans(true));
+console.log(booleans(false));
+
+// Number.prototype.valueOf on an Unknown receiver answers the primitive itself (plan-notes 372).
+function valueOf(n) {
+  return n.valueOf() + " " + typeof n.valueOf();
+}
+console.log(valueOf(1.5));
+console.log(valueOf(0));
+console.log(valueOf(-3));

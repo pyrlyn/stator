@@ -59,14 +59,23 @@ export function rewriteStatements(
   statements: readonly Statement[],
   rewriter: Rewriter,
 ): readonly Statement[] {
-  const out: Statement[] = [];
-  let changed = false;
+  if (rewriter.statement === undefined) {
+    const rebuilt = rewriteEach(statements, (stmt) => rebuildStatement(stmt, rewriter));
+    return rewriter.statements === undefined ? rebuilt : rewriter.statements(rebuilt);
+  }
+  let out: Statement[] | undefined;
+  let index = 0;
   for (const stmt of statements) {
     const replacement = rewriteStatement(stmt, rewriter);
-    changed = changed || replacement.length !== 1 || replacement[0] !== stmt;
-    out.push(...replacement);
+    if (out === undefined && (replacement.length !== 1 || replacement[0] !== stmt)) {
+      out = statements.slice(0, index);
+    }
+    if (out !== undefined) {
+      for (const next of replacement) out.push(next);
+    }
+    index++;
   }
-  const rebuilt = changed ? out : statements;
+  const rebuilt = out ?? statements;
   return rewriter.statements === undefined ? rebuilt : rewriter.statements(rebuilt);
 }
 
@@ -97,15 +106,19 @@ function rewriteMethod(method: ClassMethod, rewriter: Rewriter): ClassMethod {
   return fn === method.fn ? method : { ...method, fn };
 }
 
-/** `===` to the input array when every element came back identical. */
+/** Copy only on the first change: analysis-only walks must not allocate discarded lists. */
 function rewriteEach<T>(items: readonly T[], f: (item: T) => T): readonly T[] {
-  let changed = false;
-  const out = items.map((item) => {
+  let out: T[] | undefined;
+  let index = 0;
+  for (const item of items) {
     const next = f(item);
-    changed = changed || next !== item;
-    return next;
-  });
-  return changed ? out : items;
+    if (out === undefined && next !== item) {
+      out = items.slice();
+    }
+    if (out !== undefined) out[index] = next;
+    index++;
+  }
+  return out ?? items;
 }
 
 export function rewriteStatement(stmt: Statement, rewriter: Rewriter): readonly Statement[] {
@@ -359,7 +372,8 @@ function rebuildExpression(expr: Expression, rewriter: Rewriter): Expression {
         target.kind !== 'identifier' &&
         target.kind !== 'index-access' &&
         target.kind !== 'field-access' &&
-        target.kind !== 'dyn-field-access'
+        target.kind !== 'dyn-field-access' &&
+        target.kind !== 'accessor-place'
       ) {
         throw new Error(`rewriteExpression: update target became ${target.kind}`);
       }
@@ -386,11 +400,28 @@ function rebuildExpression(expr: Expression, rewriter: Rewriter): Expression {
       return target === expr.target && index === expr.index ? expr : { ...expr, target, index };
     }
     case 'new':
-    case 'console-log': {
+    case 'console-log':
+    case 'date-components':
+    case 'date-static':
+    case 'global-call':
+    case 'math-call':
+    case 'object-static':
+    case 'string-static':
+    case 'typed-op': {
       const args = rewriteEach(expr.args, sub);
       return args === expr.args ? expr : { ...expr, args };
     }
-    case 'new-value': {
+    case 'new-value':
+    case 'array-op':
+    case 'method-call':
+    case 'dyn-method-call':
+    case 'field-call':
+    case 'number-op':
+    case 'collection-op':
+    case 'date-op':
+    case 'regexp-op':
+    case 'string-op':
+    case 'promise-method': {
       const target = sub(expr.target);
       const args = rewriteEach(expr.args, sub);
       return target === expr.target && args === expr.args ? expr : { ...expr, target, args };
@@ -408,7 +439,9 @@ function rebuildExpression(expr: Expression, rewriter: Rewriter): Expression {
     case 'match-read':
     case 'regexp-read':
     case 'get-iterator':
-    case 'dyn-field-access': {
+    case 'dyn-field-access':
+    case 'accessor-place':
+    case 'method-value': {
       const target = sub(expr.target);
       return target === expr.target ? expr : { ...expr, target };
     }
@@ -418,33 +451,6 @@ function rebuildExpression(expr: Expression, rewriter: Rewriter): Expression {
       return target === expr.target && sent === expr.sent ? expr : { ...expr, target, sent };
     }
 
-    case 'method-value': {
-      const target = sub(expr.target);
-      return target === expr.target ? expr : { ...expr, target };
-    }
-    case 'array-op':
-    case 'method-call':
-    case 'dyn-method-call':
-    case 'field-call':
-    case 'number-op':
-    case 'collection-op':
-    case 'date-op':
-    case 'regexp-op':
-    case 'string-op': {
-      const target = sub(expr.target);
-      const args = rewriteEach(expr.args, sub);
-      return target === expr.target && args === expr.args ? expr : { ...expr, target, args };
-    }
-    case 'date-components':
-    case 'date-static':
-    case 'global-call':
-    case 'math-call':
-    case 'object-static':
-    case 'string-static':
-    case 'typed-op': {
-      const args = rewriteEach(expr.args, sub);
-      return args === expr.args ? expr : { ...expr, args };
-    }
     case 'date-new':
     case 'error-new':
     case 'json-parse':
@@ -452,11 +458,6 @@ function rebuildExpression(expr: Expression, rewriter: Rewriter): Expression {
     case 'promise-static': {
       const arg = sub(expr.arg);
       return arg === expr.arg ? expr : { ...expr, arg };
-    }
-    case 'promise-method': {
-      const target = sub(expr.target);
-      const args = rewriteEach(expr.args, sub);
-      return target === expr.target && args === expr.args ? expr : { ...expr, target, args };
     }
     case 'promise-construct': {
       const executor = sub(expr.executor);

@@ -115,6 +115,7 @@ tasks:
       - 'compiler:typecheck'
       - 'compiler:lint'
       - 'compiler:dupes'
+      - 'compiler:js-sources'
       - 'tests:typecheck'
       - 'std:typecheck'
       - 'node:typecheck'

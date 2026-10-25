@@ -9,11 +9,14 @@ codeql:
 snyk:
   enabled: true
 
-# Replaces sonarcloud.yml: sonar-project.properties holds the project key; mise.toml
-# installs node, pnpm, just, clang and zig. Coverage is the ci.yml linux/x64 coverage script.
+# SonarCloud is `pipeline / sonarcloud` inside pyrlyn/ci's ci.yml, which pipeline.yml
+# calls as `@main`. A local sonarcloud.yml pinned by SHA fails `no-pinned-ci` (plan-notes
+# 361). sonar-project.properties holds the project key. mise installs only the tools the
+# runtime build needs (`pnpm`, not `npm:pnpm` — #138). Setup is a hard failure, so a broken
+# runtime stops the job before coverage. Coverage and the scan stay soft-fail (the shared
+# default). To make the analysis blocking, set `soft-fail: false` here.
 sonarcloud:
   enabled: true
-  setup-command: |
-    pnpm install --frozen-lockfile
-    pnpm run runtime || true
-  coverage-command: pnpm run test:coverage || true
+  mise-install-args: "node pnpm just zig conda:clang conda:llvm"
+  setup-command: "pnpm install --frozen-lockfile && pnpm run runtime"
+  coverage-command: "pnpm run test:coverage"

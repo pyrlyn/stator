@@ -666,6 +666,10 @@ function expressionHasUnknown(expr: Expression): boolean {
     // argument was, so the call site is where the program becomes dynamic.
     case 'json-parse':
       return true;
+    // An accessor place is as dynamic as its receiver: the get/set pair runs against whatever
+    // arrived. Its own type is concrete (the property's), so only the target can be dynamic.
+    case 'accessor-place':
+      return expressionHasUnknown(expr.target);
     // A fresh collection is as static as its type argument, which the check at the top of this
     // function already read: `new Map<string, number>()` is static, `new Map()` -- which the
     // checker types `Map<any, any>` -- is not.

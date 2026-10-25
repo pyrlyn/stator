@@ -1,6 +1,6 @@
 /* print_promise.c — the promise corpus: print forms, reaction ordering, and Promise.all.
  *
- * Ground truth is Node (runtime/tests/print_promise.mjs), which is the only reason this file can
+ * Ground truth is Node (runtime/tests/print_promise.ts), which is the only reason this file can
  * assert anything about ORDER. Reaction ordering is the part of a promise implementation that is
  * easy to get subtly wrong -- one tick early or late -- and impossible to check against yourself.
  *
@@ -27,7 +27,7 @@ static void note(void *state, jsrt_value value, bool rejected) {
 }
 
 /* Retires a rejection without reporting it: the drain aborts on a rejection nobody subscribed to
- * (STA2005), so a corpus that prints a rejected promise has to claim it, exactly as the .mjs side
+ * (STA2005), so a corpus that prints a rejected promise has to claim it, exactly as the .ts side
  * claims the same one with `.catch(() => {})`. Prints nothing, so it costs a tick and no output. */
 static void ignore(void *state, jsrt_value value, bool rejected) {
   (void)state;

@@ -364,6 +364,28 @@ function runStaticLibAsan(): void {
   }
 }
 
+function runThreadsAsan(): void {
+  const result = spawnSync(
+    process.execPath,
+    [
+      join(REPO, 'node_modules/vitest/vitest.mjs'),
+      'run',
+      '--config',
+      'packages/tests/vitest.config.ts',
+      'packages/tests/unit/std.test.ts',
+      '--testNamePattern',
+      'std/(thread|sync)|std/fs Promise',
+    ],
+    {
+      cwd: REPO,
+      env: { ...process.env, STATOR_RUNTIME: 'asan', ASAN_OPTIONS: 'detect_leaks=0' },
+      stdio: 'inherit',
+    },
+  );
+  if (result.status !== 0)
+    throw new Error(`threads under asan failed (exit ${String(result.status)})`);
+}
+
 function main(): void {
   const forced = isForceRequested();
   // Stages 1-2 run on EVERY invocation: they are the seconds-long incremental half,
@@ -372,6 +394,7 @@ function main(): void {
   runJust('std', 'std');
   runJust('runtime', 'runtime-test-asan');
   runStaticLibAsan();
+  runThreadsAsan();
   const hash = hashGateInputs(collectGateInputs());
   const path = recordPath();
   const record = readGreenRecord(path);

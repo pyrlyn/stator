@@ -36,8 +36,9 @@ export fn jsrt_std_env_unset(name: [*:0]const u8) f64 {
     return if (unsetenv(name) == 0) 0 else root.fail("EINVAL");
 }
 
-// POSIX `environ`. Windows CI does not build this archive (docs/STD.md §4). A `setenv` is visible
-// here the moment it returns, because this is libc's own vector.
+// POSIX `environ`: the names `std/env.names` walks. Windows CI does not build this archive
+// (docs/STD.md §4). A `setenv` is visible here the moment it returns, because this is libc's
+// own vector — the same one `getenv` reads.
 extern "c" var environ: [*:null]?[*:0]u8;
 
 export fn jsrt_std_env_count() f64 {
@@ -46,8 +47,8 @@ export fn jsrt_std_env_count() f64 {
     return @floatFromInt(n);
 }
 
-// Name of variable `index` (text before the first `=`), parked for `jsrtStdResult`. Past the end
-// is EINVAL.
+/// Name of variable `index` (text before the first `=`), parked for `jsrtStdResult`. Past the
+/// end is EINVAL. The value is never parked: a value may be a secret (docs/STD.md §5).
 export fn jsrt_std_env_name(index: f64) f64 {
     const wanted: usize = @intCast(root.intIn(index, 0, std.math.maxInt(c_int)) orelse return root.fail("EINVAL"));
     var n: usize = 0;

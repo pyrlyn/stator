@@ -1,6 +1,6 @@
 /* print_classes.c — the class object of docs/VALUE.md §4.18, printed and called.
  *
- * Ground truth is Node: print_classes.mjs declares the SAME classes and prints them in the same
+ * Ground truth is Node: print_classes.ts declares the SAME classes and prints them in the same
  * order; `just runtime-test` diffs the two byte-for-byte.
  *
  * What this pins: a class prints as `[class S]` with its own static DATA fields as braces and

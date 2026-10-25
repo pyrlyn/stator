@@ -12,6 +12,8 @@ process.env.STATOR_NODE_PROCESS_JS = "js";
 console.log(process.env.STATOR_NODE_PROCESS_JS, typeof process.env.TZ);
 delete process.env.STATOR_NODE_PROCESS_JS;
 console.log(process.env.STATOR_NODE_PROCESS_JS);
+const t = process.hrtime();
+console.log(t.length, t[0] >= 0, t[1] >= 0 && t[1] < 1e9);
 process.nextTick((a, b) => console.log("tick", a, b), 1, "two");
 process.nextTick(() => console.log("exit code", process.exitCode));
 process.exitCode = 0;

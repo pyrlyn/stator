@@ -42,3 +42,4 @@ site/.astro/
 # Local files (pyrlyn template).
 .env
 .env.local
+.rtok/

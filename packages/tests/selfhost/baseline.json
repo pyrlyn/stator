@@ -4,7 +4,7 @@
     "codes": {
       "STA1207": 1,
       "STA1213": 2,
-      "STA1214": 1844
+      "STA1214": 1887
     }
   },
   "packages/node/src/assert.ts": {
@@ -56,6 +56,14 @@
     "codes": {}
   },
   "packages/std/src/process.ts": {
+    "verdict": "static",
+    "codes": {}
+  },
+  "packages/std/src/sync.ts": {
+    "verdict": "dynamic",
+    "codes": {}
+  },
+  "packages/std/src/thread.ts": {
     "verdict": "static",
     "codes": {}
   },

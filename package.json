@@ -28,10 +28,10 @@
     "test:ffi": "node packages/tests/ffi/run.ts",
     "test:intl": "just -f packages/runtime/justfile -d packages/runtime runtime-intl && just -f packages/std/justfile -d packages/std std && STATOR_RUNTIME=intl node packages/tests/golden/run.ts",
     "runtime": "just -f packages/runtime/justfile -d packages/runtime runtime && just -f packages/std/justfile -d packages/std std",
-    "vendor:update": "node packages/runtime/vendor/update.mjs",
+    "vendor:update": "node packages/runtime/vendor/update.ts",
     "dupes": "cpd .",
     "dupes:baseline": "cpd . --update-baseline",
-    "ci": "node scripts/check-node.mjs && pnpm run typecheck && pnpm run lint && pnpm run dupes && pnpm run runtime && pnpm run test && pnpm run test:runtime && pnpm run test:subset && pnpm run test:golden && pnpm run test:selfhost && pnpm run test:builtins && pnpm run test:node-coverage && pnpm run test:leak && pnpm run test:asan",
+    "ci": "node scripts/check-node.ts && node scripts/check-js-sources.ts && pnpm run typecheck && pnpm run lint && pnpm run dupes && pnpm run runtime && pnpm run test && pnpm run test:runtime && pnpm run test:subset && pnpm run test:golden && pnpm run test:selfhost && pnpm run test:builtins && pnpm run test:node-coverage && pnpm run test:leak && pnpm run test:asan",
     "test:builtins": "node packages/tests/golden/builtins.ts",
     "docs:node": "node packages/tests/golden/node-coverage.ts",
     "schema:config": "node packages/tests/support/config-schema.ts",
@@ -46,21 +46,21 @@
     "@types/react": "19.3.0",
     "c8": "12.0.0",
     "cpd": "5.4.1",
-    "dotenv": "18.0.7",
-    "execa": "10.1.0",
+    "dotenv": "18.0.8",
+    "execa": "10.1.1",
     "ink": "8.0.0",
     "jsonc-parser": "3.3.1",
-    "oxfmt": "0.72.0",
-    "oxlint": "1.87.0",
+    "oxfmt": "0.73.0",
+    "oxlint": "1.88.0",
     "oxlint-tsgolint": "7.0.2004",
-    "react": "19.3.0",
-    "typebox": "1.3.36",
+    "react": "19.3.1",
+    "typebox": "1.4.2",
     "typescript": "6.0.3",
     "vite-stator": "workspace:*",
-    "vitest": "5.0.3"
+    "vitest": "5.0.5"
   },
   "engines": {
     "node": ">=24"
   },
-  "packageManager": "pnpm@12.3.4"
+  "packageManager": "pnpm@12.15.0"
 }

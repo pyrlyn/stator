@@ -1,7 +1,6 @@
-// `std/fs` — sync file-system calls (docs/STD.md §5): by path, and on descriptors `open`
-// answers. Paths resolve against the working directory exactly as the OS resolves them. The Promise twins (`readTextAsync`, …) arrive
-// with T10.2's thread pool (docs/STD.md §2); until then importing one is not-yet (the compiler's
-// frontend/std.ts names them), rather than a sync call wearing `async`.
+import { submit } from './internal/thread.ts';
+// Paths resolve against the process working directory. Promise twins submit synchronous
+// operations to reusable OS workers so the main microtask drain stays responsive.
 
 import { jsrtStdResult, type CString } from './native/core.js';
 import {
@@ -171,4 +170,19 @@ export function write(fd: number, data: Uint8Array, position: number = -1): numb
     throw __stdFailure('std/fs.write', `${fd}`);
   }
   return data.length;
+}
+
+/** Captures a path before starting a worker; the function itself stays ordinary TypeScript. */
+function pathTask<T>(operation: (path: string) => T): (path: string) => Promise<T> {
+  return (path: string) => submit(() => operation(path));
+}
+
+export const readTextAsync = pathTask(readText);
+export const statAsync = pathTask(stat);
+export const mkdirAsync = pathTask(mkdir);
+export const unlinkAsync = pathTask(unlink);
+export const rmdirAsync = pathTask(rmdir);
+
+export function writeTextAsync(path: string, text: string): Promise<void> {
+  return submit(() => writeText(path, text));
 }

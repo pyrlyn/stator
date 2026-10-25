@@ -13,17 +13,22 @@ jobs:
   evidence:
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 2 * * *' || github.event.schedule == '0 3 * * 0'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # Differential (60 min) + a full instrumented impact recording + the weekly bench: the
+    # ceiling is for the sum, not each step.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          # The impact map is keyed to HEAD and later proven by `merge-base --is-ancestor`;
+          # a shallow clone cannot answer that, so the recording job takes full history.
+          fetch-depth: 0
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
         with:
           just-version: '1.58.0'
       - uses: ./.github/actions/setup
       - name: Install runtime dependencies
-        run: sudo apt-get update && sudo apt-get install -y libgc-dev clang llvm
+        run: sudo apt-get update && sudo apt-get install -y libgc-dev libsqlite3-dev clang llvm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run runtime
       - name: Differential fuzzing
@@ -36,6 +41,27 @@ jobs:
           name: differential-${{ github.run_number }}
           path: packages/tests/differential/failures
           if-no-files-found: ignore
+
+      # Task 6.17 step 4: nightly also records the impact map, so a quiet week on `main` still
+      # refreshes what pull requests restore. Same handoff as ci.yml's `impact-map` job: an
+      # artifact for humans, a cache entry (`impact-map-<sha>`) that the PR job's
+      # `restore-keys: impact-map-` picks up as the newest map.
+      - name: Record impact map
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 2 * * *'
+        run: pnpm run test:impact:record
+      - name: Upload impact map artifact
+        if: always() && (github.event_name == 'workflow_dispatch' || github.event.schedule == '0 2 * * *')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: impact-map-${{ github.run_number }}
+          path: .cache/impact/impact-map.json
+          if-no-files-found: ignore
+      - name: Save impact map cache
+        if: always() && (github.event_name == 'workflow_dispatch' || github.event.schedule == '0 2 * * *')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .cache/impact/impact-map.json
+          key: impact-map-${{ github.sha }}
 
       - name: Record benchmark
         if: github.event.schedule == '0 3 * * 0'

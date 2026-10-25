@@ -12945,7 +12945,7 @@ fixtures are T17's `string_range_error` and T16's `keys.js`. What T20 still asks
 
 **Evidence.** pyrlyn/ci `.github/workflows/sonarcloud.yml` at
 `c875cd763ad0c4abbd936e480be5752330d3b66b` describes itself as "unifying the sonarcloud.yml of
-rtok, ketch, cox, runa, crates-packages, slint_dart and stator". Its steps are the ones stator's
+The token-reduction CLI, the package manager, the coding agent, the local model runner, crates-packages, slint_dart and stator". Its steps are the ones stator's
 `sonarcloud.yml` carries by hand: skip with a notice without `SONAR_TOKEN`, full-history
 checkout, tool setup, a setup and a coverage command, the scan with soft-fail. What differs: the
 shared workflow sets tools up with mise (`mise-install-args`), not with `pnpm/action-setup`,
@@ -13013,7 +13013,1049 @@ the vendor module is not on disk, and hashing it would make every bundled progra
 This is the dependency-hash key the task allowed in place of a TODO. Watch mode is not
 implemented here; when it is, it keeps this key.
 
-## 361. T11.6: `node:process` is the global `process` (2026-10-19)
+## 361. Task 6.31: the SHA-pinned sonarcloud.yml caller is forbidden (2026-10-19)
+
+**What the card assumed.** plan-notes 358 (2026-10-08) measured stator's own
+`.github/workflows/sonarcloud.yml` as a copy of pyrlyn/ci's reusable workflow at
+`c875cd763ad0c4abbd936e480be5752330d3b66b`, and Task 6.31 said to replace it with a thin
+caller pinned to a 40-character SHA, never `@main`.
+
+**What landed first.** #138 (`f6276ff`, 2026-10-13) deleted that file. SonarCloud now runs
+as `pipeline / sonarcloud` inside `pyrlyn/ci/.github/workflows/ci.yml`, configured by
+`.github/infra.yml`. #158 (`e825724`, 2026-10-18) points `pipeline.yml` at `@main` on
+purpose. pyrlyn/ci `main` at `3fa4275e525269297a4d193c427f965ad9dd7544` runs a
+`no-pinned-ci` job whose comment is "Callers reference pyrlyn/ci as `@main`, never a SHA
+or a tag", and the workflow fails a pull request that pins `uses: pyrlyn/ci/...@<sha>`.
+Restoring the card's caller would fail that check. The Check in plan.md is edited to the
+durable fact: no `sonarcloud.yml` in this repo, `@main` on the pipeline caller, and the
+commands in `infra.yml`.
+
+**Commands.** `infra.yml` had `pnpm run runtime || true` and
+`pnpm run test:coverage || true`. The shared workflow already sets `continue-on-error` on
+coverage and the scan when `soft-fail` is true (the default), and it does **not** set it
+on setup. The `|| true` made a runtime failure look like success, so coverage still ran.
+Setup is now `pnpm install --frozen-lockfile && pnpm run runtime`. A runtime failure ends
+the job before coverage and, because `cancel-run-on-failure` defaults to true, cancels the
+rest of that pipeline run. Coverage stays soft-fail.
+
+**Toolchain.** The card's `mise-install-args` said `npm:pnpm`. #138 changed `mise.toml`
+from `"npm:pnpm"` to `pnpm` because the npm backend left pnpm 12's placeholder script and
+the scan crashed with `SyntaxError`. The args are
+`node pnpm just zig conda:clang conda:llvm`: the runtime recipe is clang plus the Zig
+memory core (`pnpm run runtime` builds `libjsrt.a` and `libjsrt_std.a`). Time cost is the
+pull request's Setup step, not a local guess.
+
+## 362. jactionlint's baseline matched nothing; `@main` stays a durable ignore (2026-10-19)
+
+**Symptom.** `static analysis` failed on main (run 39159865395, job on the #150 push) and
+on the Task 6.31 pull request. jactionlint 2.0.2 reported two `unpinned-uses` findings and
+the note `0 finding(s) are hidden by the baseline; 41 baseline entr(ies) match nothing any
+more` (40 after the deleted `sonarcloud.yml` entry). `--no-baseline` prints only:
+
+- `.github/workflows/pipeline.yml` → `pyrlyn/ci/.github/workflows/ci.yml@main`
+- `.github/workflows/sync-docs.yml` → `pyrlyn/ci/.github/workflows/sync-docs.yml@main`
+
+Every fingerprint in the baseline was an action ref that is already a full SHA, so none of
+them hide a current finding.
+
+**Why not pin.** Pinning either caller to a SHA fails pyrlyn/ci's `no-pinned-ci` job
+(plan-notes 361). The acceptance is two `ignores` entries in `.github/jactionlint.yaml`,
+matched on the exact `@main` ref. `jactionlint --baseline-write` then records zero entries.
+A new unpinned action is a failure again; the dead fingerprints are not.
+
+## 363. Task 6.31: the shared sonarcloud job ran Setup and wrote coverage (2026-10-19)
+
+**Plan:** §9 Task 6.31. `plan.md` edited in the same change: the task is a stub, evidence
+in `done.md`. The next free note after 362 on this branch is 363. Notes 364 and 365 are
+taken on other unmerged branches.
+
+**The run.** Non-draft PR #161, pipeline run 39297920890, job
+`pipeline / sonarcloud / sonarcloud` (118222865144), head `889f434`. `Skip SonarCloud (no
+token)` was skipped, so `SONAR_TOKEN` was set; the log prints the value as `***`. `Setup`
+succeeded with `pnpm install --frozen-lockfile && pnpm run runtime`. `Coverage` succeeded
+with `pnpm run test:coverage`. The scanner then logged `Analysing
+[/home/runner/work/stator/stator/coverage/lcov.info]` and uploaded the report. That is the
+Check's CI half. The file half is the commands in `infra.yml` and the absent
+`sonarcloud.yml`, unchanged by the commit that moves the card.
+
+## 364. Cloud-review rows T20, T22, T25 and T26 were already fixed (2026-10-19)
+
+**Plan:** the cloud-review table at the top of `plan.md` (not the audit task T20, which
+plan-notes 360 already closed). `plan.md` edited in the same change: those four rows are
+struck, the way T23 was. They were never given Steps and a Check, so there is no record to
+move to `done.md`. T21 and T24 stay open.
+
+**T20.** `ci.yml` starts with `push: branches: [main]`. The comment above it says a merge to
+main would otherwise have no test gate, and the revert job is `github.event_name == 'push'`.
+plan-notes 353 added that trigger. Re-checked on `9767c85`.
+
+**T22.** `pipeline.yml` calls `uses: pyrlyn/ci/.github/workflows/ci.yml@main`. plan-notes 353
+replaced the private `listepo/infra` caller (run 37694735601 failed in 0s). PR #158
+(`e825724`, merged 2026-10-18) then moved the reference from a SHA to `@main`, because
+pyrlyn/ci's `no-pinned-ci` job fails a pull request that pins that caller. `@main` is the
+reference on purpose.
+
+**T25.** `AGENTS.md`'s repo map lists `vendor/` as QuickJS-NG libregexp only. `docs/TOOLCHAIN.md`
+says Ryū is not vendored and that fetching it stays on §12. plan-notes 353 corrected the map.
+The golden-rule sentence that says "vendor Ryū" is the standing instruction for when that
+ladder rung is taken, not a claim that the code is in the tree.
+
+**T26.** `memfs` is absent from the root `package.json`, from `packages/tests/package.json`,
+and from `packages/compiler/src/frontend/program.ts`. The custom-host comments say
+"in-memory CompilerHost". plan-notes 353 removed the dependency.
+
+**Left open.** T21 is a required-check / ruleset change, and this session does not edit
+rulesets. T24 is still one file: `packages/compiler/src/codegen/index.ts` (closed later in
+plan-notes 371).
+## 369. Task 6.15: own-source JavaScript is TypeScript, and the exempt set is checked (2026-10-19)
+
+**Plan:** §0.10 and §9 Task 6.15. `plan.md` edited in the same change: the task is a stub,
+evidence in `done.md`. §0.10 names `scripts/check-js-sources.ts`. Phase 8 step 3's re-vendor
+command is `node packages/runtime/vendor/update.ts quickjs-ng`.
+
+**What moved.** Oracle shims, the print corpus, `scripts/check-node.ts`,
+`packages/runtime/vendor/update.ts`, `packages/runtime/vendor/fdlibm/port.ts`,
+`site/astro.config.ts`, and `packages/tests/test262/harness/done.ts`. Node 26 type-strips them.
+`done.ts` is concatenated raw into Test262 sources, so it has no type annotations and is excluded
+from `packages/tests/tsconfig.json`. `packages/tests/leak/keys.js` stays: it is a `js`-mode
+fixture (`--mode=js`), not our source.
+
+**The gate.** `scripts/check-js-sources.ts` runs `git ls-files '*.js' '*.mjs' '*.cjs'` and fails
+unless every path is a `js`-mode input or example, vendored upstream code, generated output, or
+`site/public/`. `node_shim.js` / `.mjs` / `.cjs` and the two vendor scripts are never exempt.
+`pnpm run ci` runs the script before typecheck; the static job runs it after `dupes`; `moon run
+tests:ci` depends on `compiler:js-sources`.
+
+**fdlibm.c.** The generated preamble's regenerate line now says `node port.ts`. The C body was
+not regenerated: a regen fetches upstream and must stay byte-identical apart from that comment,
+and this change does not bump the pin. The next `pnpm run vendor:update fdlibm` rewrites the
+preamble from `port.ts` and leaves the algorithm alone.
+
+**Clone baseline.** The libm and stat example runners already shared a clone. Replacing
+`node_shim.mjs` with `node_shim.ts` in both changed that clone's fingerprint. `.jscpd-baseline.json`
+swaps one fingerprint for one (`964d0cad4424ce0b` → `4aecb478f234e5bf`) and stays at 180.
+
+## 370. T21: protect-main requires the stage-1 and Windows checks (2026-10-23)
+
+**Plan:** cloud-review row T21; `plan.md` edited in the same change — the row is struck and
+gains a `### T21` Steps/Check section (the other cloud-review rows needed none because they
+needed no change).
+
+**What was broken.** The `protect-main` ruleset (repo `pyrlyn/stator`, id 24341905; the
+`listepo/stator` name 307-redirects) required exactly one status check: `pipeline / gate`.
+That gate is the shared SonarCloud/CodeQL/Snyk pipeline. T17 (`ccf9818`, PR #113) merged with
+red CI — `pipeline` failed in 0 s and `frontend (windows/arm64)` failed — because the `ci.yml`
+jobs (`static analysis`, every `frontend`/`runtime`/`asan`/… leg) were not required at all.
+Admin can also bypass on PRs (`bypass_mode: pull_request`, actor `RepositoryRole` admin);
+that bypass is kept, so the human can still emergency-merge, but an ordinary merge is now
+blocked on the real test jobs.
+
+**A second bug made the desktop legs unrequired-able.** `frontend-desktop`'s matrix was
+built with `fromJSON` over JSON that used a leading space in the key (`" platform"`) and
+trailing spaces in the runner labels (`"windows-2025 "`). `matrix.platform` was therefore
+empty and the jobs reported check names `frontend (/x64)` / `frontend (/arm64)` (two legs
+even shared a name). A required-status-check context can never match those names. Fixed in
+`.github/workflows/ci.yml` in the same change: exact keys, exact labels
+(`windows-2025`, `windows-11-arm`, `macos-14`).
+
+**What is required now** (applied via API, verified by read-back):
+
+```
+pipeline / gate
+static analysis                 # ci.yml job id `static`
+frontend (linux/x64)            # ci.yml job id `frontend-coverage`
+frontend (windows/x64)          # ci.yml job id `frontend-desktop`
+frontend (windows/arm64)
+```
+
+Commands (PUT needs the numeric repo id — `gh` does not follow the 307 from
+`listepo/stator` / `pyrlyn/stator` on PUT):
+
+```
+gh api -X PUT repositories/1353641814/rulesets/24341905 --input protect-main.json
+gh api repos/pyrlyn/stator/rulesets/24341905 \
+  --jq '[.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context]'
+```
+
+Read-back: `["pipeline / gate","static analysis","frontend (linux/x64)","frontend (windows/x64)","frontend (windows/arm64)"]`.
+
+**Why not the macOS legs.** Org variable `MACOS_CI_DISABLED` is currently `false`, but when
+it is `true` the `frontend-desktop` matrix drops the macOS entry entirely (the job never
+reports), while the `-macos` twins of `runtime`/`asan`/`intl`/`ffi` use `if:` and report
+`skipped` (which satisfies a required check). Requiring `frontend (macos/arm64)` would
+therefore block every PR whenever the org variable is flipped, with no check run to wait
+for. Stage-1 (`static analysis` + `frontend (linux/x64)`) plus both Windows frontend legs is
+the set that always reports on every PR; macOS coverage still runs on every PR while the
+variable is false, just unenforced. If the matrix is ever restructured so macOS always
+reports (skipped rather than absent), add `frontend (macos/arm64)` to the ruleset.
+
+**What remains manual.** The ruleset lives only on GitHub; nothing in-tree re-applies it.
+#170/#171 already established that the `pyrlyn/ci` `repo-settings` caller cannot work here
+(no `REPO_ADMIN_TOKEN`, HTTP 401). Re-applying after a UI edit is the `gh api` PUT above.
+`docs/TOOLCHAIN.md` "CI stages" now names the required set. `jactionlint` is clean on the
+changed workflow.
+
+## 371. T24: the C emitter is split by HIR family under `src/codegen/` (2026-10-23)
+
+**Plan:** the cloud-review table at the top of `plan.md` (not a phase card). `plan.md` edited
+in the same change: the T24 row is struck the way T23/T20 were — it never had Steps and a
+Check of its own, so there is no record to move to `done.md`. The Check for this move is the
+one below, recorded here as the acceptance.
+
+**What moved.** `packages/compiler/src/codegen/index.ts` (6,276 lines, the only file in
+`codegen/`) is now a 16-line facade re-exporting `emitC` / `LibraryEmit`. The emitter is:
+
+| File | Lines | Role |
+| --- | ---: | --- |
+| `expressions.ts` | 1,911 | `emitExpression` + binary/logical/conditional/optional/update/template and class method resolution |
+| `statements.ts` | 1,205 | `emitStatement`, for-of, try/finally, switch, loop scopes |
+| `module.ts` | 813 | `emit` / main / library init / export stubs |
+| `slots.ts` | 776 | the counting pass, slot map, `slotAt`/`slotRef` |
+| `runtime_calls.ts` | 573 | call sequencing, extern ABI, console |
+| `helpers.ts` | 487 | pure helpers (no emitter state) |
+| `closures.ts` | 476 | function units, async/generator, environments |
+| `emitter.ts` | 430 | state fields + `declare` method shapes |
+| `install.ts` | 58 | prototype install of family free functions |
+| `types.ts` | 112 | `FunctionUnit`, `TryFinallyScope`, `CallSlotted`, `LibraryEmit` |
+| `tables.ts` | 90 | `BINARY_EMITTERS` & friends |
+
+Family modules take the emitter as a leading parameter (`emitter: Emitter`) so they stay
+ordinary exported functions under oxlint's `no-this-in-exported-function`. `install.ts`
+rebinds them onto `Emitter.prototype` once before the first `emit()`; mutual recursion stays
+`emitter.emitExpression(...)` through the prototype. Method shapes on the class are
+`declare` fields (type-only under `useDefineForClassFields`) rather than an interface merge,
+which `typescript/no-unsafe-declaration-merging` rejects.
+
+**Why not grow the clone baseline.** Renaming `this.` → `emitter.` re-fingerprinted ~17
+already-present structural clones (jscpd's `ignoreIdentifiers` does not treat the keyword
+`this` as an identifier). Those were removed by extracting shared helpers instead:
+`openCapturedWhile` / `emitLoopBody` / `closeLoopScope`, `pushFinallyScope` /
+`emitFinallyDispatch*`, `openFinallyTail` / `closeFinallyLoop`, unit-state
+snapshot/restore by key list, `requireIndexBase` / `requireCallBase` / `sequenceCallOperands`
+/ `findClassMethod` / `requireTempSlot`, `emitBranchArm`, `beginModuleUnits`,
+`withLiveIterEnv`. `.jscpd-baseline.json` is unchanged; `pnpm run dupes` reports 163 clones
+and **zero** new ones.
+
+**Docs.** `docs/FFI.md` and `docs/SUBSET.md` no longer name a single `codegen/index.ts` as
+the emitter's home (the facade is only the re-export). Architecture diagrams already said
+`src/codegen/` and did not need a D2 edit.
+
+**Check (passed on this worktree).**
+
+```
+pnpm run typecheck     # clean
+pnpm run lint          # oxlint --deny-warnings + oxfmt --check: clean
+pnpm run dupes         # 163 clones, 0 new
+pnpm run test          # 61 files, 783 tests, 0 failed
+pnpm run test:golden   # 464 fixtures, 464 passed, 2 intl_* skipped (non-intl STATOR_RUNTIME)
+```
+
+`pnpm run ci` was not run in full (serial wall-time); the gates above are typecheck, lint,
+dupes, unit, and golden — the ones this move can break. A spot-check that `--emit=c` for a
+recursive `f` is byte-identical to the pre-split emitter (`diff` empty) was the byte-for-byte
+guard while landing the branch-arm helper.
+
+**Left.** Class-descriptor *emission* stays inside `module.ts`'s `emit()` (it is file-scope
+prologue, not a separate HIR family). If a later card wants a `classes.ts`, the method
+resolution helpers already live in `expressions.ts` and can move with them.
+
+## 372. A1–A5 runtime residue: two landed earlier, three closed here (2026-10-23)
+
+**Touches:** `runtime/src/jsrt_boolean_methods.c` (new), `runtime/src/jsrt_number_methods.c`,
+`runtime/src/jsrt_shape.c`, `runtime/include/jsrt_value.h`, `compiler/src/lower/index.ts`,
+`tests/golden/js/{dynamic_missing_method.js,primitive_methods.js}`. plan-notes 223 items 5 and 6
+were carded as Phase 5 steps 20–21 (plan-notes 249) and most of that work already sat on this
+tree; the residues below are what a fresh repro still showed, and what this change closes.
+
+**A1 — named-capture `$<name>` in `replace` (already landed, step 21c).**
+Before: `'ab'.replace(/(?<x>a)/, '[$<x>]')` printed `[$<x>]b` (no `$<name>` branch in
+`jsrt_regexp.c`'s substitute). After: `[a]b`. The expander's `$<name>` arm, the `$&`/`$1`/`$$`
+forms and the unknown-name-empty rule are already in `runtime/src/jsrt_regexp.c` and pinned by
+`tests/golden/{js,ts}/replace_named_group.*`. Verified byte-for-byte against the pinned Node.
+
+**A2 — `Date.parse` hour 24 (already landed, step 21d).**
+Before: `Date.parse("2024-01-01T24:00:01Z")` answered `1704153601000`. After: `NaN`.
+`parse_iso` rejects hour 24 unless minutes, seconds and the full-precision fraction are zero;
+`T24:00:00Z` rolls to the next day. Pinned by `tests/golden/{js,ts}/date_parse_hour24.*`.
+Non-ISO hour-24 (`2024-01-01 24:00:00`) stays `NaN` on purpose: `jsrt_date_parse` is the
+Date Time String Format only (§21.4.1.32), and V8's fallback parser is not specified — the
+parser header records that an unparseable string is honestly Invalid rather than a guess.
+
+**A3 — a missing method on an Unknown receiver panicked STA2006 (closed here).**
+Before: `function callIt(a) { return a.nosuch(); }` with `a = [1]` aborted
+`PANIC: STA2006: calling a non-function`. After: `TypeError: a.nosuch is not a function`,
+catchable, Node's wording. The shape-table and prototype walks answered `undefined` for a name
+neither has, and `jsrt_call_at` turned that into the located abort. The fix is the lowering's:
+every `dyn-method-call` now carries `notFunction` (`compiler/src/lower/index.ts`), so the
+emitter's existing non-closure check throws Node's `TypeError` before the call. The check is a
+no-op when the load found a closure. Array, class and literal methods are unchanged — they were
+already answered by `jsrt_array_method` / the class descriptor / the `#method:` slot.
+
+**A4 — `jsrt_as_array`'s missing tag check (already landed, step 20).**
+Before: `function add(v) { arr.push(v); }` with a hoisted `var arr` segfaulted (the unbox of
+`undefined` was NULL). After: `TypeError: Cannot read properties of undefined (reading 'push')`.
+The checked unbox is `jsrt_require_array`, which throws `STA2008` (already allocated in
+`docs/DIAGNOSTICS.md`) with Node's member-access wording for nullish; raw `jsrt_as_array` stays
+for internal callers that ran a public entry first. Pinned by
+`tests/golden/js/dynamic_array_receiver.js`.
+
+**A5 — Boolean.prototype and `Number.prototype.valueOf` on an Unknown receiver (closed here).**
+Before: `function f(a) { return a.toString(); }` with `a = false` aborted STA2006 —
+`jsrt_get_prop`'s primitive walk consulted `jsrt_string_method` and `jsrt_number_method` only.
+After: `false`. `jsrt_boolean_method` (new `runtime/src/jsrt_boolean_methods.c`) answers
+`toString`/`toLocaleString`/`valueOf` bound to the receiver on the
+`jsrt_string_method`/`jsrt_number_method` contract; `jsrt_number_method` gains `valueOf`.
+String and number methods (including `toUpperCase`, `toFixed`, `toString`) already worked
+(plan-notes 310). Goldens: `tests/golden/js/primitive_methods.js` (boolean + `valueOf` lines)
+and `tests/golden/js/dynamic_missing_method.js`. The ts gate still refuses
+`Boolean.prototype.toString` as `STA1214` on a dynamic `this`, so the ts twin stays on the
+methods that arm already supports.
+
+**Residue named, not hidden.** `a[0]` on a string through an Unknown receiver answers
+`undefined` where Node answers the character — `jsrt_get_prop` handles string `length` and the
+prototype methods but not the string exotic index. It is a wrong answer, not a panic, and is
+outside this batch's method-dispatch scope.
+
+**Checks.** `pnpm run typecheck && pnpm run lint` clean. `pnpm run test` 783/783.
+`pnpm run test:golden` 465/465. `pnpm run test:subset` 933 passed, 31 expected-fail, 0 failed.
+`pnpm run test:runtime` print corpus matches Node.
+
+## 373. Step 12(d)/(e) class-surface residue: five slices (2026-10-19)
+
+**Plan:** §8 step 12(d)/(e) residue (plan-notes 272–278 aftermath). `plan.md` edited in this
+change: residue bullets struck/narrowed for what landed.
+
+### B1. Switch-guarded `super(...)` — already landed (commit `7da5402`)
+
+`checkCtorList` covers `switch` clauses with the same exactly-once / no-early-return /
+no-`this`-before-super rules as `if`/`else` (needs a non-empty `default` for the unmatched
+path). Fixtures `subset_super_switch_*`, `subset_class_super_late_*`; goldens
+`class_super_late.{ts,js}`. No code change here — verified green and named in the residue.
+
+### B2. `super.x` in a static block / method — landed (narrow)
+
+`super.x` naming a static of the base class erases to that binding (`staticMemberOf` now
+resolves `super` receivers through `staticSuperClass` → `staticMemberIn`). Lexically bound,
+so erasure is exact even in a static method (`super.n` always reads `Base.n`). A base
+INSTANCE method stays refused (no receiver); bare `super` is a JavaScript SyntaxError.
+Gate: `gateMemberAccess` super arm checks `staticMemberOf` first; `staticBlockUsesSuper`
+only refuses unresolved `super`. Goldens `class_static_this_super.{ts,js}`;
+fixtures `subset_static_block_super_*` flipped to static.
+
+### B3. `this.x` in a static — landed for field initializers and blocks only
+
+`this.x` in a static FIELD initializer or BLOCK is the class being defined — erasure to
+that class's static binding is exact (`staticThisClass` → `staticMemberIn`). In a static
+METHOD `this` is whoever the method was reached through (`T.m()` reads `T.v`, `S.m()`
+reads `S.v`), which needs the class object — that stays `STA1214`. Bare `this` in any
+static stays refused. `staticThisClass` returns `undefined` in instance contexts so
+`this.count` in an instance method still reads the instance field (the defect this
+narrowing caught: without it `statics.ts` panicked `STA2002`). Goldens
+`class_static_this_super.*`; `subset_static_block_this_*` flipped, `subset_static_this_*`
+stays not-yet with the dispatch reason.
+
+### B4. Anonymous default class — landed
+
+`export default class {}` takes Node's `.name` (`default`); the descriptor keys on ES's
+`*default*` binding (`declaredBindingName`), which the default import aliases.
+`classDisplayName` returns `*default*`; `descriptorName` prints `default`. Sites:
+`types.ts` (`classDisplayName`, `classTypeToHType`, `declaredTypeOf`, `aliasedClassDeclaration`),
+`gate.ts` (`gateClass`), `lower/index.ts` (`lowerClass` binding, `hirClassName`,
+`mangleClassName`, `renameBase`), `codegen/index.ts` (`descriptorName`). Decision tests
+`subset_class_anonymous_*` flipped to static; goldens `class_default_anon/{ts,js}/`.
+Class-as-value (`C.name`, `console.log(C)`) stays the opaque-class refusal.
+
+### B5. Accessor compound in value position — landed
+
+`o.x += 1` / `o.x++` / `++o.x` on a getter/setter in value position run the getter, fold,
+and setter, answering the fold's value (`+=` and prefix answer the new number, postfix the
+old). New `AccessorPlace` UpdatePlace variant (`hir/nodes.ts`); lowering
+(`accessorUpdateTarget`), codegen (`emitUpdate` accessor arm, `accessorCallee`), verifier,
+rewrite, explain. An untyped call-result receiver takes the dynamic path (docs/VALUE.md
+§4.24) — the js golden omits that case. Goldens `class_accessor_compound.{ts,js}` extended
+byte-for-byte; `subset_accessor_compound_*` extended to value position.
+
+**Gates.** typecheck, lint, subset (964: 933/31/0), golden (468/468), unit (class-members
+58/58, gate 81/81). HIR verifier clean on all fixtures touched.
+
+**Still refused (honest):** `this.x` in a static METHOD (class-object dispatch), bare
+`this`/`super` in a static, opaque class values, `#n in o`.
+
+## 374. C1 batch: impact-map CI, clone baseline, parallel clang, node:process, bench noise (2026-10-23)
+
+**Plan:** §9 Tasks 6.17 step 4, 6.16 first tranche, 6.3 noise floor; §11b T10.3 step C1; §11c
+T11.6 `node:process` slice. Branch `c1-tooling-ci`. Host for every measurement below is
+**darwin-arm64, Apple M3 Max, Node v26.7.0, clang from Xcode** — not the weekly job's
+ubuntu-24.04 runner.
+
+### C1 — Task 6.17 step 4: the impact map in CI
+
+`ci.yml` gains two jobs and `nightly.yml` one step set. **`impact map`** (push to `main` only)
+runs `pnpm run test:impact:record` at `fetch-depth: 0` (the map is keyed to HEAD and later
+proven by `merge-base --is-ancestor`) and publishes `.cache/impact/impact-map.json` twice: an
+`actions/upload-artifact` named `impact-map`, and an `actions/cache/save` entry keyed
+`impact-map-<sha>`. Nightly records the same way on the daily schedule so a quiet week still
+refreshes the map. **`impact select`** (pull requests only) restores with
+`actions/cache/restore` and `restore-keys: impact-map-` — GitHub serves the most recently
+created matching cache, and caches from the default branch are readable from every PR, so this
+is the newest `main` map with no API lookup — prints the map's provenance, then runs
+`pnpm run test:impact`, whose `formatSelection` is the log line the Check wants.
+
+Neither job is a required check; `static analysis`, `frontend (linux/x64)`,
+`frontend (windows/x64)`, `frontend (windows/arm64)` and `pipeline / gate` keep their names
+and their steps (T21). Local proof of the handoff, at a clean `8e8b12c`: a map recorded with
+`--harness=node-coverage` was trusted (`dirty: false`, same Node/platform, ancestor commit) and
+`test:impact --dry-run` printed a per-harness selection with reasons — not `impact: FULL RUN`.
+Deleting the map restored the fallback line
+`impact: FULL RUN — no map at … (record one: pnpm run test:impact:record)`.
+The Done clause ("a PR's CI log shows a selection made from a `main` map") cannot be observed
+until this branch merges and a real PR runs against a recorded map; the wiring and the local
+selection are the evidence until then. `jactionlint` is clean.
+
+### C2 — Task 6.16 first tranche: clone baseline toward zero
+
+Six helpers, all at the responsible layer, no behavior change (unit 798 green, `node_*` and
+`loop` goldens green, subset `for*` 28 green):
+
+| Helper | File | Clones it removed |
+| --- | --- | --- |
+| `emitLoopBody` + `emitLoopEpilogue` | `codegen/index.ts` | while/for/do-while body and close (the 13L and 9L exact pairs) |
+| `emitWhileOpen` | `codegen/index.ts` | the while/for condition-open twin |
+| `emitRouteDispatch` | `codegen/index.ts` | map/set and iterator for-of route closes |
+| `resetToModuleLevel` | `codegen/index.ts` | `emitMain` / `emitLibrary` state reset (11L exact) |
+| `flushCallSlots` | `codegen/index.ts` | object-static / typed-op / global-call / string-static slot flush (9L exact) |
+| `lowerNewCallArgs` | `lower/index.ts` | `new Error` / `new Date` / `new Promise` span+args prologue (10L exact) |
+
+`.jscpd-baseline.json` **shrank** 180 → 171 fingerprints (`pnpm run dupes:baseline` in the same
+change). `pnpm run dupes` is green with no new clones. The Check wants the baseline empty; this
+is the first tranche, not the whole job.
+
+### C3 — T10.3 step C1: parallel clang (`STATOR_COMPILE_JOBS`)
+
+**Before** (current serial path, `STATOR_COMPILE_JOBS` did not exist). Fixture: 20 modules × 8
+functions of arithmetic loops, **556,499 bytes** of C, 160 exported functions, output `1317`.
+Warm wall `2.41 s` (3 runs: 3.50 cold, 2.41, 2.41). Spans at jobs=1 after the change
+(`STATOR_COMPILE_TIMING=1`): `frontend/program=140ms gate=86 graph=1 lower=56 optimize=6
+verify=3 emit=10 link/clang=1976ms`.
+
+**After.** `packages/compiler/src/cli/compile-jobs.ts` partitions the emitted C into a shared
+unit plus up to N function units (column-zero function opens only — an indented `if (…) {` is
+not a function), each compiled by its own clang, then one link. `STATOR_COMPILE_JOBS=1` is the
+old single-tTU clang line and the `--keep-c` output is **byte-identical** (`cmp` clean).
+`STATOR_COMPILE_JOBS=8`: warm wall `1.14 s` (3 runs: 1.14, 1.14, 1.30). Spans:
+`link/compile=1465ms` (sum of the pool) `link/ld=151ms`.
+
+**Wall speedup `2.41 / 1.14 = 2.11×`** — above the 1.3× keep bar. A smaller 170KB / 49-function
+fixture does **not** clear 1.3× on this host (warm ~0.95 s either way): the unset default
+therefore still requires 8 functions and 40,000 characters (`PARALLEL_MIN_*`). An explicit
+value above 1 splits as soon as there are two functions, which is how the 15 unit tests in
+`packages/tests/unit/compile-jobs.test.ts` smoke the path. Invalid values are `STA0021`
+(`docs/DIAGNOSTICS.md`). `STATOR_COMPILE_TIMING=1` prints one `stator: timing …` line per span
+(`addStageTime` for the pool's compile vs. `link/ld`). C2 (parallel emit) and C3 (sharded
+lower/verify) were **not taken**: emit is 10 ms of a 2.4 s build and `hir/verify` is 3 ms.
+
+### C4 — T11.6 slice: `node:process`
+
+`packages/node/src/process.ts` lands the N1 members over `std/process`, `std/env` and `std/os`:
+`argv` (Node's single-executable shape), `env` (a startup snapshot from new `std/env.names()`,
+libc `environ`), `cwd()`, `exit()`, `exitCode` accessor, `pid`, `ppid`, `platform`, `arch`,
+`execPath`, `hrtime()` (`[seconds, nanoseconds]` as `number[]` — the HIR has no tuple;
+`hrtime.bigint` is a function-with-properties and stays not-yet), `memoryUsage()` (rss; the
+heap fields stay 0). `std/zig/env.zig` gains `jsrt_std_env_count` / `jsrt_std_env_name`.
+`require('node:process')` joins `module.ts`'s landed table.
+
+Proof: goldens `ts/node_process.ts` and `js/node_process.js` (13 `node_*` fixtures green under
+`--node`, including `process.exit(0)` at the end), decision tests
+`subset_node_process_{node_ts,node_js,ts}` (3 green; without `--node` the specifier is
+`STA1214`), `docs/NODE.md` regenerated to **12 / 68 (18%)** for `node:process`, selfhost
+baseline records the new `packages/node/src/process.ts` target (dynamic). The free `process`
+global rewrite and `stdout`/`nextTick` stay with their own slices (PR #168 has a broader
+version of this work; this slice is the task's member list only).
+
+### C5 — Task 6.3 noise floor: local measurement
+
+Five repeats of one commit (`8e8b12c`) of `pnpm run bench:record` on this host:
+
+| Run | stator geomean (ms) |
+| --- | --- |
+| 1 | 29.380 |
+| 2 | 27.924 |
+| 3 | 25.784 |
+| 4 | 29.497 |
+| 5 | 26.244 |
+
+Range spread `(max-min)/min = 14.4%`. Consecutive deltas: −5.0%, −7.7%, **+14.4%**, −11.0%.
+A sixth run **tripped the 20% gate at +53.9%** on the same commit (noise). Per-program spreads
+explain it: `json-roundtrip` 53.9% (5.8–9.0 ms) and `startup` 62.4% (5.4–8.8 ms) are
+millisecond-scale and dominate the geomean when they jitter.
+
+This host is **not** the machine that runs the weekly job (that is ubuntu-24.04 in
+`nightly.yml`). The Check wants the threshold set from that machine's spread; these numbers are
+local evidence only. The **20% gate is left unchanged**: the measured geomean spread (14.4%)
+sits under it, and raising the gate to hide the 53.9% outlier would be exactly the "alarm that
+fires on noise" failure the residue names. The outlier is a short-program jitter problem, not a
+threshold problem — if the weekly host's measured spread ever clears 20%, the gate moves then.
+
+### Gates run
+
+`pnpm install --frozen-lockfile` · `pnpm run typecheck` · `pnpm run lint` · `pnpm run test`
+(798) · `pnpm run dupes` (no new clones; baseline 180→171) · `node scripts/check-js-sources.ts`
+· `pnpm run docs:node` + `pnpm run test:node-coverage` · `jactionlint` · `pnpm run test:selfhost`
+(with `--update` for the new `process.ts` target). Not run here: `pnpm run ci` in full
+(test262/asan/leak need the CI toolchain), `pnpm run test:golden` in full (a sample of
+`node_*` and `loop` fixtures was run).
+
+
+## 375. Integrate the outstanding local branches and refresh selfhost evidence (2026-10-23)
+
+The integration preserves the commits from local `main`, `b1-class-surface`,
+`c1-tooling-ci`, and the uncommitted anonymous-default-class work in `d1-class-redo`.
+The latter is already covered by B1; its merge changes no source. The emitter conflicts
+are resolved in T24's modules rather than restoring the old monolithic `index.ts`.
+Existing `ancestry`, call-slot, loop, and module-state helpers are reused. The clone
+baseline shrinks to 143 clones with zero new clones; no fingerprints are added.
+
+The first full `pnpm run ci` passed 800 unit tests, the runtime print corpus,
+967 subset fixtures (936 passed, 31 expected-fail, 0 failed), and all 471 goldens,
+then exposed a stale selfhost count: `STA1214` 1844 → 1879. A separate
+`node src/cli/main.ts explain --json` in `packages/compiler` on the original local
+`main` (`17e42fb`) already reports 1849. The integrated tree reports 1879; its added
+CLI code brings package/global/process/QualifiedName and other not-yet diagnostics.
+The verdict remains `not-yet`, with `STA1207: 1` and `STA1213: 2` unchanged.
+`node packages/tests/selfhost/run.ts --update` records the measured count under
+§9 Task 6.19's explicit growth policy and passes all 15 targets plus std/node smoke.
+
+The same section still called permission to record growth an open question immediately
+after documenting the creator's decision allowing it (note 306). That stale sentence
+is removed, and AGENTS.md's command comment is aligned with the normative policy.
+No task or phase is newly declared complete by this integration.
+
+SonarCloud's two new reliability findings were default `.sort()` calls in the
+`std_env` golden. One shared explicit UTF-16 comparator preserves Node's default
+ordering independently of locale; `node packages/tests/golden/run.ts --filter std_env`
+prints `golden: 1 fixtures — 1 passed, 0 failed`.
+
+The ready PR also exposed an older pinned `pyrlyn/ci` action in `ci.yml`: the
+`no-pinned-ci` job rejected `macos-runner@4b5b547…` (run 39997145944,
+job 120563580600). Its reference now uses `@main`, applying the existing #158
+policy to the action as well as the reusable workflow; no check is bypassed.
+
+The action receives the same file-and-reference-specific `jactionlint` ignore as the
+two existing shared workflow callers. All other `unpinned-uses` findings remain errors;
+`mise exec -- jactionlint --sarif-hide-baselined` passes with an empty baseline.
+
+The ready PR then waited on Snyk/SonarCloud jobs 120564959109/120564959561:
+GitHub reported their labels as `["xcode-27-local"]`, while the repository's
+`actions/runners` endpoint returned `total_count: 0` and no repository `CI_RUNNER`
+variable existed. The current shared `snyk.yml` and `sonarcloud.yml` both use
+`${{ vars.CI_RUNNER || 'xcode-27-local' }}`. Set the supported repository override
+`CI_RUNNER=ubuntu-latest` and document it in TOOLCHAIN.md. This supplies a hosted
+runner to the unchanged checks; it does not skip them or change their gate policy.
+## 376. F1 residues: string exotic index, dropped-`as` spread; `#n in o` already landed (2026-10-23)
+
+**Plan:** §8 step 12 residues. Originally numbered 375 on `f1-residues`; renumbered 376 because note 375 records the first integration PR.
+Touches: `runtime/src/jsrt_shape.c`, `compiler/src/frontend/{gate,types}.ts`,
+`compiler/src/codegen/helpers.ts`, `compiler/src/hir/verify.ts`, goldens
+`{ts,js}/string_exotic_index`, `{ts,js}/spread_dropped_as`, subset `subset_string_index_*` and
+the flipped `subset_spread_unknown_cast_*`, `docs/SUBSET.md`, `plan.md` residue lines.
+
+**F1 — string exotic index (closed).** Before: `a[0]` where `a` is a string through an Unknown
+receiver answered `undefined`; Node answers the character. `jsrt_get_prop` handled string
+`length` and the prototype methods but not the string exotic index (plan-notes 372 residue).
+The same arm now answers a canonical array index below `length` with the UTF-16 unit at that
+position, and `jsrt_has_prop` agrees. The gate accepts a typed-string index (`s[0]`), which
+`indexGetCall`/`indexSetCall` route through the same dynamic entry; the verifier's
+`checkIndexable` admits `string`. Goldens `string_exotic_index` both modes match Node
+byte-for-byte (js also covers string keys and non-canonical spellings). Decision tests
+`subset_string_index_*` are `dynamic` (the read is `string | undefined` under
+`noUncheckedIndexedAccess`).
+
+**F2 — `#n in o` (already landed, residue struck).** The brand check lowers to `instanceof`
+against the lexically-resolved declaring class (`brandDeclaringClass`); goldens
+`class_private_accessor` and `class_private_redeclare` both modes, subset
+`subset_class_private_accessor_*` `dynamic`. plan.md step 12(b) residue no longer names it.
+
+**F3 — dropped `as` assertion's unknown operand in object-literal spread (closed).**
+`{ ...(o as { x: number }) }` stayed `STA1214` because `objectLiteralIsDynamic` was false (the
+literal types the asserted shape) while the lowering drops the non-checkable `as` and spreads
+the unknown operand. The result now takes the dynamic path: `objectLiteralIsDynamic` is true
+when any spread reads a run-time key set (a dropped-`as` unknown), and the gate's unknown-spread
+arm accepts it. The shape-table `assign` already copied the run-time keys (plan-notes 297). Array
+spread of a dropped `as` already worked and rides the same fixture. Goldens
+`spread_dropped_as` both modes; `subset_spread_unknown_cast_*` flipped `not-yet` → `dynamic`.
+
+**Left open (not landed here).** Step 12(a) nested patterns / rest-in-pattern / default-in-pattern
+(`isSimpleBindingPattern` still refuses a nested binding element; the gate message is the shallow
+destructuring refusal, not a named residue). Step 12(f) homeless generics outside a call-argument
+position already carry precise per-shape refusals (`subset_generic_homeless_*`);
+`const f = <T>(x: T) => x` at module scope already specializes under the const home
+(`subset_generic_arrow_*` `static`). No new diagnostic codes.
+
+**Checks (F3 landing run).** typecheck + lint clean. `test:golden --filter=string_exotic_index`
+2/2, `--filter=spread_dropped_as` 2/2, `--filter=class_private` 6/6. `test:subset
+--filter=string_index` 2/2; full subset/golden reported below with the commit.
+
+
+## 377. Follow-up integration of the completed D1/F1 worktrees (2026-10-23)
+
+The creator requested waiting for the worktrees' remaining work after PR #176.
+The final inspected heads are `d1-class-redo` at `2bc9ead` and `f1-residues` at
+`7a25fbe`: both have clean indexes/worktrees, stable committed changes, and no
+compiler, runtime-build, or test processes running in either worktree.
+
+D1 independently replayed B1's class fixes. Comparing `b1-class-surface` with D1
+shows identical frontend type mapping, HIR nodes/verifier, rewrite, explain, and
+class fixtures; its gate/test differences only update the emitter path in comments.
+D1's expression/slot/module emitter files also match the integrated `main` exactly.
+No class implementation or test is duplicated or reverted in this follow-up.
+
+F1 contributes the string-exotic-index and dropped-assertion-spread commits
+`c9be1cc` and `7a25fbe`, preserving their human authors. Frontend conflicts use
+`frontendTypes` for the shared helpers already adopted by #176. The subset matrix
+keeps the anonymous-default-class support from #176 alongside the new spread
+support. The roadmap records both accessor compounds and private-brand checks as
+landed. F1's original note 375 is renumbered 376 to preserve #176's note 375.
+
+Initial integration checks: strict typecheck and lint pass; `pnpm run dupes`
+reports 143 clones and zero new clones, with the baseline unchanged. The full
+`pnpm run ci` gate is run on the combined tree before merge; its final output is
+recorded in the follow-up PR.
+
+The first full run found three unit expectations for the old string-index and
+unknown-object-spread refusals. They now assert the newly supported constructs;
+a separate assertion still requires STA1214 for `{ ...null }`, preserving the
+adjacent unsupported case. All 800 unit tests pass. The standard selfhost generator
+records a reduction from 1879 to 1831 STA1214 diagnostics, with the other codes
+and `not-yet` verdict unchanged; its 15 targets and std/node smoke pass.
+
+## 378. Reproducible Node API coverage across Linux and macOS (2026-10-23)
+
+PR #177's Linux `impact select` fallback passed the feature suites but failed the
+generated Node-document drift check; the complete macOS gate passed. Reproducing
+the generator on official Node v26.7.0 Linux x64 in Colima exposed the mechanism:
+`node:constants` has six Linux-only exports and two macOS-only exports, while
+`fs.lchmod` and `fs.lchmodSync` are functions on macOS and exported `undefined`
+values on Linux. The old dashboard therefore counted 2364 members on macOS and
+2368 on Linux and could not satisfy the same committed-document check on both.
+
+The dashboard now includes the measured union of both public surfaces: 2370
+members, including all 237 constants. Platform-only members carry an explicit
+platform kind. The generator validates each measured export's host variant and
+the exact Node pin, requiring the inventory to be refreshed when either changes.
+It still enumerates all other live exports and compares the complete generated
+document byte-for-byte; no member or stale-document check is skipped. The Phase-11
+coverage contract in `plan.md` records this cross-platform denominator.
+
+Proof: `pnpm run docs:node` followed by `pnpm run test:node-coverage` passes on
+macOS arm64. Running the generator with official `node:26.7.0-bookworm-slim`
+Linux x64 (image digest
+`sha256:4db36457f406501e6f608802e5da617e5fbd0e80b75901b6a09de1ae5a667d32`)
+produces an identical document (`diff -u` exits 0), and its read-only `--check`
+reports `node-coverage: docs/NODE.md is current`. Strict typecheck and lint pass.
+
+## 379. Nested binding patterns land; rest/default-in-pattern stay not-yet (2026-10-24)
+
+H1 (step 12a residue): `isSimpleBindingPattern` now accepts nested object/array
+patterns recursively (`const { a: { b } } = o`, `function f([x, [y]])`,
+`const { a: [b] } = o`). `bindPatternElement` recurses through
+`lowerBindingPattern` for nested elements; `lowerPatternRead` accepts
+`ts.BindingName` so the field read types the nested pattern. The gate's refusal
+message now names the remainder precisely: "rest or default in a destructuring
+declaration/parameter is not yet supported" instead of the vague
+"destructuring declarations/parameters are not yet supported".
+
+Decision tests both modes: `subset_nested_destructuring_{,array,mixed}_{ts,js}`
+(static for object nesting, dynamic for array nesting matching the existing
+array-destructuring verdict). Residue rows `subset_nested_destructuring_{rest,default}_{ts,js}`
+carry `@verdict: not-yet` + `@code: STA1214`. Goldens
+`tests/golden/ts|js/nested_destructure.*` match pinned Node byte-for-byte.
+
+H2 (homeless generic arrow) left open: `let`-homed / nesting slice needs
+specialization keying without a single parameter type (canonical-tuple blocked
+on dynamic-tier value semantics). The vague message sharpening is deferred with
+that slice.
+
+Gates: typecheck clean; lint pre-existing site/astro failure unrelated;
+`test` 800/800; `test:subset` 948 passed, 31 expected-fail, 0 failed;
+`test:golden --filter=nested_destructure` 2/2.
+
+## 380. Rest-in-pattern and default-in-pattern land (step 12a remainder) (2026-10-24)
+
+I1 (step 12a residue after H1's nested patterns, plan-notes 379): `isSimpleBindingPattern`
+now accepts rest elements (`...r`, identifier name only) and defaults (`= e`) at every
+nesting level. `bindPatternElement` wraps the field/index read in a `conditional` when the
+element carries a default — the read lands in a scratch, the default stays lazy behind the
+alternate arm, matching a parameter default's semantics. Array rest (`const [x, ...rest] = a`)
+lowers to `array-op slice` from the rest index. Object rest (`const { a, ...rest } = o`)
+expands the SOURCE layout minus the bound keys into an `object-literal`; the checker's
+`Omit` mapped type is not a layout `shapeTypeToHType` accepts (its symbol is the binding), so
+the expansion computes `Omit` here and types each read from the source field, not from
+`typeAt(restName)` (which would drag the file dynamic). Destructured parameters unpack
+BEFORE the body lowers, so the body sees the rest binding's constructed type.
+
+Still `STA1214`, each named at its gate site: a rest PATTERN (`...{ a }` / `...[a]`), a
+computed property name, object rest over a value with no fixed layout (optional property or
+untyped source), and object rest over a type with methods.
+
+I2 (homeless generic arrow, `const`-in-block / `let` slice) left open: `genericArrowKey`
+keys a homed arrow on its `const`/`let` variable name, but a block-scoped binding has no
+module-level home to lower the specialization under (the specialization is a file-level
+function). Forcing a key would emit a specialization that cannot see the block's bindings —
+plan-notes 280 already refuses the same capture case. A sharp not-yet for
+"`let`/block-scoped generic arrow" would need a new gate site; left with the existing
+"a generic function expression or arrow is not yet supported" rather than inventing a wrong
+specialization key.
+
+I3 (`C.name` as a string read of the descriptor) left open: `gate.ts` refuses every opaque
+class use (`using a class as a value`) uniformly. A `C.name` fold to a string literal would
+need the class descriptor's `name` without building a class object — the descriptor already
+carries the display name (`classDisplayName`), but the gate's class-value arms fire before any
+member read is typed, and splitting `C.name` out of the opaque-use refusal would leave
+`C.length`, `C.prototype` and `C.static` on the old message with no principled boundary.
+The class object must provide: a value holding the constructor function + prototype +
+static table, so member reads on it dispatch. Not built in this pass.
+
+Gates: typecheck clean; lint clean; `test` 800/800; `test:subset` 957 passed, 31
+expected-fail, 0 failed; `test:golden` 479/479 (new `destructure_rest_default` ts+js
+byte-for-byte vs pinned Node).
+
+## 381. Tooling-left batch: clone baseline tranche, T10.3 step-5 CI smoke, Task 6.3 noise-floor notes (2026-10-24)
+
+**Plan:** §9 Tasks 6.16, 6.3 noise floor + Phase-6 Check fuzzing clause; §11b T10.3 step 5.
+Branch `j1-tooling-left`. Host for every measurement below is **darwin-arm64, Apple M3 Max,
+Node v26.7.0** — not the weekly job's ubuntu-24.04 runner.
+
+### J2 — T10.3 step 5: `STATOR_COMPILE_JOBS=2` CI smoke
+
+`ci.yml` gains one non-required job, **`compile jobs smoke`** (`compile-jobs-smoke`). It builds
+the runtime archive, then with `STATOR_COMPILE_JOBS=2` (1) builds and runs the multi-module
+golden fixture `packages/tests/golden/ts/modules` (`init c / init b / init a / 30 / base=20`)
+and (2) runs `packages/tests/unit/compile-jobs.test.ts`. The unit file also gained a
+`NATIVE_ONLY` smoke that itself spawns that build with `STATOR_COMPILE_JOBS=2`, so the
+parallel path is exercised by `pnpm run test` as well. Default CI stays serial for log
+readability. Required checks (`static analysis`, `frontend (linux/x64)`,
+`frontend (windows/x64)`, `frontend (windows/arm64)`, `pipeline / gate`) keep their names and
+steps. `jactionlint` clean. `docs/TOOLCHAIN.md` documents the smoke beside the
+`STATOR_COMPILE_JOBS` row.
+
+Local proof: `vitest run packages/tests/unit/compile-jobs.test.ts` — **16/16 green** (15 pure
++ the new smoke, 1.97 s for the build). Job-level CI green is observable after merge.
+
+### J1 — Task 6.16 second tranche: clone baseline toward zero
+
+Shared helpers at the responsible layer, no behavior change (unit **801** green; runtime rebuild
+clean):
+
+| Helper | File | Family it removes |
+| --- | --- | --- |
+| `emptyBlockAt` | `lower/index.ts` | empty-statement / type-alias / bodiless-overload empty block |
+| `assignOperatorKinds` | `lower/index.ts` | compound + logical assignment detection (2 sites) |
+| `substitutedTypeArguments` | `lower/index.ts` | type-args substitution before `enqueueSpecialization` (4 sites) |
+| `genericNamesakeOf` | `lower/index.ts` | generic-class namesake lookup (method call + accessor) |
+| `declaringClassOfProperty` | `lower/index.ts` | receiver class + accessor owner (`accessorOwner` / `hasAccessorHalf`) |
+| `methodCallAtSlot` + `missingMethodSlot` | `lower/index.ts` | private / named method-call construction after slot resolve |
+| `parameterDefaults` | `frontend/generics.ts` | type-parameter default list for `finishTuple` (2 sites) |
+| `isSingleConstList` | `frontend/generics.ts` | single-`const` declarator check (2 sites) |
+| `unifyNamedMembers` | `frontend/generics.ts` | fields/methods unify (2 sites) |
+| `collect_varargs` | `runtime/src/jsrt_array_ops.c` | va_list collect (push/unshift/concat/splice) |
+| `find_result` | `runtime/src/jsrt_array_ops.c` | find / findIndex / findLast / findLastIndex |
+| `array_search_forward` | `runtime/src/jsrt_array_ops.c` | indexOf / includes forward search |
+| `array_half_open_range` | `runtime/src/jsrt_array_ops.c` | slice / fill relative range |
+
+`.jscpd-baseline.json` **shrank 143 → 129 fingerprints** (`pnpm run dupes:baseline` in the same
+change). `pnpm run dupes` green at 129 clones / 2.0%. The Check wants the baseline empty; this is
+the second tranche, not the whole job. Remaining leaders: `lower/index.ts` (operator maps, dispatch
+chains, substitute-HType object walk), `jsrt_array_ops.c` switch cases, `gate.ts` / `generics.ts`
+`ts.is*` lists, `jsrt_string_ops.c`, `hir/verify.ts`, `jsrt_print.c`, `jsrt_date.c`.
+
+### J3 — Task 6.3 noise floor + Phase-6 Check fuzzing clause
+
+**Noise floor (no new bench run this batch).** plan-notes 374 already measured five repeats of one
+commit on darwin-arm64 (Apple M3 Max — **not** the weekly ubuntu-24.04 runner): stator geomeans
+25.784–29.497 ms, **14.4%** range spread; a sixth tripped the 20% gate at +53.9% on short-program
+jitter. The **20% gate is unchanged**. The Check still wants the spread measured on the machine
+that runs the weekly job; that measurement is not run here.
+
+**Fuzzing clause — cited.** `nightly.yml` runs `pnpm run differential -- --minutes=60`. Run
+**40072874719** (2026-10-24T07:07Z, schedule, `main`, completed success, 1h11m) logged
+`differential: seed=50 modes=ts,js` then `differential: 5177 cases — 0 divergences` after a full
+hour (07:08→08:08). That is the Phase-6 Check's *≥1 h nightly with zero unexplained divergences*
+clause, on the nightly run's own output.
+
+### Gates (J1+J2)
+
+`pnpm install --frozen-lockfile` · typecheck · lint · `pnpm run test` (801) · `pnpm run dupes`
+(129, baseline 143→129) · runtime rebuild · jactionlint (J2). Not run here: `pnpm run ci` in full.
+
+## 382. T27 narrow slice (class-object `C.name` + static reads) and T32 confirmed already landed (2026-10-24)
+
+**Plan:** T27 (plan.md T27–T34 card, §8 step 12(d)/(e) class-object residue) narrow slice, and
+T32 (abstract/virtual accessors) verification.
+
+**T32 — already landed, card was stale.** Abstract accessors (`abstract get`/`set` throw-stubs,
+plan-notes 275 model), pair-whole override dispatch (get-only/set-only/pair), and base-typed
+virtual accessor calls all landed with plan-notes 283 and the 12(d) slices (plan-notes 373).
+Evidence already in-tree: goldens `ts|js/abstract_accessor`, `ts/inherited_accessor`; subset rows
+`subset_abstract_accessor_*` (`static`) and `subset_accessor_override_*` (`static`/`dynamic`);
+SUBSET.md "Classes with getters/setters" row. No code change here. T32's Check is met by the
+existing tree.
+
+**T27 narrow slice — landed.** Docs first (`docs/VALUE.md` §4.26 class-object model: closure +
+`klass`, identity, statics table, v0 read surface; `docs/SUBSET.md` new "Class-object reads" row).
+Gate: `C.name` / `K.name` (class name, `const K = C` alias chain, bound class expression) is
+accepted in the `classConstructorTypeOf` arm and in the in-place helpers (`namesAClassInPlace`,
+`isClassAliasUseInPlace`) so the receiver identifier is not separately refused. Lowering folds the
+read to a string-literal of `classDisplayName` (`*default*` → `default`) — no class object is
+built. `C.static` / `K.static` is the existing alias erasure, unchanged. `C.prototype` /
+`K.prototype` keeps its named code ("the prototype surface", Phase 8). Fixtures:
+`subset_class_object_name_{ts,js}` (`static`), `subset_class_object_prototype_{ts,js}`
+(`not-yet STA1214`), goldens `ts|js/class_object_name`, `class_default_anon` both modes now also
+read `Anon.name`/`Named.name`. `gate.test.ts` pin updated (`C.name` now `[]`).
+
+**Not in this change (T27 remainder, recorded on the card).** Materializing a class object as a
+value (`f(C)`, `console.log(K)`, `typeof C`, `K.length`, `C === D` observability), static reads
+through a *materialized* class value (`ClassValue` + `JSRTClass.statics` population /
+`staticProps`), `this` in a static method (step 4 of the card), and `C.prototype` itself. HIR
+`ClassValue`/`NewValue`/`InstanceOfValue` and the runtime class-object entries remain declared and
+emitted but unreachable from the gate for those surfaces (plan-notes 283).
+
+**Gates.** typecheck clean · lint 0/0 + oxfmt clean · `pnpm run test` 801/801 ·
+`pnpm run test:subset` 973 fixtures — 942 passed, 31 expected-fail, 0 failed (was 969; +4 new).
+Not run here (disk/time): `pnpm run test:golden`, `pnpm run ci` in full.
+## 383. T29: rest patterns, static computed keys, dynamic object rest (2026-10-24)
+
+T29 (step 12a remainder after 379/380). Three shapes land:
+
+1. **Rest PATTERN** (`const [...[a]] = arr`, nested `const { items: [...[head]] } = xs`):
+   `bindArrayRest` / `bindObjectRest` compute the remainder (slice / object expansion) and
+   recurse into `lowerBindingPattern` instead of binding one identifier. An object rest
+   PATTERN (`...{ a }`) is a TypeScript parse error (the parser only accepts
+   `... BindingIdentifier` in object rest), so that spelling never reaches the gate — the
+   lower path still handles it if a future parser admits it.
+2. **Computed keys in binding patterns**, static-key only under the step-22 rule
+   (`bindingElementKey` mirrors `computedKeyStaticName`): identifier, string/number literal,
+   or a literal-typed computed key is the field the direct spelling writes. A runtime name
+   stays `STA1214` ("a computed key with a runtime name in a destructuring declaration").
+3. **Object rest over a dynamic/unknown source** routes through the shape table (the spread
+   twin): `Object.assign({}, src)` then `delete` of each bound key. Result is Unknown, which
+   is what `Omit` over an unknown source is. Still not-yet (each named): object rest over a
+   type with methods, and object rest over an array.
+
+`isSimpleBindingPattern` now takes a checker (computed keys need `computedKeyStaticName`) and
+accepts rest patterns. The STA4032 labeling vehicle moved from a rest pattern to a runtime-named
+computed key (`lower-mode-label.test.ts`).
+
+Decision tests: `subset_nested_rest_{pattern,array_pattern}_{ts,js}`,
+`subset_destructure_computed_{static,runtime}_*`, `subset_object_rest_{dynamic,untyped}` flipped
+to `dynamic`. `docs/SUBSET.md` object-destructuring row updated.
+
+T28 left open: the specialization-key rule for a block-homed generic is **not sound** as
+currently architected (specializations are file-level functions; a block-scoped binding has no
+module-level home — plan-notes 280 already refuses the capture case). Documenting that rule in
+`docs/HIR.md` and sharpening the remaining named refusals is the next slice.
+
+Gates: typecheck clean; lint clean (site installed); `gate`/`lower-mode-label` unit tests
+83/83; `test:subset` run in this batch. Full `test`/`test:golden`/`pnpm run ci` not run here
+(runtime archive absent on this worktree).
+## 384. N1 batch: Task 6.16 clone tranche + Task 6.3 noise floor host note (2026-10-24)
+
+**Plan:** §9 Tasks 6.16 (clone baseline toward zero) and 6.3 step 7 (noise floor).
+Branch `n1-batch`. Host for every local measurement: **darwin-arm64, Apple M3 Max, Node v26.7.0**.
+
+### T30 — Task 6.16 third tranche: named families
+
+Shared helpers at the responsible layer, no behavior change (unit **801** green; runtime rebuild
+clean with `-Wall -Wextra -Werror`):
+
+| Helper | File | Family it removes |
+| --- | --- | --- |
+| `hasModifierKind` | `frontend/export.ts` | export/default modifier predicates |
+| `SELF_NAMED_KINDS` + `bindsOwnName` | `frontend/generics.ts` | declaration/member name-binding `ts.is*` lists |
+| `SCOPE_BOUNDARY_KINDS` | `frontend/generics.ts` | scope-boundary `ts.is*` list |
+| `ANNOTATION_SITE_KINDS` | `frontend/types.ts` | annotation-site `ts.is*` list |
+| `opProblem` + `verifyReceiverOpShape` | `hir/verify.ts` | string-op / array-op receiver+arity+result checks |
+| `verifyShapeCoverage` | `hir/verify.ts` | object-literal field/method cover loops |
+| `char_index` / `relative_char_index` / `search_from` / `substr_range` | `runtime/src/jsrt_string_ops.c` | charAt/at/charCodeAt/codePointAt, indexOf/includes, slice/substring |
+| `DATE_GETTER_FIELDS` X-macro | `runtime/src/jsrt_date.c` | sixteen `DATE_GETTER(...)` invocations |
+| `append_quoted_escape` | `runtime/src/jsrt_print.c` | quoted UTF-16 / UTF-8 escape tails |
+| `walk_present` + `visit_*` | `runtime/src/jsrt_array_ops.c` | for_each/map/filter/some/every/flatMap walk skeleton |
+
+`.jscpd-baseline.json` **shrank 129 → 117 fingerprints** (`pnpm run dupes:baseline` in the same
+change). `pnpm run dupes` green at 117 clones / 1.9%. Remaining leaders: `lower/index.ts`
+(operator maps, dispatch chains), `jsrt_array_ops.c` dispatch switch + enum, `gate.ts` SyntaxKind
+case lists, `jsrt_numeric.c`/`jsrt_print.c` scalar tails, `MATH_ARITY`/`COLLECTION_ARITY` tables.
+
+### T31 — Task 6.3 noise floor: weekly-job host unreachable
+
+The Check wants a handful of repeats of one commit **on the machine that runs the weekly job**.
+That job (`nightly.yml`, `0 3 * * 0`) runs on a **GitHub-hosted `ubuntu-24.04` runner** — an
+ephemeral VM with no SSH endpoint from this workstation. No measurement was taken there and **no
+numbers are invented**. The **20% gate stands unchanged**, on the existing local spreads
+(plan-notes 246: 7.4%; 374: 14.4% geomean on darwin-arm64). Closing this residue still requires
+either a self-hosted runner for the weekly bench or a workflow_dispatch that records five repeats
+on the runner itself and posts the spread.
+
+### Gates (T30+T31)
+
+`pnpm install --frozen-lockfile` · `pnpm --dir site install --frozen-lockfile` · typecheck ·
+lint · `pnpm run test` (**801** green) · `pnpm run dupes` (**117**, baseline **129 → 117**) ·
+runtime rebuild. Not run here: `pnpm run ci` in full.
+## 385. T33 Ryū vendored and swapped; T34 bind left open (2026-10-24)
+
+Branch `o1-batch` (worktree `stator-o1`). Host: darwin-arm64, pinned Node 26.7.0.
+
+### T33 — Ryū shortest-round-trip printer
+
+Vendored **Ryū `v2.0`** (`72e18e8d14d4392a4a3261f37cde248e4fbedbec`) into
+`packages/runtime/vendor/ryu/` through `packages/runtime/vendor/update.ts` (new `ryu` entry;
+`strip: 'ryu/'` flattens upstream's `ryu/` drop so `#include "ryu/<file>"` resolves under
+`-Ivendor`). Files: `d2s.c`, `d2s.h`, `d2s_full_table.h`, `d2s_intrinsics.h`, `common.h`,
+`digit_table.h`, `ryu.h`, both upstream licenses. `VENDOR.md` pins the tag and commit.
+`update.ts --check` is green for all three vendors.
+
+`shortest_digits()` in `runtime/src/jsrt_print.c` now calls `d2s_buffered` once and parses
+Ryū's `D[.DDD]E±X` shape (uppercase `E`, no `+` on a non-negative exponent, no point when
+there is one digit) into the same `(s, k, n)` the `%.*e` round-trip search produced — up to
+18 `snprintf`+`strtod` pairs per number removed. Sign/NaN/Inf/±0 stay in `format_double`.
+`justfile` `VENDOR_INC` gains `-Ivendor`. No `--check`/build temp files left behind.
+
+Gates: `pnpm run runtime` clean (Boehm); `pnpm run test:runtime` —
+`runtime: print corpus matches Node`; `pnpm run test:golden` — **475/475 passed**.
+Docs: `docs/TOOLCHAIN.md` (library table + the "not yet required" bullet),
+`AGENTS.md` repo map, `plan.md` §12 / candidate table / v4.86.
+
+**Plan contradiction recorded:** plan.md §12 had Ryū as a ladder rung gated on Task 6.3's
+measured noise floor (owner's call, plan-notes 190). The directed T33 card landed the vendor
+drop and the swap without a §12 before/after — the corpus already matched Node byte-for-byte,
+so this is a pure speed change with no correctness risk. §12's Ryū rung is retired.
+
+### T34 — `Function.prototype.bind` two-slot env — NOT landed
+
+Left open. Design is settled (docs/VALUE.md §4.16): a bound `JSRTClosure` whose `env` holds
+the receiver in slot 0 and the target in slot 1, one shared thunk that inserts slot 0 at
+`argv[0]`, `has_receiver` false so the call site does not shift. Partial args need slots 2+
+(`env->count - 2`); `new BoundF()` must construct through the **target** (target's prototype,
+bound this ignored, bound args prepended) — `construct_function` currently builds the object
+from `jsrt_function_prototype(ctor)` of the bound closure itself, which is wrong for bind, so
+the construct path needs a bound-thunk discriminator.
+
+Still to do: runtime `jsrt_function_bind` + thunk; `jsrt_get_prop` answers `bind` (and
+`call`/`apply`, plan §8 step 9a) on any closure via `jsrt_bound_method`; gate admits the
+member on a function-typed receiver in both modes (`functionMemberResult` currently accepts
+own properties only in `js`); flip `subset_function_bind_{ts,js}` off not-yet; goldens
+`bind_receiver` / `bind_partial_args` / `bind_new` in both modes; do not regress
+`has_receiver` method values (§4.16). Plan §8 step 12(e) and 9a stay open.
+## 387. T27 `typeof C` fold + T30 clone tranche (2026-10-25)
+
+**Plan:** T27 remainder (plan.md T27–T34 card) narrow slice, and T30 (Task 6.16) third tranche.
+
+### T27 — `typeof C` / `typeof K` folds to `"function"`
+
+Docs first (`docs/VALUE.md` §4.26 read table; `docs/SUBSET.md` Class-object reads row).
+Gate: `namesAClassInPlace` and `isClassAliasUseInPlace` accept `typeof C` / `typeof K` / `typeof Expr`
+beside the `C.name` fold — no class object is built. Lowering: the generic-`typeof` fold and the
+new class fold share one `'function'` string-literal arm (`classObjectOwner`, now also resolving
+`innerClassExpression`). Fixtures `subset_class_typeof_{ts,js}` flip `not-yet` → `static`; goldens
+`ts|js/class_typeof` (declarations, aliases, chained aliases, class expressions, subclass,
+default export) byte-for-byte vs pinned Node. `C.prototype` stays `STA1214` (Phase 8). The opaque
+value surface (`f(C)`, `console.log(K)`) stays `STA1214` — materialization is the card remainder.
+
+**Gates (T27).** typecheck clean · lint 0/0 + oxfmt clean · `pnpm run test` 801/801 ·
+`pnpm run test:subset` 973 — 942 passed, 31 expected-fail, 0 failed (typeof rows now assert
+`static`; the expected-fail count is unchanged because those fixtures were never marker-fails) ·
+`node packages/tests/golden/run.ts --filter=class` **56/56** (includes `class_typeof` both modes).
+
+### T30 — clone baseline 129 → 125
+
+Shared structure at the responsible layer, no behavior change (unit **801** green; `rewrite.ts`
+cases merged, not re-wrapped):
+
+| Change | File | Family it removes |
+| --- | --- | --- |
+| merge `new`/`console-log` + `date-*`/`global-call`/… (args-only) case arms | `passes/rewrite.ts` | 3-way args-rewrite clone |
+| merge `new-value` + `array-op`/`method-call`/… + `promise-method` (target+args) | `passes/rewrite.ts` | 3-way target+args clone |
+| merge `method-value` into the `instanceof`/`field-access`/… (target-only) arm | `passes/rewrite.ts` | target-only twin |
+| `genericValueExempt` predicate | `frontend/gate.ts` | generic-as-value refusal trio |
+| `bindOneParameter` | `lower/index.ts` | function + `abstractMemberStub` parameter bind |
+
+`.jscpd-baseline.json` **shrank 129 → 125 fingerprints** (`pnpm run dupes:baseline` in the same
+change). `pnpm run dupes` green at 125 clones / 2.0%. The Check wants the baseline empty; this is
+the third tranche, not the whole job. Remaining leaders: `jsrt_array_ops.c` (method switch,
+forEach/some/every walks), `lower/index.ts` (Date/String/Array receiver-op prologues, operator
+maps), `gate.ts` SyntaxKind accept lists, `jsrt_string_ops.c`, `hir/verify.ts`, `jsrt_print.c`,
+`jsrt_date.c`. A `withTableReceiverCall` helper for the Date/String/Array prologue was drafted and
+dropped unused (lint) — it is the next obvious cut.
+
+**Gates (both).** `pnpm install --frozen-lockfile` · `pnpm --dir site install --frozen-lockfile`
+(lint type-checks `site/`) · typecheck · lint · `pnpm run test` (801) · `pnpm run test:subset` ·
+`pnpm run dupes` (125, baseline 129→125) · goldens `--filter=class` (56/56). Not run here:
+`pnpm run ci` in full, `pnpm run test:golden` beyond the class filter.
+
+## 388. Creator-directed std threads: implementation contract (2026-10-24)
+
+The basic modules already exist (packages/std/src, docs/STD.md). T10.2 is the missing part of
+the creator's requested std library. The existing FFI refuses closures (frontend/extern.ts),
+and the GC roots hook only visits the collector thread's TLS frames (jsrt_gc.zig); merely
+adding pthread_create would be unsound. docs/THREADS.md records the required bridge and roots
+registry before implementation. Reuse pthreads from libc and the pinned Zig stdlib rather than
+a new scheduler or dependency. Keep foreign C callbacks undefined. Arguments travel through
+a captured zero-argument closure. Filesystem Promise twins initially spawn one thread per call;
+a bounded reusable pool is deferred and not claimed. This explicitly adjusts Design B's pool
+wording without disguising synchronous I/O as asynchronous. T10.2 remains open until its Check
+and the full local CI gate pass.
+
+T10.2's `std/fs` module now imports the typed thread wrapper for its Promise twins. `explain`
+classifies the whole imported graph, so the four sync filesystem subset fixtures change from
+static to dynamic (29-row std slice: exactly those four mismatches before updating the declared
+verdicts). This is the private boxed bridge's presence, not a loss of native numeric lowering;
+STD.md and SUBSET.md record the observable change. The implementation also reuses the existing
+Zig frame helper from typed-array code and protects the shared spread-order descriptor cache.
+
+Selfhost records the two new std targets and the documented fs graph verdict. Compiler
+counts remain unchanged (STA1207 1, STA1213 2, STA1214 1887): the private symbol allowlist uses
+a plain array/includes rather than Set(iterable), which self-compilation cannot yet lower.
+`test:selfhost -- --update` builds/runs all 11 std modules plus 10 std goldens, and all five
+Node wrapper modules plus 13 Node goldens. No diagnostic allowance was increased.
+
+**Check completed 2026-10-25:** `mise exec node zig just -- pnpm run ci` exited 0.
+808 unit tests; subset 968 passed / 31 expected-fail / 0 failed; 483/483 goldens both plain
+and ASan/UBSan; all six native concurrency tests passed under sanitizers, including forced
+collection across four workers. Leak probes plateaued at 4384/4480/4432 KB (65536 KB cap).
+T10.2's card and full command evidence moved to done.md; normative Design B stays in plan.md.
+
+## 389. Reusable filesystem workers (2026-10-25)
+
+The creator requests the pool deferred by T10.2. Reuse `jsrt_thread.zig`'s pthread workers,
+active-job roots, completion queue and main Promise settlement; the shared-package search found
+no Stator GC-aware executor to reuse. A separate third-party pool would
+still need these lifecycle/GC hooks and adds no useful primitive over libc pthreads. Extend
+the private spawn ABI with a pooled flag, preserving the public dedicated-thread API. The
+filesystem wrappers remain TypeScript and submit to a lazy pool capped at four OS threads.
+Pending jobs queue without blocking main; the worker count is bounded, not queue length.
+Each completed job runs the existing std cleanup and clears transient roots before waiting.
+Main stops/joins workers only once both ordinary microtasks and external work are drained;
+a later drain may start a fresh pool. Tests must measure actual reuse and bounded creation.
+
+The direct filesystem submission helper removes the intermediate `Thread<T>` wrapper with
+its unknown handle field. `explain` now reports static for the six sync/descriptor/Promise
+filesystem fixtures in both modes (exactly those six mismatched the old dynamic expectations).
+The private boxed ABI remains in use; this corrects the earlier explanation in note 388 that
+its mere presence makes a graph dynamic. Update those verdicts and the fs selfhost baseline;
+no compiler diagnostic allowance increases.
+
+**Check completed 2026-10-25:** `mise exec node zig just -- pnpm run ci` exited 0: 809 unit
+tests, subset 968 passed / 31 expected-fail / 0 failed, 483/483 goldens both plain and under
+ASan/UBSan, seven sanitized concurrency fixtures, all selfhost/coverage/leak gates. The pool
+probe proves 32 sequential writes create one worker and 96 reads stay within four workers;
+error recovery, forced GC, reuse across waves and shutdown/restart all passed. T10.2a's card
+and full command evidence moved to done.md.
+
+## 390. T11.6: `node:process` grows to the global `process`, `stdout`/`stderr` and `nextTick` (2026-10-25)
+
+**Merge.** Written on 2026-10-19 as note 361 on the #168 branch; main then took 361 for Task 6.31
+and landed a smaller `node:process` slice in note 374 (`hrtime()` included). This note is the
+branch rebased on that: 374's `hrtime()` and its `argv` construction are kept, and the members
+below are added on top.
 
 **Slice, not the Check.** `packages/node/src/process.ts` is the members `tsc` reads, over
 `std/process`, `std/env`, `std/os` and `std/io`. The Check (`tsc --version` / `tsc -p`

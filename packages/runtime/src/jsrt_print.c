@@ -24,6 +24,8 @@
 
 #include "jsrt_mem.h"
 
+#include "ryu/ryu.h"
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,50 +41,32 @@
  *   *k     — how many digits there are
  *   *n     — position of the decimal point, i.e. value == 0.digits * 10^n
  *
- * ponytail: the digits come from a round-trip search over "%.*e" rather than from Ryu,
- * which is not yet vendored (no network access; plan.md §5 Task 2.5). This is correct but
- * does up to 18 snprintf+strtod pairs per number. Replacing it means calling Ryu's
- * d2s_buffered and parsing the same "d.dddde+XX" shape — this function's contract, and every
- * caller below, stays exactly as it is. That is why the split lives here.
- *
- * The search is over SIGNIFICANT digits, so the shortest p that round-trips gives the
- * smallest k -- which is precisely what step 5 asks for. */
+ * The digits come from vendored Ryū (`vendor/ryu/`, docs/VALUE.md §3.1) — one call to
+ * `d2s_buffered` instead of the round-trip search over "%.*e" this used to run (up to 18
+ * snprintf+strtod pairs per number). Ryū answers `D[.DDD]E±X` (no plus on a non-negative
+ * exponent, no decimal point when there is one digit); this parses that shape into the same
+ * (k, n) the search produced, so every caller below is unchanged. Sign, NaN, Infinity and ±0
+ * never reach here — `format_double` peels them off first. */
 static void shortest_digits(double d, char *digits, size_t digits_len, int *k, int *n) {
-  char temp[64];
-  int p = 17;
-  for (int try_p = 0; try_p <= 17; try_p++) {
-    snprintf(temp, sizeof temp, "%.*e", try_p, d);
-    if (strtod(temp, NULL) == d) {
-      p = try_p;
-      break;
-    }
-  }
-  snprintf(temp, sizeof temp, "%.*e", p, d);
-
-  /* temp is "D.DDDDe±XX" (or "De±XX" when p == 0). Split at 'e'. */
-  char *e = strchr(temp, 'e');
-  int exponent = (e != NULL) ? (int)strtol(e + 1, NULL, 10) : 0;
-  if (e != NULL) {
-    *e = '\0';
-  }
+  char temp[32];
+  d2s_buffered(d, temp);
 
   size_t out = 0;
-  for (const char *c = temp; *c != '\0'; c++) {
+  const char *c = temp;
+  for (; *c != '\0' && *c != 'E'; c++) {
     if (*c >= '0' && *c <= '9' && out + 1 < digits_len) {
       digits[out++] = *c;
     }
   }
   digits[out] = '\0';
 
-  /* Trailing zeros can survive when the round-trip succeeded at a p larger than needed for
-   * this particular value (e.g. "1.50e+00"); step 5 wants k minimal, so drop them. Never
-   * drop the last digit -- "0" itself is handled by the caller. */
-  while (out > 1 && digits[out - 1] == '0') {
-    digits[--out] = '\0';
+  int exponent = 0;
+  if (*c == 'E') {
+    exponent = (int)strtol(c + 1, NULL, 10);
   }
 
   *k = (int)out;
-  *n = exponent + 1; /* "D.DDD e±XX" has its point after 1 digit, so n = XX + 1 */
+  *n = exponent + 1; /* "D[.DDD]E±X" has its point after 1 digit, so n = X + 1 */
 }
 
 /* Write ECMA-262 Number::toString(d) for a finite, strictly positive d. */
@@ -266,6 +250,21 @@ static void append_control_escape(JSRTBuf *out, uint32_t cp) {
   }
 }
 
+/* Quote/backslash, then the control-escape tail. Shared by the UTF-16 and UTF-8 quoted writers;
+ * surrogate / multi-byte handling stays at the call sites. Answers true when the unit was escaped. */
+static bool append_quoted_escape(JSRTBuf *out, uint32_t cp, char quote) {
+  if (cp == (uint32_t)(unsigned char)quote || cp == '\\') {
+    jsrt_buf_putc(out, '\\');
+    jsrt_buf_putc(out, (char)cp);
+    return true;
+  }
+  if (cp < 0x20 || cp == 0x7F) {
+    append_control_escape(out, cp);
+    return true;
+  }
+  return false;
+}
+
 /* Quoting follows Node: single quotes, unless the string contains one and no double quote, and
  * backticks only when it contains both. The quote actually chosen is then the only quote that
  * needs escaping inside. */
@@ -283,14 +282,12 @@ static void append_quoted(JSRTBuf *out, const JSString *str) {
   jsrt_buf_putc(out, quote);
   for (uint32_t i = 0; i < str->length; i++) {
     uint16_t c = str->data[i];
-    if (c == (uint16_t)quote || c == '\\') {
-      jsrt_buf_putc(out, '\\');
-      jsrt_buf_putc(out, (char)c);
-    } else if (c < 0x20 || c == 0x7F) {
-      append_control_escape(out, c);
-    } else if (c >= 0xD800u && c <= 0xDFFFu &&
-               !(c <= 0xDBFFu && i + 1 < str->length && str->data[i + 1] >= 0xDC00u &&
-                 str->data[i + 1] <= 0xDFFFu)) {
+    if (append_quoted_escape(out, c, quote)) {
+      continue;
+    }
+    if (c >= 0xD800u && c <= 0xDFFFu &&
+        !(c <= 0xDBFFu && i + 1 < str->length && str->data[i + 1] >= 0xDC00u &&
+          str->data[i + 1] <= 0xDFFFu)) {
       /* A LONE surrogate: Node escapes it ("\ud800", lowercase hex), where the unquoted path
        * substitutes U+FFFD (append_string) and JSON escapes it per well-formed stringify. */
       char esc[8];
@@ -767,14 +764,11 @@ static void append_key(JSRTBuf *out, const char *key) {
       i += 3;
       continue;
     }
-    if (b == (unsigned char)quote || b == '\\') {
-      jsrt_buf_putc(out, '\\');
-      jsrt_buf_putc(out, (char)b);
-    } else if (b < 0x20 || b == 0x7F) {
-      append_control_escape(out, b);
-    } else {
-      jsrt_buf_putc(out, (char)b);
+    if (append_quoted_escape(out, b, quote)) {
+      i++;
+      continue;
     }
+    jsrt_buf_putc(out, (char)b);
     i++;
   }
   jsrt_buf_putc(out, quote);

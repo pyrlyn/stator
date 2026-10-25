@@ -454,7 +454,7 @@ two directions, so the halves cannot drift. `STA1122`–`STA1124` and `STA1126` 
 `docs/DIAGNOSTICS.md`, no longer proposals.
 
 Landed (steps 3–5): the init contract, the TS-throws contract, and the frame/stack roots —
-`src/codegen/index.ts` emits them from the same slot layout `main` uses, `build.ts` roots
+`src/codegen/` (the C emitter family modules; `emitC` is re-exported from `index.ts`) emits them from the same slot layout `main` uses, `build.ts` roots
 the shake at the export names, and every decision below is pinned in
 `tests/unit/export-stubs.test.ts` (in-process shape plus a linked C `main()` proving the
 init→call→error paths; the CI example stays step 9's). Recorded choices, each made once
@@ -723,3 +723,10 @@ the `--link=` channel — the `extraLinkFlags` consumer path, exercised by a tes
 instead of asserted by a comment. The `extern_ptr` golden is the shape's proof:
 a two-function fixture C (sentinel identity, no header) beside real-libc
 allocation (header pragmas, true prototypes), byte-identical against Node.
+
+## Internal concurrency bridge
+
+T10.2's `std/thread` and `std/sync` wrappers use a closed, private boxed ABI from the exact
+`packages/std/src/native/concurrency.d.ts` declaration file. This does not widen the user extern
+table: user closures, unknown values and arbitrary foreign-thread callbacks remain refused or
+undefined as specified above. C exports still require the main thread. See THREADS.md.

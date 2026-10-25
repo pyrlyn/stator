@@ -39,6 +39,9 @@ Source: [`architecture/pipeline.d2`](architecture/pipeline.d2)
 
 Source: [`architecture/build.d2`](architecture/build.d2)
 
+`STATOR_COMPILE_JOBS` above 1 compiles the emitted C as several translation units before the
+link (docs/TOOLCHAIN.md). The sequence is still emit, then clang, then link.
+
 Diagnostics short-circuit: any `STA` error at the gate stops the build with code + span + mode;
 `stator explain` runs the same front half and reports per-construct verdicts
 (`static | dynamic | error | not-yet`) instead of continuing to codegen.
@@ -58,7 +61,8 @@ Invariants:
   `JSRT_FRAME(n)` and pops it on every exit path, including landing pads.
 - **`std` is resolved and linked, never imported** — `frontend` maps `std/*` to `packages/std`'s
   sources and `cli` adds `libjsrt_std.a` only for a program that imports one (docs/STD.md §6).
-  Nothing in `packages/compiler` imports `packages/std`.
+  Nothing in `packages/compiler` imports `packages/std`. Thread/sync wrappers call the private
+  boxed ABI in the runtime Zig core (THREADS.md); other native backings stay in `libjsrt_std.a`.
 - **`node` is resolved, never imported** — under `--node` only, `frontend` maps `node:*` and the
   bare built-ins to `packages/node`'s sources (docs/MODES.md §6), strict TypeScript over `std/*`
   that compiles like any user module. Nothing in `packages/compiler` imports `packages/node`.

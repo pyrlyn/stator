@@ -16,7 +16,9 @@
 //   calling convention cannot tell from a call with no receiver (docs/VALUE.md §4.16). No stream
 //   events (`node:events` and `node:stream` are N2);
 // - `browser` and `recordreplay` are not properties. In `js` mode a read of either is `undefined`,
-//   which is what `tsc` tests. `on`, `once` and `emit` wait on `node:events`.
+//   which is what `tsc` tests. `on`, `once` and `emit` wait on `node:events`;
+// - `hrtime()` answers `[seconds, nanoseconds]` as `number[]` (the HIR has no tuple). The
+//   `hrtime.bigint` and `hrtime(previous)` forms need a function with properties (not-yet).
 
 import { cwd as stdCwd, get, names } from 'std/env';
 import { isatty, terminalSize, write as writeText, writeBytes } from 'std/io';
@@ -25,6 +27,7 @@ import {
   argv as stdArgv,
   execPath as stdExecPath,
   exit as stdExit,
+  hrtimeNs,
   memoryUsage as stdMemoryUsage,
   pid as stdPid,
   ppid as stdPpid,
@@ -87,7 +90,8 @@ export class WriteStream {
 
 /** The arguments in Node's single-executable shape (docs/MODES.md §6). */
 function programArguments(): string[] {
-  const out = [stdExecPath()];
+  const out = [''].slice(1);
+  out.push(stdExecPath());
   for (const arg of stdArgv()) {
     out.push(arg);
   }
@@ -113,6 +117,13 @@ export function nextTick(task: (...args: unknown[]) => void, ...args: unknown[])
 /** The status an integer names: Node keeps its low 8 bits. */
 function statusOf(code: number): number {
   return code & 0xff;
+}
+
+/** `[seconds, nanoseconds]` from a monotonic nanosecond reading. Only differences mean
+ * anything; the two halves are what Node's `process.hrtime()` answers. */
+function hrtimePair(): number[] {
+  const ns = hrtimeNs();
+  return [Math.floor(ns / 1e9), ns % 1e9];
 }
 
 /** The process object: `import process from 'node:process'`, and the global `process`.
@@ -168,6 +179,11 @@ export class Process {
     return new MemoryUsage(stdMemoryUsage().rss);
   }
 
+  /** `[seconds, nanoseconds]` on a monotonic clock (see `hrtimePair`). */
+  hrtime(): number[] {
+    return hrtimePair();
+  }
+
   /** Ends the process now with `code`. A missing argument is the function `exit` below: an
    * omitted method parameter is the same argc as a call with no receiver (docs/VALUE.md §4.16). */
   exit(code: number): never {
@@ -189,6 +205,10 @@ export function cwd(): string {
 
 export function memoryUsage(): MemoryUsage {
   return new MemoryUsage(stdMemoryUsage().rss);
+}
+
+export function hrtime(): number[] {
+  return hrtimePair();
 }
 
 /** Ends the process now with `code`, else `exitCode`, else 0. */

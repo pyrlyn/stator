@@ -36,8 +36,41 @@ const c = mem.c;
 /// by whoever drops it (jsrt_shape.zig's slot growth).
 pub const boehm = @hasDecl(c, "JSRT_HAVE_BOEHM");
 
+// A collector on another thread may stop a native return between boxing and the caller's
+// frame store. Keep new allocations until a generated statement boundary acknowledges them.
+const Allocation = struct { pointer: *anyopaque, next: ?*Allocation };
+var concurrent = std.atomic.Value(bool).init(false);
+threadlocal var allocations: ?*Allocation = null;
+threadlocal var handoff: c.jsrt_value = c.JSRT_UNDEFINED;
+
+pub fn enableThreads() void {
+    concurrent.store(true, .release);
+}
+fn retain(pointer: *anyopaque) *anyopaque {
+    if (boehm and concurrent.load(.acquire)) {
+        const record: *Allocation = @ptrCast(@alignCast(std.c.malloc(@sizeOf(Allocation)) orelse c.jsrt_panic("thread allocation roots")));
+        record.* = .{ .pointer = pointer, .next = allocations };
+        allocations = record;
+    }
+    return pointer;
+}
+pub export fn jsrt_gc_safepoint() void {
+    var record = allocations;
+    allocations = null;
+    handoff = c.JSRT_UNDEFINED;
+    while (record) |node| {
+        record = node.next;
+        std.c.free(node);
+    }
+}
+pub export fn jsrt_gc_handoff(value: c.jsrt_value) c.jsrt_value {
+    if (concurrent.load(.acquire)) handoff = value;
+    return value;
+}
+
 const impl = if (boehm) struct {
     const gc = @cImport({
+        @cDefine("GC_THREADS", "1");
         @cInclude("gc.h");
         @cInclude("gc/gc_mark.h");
     });
@@ -99,21 +132,66 @@ const impl = if (boehm) struct {
         }
     };
 
+    const ThreadRoots = struct {
+        frames: *[*c]c.JSRTFrame,
+        pending: [*c]c.jsrt_value,
+        allocations: *?*Allocation,
+        handoff: *c.jsrt_value,
+        next: ?*ThreadRoots,
+    };
+    var threads: ?*ThreadRoots = null;
+    threadlocal var own_roots: ThreadRoots = undefined;
+    threadlocal var registered_here = false;
+
+    fn addRoots(_: ?*anyopaque) callconv(.c) ?*anyopaque {
+        own_roots = .{ .frames = &c.jsrt_frame_top, .pending = c.jsrt_pending_slot(), .allocations = &allocations, .handoff = &handoff, .next = threads };
+        threads = &own_roots;
+        return null;
+    }
+
+    fn removeRoots(_: ?*anyopaque) callconv(.c) ?*anyopaque {
+        var link = &threads;
+        while (link.*) |node| {
+            if (node == &own_roots) {
+                link.* = node.next;
+                break;
+            }
+            link = &node.next;
+        }
+        return null;
+    }
+
+    fn enterThread() void {
+        var base: gc.struct_GC_stack_base = undefined;
+        if (gc.GC_get_stack_base(&base) != gc.GC_SUCCESS) c.jsrt_panic("thread stack registration failed");
+        const result = gc.GC_register_my_thread(&base);
+        if (result != gc.GC_SUCCESS and result != gc.GC_DUPLICATE) c.jsrt_panic("thread GC registration failed");
+        registered_here = result == gc.GC_SUCCESS;
+        _ = gc.GC_call_with_alloc_lock(addRoots, null);
+    }
+
+    fn leaveThread() void {
+        _ = gc.GC_call_with_alloc_lock(removeRoots, null);
+        if (registered_here) _ = gc.GC_unregister_my_thread();
+    }
+
     fn pushRoots() callconv(.c) void {
         // First the C stack, conservatively, as if we had never been installed: every raw pointer
         // a runtime function holds in a local across an allocation depends on this. Then the frames.
         if (default_push_other_roots) |push| push();
         var roots: Roots = .{};
-        var frame: ?*const c.JSRTFrame = c.jsrt_frame_top;
-        while (frame) |f| : (frame = f.prev) {
-            for (0..f.count) |i| roots.add(@ptrFromInt(f.slots[i] & mem.payload_mask));
-            // Only the environment itself: it is a collected allocation, so the mark procedure
-            // above walks its slots and its parent link from here.
-            if (f.env != null) roots.add(@ptrCast(f.env));
+        var thread = threads;
+        while (thread) |t| : (thread = t.next) {
+            var frame: ?*const c.JSRTFrame = t.frames.*;
+            while (frame) |f| : (frame = f.prev) {
+                for (0..f.count) |i| roots.add(@ptrFromInt(f.slots[i] & mem.payload_mask));
+                if (f.env != null) roots.add(@ptrCast(f.env));
+            }
+            roots.add(@ptrFromInt(t.pending.* & mem.payload_mask));
+            roots.add(@ptrFromInt(t.handoff.* & mem.payload_mask));
+            var allocation = t.allocations.*;
+            while (allocation) |a| : (allocation = a.next) roots.add(a.pointer);
         }
-        // The one root that is not a frame slot: an exception in flight, whose only reference is
-        // the mailbox while the `finally` blocks on the way out run -- and allocate.
-        roots.add(@ptrFromInt(c.jsrt_pending_slot().* & mem.payload_mask));
         roots.flush();
     }
 
@@ -122,6 +200,8 @@ const impl = if (boehm) struct {
         // on the platforms this runtime builds for (GC_INIT_CONF_ROOTS is non-empty only on
         // Cygwin/MinGW, AIX and dynamic-loading-less Android).
         gc.GC_init();
+        gc.GC_allow_register_threads();
+        _ = gc.GC_call_with_alloc_lock(addRoots, null);
         // The kind is registered once per PROCESS, not once per runtime copy. A `--emit=lib` archive
         // carries a private runtime (plan-notes 342), so one process can hold several copies of this
         // file, and Boehm aborts with "Too many kinds" once MAXOBJKINDS (16 in 8.2) are taken -- the
@@ -175,6 +255,8 @@ const impl = if (boehm) struct {
     }
 } else struct {
     fn init() void {}
+    fn enterThread() void {}
+    fn leaveThread() void {}
 
     fn alloc(bytes: usize) ?*anyopaque {
         return std.c.malloc(bytes);
@@ -202,8 +284,8 @@ var gc_initialized = false;
 /// `jsrt_gc_stress`: a test collects before every allocation so an unrooted boxed value cannot
 /// survive by accident of heap size. Re-entry is skipped: a collection must not collect again
 /// from inside itself.
-var gc_stress = false;
-var gc_stress_collecting = false;
+threadlocal var gc_stress = false;
+threadlocal var gc_stress_collecting = false;
 
 export fn jsrt_gc_stress(on: c_int) void {
     gc_stress = on != 0;
@@ -244,7 +326,7 @@ fn stressCollect() void {
 
 pub fn alloc(bytes: usize, what: [*:0]const u8) *anyopaque {
     stressCollect();
-    return impl.alloc(if (bytes == 0) 1 else bytes) orelse oom(what);
+    return retain(impl.alloc(if (bytes == 0) 1 else bytes) orelse oom(what));
 }
 
 /// A collected block the collector never scans, zero-filled: raw bytes (an ArrayBuffer's
@@ -253,7 +335,7 @@ pub fn alloc(bytes: usize, what: [*:0]const u8) *anyopaque {
 /// a refusal is a RangeError the program can catch, not an internal panic.
 pub fn allocAtomic(bytes: usize) ?*anyopaque {
     stressCollect();
-    return impl.allocAtomic(if (bytes == 0) 1 else bytes);
+    return retain(impl.allocAtomic(if (bytes == 0) 1 else bytes) orelse return null);
 }
 
 export fn jsrt_gc_alloc(bytes: usize, what: [*c]const u8) *anyopaque {
@@ -271,4 +353,17 @@ fn oom(what: [*:0]const u8) noreturn {
     @memcpy(msg[prefix.len..][0..n], name[0..n]);
     msg[prefix.len + n] = 0;
     c.jsrt_panic(&msg);
+}
+
+/// A worker must register before its first Stator allocation and leave after publishing its result.
+pub fn enterThread() void {
+    impl.enterThread();
+}
+pub fn leaveThread() void {
+    jsrt_gc_safepoint();
+    impl.leaveThread();
+}
+
+export fn jsrt_gc_collect() void {
+    impl.collect();
 }

@@ -1,11 +1,10 @@
 // @mode: js
-// @verdict: not-yet
-// @code: STA1214
+// @verdict: dynamic
 // SUBSET.md: Spread operator ... in array literals / Object literals with static keys
 // An `as` assertion to an array or object type is never checkable (only number, string and
-// boolean are), so the lowering drops it and spreads the unknown operand — refused here with
-// the unknown-value not-yet instead of reaching the verifier as STA4082/STA4068
-// (plan.md §8 step 39).
+// boolean are), so the lowering drops it and spreads the unknown operand. The object case
+// takes the dynamic path through the shape-table `assign` (plan-notes 297); the array case
+// folds the same way (plan.md §8 step 12(c) residue).
 
 const u: unknown = JSON.parse('[1, 2]');
 export const a = [...(u as number[])];

@@ -26,6 +26,11 @@
 
 const JSRTClass jsrt_class_promise = {"Promise", 0, NULL, NULL, 0, NULL, NULL, NULL, NULL};
 
+static bool on_main(void) {
+  jsrt_thread_require_main();
+  return !jsrt_pending();
+}
+
 /* ------------------------------------------------------------ microtasks */
 
 /* A queued reaction, with the value it will be handed. The value is captured at QUEUE time, not
@@ -68,7 +73,9 @@ static void enqueue(JSRTSettle on_settle, void *state, jsrt_value value, bool re
 static uint32_t unhandled_rejections;
 
 void jsrt_run_microtasks(void) {
-  while (queue_first != NULL) {
+  while (queue_first != NULL || jsrt_thread_poll()) {
+    if (jsrt_pending()) jsrt_uncaught();
+    if (queue_first == NULL) continue;
     Microtask *task = queue_first;
     queue_first = task->next;
     if (queue_first == NULL) {
@@ -94,6 +101,7 @@ void jsrt_run_microtasks(void) {
 /* -------------------------------------------------------------- promises */
 
 jsrt_value jsrt_promise_new(void) {
+  if (!on_main()) return JSRT_UNDEFINED;
   JSRTPromise *p = (JSRTPromise *)jsrt_gc_alloc(sizeof(JSRTPromise), "promise");
   p->cls = &jsrt_class_promise;
   p->state = JSRT_PROMISE_PENDING;
@@ -106,6 +114,7 @@ jsrt_value jsrt_promise_new(void) {
 }
 
 void jsrt_promise_subscribe(jsrt_value promise, JSRTSettle on_settle, void *state) {
+  if (!on_main()) return;
   JSRTPromise *p = jsrt_as_promise(promise);
   if (p->state != JSRT_PROMISE_PENDING) {
     if (p->unhandled) {
@@ -164,6 +173,7 @@ static void adopt_subscribe(void *state, jsrt_value value, bool rejected) {
 }
 
 void jsrt_promise_settle(jsrt_value promise, jsrt_value value, bool rejected) {
+  if (!on_main()) return;
   JSRTPromise *p = jsrt_as_promise(promise);
   if (p->resolved) {
     return; /* already resolved: the resolving functions are idempotent, adoption included */
@@ -193,6 +203,7 @@ void jsrt_promise_settle(jsrt_value promise, jsrt_value value, bool rejected) {
 }
 
 jsrt_value jsrt_promise_resolve(jsrt_value v) {
+  if (!on_main()) return JSRT_UNDEFINED;
   if (jsrt_is_promise(v)) {
     return v; /* §27.2.4.6: an already-promise passes through, same identity */
   }
@@ -202,6 +213,7 @@ jsrt_value jsrt_promise_resolve(jsrt_value v) {
 }
 
 jsrt_value jsrt_promise_reject(jsrt_value reason) {
+  if (!on_main()) return JSRT_UNDEFINED;
   jsrt_value p = jsrt_promise_new();
   jsrt_promise_settle(p, reason, true);
   return p;
@@ -239,6 +251,7 @@ static void all_element(void *state, jsrt_value value, bool rejected) {
 }
 
 jsrt_value jsrt_promise_all(jsrt_value array) {
+  if (!on_main()) return JSRT_UNDEFINED;
   if (!jsrt_is(array, JSRT_TAG_ARRAY)) {
     jsrt_panic("STA2005: Promise.all over a non-array is not yet supported");
   }
@@ -272,6 +285,7 @@ static void async_resume(void *state, jsrt_value value, bool rejected) {
 }
 
 jsrt_value jsrt_async_start(JSRTEnv *env, JSRTResume resume) {
+  if (!on_main()) return JSRT_UNDEFINED;
   JSRTAsync *self = (JSRTAsync *)jsrt_gc_alloc(sizeof(JSRTAsync), "async frame");
   self->env = env;
   self->resume = resume;
@@ -322,6 +336,7 @@ static void then_react(void *state, jsrt_value value, bool rejected) {
 }
 
 jsrt_value jsrt_promise_then(jsrt_value promise, jsrt_value on_fulfilled, jsrt_value on_rejected) {
+  if (!on_main()) return JSRT_UNDEFINED;
   ThenState *s = (ThenState *)jsrt_gc_alloc(sizeof(ThenState), "Promise.then");
   s->derived = jsrt_promise_new();
   s->on_fulfilled = on_fulfilled;
@@ -331,6 +346,7 @@ jsrt_value jsrt_promise_then(jsrt_value promise, jsrt_value on_fulfilled, jsrt_v
 }
 
 jsrt_value jsrt_promise_catch(jsrt_value promise, jsrt_value on_rejected) {
+  if (!on_main()) return JSRT_UNDEFINED;
   return jsrt_promise_then(promise, JSRT_UNDEFINED, on_rejected);
 }
 
@@ -382,6 +398,7 @@ static void finally_react(void *state, jsrt_value value, bool rejected) {
 }
 
 jsrt_value jsrt_promise_finally(jsrt_value promise, jsrt_value on_finally) {
+  if (!on_main()) return JSRT_UNDEFINED;
   FinallyState *s = (FinallyState *)jsrt_gc_alloc(sizeof(FinallyState), "Promise.finally");
   s->derived = jsrt_promise_new();
   s->on_finally = on_finally;
@@ -402,6 +419,7 @@ static jsrt_value promise_reject_fn(uint32_t argc, const jsrt_value *argv, JSRTE
 }
 
 jsrt_value jsrt_promise_construct(jsrt_value executor) {
+  if (!on_main()) return JSRT_UNDEFINED;
   /* Rooted: jsrt_env_new and the two jsrt_closure_new calls below all allocate, and the promise
    * the executor resolves is otherwise reachable from nothing (plan-notes 222). The resolver pair
    * is reachable through `env`, which the first closure is handed and the second is not -- so the

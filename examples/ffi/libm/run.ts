@@ -1,5 +1,5 @@
 /* libm step-1 example runner (plan.md §10 Task 7.3 step 1) — builds `main.ts`
- * with stator, runs the binary AND this host's Node (via `node_shim.mjs`, the
+ * with stator, runs the binary AND this host's Node (via `node_shim.ts`, the
  * golden runner's `--import` pattern), and byte-compares both against
  * `expected.txt`. Deterministic, offline, no new dependencies. libm needs no
  * link pragma: `-lm` rides every link inside the runtime's `link-flags.txt`.
@@ -42,7 +42,7 @@ function main(): void {
     }
     const nodeOut = run(
       process.execPath,
-      ['--import', join(HERE, 'node_shim.mjs'), join(HERE, 'main.ts')],
+      ['--import', join(HERE, 'node_shim.ts'), join(HERE, 'main.ts')],
       'node oracle',
       fail,
     );

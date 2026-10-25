@@ -569,7 +569,7 @@ to `packages/node/src/internal/location.ts` that carries the file's path relativ
 rule keeps the common idiom working: `join(__dirname, "data.json")` finds assets laid out beside
 the binary the way they sat beside the source.
 
-**The global `process`** (T11.6, plan-notes 361). Under `--node` a free `process` is the
+**The global `process`** (T11.6, plan-notes 390). Under `--node` a free `process` is the
 `node:process` module's default export: the frontend gives every project file, and the vendor
 module, that reads one an `import process from "node:process"` (`frontend/location.ts`), resolved
 like any other built-in, and `packages/node/src/globals.d.ts` declares its type. A file that binds

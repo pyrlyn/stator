@@ -185,6 +185,7 @@ function abiCType(kind: ExternAbiKind, position: 'param' | 'return'): string {
       // rendered. The case exists only because the switch is exhaustive — a slot address has
       // no C-observable meaning, so there is no honest type to print here.
       return 'void *';
+    case 'value':
     case 'bytes':
       // Unreachable: `exportAbiKindOf` never answers `bytes`, so a `Uint8Array` position keeps
       // the `jsrt_value` form. Exhaustiveness only, and the value form is the honest fallback.
@@ -194,18 +195,16 @@ function abiCType(kind: ExternAbiKind, position: 'param' | 'return'): string {
   }
 }
 
+function hasModifierKind(node: ts.Node, kind: ts.SyntaxKind): boolean {
+  return ts.canHaveModifiers(node) && ts.getModifiers(node)?.some((m) => m.kind === kind) === true;
+}
+
 function hasExportModifier(node: ts.Node): boolean {
-  return (
-    ts.canHaveModifiers(node) &&
-    ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) === true
-  );
+  return hasModifierKind(node, ts.SyntaxKind.ExportKeyword);
 }
 
 function hasDefaultModifier(node: ts.Node): boolean {
-  return (
-    ts.canHaveModifiers(node) &&
-    ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword) === true
-  );
+  return hasModifierKind(node, ts.SyntaxKind.DefaultKeyword);
 }
 
 function isConstList(list: ts.VariableDeclarationList): boolean {

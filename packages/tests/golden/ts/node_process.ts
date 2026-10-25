@@ -4,7 +4,7 @@
 // passes the `@args` line to both runs. Host-dependent values (paths, pids, the environment
 // beyond TZ) are printed as shapes, not values.
 import { isAbsolute } from "node:path";
-import proc, { argv, cwd, env, memoryUsage, nextTick, platform } from "node:process";
+import proc, { argv, cwd, env, hrtime, memoryUsage, nextTick, platform } from "node:process";
 
 console.log(process === proc, argv === process.argv);
 console.log(process.argv.slice(2));
@@ -20,6 +20,11 @@ process.env["STATOR_NODE_PROCESS"] = "set";
 console.log(env["STATOR_NODE_PROCESS"], Object.keys(process.env).includes("STATOR_NODE_PROCESS"));
 delete process.env["STATOR_NODE_PROCESS"];
 console.log(env["STATOR_NODE_PROCESS"], "STATOR_NODE_PROCESS" in env);
+
+const t = hrtime();
+console.log(t.length, (t[0] ?? -1) >= 0, (t[1] ?? -1) >= 0 && (t[1] ?? -1) < 1e9);
+const t2 = process.hrtime();
+console.log(t2.length === 2, (t2[0] ?? -1) >= (t[0] ?? -1));
 
 const usage = memoryUsage();
 console.log(Object.keys(usage).join(","), usage.rss > 0, process.memoryUsage().rss > 0);

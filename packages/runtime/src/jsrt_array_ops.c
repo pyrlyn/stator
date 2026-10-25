@@ -22,6 +22,14 @@
 
 static JSRTArray *arr(jsrt_value v) { return jsrt_as_array(v); }
 
+/* Collect `n` C varargs into a stack VLA. Shared by every variadic array mutator (push, unshift,
+ * concat, splice): one idea, one loop, and a copy that drifted would reorder a user's arguments. */
+static void collect_varargs(uint32_t n, jsrt_value *items, va_list *ap) {
+  for (uint32_t i = 0; i < n; i++) {
+    items[i] = va_arg(*ap, jsrt_value);
+  }
+}
+
 /* Append one element through the public write path, which owns growth; `length` is the one index
  * a write may extend through, so no hole can appear. */
 static void append(jsrt_value array, jsrt_value element) {
@@ -87,9 +95,7 @@ jsrt_value jsrt_array_push_many(jsrt_value array, uint32_t n, ...) {
   jsrt_value items[n > 0 ? n : 1];
   va_list ap;
   va_start(ap, n);
-  for (uint32_t i = 0; i < n; i++) {
-    items[i] = va_arg(ap, jsrt_value);
-  }
+  collect_varargs(n, items, &ap);
   va_end(ap);
   return push_items(array, n, items);
 }
@@ -173,9 +179,7 @@ jsrt_value jsrt_array_unshift_many(jsrt_value array, uint32_t n, ...) {
   jsrt_value items[n > 0 ? n : 1];
   va_list ap;
   va_start(ap, n);
-  for (uint32_t i = 0; i < n; i++) {
-    items[i] = va_arg(ap, jsrt_value);
-  }
+  collect_varargs(n, items, &ap);
   va_end(ap);
   return unshift_items(array, n, items);
 }
@@ -211,17 +215,34 @@ static uint32_t search_start(jsrt_value from, uint32_t len) {
   return jsrt_relative_index(jsrt_int_or_inf(from, 0.0), len);
 }
 
+/* Forward search from `from`: the matching index, or -1. `same_value_z` selects SameValueZero
+ * (`includes`, which finds NaN) over strict equality (`indexOf`, which cannot). */
+static int64_t array_search_forward(const JSRTArray *a, jsrt_value search, jsrt_value from,
+                                    bool same_value_z) {
+  for (uint32_t i = search_start(from, a->length); i < a->length; i++) {
+    const bool hit = same_value_z ? same_value_zero(jsrt_unhole(a->elements[i]), search)
+                                  : jsrt_strict_equals(a->elements[i], search);
+    if (hit) {
+      return (int64_t)i;
+    }
+  }
+  return -1;
+}
+
+/* A half-open [from, to) range from optional start/end, defaulting to [0, length) — the shared
+ * slice/fill step (§23.1.3.23, §23.1.3.8). `to` may be below `from`; callers treat that as empty. */
+static void array_half_open_range(const JSRTArray *a, jsrt_value start, jsrt_value end,
+                                  uint32_t *from, uint32_t *to) {
+  *from = jsrt_relative_index(jsrt_int_or_inf(start, 0.0), a->length);
+  *to = jsrt_relative_index(jsrt_int_or_inf(end, (double)a->length), a->length);
+}
+
 jsrt_value jsrt_array_index_of(jsrt_value array, jsrt_value search, jsrt_value from) {
   const JSRTArray *a = jsrt_require_array(array, "indexOf");
   if (a == NULL) {
     return JSRT_UNDEFINED;
   }
-  for (uint32_t i = search_start(from, a->length); i < a->length; i++) {
-    if (jsrt_strict_equals(a->elements[i], search)) {
-      return jsrt_number((double)i);
-    }
-  }
-  return jsrt_number(-1.0);
+  return jsrt_number((double)array_search_forward(a, search, from, false));
 }
 
 jsrt_value jsrt_array_last_index_of(jsrt_value array, jsrt_value search) {
@@ -270,12 +291,7 @@ jsrt_value jsrt_array_includes(jsrt_value array, jsrt_value search, jsrt_value f
   if (a == NULL) {
     return JSRT_UNDEFINED;
   }
-  for (uint32_t i = search_start(from, a->length); i < a->length; i++) {
-    if (same_value_zero(jsrt_unhole(a->elements[i]), search)) {
-      return JSRT_TRUE;
-    }
-  }
-  return JSRT_FALSE;
+  return array_search_forward(a, search, from, true) >= 0 ? JSRT_TRUE : JSRT_FALSE;
 }
 
 jsrt_value jsrt_array_slice(jsrt_value array, jsrt_value start, jsrt_value end) {
@@ -283,8 +299,9 @@ jsrt_value jsrt_array_slice(jsrt_value array, jsrt_value start, jsrt_value end) 
   if (a == NULL) {
     return JSRT_UNDEFINED;
   }
-  uint32_t from = jsrt_relative_index(jsrt_int_or_inf(start, 0.0), a->length);
-  uint32_t to = jsrt_relative_index(jsrt_int_or_inf(end, (double)a->length), a->length);
+  uint32_t from;
+  uint32_t to;
+  array_half_open_range(a, start, end, &from, &to);
   uint32_t count = to > from ? to - from : 0;
   return jsrt_array_new(count, count > 0 ? a->elements + from : NULL);
 }
@@ -340,9 +357,7 @@ jsrt_value jsrt_array_concat_many(jsrt_value array, uint32_t n, ...) {
   jsrt_value items[n > 0 ? n : 1];
   va_list ap;
   va_start(ap, n);
-  for (uint32_t i = 0; i < n; i++) {
-    items[i] = va_arg(ap, jsrt_value);
-  }
+  collect_varargs(n, items, &ap);
   va_end(ap);
   return concat_items(array, n, items);
 }
@@ -365,8 +380,9 @@ jsrt_value jsrt_array_fill(jsrt_value array, jsrt_value value, jsrt_value start,
   if (a == NULL) {
     return JSRT_UNDEFINED;
   }
-  uint32_t from = jsrt_relative_index(jsrt_int_or_inf(start, 0.0), a->length);
-  uint32_t to = jsrt_relative_index(jsrt_int_or_inf(end, (double)a->length), a->length);
+  uint32_t from;
+  uint32_t to;
+  array_half_open_range(a, start, end, &from, &to);
   for (uint32_t i = from; i < to; i++) {
     a->elements[i] = value;
   }
@@ -477,9 +493,7 @@ jsrt_value jsrt_array_splice_insert(jsrt_value array, jsrt_value start, jsrt_val
   jsrt_value items[n > 0 ? n : 1];
   va_list ap;
   va_start(ap, n);
-  for (uint32_t i = 0; i < n; i++) {
-    items[i] = va_arg(ap, jsrt_value);
-  }
+  collect_varargs(n, items, &ap);
   va_end(ap);
   return splice_insert_items(array, start, delete_count, n, items);
 }
@@ -538,6 +552,17 @@ static bool index_present(jsrt_value array, uint32_t i) {
   return i < arr(array)->length && arr(array)->elements[i] != JSRT_HOLE;
 }
 
+/* Present-index walk under the entry length. `visit` answers false to stop early (some/every).
+ * for_each / map / filter / some / every / flatMap all share this skeleton. */
+static void walk_present(jsrt_value array, uint32_t len,
+                         bool (*visit)(jsrt_value array, uint32_t i, void *ctx), void *ctx) {
+  for (uint32_t i = 0; walking(array, i, len); i++) {
+    if (index_present(array, i) && !visit(array, i, ctx)) {
+      return;
+    }
+  }
+}
+
 /* One predicate step shared by the upward and downward find walks: snapshot the element BEFORE
  * the callback (the callback may mutate the slot; the answer is the snapshot), then report a
  * hit with the snapshot and/or the index. */
@@ -584,16 +609,85 @@ static bool array_find_downward(jsrt_value array, jsrt_value cb, uint32_t *index
   return false;
 }
 
+/* The public find/findIndex/findLast/findLastIndex answer: one walk direction, and either the
+ * matching element (`want_index` false, missing → `undefined`) or its index (`want_index` true,
+ * missing → `-1`). One helper so the four entry points cannot drift on the no-match answers. */
+static jsrt_value find_result(jsrt_value array, jsrt_value cb, bool upward, bool want_index) {
+  uint32_t index = 0;
+  jsrt_value elem = JSRT_UNDEFINED;
+  const bool found = upward ? array_find_upward(array, cb, want_index ? &index : NULL,
+                                                want_index ? NULL : &elem)
+                            : array_find_downward(array, cb, want_index ? &index : NULL,
+                                                  want_index ? NULL : &elem);
+  if (!found) {
+    return want_index ? jsrt_number(-1.0) : JSRT_UNDEFINED;
+  }
+  return want_index ? jsrt_number((double)index) : elem;
+}
+
+typedef struct {
+  jsrt_value cb;
+  jsrt_value out;
+  bool flag;
+} MapWalk;
+
+static bool visit_for_each(jsrt_value array, uint32_t i, void *ctx) {
+  call_cb(*(jsrt_value *)ctx, array, i);
+  return true;
+}
+
+static bool visit_map(jsrt_value array, uint32_t i, void *ctx) {
+  MapWalk *w = (MapWalk *)ctx;
+  arr(w->out)->elements[i] = call_cb(w->cb, array, i);
+  return true;
+}
+
+static bool visit_filter(jsrt_value array, uint32_t i, void *ctx) {
+  MapWalk *w = (MapWalk *)ctx;
+  /* Capture kValue before the callback. The callback receives this snapshot, and the selected
+   * value pushed into the result is that same snapshot even when the callback mutates the
+   * receiver's slot (ECMA-262 §23.1.3.8 steps 6.a–6.c). */
+  const jsrt_value element = arr(array)->elements[i];
+  if (jsrt_truthy(call_cb(w->cb, array, i))) {
+    append(w->out, element);
+  }
+  return true;
+}
+
+static bool visit_some(jsrt_value array, uint32_t i, void *ctx) {
+  MapWalk *w = (MapWalk *)ctx;
+  if (jsrt_truthy(call_cb(w->cb, array, i))) {
+    w->flag = true;
+    return false;
+  }
+  return true;
+}
+
+static bool visit_every(jsrt_value array, uint32_t i, void *ctx) {
+  MapWalk *w = (MapWalk *)ctx;
+  if (!jsrt_truthy(call_cb(w->cb, array, i))) {
+    w->flag = true;
+    return false;
+  }
+  return true;
+}
+
+static bool visit_flat_map(jsrt_value array, uint32_t i, void *ctx) {
+  MapWalk *w = (MapWalk *)ctx;
+  jsrt_value mapped = call_cb(w->cb, array, i);
+  if (jsrt_is(mapped, JSRT_TAG_ARRAY)) {
+    flatten_into(w->out, mapped, 0.0);
+  } else {
+    append(w->out, mapped);
+  }
+  return true;
+}
+
 jsrt_value jsrt_array_for_each(jsrt_value array, jsrt_value cb) {
   if (jsrt_require_array(array, "forEach") == NULL) {
     return JSRT_UNDEFINED;
   }
-  const uint32_t len = arr(array)->length;
-  for (uint32_t i = 0; walking(array, i, len); i++) {
-    if (index_present(array, i)) {
-      call_cb(cb, array, i);
-    }
-  }
+  walk_present(array, arr(array)->length, visit_for_each, &cb);
   return JSRT_UNDEFINED;
 }
 
@@ -604,72 +698,43 @@ jsrt_value jsrt_array_map(jsrt_value array, jsrt_value cb) {
   /* §23.1.3.21: the answer has the receiver's length at entry, and an index the walk skips -- a
    * hole, or one the callback cut off -- stays a hole in it. */
   const uint32_t len = arr(array)->length;
-  jsrt_value out = holes(len);
-  for (uint32_t i = 0; walking(array, i, len); i++) {
-    if (index_present(array, i)) {
-      const jsrt_value mapped = call_cb(cb, array, i);
-      arr(out)->elements[i] = mapped;
-    }
-  }
-  return out;
+  MapWalk w = {cb, holes(len), false};
+  walk_present(array, len, visit_map, &w);
+  return w.out;
 }
 
 jsrt_value jsrt_array_filter(jsrt_value array, jsrt_value cb) {
   if (jsrt_require_array(array, "filter") == NULL) {
     return JSRT_UNDEFINED;
   }
-  const uint32_t len = arr(array)->length;
-  jsrt_value out = jsrt_array_new(0, NULL);
-  for (uint32_t i = 0; walking(array, i, len); i++) {
-    /* Capture kValue before the callback. The callback receives this snapshot, and the selected
-     * value pushed into the result is that same snapshot even when the callback mutates the
-     * receiver's slot (ECMA-262 §23.1.3.8 steps 6.a–6.c). */
-    if (!index_present(array, i)) {
-      continue;
-    }
-    const jsrt_value element = arr(array)->elements[i];
-    if (jsrt_truthy(call_cb(cb, array, i))) {
-      append(out, element);
-    }
-  }
-  return out;
+  MapWalk w = {cb, jsrt_array_new(0, NULL), false};
+  walk_present(array, arr(array)->length, visit_filter, &w);
+  return w.out;
 }
 
 jsrt_value jsrt_array_some(jsrt_value array, jsrt_value cb) {
   if (jsrt_require_array(array, "some") == NULL) {
     return JSRT_UNDEFINED;
   }
-  const uint32_t len = arr(array)->length;
-  for (uint32_t i = 0; walking(array, i, len); i++) {
-    if (index_present(array, i) && jsrt_truthy(call_cb(cb, array, i))) {
-      return JSRT_TRUE;
-    }
-  }
-  return JSRT_FALSE;
+  MapWalk w = {cb, JSRT_UNDEFINED, false};
+  walk_present(array, arr(array)->length, visit_some, &w);
+  return w.flag ? JSRT_TRUE : JSRT_FALSE;
 }
 
 jsrt_value jsrt_array_every(jsrt_value array, jsrt_value cb) {
   if (jsrt_require_array(array, "every") == NULL) {
     return JSRT_UNDEFINED;
   }
-  const uint32_t len = arr(array)->length;
-  for (uint32_t i = 0; walking(array, i, len); i++) {
-    if (index_present(array, i) && !jsrt_truthy(call_cb(cb, array, i))) {
-      return JSRT_FALSE;
-    }
-  }
-  return JSRT_TRUE;
+  MapWalk w = {cb, JSRT_UNDEFINED, false};
+  walk_present(array, arr(array)->length, visit_every, &w);
+  return w.flag ? JSRT_FALSE : JSRT_TRUE;
 }
 
 jsrt_value jsrt_array_find(jsrt_value array, jsrt_value cb) {
   if (jsrt_require_array(array, "find") == NULL) {
     return JSRT_UNDEFINED;
   }
-  jsrt_value elem = JSRT_UNDEFINED;
-  if (array_find_upward(array, cb, NULL, &elem)) {
-    return elem;
-  }
-  return JSRT_UNDEFINED;
+  return find_result(array, cb, true, false);
 }
 
 /* map, then a depth-1 flatten of each answer -- one pass, no intermediate array. */
@@ -677,31 +742,16 @@ jsrt_value jsrt_array_flat_map(jsrt_value array, jsrt_value cb) {
   if (jsrt_require_array(array, "flatMap") == NULL) {
     return JSRT_UNDEFINED;
   }
-  const uint32_t len = arr(array)->length;
-  jsrt_value out = jsrt_array_new(0, NULL);
-  for (uint32_t i = 0; walking(array, i, len); i++) {
-    if (!index_present(array, i)) {
-      continue;
-    }
-    jsrt_value mapped = call_cb(cb, array, i);
-    if (jsrt_is(mapped, JSRT_TAG_ARRAY)) {
-      flatten_into(out, mapped, 0.0);
-    } else {
-      append(out, mapped);
-    }
-  }
-  return out;
+  MapWalk w = {cb, jsrt_array_new(0, NULL), false};
+  walk_present(array, arr(array)->length, visit_flat_map, &w);
+  return w.out;
 }
 
 jsrt_value jsrt_array_find_index(jsrt_value array, jsrt_value cb) {
   if (jsrt_require_array(array, "findIndex") == NULL) {
     return JSRT_UNDEFINED;
   }
-  uint32_t index = 0;
-  if (array_find_upward(array, cb, &index, NULL)) {
-    return jsrt_number((double)index);
-  }
-  return jsrt_number(-1.0);
+  return find_result(array, cb, true, true);
 }
 
 /* reduce/reduceRight, WITH-initial form only: the zero-initial form gives the first element a
@@ -866,22 +916,14 @@ jsrt_value jsrt_array_find_last(jsrt_value array, jsrt_value cb) {
   if (jsrt_require_array(array, "findLast") == NULL) {
     return JSRT_UNDEFINED;
   }
-  jsrt_value elem = JSRT_UNDEFINED;
-  if (array_find_downward(array, cb, NULL, &elem)) {
-    return elem;
-  }
-  return JSRT_UNDEFINED;
+  return find_result(array, cb, false, false);
 }
 
 jsrt_value jsrt_array_find_last_index(jsrt_value array, jsrt_value cb) {
   if (jsrt_require_array(array, "findLastIndex") == NULL) {
     return JSRT_UNDEFINED;
   }
-  uint32_t index = 0;
-  if (array_find_downward(array, cb, &index, NULL)) {
-    return jsrt_number((double)index);
-  }
-  return jsrt_number(-1.0);
+  return find_result(array, cb, false, true);
 }
 
 /* The ES2023 immutable variants: a fresh copy, then the mutating op's own machinery. Each reads

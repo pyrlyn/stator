@@ -73,6 +73,10 @@ pnpm run ci                      # typecheck -> lint -> dupes -> unit -> runtime
 pnpm run test                    # unit tests via vitest (the default; coverage is on-demand, not per-run)
 pnpm run test:impact             # only the tests your diff reaches, every harness (plan.md §9 Task 6.17); prints its reasons, falls back to the full run
 pnpm run test:impact:record      # record that map: a full instrumented run at a clean HEAD → .cache/impact/impact-map.json
+# CI handoff (Task 6.17 step 4): `impact map` on `main` (and nightly) records and publishes the
+# map as an artifact + cache entry `impact-map-<sha>`; `impact select` on pull requests restores
+# the newest `main` map and runs `test:impact`. Neither job is a required check — `test` and
+# `pnpm run ci` stay the gate.
 pnpm run test:coverage           # unit tests + src/ coverage table; writes coverage/lcov.info (only when the table is the question — ~4x wall time)
 pnpm run test:subset             # feature × mode decision matrix
 pnpm run test:golden             # compile + run vs the pinned Node, byte-for-byte
@@ -112,14 +116,27 @@ from the last build rebuilds every object (`packages/runtime/build*/cflags.txt`)
 CI runs in two stages (plan-notes 292):
 
 1. **Stage 1, Linux only:** `static analysis` (typecheck, `lint` = oxlint `--deny-warnings` + oxfmt
-   check, `dupes`, then jactionlint 2.0.2 over the workflows against `.github/jactionlint-baseline.json`) and `frontend (linux/x64)` (subset tests, runtime archive, unit tests **with
+   check, `dupes`, then jactionlint 2.0.2 over the workflows against `.github/jactionlint-baseline.json`
+   and the durable ignores in `.github/jactionlint.yaml`) and `frontend (linux/x64)` (subset tests, runtime archive, unit tests **with
    coverage**; uploads the `coverage-lcov` artifact). This is the only job that collects coverage.
+   The `pyrlyn/ci` workflow callers and `macos-runner` action use `@main`: pinning them fails `no-pinned-ci` (plan-notes 362, 375).
+   Set the repository Actions variable `CI_RUNNER=ubuntu-latest` for the shared pipeline.
+   Its Snyk and SonarCloud jobs otherwise fall back to the `xcode-27-local` label, which
+   has no runner registered for this repository (plan-notes 375).
 2. **Stage 2, Windows and macOS:** `frontend-desktop` (macOS and Windows, plain `pnpm run test`),
    plus the `-macos` twins of `runtime`, `asan`, `intl` and `ffi`. Each has
    `needs: [static, frontend-coverage]`, so none starts unless every stage-1 job passed.
 
 Other Linux jobs (`test262`, Linux arm64 `frontend`, Linux `runtime`/`asan`/`intl`/`ffi`) belong to
 neither stage and run ungated, in parallel with stage 1.
+
+**Required to merge into `main`** (the `protect-main` ruleset; cloud-review T21, plan-notes 370):
+`pipeline / gate`, `static analysis`, `frontend (linux/x64)`, `frontend (windows/x64)` and
+`frontend (windows/arm64)`. The macOS frontend legs are not required: under
+`MACOS_CI_DISABLED=true` the matrix drops them entirely rather than reporting `skipped`, so a
+required macOS context would block every PR with a check that never appears. Admin can still
+bypass on a PR; an ordinary merge cannot. The ruleset is GitHub state only — nothing in-tree
+re-applies it (the `repo-settings` caller never had `REPO_ADMIN_TOKEN`, plan-notes 370).
 
 ## Compile-time opt level (`STATOR_OPT` / `--opt`)
 
@@ -137,6 +154,33 @@ and the message names the environment variable, since no `--opt` is on the comma
 compiled as thin-LTO bitcode too when the archive was. Full PGO / a custom LLVM backend remains
 §12 rung 6 and needs the Task 6.3 measurement gate before it is scheduled.
 
+## Parallel clang (`STATOR_COMPILE_JOBS`)
+
+How many processes compile the generated C. This is a host knob, not a config key and not a
+flag: a project `.env` may not set it (it is a `STATOR_*` name outside the allowlist, so the
+file's line is ignored and the real environment decides).
+
+| Value | What a build does |
+| --- | --- |
+| unset or empty | the host's parallelism (`os.availableParallelism()`), but a small program stays one translation unit |
+| `1` | one clang invocation, the same line `linkArguments` has always built. Emitted C is unchanged |
+| `2` and up | file-scope functions are split into that many units, compiled together, then linked once |
+| anything else | `STA0021` |
+
+An explicit value above 1 splits as soon as the program has two functions. The unset
+default splits only when the generated C has at least 8 functions and 40,000 characters:
+below that, a second process costs more than it returns (plan-notes 374). `--emit=c` writes
+the one canonical C either way. `--emit-header` and `--emit=lib` stay one object.
+
+```
+STATOR_COMPILE_JOBS=1 node packages/compiler/src/cli/main.ts build file.ts -o app
+STATOR_COMPILE_JOBS=2 node packages/compiler/src/cli/main.ts build file.ts -o app
+STATOR_COMPILE_TIMING=1 node packages/compiler/src/cli/main.ts build file.ts -o app
+```
+
+`STATOR_COMPILE_TIMING=1` prints one `stator: timing` line on stderr (span name to
+milliseconds). It is also not a `.env` key.
+
 ## Environment variables and `.env`
 
 `stator build` and `stator explain` read these from the environment:
@@ -147,8 +191,15 @@ compiled as thin-LTO bitcode too when the archive was. Full PGO / a custom LLVM 
 | `STATOR_RUNTIME` | runtime flavor: `asan` or `intl` archive, and the builtins the gate admits | yes |
 | `STATOR_OTEL` | turns tracing on (plan-notes 187) | yes |
 | `CC` | the C compiler Stator runs | **no** |
+| `STATOR_COMPILE_JOBS` | how many clang processes compile the generated C (plan.md §11b T10.3). `1` is one translation unit and one clang line; unset splits a large enough program across the host's cores; an explicit value above 1 splits whenever there are two functions. An invalid value is `STA0021` | **no** |
+| `STATOR_COMPILE_TIMING` | set to anything to print one `stator: timing …` line of per-span wall times on stderr (T10.3's measurement; does not change the output) | **no** |
 | `STATOR_RUNTIME_ROOT` (and `STATOR_STD_ROOT`, `STATOR_NODE_ROOT`) | where the runtime headers and archives live | **no** |
 | `OTEL_*` (`OTEL_EXPORTER_OTLP_ENDPOINT`, `_HEADERS`, `OTEL_SERVICE_NAME`, …) | where trace data goes | **no** |
+
+The parallel path is smoke-tested in CI (`compile jobs smoke`, plan.md §11b T10.3 step 5): one
+non-required job builds the multi-module `tests/golden/ts/modules` fixture and runs
+`packages/tests/unit/compile-jobs.test.ts` with `STATOR_COMPILE_JOBS=2`, so a shared-state race
+in the partition/compile/link path fails that job. Default CI stays serial for log readability.
 
 The CLI reads `./.env` from the **current directory**, which is the project being compiled and
 may be a repository someone else wrote. So the file may set only the three build options above.
@@ -174,6 +225,7 @@ compiled against (plan-notes 106).
 | ---------------------------------------------------- | ------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
 | QuickJS-NG `libregexp` (+ `libunicode`, `cutils.h`)  | vendored, MIT                   | yes                          | the RegExp engine (golden rule 5)                                                                                  | `packages/runtime/vendor/quickjs-ng/` — provenance in its `VENDOR.md`                      |
 | fdlibm (V8 `ieee754.cc`, mechanically ported to C11) | vendored, fdlibm + BSD-3-Clause | yes                          | `Math.sin` and 19 siblings, bit-identical to the pinned Node's                                                     | `packages/runtime/vendor/fdlibm/` — provenance in its `VENDOR.md`                          |
+| Ryū (`d2s`)                                          | vendored, Apache-2.0 OR Boost-1.0 | yes                        | shortest round-trip digits for `Number::toString` (golden rule 5; docs/VALUE.md §3.1)                              | `packages/runtime/vendor/ryu/` — provenance in its `VENDOR.md`                            |
 | libm (`-lm`)                                         | system                          | yes                          | `floor`/`trunc`/`sqrt`/`fmod` — ToInt32, array indexing, the print path                                            | part of libSystem on macOS (the flag is a no-op there), separate on glibc (plan-notes 122) |
 | Boehm GC (`bdw-gc`)                                  | system                          | optional                     | the collector (`docs/VALUE.md` §4.12); without it the runtime falls back to plain `malloc`, no collection          | `pkg-config --libs bdw-gc`; macOS `brew install bdw-gc`, Debian `apt install libgc-dev`    |
 | ICU (`icu-uc`, `icu-i18n`)                           | system                          | optional, feature build only | `Intl` — `just -f packages/runtime/justfile -d packages/runtime runtime-intl`, into `packages/runtime/build-intl/` | `pkg-config`; macOS `brew install icu4c`, Debian `apt install libicu-dev`                  |
@@ -183,7 +235,7 @@ Intl is a separate object directory rather than a flag on the default build.
 
 Vendored code compiles with `-Wall` alone rather than the runtime's `-Wall -Wextra -Werror`
 (plan-notes 101) and is never hand-edited. A version bump is `pnpm run vendor:update <name> [ref]`
-(`packages/runtime/vendor/update.mjs`): it refetches the manifest's files at that ref — re-running `port.mjs`
+(`packages/runtime/vendor/update.ts`): it refetches the manifest's files at that ref — re-running `port.ts`
 over upstream's `ieee754.cc` for fdlibm — and prints the provenance rows for the directory's
 `VENDOR.md`. `--check` validates the manifests offline. Re-vendoring at the pinned ref reproduces
 the tree byte-for-byte, so `git status` after a run is the diff the bump actually introduces.
@@ -227,7 +279,7 @@ transient `library not found for -ljsrt` in exactly one fixture.
 
 These arrive with the phase that needs them; do not add them to CI before that:
 
-- **Ryū** — **NOT vendored.** Planned by Phase 2 Task 2.5 for `runtime/vendor/ryu/`; it was never fetched, and `shortest_digits()` in `runtime/src/jsrt_print.c` stands in for it with a round-trip search over `%.*e`. Correct, and slow: up to 18 `snprintf`+`strtod` pairs per number printed. See plan-notes 28 for the standing seam and plan-notes 188 for the correction: the network IS reachable, so Ryū is fetchable and simply not yet fetched — a scheduling fact, not an environmental one. **The schedule is now recorded** (owner's call, 2026-09-04, plan-notes 190): Ryū rides the §12 optimization ladder rather than becoming a task, because the corpus it would replace already matches Node byte-for-byte, so it is a pure speed change and §12's entry criterion — a measured before/after on Task 6.3's harness — applies. (This line claimed Ryū was vendored until 2026-09-01.)
+- ~~**Ryū**~~ — **vendored** (2026-10-24, plan-notes 385; T33). `packages/runtime/vendor/ryu/` pins `v2.0` (`72e18e8…`); `shortest_digits()` in `runtime/src/jsrt_print.c` calls `d2s_buffered` and parses the `(s, k, n)` ECMA-262 step 5 wants. It was scheduled on §12's optimization ladder (owner's call, plan-notes 190) because the round-trip search already matched Node byte-for-byte; the directed T33 card landed the vendor drop and the swap without waiting for the bench noise floor, so §12 loses this rung. See plan-notes 385.
 - **Test262 corpus** — fetched on demand (`pnpm run test262:fetch`) into `tests/test262/corpus/` or `$STATOR_TEST262`. The runner, pin, and ratchet are in-tree; `pnpm run test262` is a CI heartbeat, not part of `pnpm run ci`.
 - **Node test suite corpus** — the `test/parallel` files `tests/node-suite/expectations.json` selects, fetched from the tag in `tests/node-suite/pin.json` (the `.node-version` Node) into `tests/node-suite/corpus/` or `$STATOR_NODE_SUITE` by `pnpm run test:node-suite`, which then runs them through vitest (plan.md §11c T11.7). Not part of `pnpm run ci` (it needs the network); `ci` checks the expectations file's shape in `unit/node-suite.test.ts` and its counts in `docs/NODE.md`.
   - **Pool width (`STATOR_TEST_JOBS`)** — `packages/tests/support/parallel.ts` runs compile/execute work on a fixed-size pool. Default width is `os.availableParallelism()` (one slot per logical core). Set `STATOR_TEST_JOBS=N` to override: raise it on a quiet machine with headroom, lower it (`1` forces serial) when debugging a flaky failure or when sharing a CI box that must not be saturated.

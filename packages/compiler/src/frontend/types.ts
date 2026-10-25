@@ -1,7 +1,12 @@
 import * as ts from 'typescript';
 import { ERROR_CLASSES, errorHType } from '../hir/nodes.ts';
 import type { HField, HType } from '../hir/types.ts';
-import { ambiguousStarExports, namespaceModule } from './modules.ts';
+import {
+  ambiguousStarExports,
+  DEFAULT_EXPORT_BINDING,
+  isDefaultExportDeclaration,
+  namespaceModule,
+} from './modules.ts';
 import {
   accessorName,
   accessorProperty,
@@ -296,19 +301,14 @@ function classTypeToHType(type: ts.Type, checker: ts.TypeChecker, depth: number)
   if (symbol === undefined || declaration === undefined) {
     return null;
   }
-  // An anonymous class DECLARATION (`export default class {}`) has no name to identify its
-  // layout by, and nominal equality needs one. A bound EXPRESSION takes Node's `.name` — the
-  // inner name, else the variable (`const C = class D {}` is `D`, `const C = class {}` is
-  // `C`) — so nominal equality holds onto the same spelling every use resolves through
-  // (plan.md §8 step 12(d)). An unbound expression has no identity and stays Unknown.
+  // An anonymous class DECLARATION (`export default class {}`) takes Node's `.name` —
+  // `default` — the same way a bound EXPRESSION takes the inner name or the variable
+  // (`const C = class D {}` is `D`, `const C = class {}` is `C`), so nominal equality holds
+  // onto the same spelling every use resolves through (plan.md §8 step 12(d)). Any other
+  // unnamed declaration or an unbound expression has no identity and stays Unknown.
   let className: string | undefined;
-  if (ts.isClassDeclaration(declaration)) {
-    if (declaration.name === undefined) {
-      return null;
-    }
-    className = declaration.name.text;
-  } else if (ts.isClassExpression(declaration)) {
-    className = expressionClassName(declaration);
+  if (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration)) {
+    className = classDisplayName(declaration);
     if (className === undefined) {
       return null;
     }
@@ -706,6 +706,29 @@ export function elementStaticKey(expr: ts.Expression, checker: ts.TypeChecker): 
   return null;
 }
 
+/** The compile-time name of a `PropertyName`, or `null` when the key is a runtime value.
+ *
+ * An identifier or a string/template literal is its own name. A numeric name is its value's
+ * spelling, not the source text: `{ 0x10: 1 }` declares `16`, exactly as the checker spells
+ * the property. A computed key is a name only when `computedKeyStaticName` can read one.
+ * Shared by object-literal members and binding-element keys. */
+export function staticPropertyName(name: ts.PropertyName, checker: ts.TypeChecker): string | null {
+  if (
+    ts.isIdentifier(name) ||
+    ts.isStringLiteral(name) ||
+    ts.isNoSubstitutionTemplateLiteral(name)
+  ) {
+    return name.text;
+  }
+  if (ts.isNumericLiteral(name)) {
+    return String(Number(name.text));
+  }
+  if (ts.isComputedPropertyName(name)) {
+    return computedKeyStaticName(name, checker);
+  }
+  return null;
+}
+
 function computedKeyIsLayoutKey(name: ts.ComputedPropertyName, checker: ts.TypeChecker): boolean {
   return computedKeyStaticName(name, checker) !== null;
 }
@@ -728,6 +751,30 @@ function literalHasRuntimeComputedKey(
   return false;
 }
 
+/** Whether a spread operand reads a run-time key set: its type is Unknown after a dropped `as`.
+ *
+ * `isCheckable` (narrowing.ts) is the same three kinds -- number, string and boolean -- spelled
+ * here so this file need not import the narrowing module (which imports this one). An `as` to
+ * anything else is dropped by the lowering, so the spread reads the operand's Unknown type and
+ * the keys are a run-time question. */
+function spreadReadsUnknown(expr: ts.Expression, checker: ts.TypeChecker): boolean {
+  let current = expr;
+  for (;;) {
+    while (ts.isParenthesizedExpression(current)) {
+      current = current.expression;
+    }
+    if (ts.isAsExpression(current)) {
+      const asserted = tsTypeToHType(checker.getTypeAtLocation(current), checker);
+      if (asserted.kind === 'number' || asserted.kind === 'string' || asserted.kind === 'boolean') {
+        return false;
+      }
+      current = current.expression;
+      continue;
+    }
+    return tsTypeToHType(checker.getTypeAtLocation(current), checker).kind === 'unknown';
+  }
+}
+
 export function objectLiteralIsDynamic(
   literal: ts.ObjectLiteralExpression,
   checker: ts.TypeChecker,
@@ -737,11 +784,17 @@ export function objectLiteralIsDynamic(
   return (
     // The checker typed the literal `any`: a spread of an `any` value, or one it refused (TS2698,
     // a js-mode runtime code). Its key set is then a run-time question, and only the shape table
-    // can answer it (plan-notes 297).
+    // can answer it (plan-notes 297). A spread of a dropped-`as` unknown (`{ ...(o as {x}) }`)
+    // is the same question: the assertion names a shape the value need not have, so the result
+    // cannot take a fixed layout (plan.md §8 step 12(c) residue).
     (own.flags & ts.TypeFlags.Any) !== 0 ||
     literalHasRuntimeComputedKey(literal, checker) ||
     (contextual !== undefined && isDynamicShape(contextual, checker)) ||
-    isDynamicShape(own, checker)
+    isDynamicShape(own, checker) ||
+    literal.properties.some(
+      (property) =>
+        ts.isSpreadAssignment(property) && spreadReadsUnknown(property.expression, checker),
+    )
   );
 }
 
@@ -753,15 +806,20 @@ export function shapeName(fields: readonly HField[], methods: readonly HField[] 
   ];
   return `{${parts.join(', ')}}`;
 }
-/** The instance type a class declaration declares, or `undefined` for an anonymous one. Going
- * through the name's symbol is what makes this answerable for any class in a chain, not just the
- * one whose `ts.Type` the caller happened to start from. */
+/** The instance type a class declaration declares, or `undefined` when no symbol resolves.
+ * Going through the name's symbol is what makes this answerable for any class in a chain, not
+ * just the one whose `ts.Type` the caller happened to start from. The anonymous `export default
+ * class {}` has no name symbol; its declaration's own type is already the instance type. */
 function declaredTypeOf(
   declaration: ts.ClassDeclaration | ts.ClassExpression,
   checker: ts.TypeChecker,
 ): ts.Type | undefined {
-  const symbol =
-    declaration.name === undefined ? undefined : checker.getSymbolAtLocation(declaration.name);
+  if (declaration.name === undefined) {
+    return ts.isClassDeclaration(declaration) && isDefaultExportDeclaration(declaration)
+      ? checker.getTypeAtLocation(declaration)
+      : undefined;
+  }
+  const symbol = checker.getSymbolAtLocation(declaration.name);
   return symbol === undefined ? undefined : checker.getDeclaredTypeOfSymbol(symbol);
 }
 
@@ -1291,7 +1349,9 @@ export function aliasedClassDeclaration(
       return undefined;
     }
     if (ts.isClassDeclaration(declaration)) {
-      return declaration.name !== undefined ? declaration : undefined;
+      // The anonymous `export default class {}` has no name node but does have an identity
+      // (`*default*`, plan.md §8 step 12(d)); anything else without a name does not.
+      return classDisplayName(declaration) !== undefined ? declaration : undefined;
     }
     // The binding's own name declares rather than uses: without this the formation
     // `const K = C` would resolve its own `K` to `C` and read as a use of itself.
@@ -1400,13 +1460,21 @@ export function expressionClassName(expression: ts.ClassExpression): string | un
 }
 
 /** The spelling a class-like answers to in source positions: the declared name for a
- * declaration, Node's `.name` (inner name, else bound variable) for an expression.
- * `undefined` for an anonymous declaration or an unbound expression — shapes with no
- * identity, which the gate refuses before any consumer asks. */
+ * declaration, Node's `.name` (inner name, else bound variable) for an expression, and
+ * `*default*` for the anonymous `export default class {}` — ES's own binding name, which
+ * the descriptor keys on and `descriptorName` prints as Node's `.name` (`default`).
+ * `undefined` for any other anonymous declaration or an unbound expression — shapes with
+ * no identity, which the gate refuses before any consumer asks. */
 export function classDisplayName(
   node: ts.ClassDeclaration | ts.ClassExpression,
 ): string | undefined {
-  return ts.isClassExpression(node) ? expressionClassName(node) : node.name?.text;
+  if (ts.isClassExpression(node)) {
+    return expressionClassName(node);
+  }
+  if (node.name !== undefined) {
+    return node.name.text;
+  }
+  return isDefaultExportDeclaration(node) ? DEFAULT_EXPORT_BINDING : undefined;
 }
 
 /** The type of `new P()` for a JavaScript constructor function `P`: TypeScript gives the
@@ -1556,6 +1624,23 @@ export function staticMemberOf(
       member: ts.ClassElement;
     }
   | undefined {
+  // `this.x` / `super.x` inside a STATIC context name a static of the class (or its base),
+  // the same binding `C.x` reads (plan.md §8 step 12(d)). The receiver is the class object,
+  // which this subset does not build -- so the access erases to the declaration, exactly as
+  // a bound class expression's in-place use does. An INSTANCE context's `this` is the
+  // receiver parameter and takes the ordinary member path below.
+  if (access.expression.kind === ts.SyntaxKind.ThisKeyword) {
+    const owner = staticThisClass(access);
+    return owner === undefined
+      ? undefined
+      : staticMemberIn(owner, access.name.text, wantMethod, checker);
+  }
+  if (access.expression.kind === ts.SyntaxKind.SuperKeyword) {
+    const owner = staticSuperClass(access, checker);
+    return owner === undefined
+      ? undefined
+      : staticMemberIn(owner, access.name.text, wantMethod, checker);
+  }
   if (!ts.isIdentifier(access.expression)) {
     return undefined;
   }
@@ -1574,14 +1659,24 @@ export function staticMemberOf(
   if (declaration === undefined) {
     return undefined;
   }
-  const name = access.name.text;
-  const seen = new Set<ts.ClassDeclaration | ts.ClassExpression>();
-  for (
-    let current: ts.ClassDeclaration | ts.ClassExpression | undefined = declaration;
-    current !== undefined && !seen.has(current);
-    current = baseClassOf(current, checker)
-  ) {
-    seen.add(current);
+  return staticMemberIn(declaration, access.name.text, wantMethod, checker);
+}
+
+/** The static `name` of `declaration`, walking the chain -- statics are inherited, so `D.count`
+ * on `class D extends C` reads the ONE binding `C` declared. Shared by the identifier path and
+ * the `this`/`super` erasure above. */
+function staticMemberIn(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  name: string,
+  wantMethod: boolean | undefined,
+  checker: ts.TypeChecker,
+):
+  | {
+      owner: ts.ClassDeclaration | ts.ClassExpression;
+      member: ts.ClassElement;
+    }
+  | undefined {
+  for (const current of ancestry(declaration, checker).reverse()) {
     // An identifier names itself; a literal-typed computed key (`static [k]` with `k: "m"`)
     // is the name the direct spelling writes, so it matches the same read. String/numeric
     // literal spellings keep their old verdict -- this predicate only learns the computed
@@ -1600,6 +1695,49 @@ export function staticMemberOf(
     }
   }
   return undefined;
+}
+
+/** The class whose statics `this.x` names inside a STATIC context: the enclosing class body's
+ * owner. `undefined` outside one, or in an INSTANCE context where `this` is the receiver
+ * parameter and takes the ordinary member path. Bare `this` in a static is the class object,
+ * which stays refused (plan.md §8 step 12(d)). */
+export function staticThisClass(
+  access: ts.PropertyAccessExpression,
+): ts.ClassDeclaration | ts.ClassExpression | undefined {
+  for (let n: ts.Node | undefined = access.parent; n !== undefined; n = n.parent) {
+    if (ts.isClassDeclaration(n) || ts.isClassExpression(n)) {
+      return n;
+    }
+    // An instance member's `this` is the receiver, not the class object — stop here.
+    // A static member continues the walk: its `this` is the class being defined.
+    if (
+      ts.isConstructorDeclaration(n) ||
+      ts.isMethodDeclaration(n) ||
+      ts.isGetAccessorDeclaration(n) ||
+      ts.isSetAccessorDeclaration(n) ||
+      ts.isPropertyDeclaration(n)
+    ) {
+      if (!isStaticMember(n)) {
+        return undefined;
+      }
+      continue;
+    }
+    if (ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n)) {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/** The class whose statics `super.x` names inside a static context: the base of the enclosing
+ * class. `undefined` when there is no enclosing class or no base -- bare `super` in a static is
+ * a JavaScript SyntaxError and stays refused. */
+export function staticSuperClass(
+  access: ts.PropertyAccessExpression,
+  checker: ts.TypeChecker,
+): ts.ClassDeclaration | ts.ClassExpression | undefined {
+  const self = staticThisClass(access);
+  return self === undefined ? undefined : baseClassOf(self, checker);
 }
 
 /** Which class in `declaration`'s ancestry declares the method `name` that `declaration` responds
@@ -1891,20 +2029,23 @@ function isAnyKeyword(typeNode: ts.TypeNode): boolean {
   return ts.isToken(typeNode) && typeNode.kind === ts.SyntaxKind.AnyKeyword;
 }
 
+/** Nodes that can carry a type annotation on their own `type` slot. */
+const ANNOTATION_SITE_KINDS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.VariableDeclaration,
+  ts.SyntaxKind.Parameter,
+  ts.SyntaxKind.PropertyDeclaration,
+  ts.SyntaxKind.PropertySignature,
+  ts.SyntaxKind.FunctionDeclaration,
+  ts.SyntaxKind.MethodDeclaration,
+  ts.SyntaxKind.ArrowFunction,
+  ts.SyntaxKind.FunctionExpression,
+]);
+
 /** `null` = this node is not a place an annotation can go. `undefined` = it is, and there is none.
  * Otherwise the annotation itself. The three-way answer is what lets the caller tell "annotated
  * with something else" apart from "nothing to annotate". */
 function annotationSiteOf(node: ts.Node): ts.TypeNode | null | undefined {
-  if (
-    ts.isVariableDeclaration(node) ||
-    ts.isParameter(node) ||
-    ts.isPropertyDeclaration(node) ||
-    ts.isPropertySignature(node) ||
-    ts.isFunctionDeclaration(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isFunctionExpression(node)
-  ) {
+  if (ANNOTATION_SITE_KINDS.has(node.kind)) {
     // A `for-of` binding cannot carry an annotation (`for (const x: T of ...)` is a grammar
     // error), so it can never be *implicit* any in the sense this question asks: when iteration
     // itself is refused (TS2488/TS2571, plan.md §8 step 2a(c)) the checker types the binding `any`
@@ -1919,7 +2060,7 @@ function annotationSiteOf(node: ts.Node): ts.TypeNode | null | undefined {
     ) {
       return null;
     }
-    return node.type;
+    return (node as { readonly type?: ts.TypeNode }).type;
   }
   return null;
 }

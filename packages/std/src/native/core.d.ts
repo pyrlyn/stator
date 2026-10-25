@@ -13,3 +13,6 @@ export declare function jsrtStdResult(): CString;
 /** The error code (docs/STD.md §3) a backing recorded by its last failing call. */
 /** @statorExtern jsrt_std_last_error */
 export declare function jsrtStdLastError(): CString;
+
+/** @statorExtern jsrt_std_thread_cleanup */
+export declare function jsrtStdThreadCleanup(): void;

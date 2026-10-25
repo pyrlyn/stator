@@ -13,8 +13,8 @@
 //!   bytes travel in the caller's `Uint8Array`, which the backing reads or fills in place.
 //!   The emitter copies a `CString` return into a runtime string at the call site
 //!   (docs/FFI.md §3), so the buffer only has to outlive that copy: the next call that parks a
-//!   result frees the previous one. Nothing here is thread-safe; v0 std is single-threaded like
-//!   v0 FFI (T10.2 owns threads).
+//!   result frees the previous one. Mailboxes and the I/O backend are thread-local;
+//!   docs/THREADS.md states which process-wide operations belong on main.
 //!
 //! This archive depends on libc and nothing else — not on libjsrt.a — so it links in any
 //! position on the line.
@@ -22,9 +22,10 @@
 const std = @import("std");
 
 /// Zig's own I/O implementation behind every file-system and clock call: cross-platform where
-/// Zig's std is (§0.5), single-threaded, and needing no setup from the C `main` that hosts it.
+/// Zig's std is (§0.5); each caller thread has an independent synchronous backend.
+threadlocal var local_io: std.Io.Threaded = .init_single_threaded;
 pub fn io() std.Io {
-    return std.Io.Threaded.global_single_threaded.io();
+    return local_io.io();
 }
 
 /// A safety-check failure (bounds, overflow) in a std backing is a bug in this library, never a
@@ -42,7 +43,7 @@ fn onPanic(msg: []const u8, _: ?usize) noreturn {
 
 pub const allocator = std.heap.c_allocator;
 
-var result: ?[:0]u8 = null;
+threadlocal var result: ?[:0]u8 = null;
 
 /// Parks `owned` (allocated with `allocator`) as the answer `jsrt_std_result` returns, freeing
 /// the previous answer: its only reader, the emitter's copy, has already run.
@@ -55,7 +56,7 @@ export fn jsrt_std_result() [*:0]const u8 {
     return if (result) |r| r.ptr else "";
 }
 
-var last_error: [:0]const u8 = "";
+threadlocal var last_error: [:0]const u8 = "";
 
 /// Records `code` for `jsrt_std_last_error` and answers the failure status every backing returns.
 pub fn fail(code: [:0]const u8) f64 {
@@ -139,4 +140,11 @@ comptime {
     _ = @import("io.zig");
     _ = @import("encoding.zig");
     _ = @import("hash.zig");
+}
+
+/// Worker-local native mailboxes do not outlive the synchronous callback that uses them.
+export fn jsrt_std_thread_cleanup() void {
+    if (result) |owned| allocator.free(owned);
+    result = null;
+    @import("fs.zig").cleanup();
 }

@@ -3,8 +3,8 @@
  *
  * `std/<name>` is a RESERVED prefix, not a package: a known name resolves to
  * `packages/std/src/<name>.ts` through a `paths` entry on the program's own options (so the
- * checker, the gate and the module graph all resolve it identically), `std/sync` and
- * `std/thread` are not-yet until T10.2's threads exist, and every other `std/…` is a hard error
+ * checker, the gate and the module graph all resolve it identically), and every other
+ * `std/…` is a hard error
  * (STA3002) — never a silent fall-through to a package lookup. A std file is ordinary strict
  * TypeScript once resolved: below this edge nothing knows it came from `std`, except the link,
  * which adds `libjsrt_std.a` when the module graph holds one (cli/build.ts).
@@ -23,26 +23,6 @@ const PREFIX = 'std/';
 export const STD_ROOT = packageRoot('STATOR_STD_ROOT', 'std', 'src');
 
 const STD_SOURCE_DIR = checkerDir(join(STD_ROOT, 'src'));
-
-/** Modules whose surface needs T10.2's OS threads (docs/STD.md §5). */
-const THREAD_MODULES: ReadonlySet<string> = new Set(['sync', 'thread']);
-
-/** Members a std module will export once T10.2's thread pool exists: the Promise twins of the
- * sync `std/fs` calls (docs/STD.md §2, T10.1 step 5). They are refused as not-yet rather than
- * shipped as sync calls under `async`, which would block main inside an async program. */
-const THREAD_POOL_MEMBERS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-  [
-    'fs',
-    new Set([
-      'readTextAsync',
-      'writeTextAsync',
-      'statAsync',
-      'mkdirAsync',
-      'unlinkAsync',
-      'rmdirAsync',
-    ]),
-  ],
-]);
 
 let moduleNames: readonly string[] | undefined;
 
@@ -92,14 +72,6 @@ export function classifyStdSpecifier(specifier: string): StdSpecifier | undefine
   if (stdModuleNames().includes(name)) {
     return { kind: 'module', name };
   }
-  if (THREAD_MODULES.has(name)) {
-    return {
-      kind: 'not-yet',
-      code: 'STA1214',
-      message: `'${specifier}' is not yet supported; planned for Phase 10 (T10.2: OS threads)`,
-      phase: 10,
-    };
-  }
   const known = stdModuleNames()
     .map((m) => PREFIX + m)
     .join(', ');
@@ -107,25 +79,6 @@ export function classifyStdSpecifier(specifier: string): StdSpecifier | undefine
     kind: 'unknown',
     code: 'STA3002',
     message: `unknown std module '${specifier}' — the std modules are ${known === '' ? '(none found)' : known}`,
-  };
-}
-
-/** A named import of a std member that waits for T10.2, or `undefined` for any other name (which
- * the checker answers as before: a member no module exports is a plain error). */
-export function classifyStdMember(specifier: string, member: string): StdNotYet | undefined {
-  if (!specifier.startsWith(PREFIX)) {
-    return undefined;
-  }
-  if (THREAD_POOL_MEMBERS.get(specifier.slice(PREFIX.length))?.has(member) !== true) {
-    return undefined;
-  }
-  return {
-    kind: 'not-yet',
-    code: 'STA1214',
-    message:
-      `'${member}' from '${specifier}' is not yet supported; planned for Phase 10 ` +
-      '(T10.2: Promise-flavored std/fs runs on the thread pool)',
-    phase: 10,
   };
 }
 

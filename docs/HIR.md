@@ -799,6 +799,21 @@ A `Rewriter` supplies up to three hooks, all called with children already rewrit
 
 Returning a node by identity (`===`) is how a pass says "nothing happened", and the walk propagates
 that upward, so an unoptimizable module comes back as the same object.
+Child lists are copied only at their first changed element. Unchanged lists allocate no replacement
+array; statement-list walks without a `statement` hook also avoid singleton result arrays. Hooks still
+run once per visited node, bottom-up and in the original order, including whole-list hooks on empty
+or unchanged lists.
+
+To measure traversal throughput and heap growth independently of parsing/type checking, run
+`node --expose-gc --max-semi-space-size=128 packages/tests/bench/hir-rewrite.ts` from the repository
+root. An optional checkout path compares another implementation in the same process, alternating
+their order and checking equal results. The fixture contains 10,000 statements with eight numeric
+arguments each; it covers identity, sparse and full expression
+rewrites, plus an identity statement hook. Timing is the median of 15 batches of 25 walks, including
+any collection during a batch; process CPU time is also reported. Heap growth is measured separately
+across a single walk after an explicit collection; it is not process RSS or retained memory.
+Compare on the same pinned Node and
+idle host. These measurements describe the walker, not end-to-end compilation or native execution.
 
 ### 6.2 The three passes, and their order
 

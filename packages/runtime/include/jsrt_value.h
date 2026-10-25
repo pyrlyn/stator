@@ -248,12 +248,14 @@ jsrt_value jsrt_global_is_finite(jsrt_value v);
  * RangeError pending and answers undefined. */
 jsrt_value jsrt_number_to_string_radix(jsrt_value number, jsrt_value radix);
 jsrt_value jsrt_number_to_fixed(jsrt_value number, jsrt_value digits);
-/* Number.prototype and String.prototype as VALUES for an Unknown receiver (plan.md §11c T11.4,
- * plan-notes 310), on the `jsrt_array_method` contract: true when `key` names a landed method of
- * the receiver's primitive type, with `*out` a closure bound to the receiver. `jsrt_get_prop`
- * asks them, since a primitive has no shape table to walk. */
+/* Number.prototype, String.prototype and Boolean.prototype as VALUES for an Unknown receiver
+ * (plan.md §11c T11.4, plan-notes 310; Boolean plan-notes 372), on the `jsrt_array_method`
+ * contract: true when `key` names a landed method of the receiver's primitive type, with `*out`
+ * a closure bound to the receiver. `jsrt_get_prop` asks them, since a primitive has no shape
+ * table to walk. */
 bool jsrt_number_method(jsrt_value number, const char *key, jsrt_value *out);
 bool jsrt_string_method(jsrt_value string, const char *key, jsrt_value *out);
+bool jsrt_boolean_method(jsrt_value boolean, const char *key, jsrt_value *out);
 
 /* ToBoolean: convert a jsrt_value to a boolean.
  * Falsy: false, +0, -0, NaN, undefined, null, empty string.
@@ -1758,6 +1760,16 @@ jsrt_value jsrt_promise_construct(jsrt_value executor); /* new Promise(executor)
 /* The event loop, such as it is: drain the microtask queue until it is empty. Generated `main`
  * calls it once, after the module body, and that is the whole loop until timers or I/O exist to
  * need more (plan.md Task 4.6). */
+/* Internal std/thread bridge; main alone owns Promise state. */
+bool jsrt_thread_poll(void);
+bool jsrt_thread_is_worker(void);
+double jsrt_thread_pool_started(void); /* internal lifecycle probe, main-only */
+void jsrt_thread_require_main(void);
+void jsrt_gc_safepoint(void);
+void jsrt_gc_collect(void);
+void jsrt_shape_metadata_lock(void);
+void jsrt_shape_metadata_unlock(void);
+jsrt_value jsrt_gc_handoff(jsrt_value value);
 void jsrt_run_microtasks(void);
 
 /* ---------------------------------------------------------- async bodies */

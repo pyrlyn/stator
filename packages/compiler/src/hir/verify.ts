@@ -83,6 +83,98 @@ export interface VerifyProblem {
   readonly message: string;
 }
 
+function opProblem(kind: string, code: string, span: Span, message: string): VerifyProblem {
+  return { kind, span, code, message };
+}
+
+/** Receiver / arity / result agreement shared by `string-op` and `array-op`. The first
+ * disagreement wins; the `iterator` pin is the one result rule a want-type cannot express.
+ * Answers true when every check agreed. */
+function verifyReceiverOpShape(
+  problems: VerifyProblem[],
+  kind: string,
+  code: string,
+  span: Span,
+  op: string,
+  targetType: HType,
+  receiverKind: 'string' | 'array',
+  argCount: number,
+  arity: number,
+  countOk: boolean,
+  type: HType,
+  want: HType | undefined,
+  resultKind: string,
+): boolean {
+  if (targetType.kind !== receiverKind) {
+    problems.push(
+      opProblem(kind, code, span, `${op} on a receiver of type '${hTypeName(targetType)}'`),
+    );
+    return false;
+  }
+  if (!countOk) {
+    problems.push(
+      opProblem(
+        kind,
+        code,
+        span,
+        `${op} takes ${String(arity)} arguments after padding, not ${String(argCount)}`,
+      ),
+    );
+    return false;
+  }
+  if (want !== undefined && !hTypeEquals(type, want)) {
+    problems.push(
+      opProblem(
+        kind,
+        code,
+        span,
+        `${op} results in '${hTypeName(type)}', not '${hTypeName(want)}'`,
+      ),
+    );
+    return false;
+  }
+  if (resultKind === 'iterator' && type.kind !== 'iterator') {
+    problems.push(
+      opProblem(kind, code, span, `${op} results in '${hTypeName(type)}', not an iterator`),
+    );
+    return false;
+  }
+  return true;
+}
+
+/** Every shape member is written, and every written name is a shape member. Duplicates are
+ * overwrites, not errors — the emitter stores in source order into one hidden slot. */
+function verifyShapeCoverage(
+  problems: VerifyProblem[],
+  span: Span,
+  shapeName: string,
+  shapeMembers: readonly { readonly name: string }[],
+  written: ReadonlySet<string>,
+  writerWord: string,
+  memberWord: string,
+): void {
+  for (const name of written) {
+    if (!shapeMembers.some((member) => member.name === name)) {
+      problems.push({
+        kind: 'object-literal',
+        span,
+        code: 'STA4052',
+        message: `${writerWord} '${name}' names no ${memberWord} of shape '${shapeName}'`,
+      });
+    }
+  }
+  for (const member of shapeMembers) {
+    if (!written.has(member.name)) {
+      problems.push({
+        kind: 'object-literal',
+        span,
+        code: 'STA4052',
+        message: `shape '${shapeName}' has ${memberWord} '${member.name}', which the literal does not write`,
+      });
+    }
+  }
+}
+
 /** One enclosing loop or switch, innermost last.
  *
  * `isLoop` is what separates the two jumps: `break` may leave either, `continue` may only leave a
@@ -228,7 +320,8 @@ function checkIndexable(
   if (
     target.type.kind !== 'array' &&
     target.type.kind !== 'unknown' &&
-    target.type.kind !== 'uint8array'
+    target.type.kind !== 'uint8array' &&
+    target.type.kind !== 'string'
   ) {
     if (
       target.type.kind === 'object' &&
@@ -1533,26 +1626,15 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
       // that every entry names a field of the shape and the literal covers the shape exactly --
       // that is the invariant the emitter's slot lookup and the shape's key order both rest on.
       const named = new Set(expr.entries.map((entry) => entry.name));
-      for (const entry of expr.entries) {
-        if (!shape.fields.some((field) => field.name === entry.name)) {
-          problems.push({
-            kind: 'object-literal',
-            span: expr.span,
-            code: 'STA4052',
-            message: `entry '${entry.name}' names no field of shape '${hTypeName(shape)}'`,
-          });
-        }
-      }
-      for (const field of shape.fields) {
-        if (!named.has(field.name)) {
-          problems.push({
-            kind: 'object-literal',
-            span: expr.span,
-            code: 'STA4052',
-            message: `shape '${hTypeName(shape)}' has field '${field.name}', which the literal does not write`,
-          });
-        }
-      }
+      verifyShapeCoverage(
+        problems,
+        expr.span,
+        hTypeName(shape),
+        shape.fields,
+        named,
+        'entry',
+        'field',
+      );
       // The same cover rule for methods: every writer -- an own member or a spread copy --
       // names a method of the shape, and every method of the shape has at least one writer.
       // Duplicates are overwrites (`{ ...a, ...b }`, `{ ...o, m() {} }`), not errors: the
@@ -1564,26 +1646,15 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
         ...expr.methods.map((method) => method.name),
         ...expr.methodCopies.map((copy) => copy.name),
       ]);
-      for (const name of written) {
-        if (!shape.methods.some((method) => method.name === name)) {
-          problems.push({
-            kind: 'object-literal',
-            span: expr.span,
-            code: 'STA4052',
-            message: `method '${name}' names no method of shape '${hTypeName(shape)}'`,
-          });
-        }
-      }
-      for (const method of shape.methods) {
-        if (!written.has(method.name)) {
-          problems.push({
-            kind: 'object-literal',
-            span: expr.span,
-            code: 'STA4052',
-            message: `shape '${hTypeName(shape)}' has method '${method.name}', which the literal does not write`,
-          });
-        }
-      }
+      verifyShapeCoverage(
+        problems,
+        expr.span,
+        hTypeName(shape),
+        shape.methods,
+        written,
+        'method',
+        'method',
+      );
       for (const copy of expr.methodCopies) {
         if (!Number.isInteger(copy.at) || copy.at < 0 || copy.at > expr.entries.length) {
           problems.push({
@@ -1632,6 +1703,27 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
           span: expr.span,
           code: 'STA4059',
           message: `dynamic object literal has type '${hTypeName(expr.type)}', not Unknown`,
+        });
+      }
+      break;
+    }
+
+    case 'accessor-place': {
+      verifyExpression(expr.target, problems, bindings);
+      if (expr.target.type.kind !== 'object') {
+        problems.push({
+          kind: 'accessor-place',
+          span: expr.span,
+          code: 'STA4049',
+          message: 'accessor-place receiver must be an object',
+        });
+      }
+      if (expr.getSlot < 0 && expr.setSlot < 0) {
+        problems.push({
+          kind: 'accessor-place',
+          span: expr.span,
+          code: 'STA4067',
+          message: `accessor '${expr.property}' has neither half in ${expr.owner}`,
         });
       }
       break;
@@ -1782,35 +1874,21 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
               : shape.result === 'boolean'
                 ? H_BOOLEAN
                 : H_STRING;
-      if (expr.target.type.kind !== 'string') {
-        problems.push({
-          kind: 'string-op',
-          span: expr.span,
-          code: 'STA4081',
-          message: `${expr.op} on a receiver of type '${hTypeName(expr.target.type)}'`,
-        });
-      } else if (expr.args.length !== shape.arity) {
-        problems.push({
-          kind: 'string-op',
-          span: expr.span,
-          code: 'STA4081',
-          message: `${expr.op} takes ${String(shape.arity)} arguments after padding, not ${String(expr.args.length)}`,
-        });
-      } else if (want !== undefined && !hTypeEquals(expr.type, want)) {
-        problems.push({
-          kind: 'string-op',
-          span: expr.span,
-          code: 'STA4081',
-          message: `${expr.op} results in '${hTypeName(expr.type)}', not '${hTypeName(want)}'`,
-        });
-      } else if (shape.result === 'iterator' && expr.type.kind !== 'iterator') {
-        problems.push({
-          kind: 'string-op',
-          span: expr.span,
-          code: 'STA4081',
-          message: `${expr.op} results in '${hTypeName(expr.type)}', not an iterator`,
-        });
-      }
+      verifyReceiverOpShape(
+        problems,
+        'string-op',
+        'STA4081',
+        expr.span,
+        expr.op,
+        expr.target.type,
+        'string',
+        expr.args.length,
+        shape.arity,
+        expr.args.length === shape.arity,
+        expr.type,
+        want,
+        shape.result,
+      );
       break;
     }
 
@@ -1847,15 +1925,6 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
         verifyExpression(arg, problems, bindings);
       }
       const shape = ARRAY_OPS[expr.op];
-      if (expr.target.type.kind !== 'array') {
-        problems.push({
-          kind: 'array-op',
-          span: expr.span,
-          code: 'STA4082',
-          message: `${expr.op} on a receiver of type '${hTypeName(expr.target.type)}'`,
-        });
-        break;
-      }
       const want: HType | undefined =
         shape.result === 'self'
           ? expr.target.type
@@ -1874,28 +1943,22 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
           : 'maxArity' in shape
             ? expr.args.length >= shape.arity && expr.args.length <= shape.maxArity
             : expr.args.length === shape.arity;
-      if (!countOk) {
-        problems.push({
-          kind: 'array-op',
-          span: expr.span,
-          code: 'STA4082',
-          message: `${expr.op} takes ${String(shape.arity)} arguments after padding, not ${String(expr.args.length)}`,
-        });
-      } else if (want !== undefined && !hTypeEquals(expr.type, want)) {
-        problems.push({
-          kind: 'array-op',
-          span: expr.span,
-          code: 'STA4082',
-          message: `${expr.op} results in '${hTypeName(expr.type)}', not '${hTypeName(want)}'`,
-        });
-      } else if (shape.result === 'iterator' && expr.type.kind !== 'iterator') {
-        problems.push({
-          kind: 'array-op',
-          span: expr.span,
-          code: 'STA4082',
-          message: `${expr.op} results in '${hTypeName(expr.type)}', not an iterator`,
-        });
-      } else if (shape.result === 'mapped' && expr.type.kind !== 'array') {
+      const shapeAgrees = verifyReceiverOpShape(
+        problems,
+        'array-op',
+        'STA4082',
+        expr.span,
+        expr.op,
+        expr.target.type,
+        'array',
+        expr.args.length,
+        shape.arity,
+        countOk,
+        expr.type,
+        want,
+        shape.result,
+      );
+      if (shapeAgrees && shape.result === 'mapped' && expr.type.kind !== 'array') {
         // Only the KIND is pinned: the element is the checker's answer (map) or a possibly
         // narrowed one (filter), the same latitude Object.values gets under STA4083.
         problems.push({

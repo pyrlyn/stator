@@ -15,12 +15,7 @@ import {
   nodeGlobalsFile,
   nodePathMapping,
 } from './node.ts';
-import {
-  classifyStdMember,
-  classifyStdSpecifier,
-  type StdSpecifier,
-  stdPathMapping,
-} from './std.ts';
+import { classifyStdSpecifier, type StdSpecifier, stdPathMapping } from './std.ts';
 import { tsTypeToHType } from './types.ts';
 
 type Mode = 'ts' | 'js';
@@ -1152,9 +1147,7 @@ function edgeRefusalFor(
   }
   if (MISSING_MEMBER_CODES.has(code)) {
     const specifier = moduleSpecifierAt(file, start);
-    return specifier === undefined
-      ? undefined
-      : (classifyStdMember(specifier, literal) ?? classifyNodeMember(specifier, literal, node));
+    return specifier === undefined ? undefined : classifyNodeMember(specifier, literal, node);
   }
   return undefined;
 }
