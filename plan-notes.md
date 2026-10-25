@@ -14056,6 +14056,9 @@ and full command evidence moved to done.md.
 and landed a smaller `node:process` slice in note 374 (`hrtime()` included). This note is the
 branch rebased on that: 374's `hrtime()` and its `argv` construction are kept, and the members
 below are added on top.
+The frontend rewrite (`location.ts`) and the spread rule (`gate.ts`) add seven `STA1214`
+(`ts.*` qualified type names, one generic function value) to the compiler's selfhost count:
+`packages/tests/selfhost/baseline.json` moves 1887 → 1894 in the same change.
 
 **Slice, not the Check.** `packages/node/src/process.ts` is the members `tsc` reads, over
 `std/process`, `std/env`, `std/os` and `std/io`. The Check (`tsc --version` / `tsc -p`
