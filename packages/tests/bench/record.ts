@@ -1,5 +1,5 @@
 /* Weekly benchmark recorder (plan.md §9 Task 6.3). Extends the Phase 2 baseline shape. */
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -14,6 +14,8 @@ import { arch, cpus, hostname, platform, release, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { nodePath } from '../support/node-path.ts';
+import { onPath } from '../support/on-path.ts';
+import { type TimedRun, timedRun } from '../support/timed-run.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
@@ -21,14 +23,6 @@ const CLI = join(REPO, 'compiler', 'src', 'cli', 'main.ts');
 const PROGRAMS = join(HERE, 'programs');
 const RESULTS = join(HERE, 'results');
 const RUNS = 5;
-
-interface Streams {
-  readonly status: number | null;
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly maxRssRaw: number;
-  readonly maxRssBytes: number;
-}
 
 interface ProgramMeasurement {
   readonly program: string;
@@ -50,42 +44,8 @@ function hostId(): string {
   return `${platform()}-${arch()}-${hostname()}`.replace(/[^A-Za-z0-9_.-]/g, '_');
 }
 
-function run(command: string, args: readonly string[], timeout = 120_000): Streams {
-  const time = '/usr/bin/time';
-  const timedArgs =
-    platform() === 'darwin' ? ['-l', command, ...args] : ['-f', '%M', command, ...args];
-  const result = existsSync(time)
-    ? spawnSync(time, timedArgs, { encoding: 'utf8', timeout, maxBuffer: 4 * 1024 * 1024 })
-    : spawnSync(command, [...args], { encoding: 'utf8', timeout, maxBuffer: 4 * 1024 * 1024 });
-  const stderr = result.stderr ?? '';
-  const rawMatch =
-    platform() === 'darwin'
-      ? /maximum resident set size:\s*(\d+)/.exec(stderr)
-      : /(?:^|\n)(\d+)\s*$/.exec(stderr);
-  const raw = rawMatch === null ? 0 : Number(rawMatch[1]);
-  const cleanedStderr =
-    rawMatch === null
-      ? stderr
-      : platform() === 'darwin'
-        ? stderr
-            .split('\n')
-            .filter(
-              (line) =>
-                !/^\s*(?:\d+(?:\.\d+)?\s+(?:real|user|sys)|\d+\s+[a-z].*|[a-z].*\d+)\s*$/.test(
-                  line,
-                ),
-            )
-            .join('\n')
-            .trim()
-        : stderr.slice(0, rawMatch.index).trimEnd();
-  const maxRssBytes = platform() === 'darwin' ? raw : raw * 1024;
-  return {
-    status: result.status,
-    stdout: result.stdout ?? '',
-    stderr: cleanedStderr,
-    maxRssRaw: raw,
-    maxRssBytes,
-  };
+function run(command: string, args: readonly string[], timeout = 120_000): TimedRun {
+  return timedRun(command, args, { timeout });
 }
 
 function clangVersion(): string {
@@ -132,8 +92,8 @@ function measureStator(program: string, expected: string): ProgramMeasurement {
 
 function probe(name: string): { readonly path: string; readonly version: string } | undefined {
   try {
-    const path = execFileSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' }).trim();
-    if (path === '') return undefined;
+    const path = onPath(name);
+    if (path === undefined) return undefined;
     const version = run(path, ['--version'], 10_000).stdout.split('\n')[0] ?? 'unknown';
     return { path, version };
   } catch {

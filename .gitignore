@@ -21,6 +21,7 @@ packages/tests/differential/failures/
 # have to know it is transient -- otherwise `pnpm run ci` fails whenever a fuzzer run overlaps it.
 .differential-*/
 packages/tests/bench/results/
+packages/tests/bench/profile/out/
 packages/tests/test262/corpus/
 packages/tests/node-suite/corpus/
 packages/tests/test262/results.json
