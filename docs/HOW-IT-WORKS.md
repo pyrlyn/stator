@@ -195,3 +195,5 @@ ABI behavior.
 
 When behavior, CLI, subset, diagnostics, toolchain, or architecture change,
 update the matching docs in the **same** change (see `AGENTS.md` golden rules).
+
+Self-hosting plan (V-style bootstrap): [SELF-HOSTING.md](SELF-HOSTING.md).
