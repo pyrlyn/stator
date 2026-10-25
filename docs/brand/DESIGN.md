@@ -7,7 +7,7 @@
 Identity: electric indigo-blue + cool gray. Not neon purple; calm engineering blue.
 
 
-**Shared visual lock (Listepo landing v1):** **nerd + ai + glass + flat** — same family as ketch brand v1. IBM Plex Mono eyebrows/labels/chips, hairline borders, mono CLI cards; subtle agent/compute cues (soft accent glow, gradient hairline, status chips) using **indigo `#5B7CFF` only** (no purple AI gradients); translucent glass panels with `backdrop-filter` plus opaque `@media (prefers-reduced-transparency: reduce)` fallbacks; flat CTAs, 4/8pt spacing, surface ladder, radii 8–12.
+**Shared visual lock (Listepo landing v1):** **nerd + ai + glass + flat** — same family as the package manager brand v1. IBM Plex Mono eyebrows/labels/chips, hairline borders, mono CLI cards; subtle agent/compute cues (soft accent glow, gradient hairline, status chips) using **indigo `#5B7CFF` only** (no purple AI gradients); translucent glass panels with `backdrop-filter` plus opaque `@media (prefers-reduced-transparency: reduce)` fallbacks; flat CTAs, 4/8pt spacing, surface ladder, radii 8–12.
 
 ## Colors
 
@@ -92,5 +92,5 @@ Identity: electric indigo-blue + cool gray. Not neon purple; calm engineering bl
 
 **Don't**
 - No neon purple, magenta, or holographic gradients
-- Don’t collide with rtok cyan — stay indigo, not sky
+- Don’t collide with the token CLI cyan — stay indigo, not sky
 - Avoid literal motor illustrations; one geometric metaphor

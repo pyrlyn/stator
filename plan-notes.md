@@ -12945,7 +12945,7 @@ fixtures are T17's `string_range_error` and T16's `keys.js`. What T20 still asks
 
 **Evidence.** pyrlyn/ci `.github/workflows/sonarcloud.yml` at
 `c875cd763ad0c4abbd936e480be5752330d3b66b` describes itself as "unifying the sonarcloud.yml of
-rtok, ketch, cox, runa, crates-packages, slint_dart and stator". Its steps are the ones stator's
+The token CLI, the package manager, the coding agent, runa, crates-packages, slint_dart and stator". Its steps are the ones stator's
 `sonarcloud.yml` carries by hand: skip with a notice without `SONAR_TOKEN`, full-history
 checkout, tool setup, a setup and a coverage command, the scan with soft-fail. What differs: the
 shared workflow sets tools up with mise (`mise-install-args`), not with `pnpm/action-setup`,
