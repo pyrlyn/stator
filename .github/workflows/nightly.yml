@@ -12,7 +12,7 @@ permissions:
 jobs:
   evidence:
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 2 * * *' || github.event.schedule == '0 3 * * 0'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Differential (60 min) + a full instrumented impact recording + the weekly bench: the
     # ceiling is for the sum, not each step.
     timeout-minutes: 180

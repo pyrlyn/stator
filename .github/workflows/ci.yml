@@ -84,7 +84,7 @@ jobs:
   # under the 2-hour per-job ceiling so the conformance number stays on every commit.
   test262:
     name: test262 conformance (shard ${{ matrix.shard }}/8)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -118,7 +118,7 @@ jobs:
   # names individual tests -- so `--aggregate` reassembles the shards and applies them once.
   test262-report:
     name: test262 conformance
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     needs: test262
     # `needs` alone would skip this job when a shard fails, and a skipped gate reports nothing --
@@ -149,7 +149,7 @@ jobs:
   # Running these six times would prove the same thing six times.
   static:
     name: static analysis
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:
       - *checkout
@@ -176,7 +176,7 @@ jobs:
   # Keeps the check name `frontend (linux/x64)` it had as a matrix entry.
   frontend-coverage:
     name: frontend (linux/x64)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:
       - *checkout
@@ -458,7 +458,7 @@ jobs:
   impact-map:
     name: impact map
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 180
     steps:
       # fetch-depth 0: the map is keyed to HEAD and the selector later proves
@@ -500,7 +500,7 @@ jobs:
   impact-select:
     name: impact select
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -542,7 +542,7 @@ jobs:
   # `frontend (windows/x64)`, `frontend (windows/arm64)` and `pipeline / gate` keep their names.
   compile-jobs-smoke:
     name: compile jobs smoke
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - *checkout
