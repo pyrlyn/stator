@@ -10,7 +10,7 @@ console.log([0, 1, '', 'x', null].filter(Boolean).length, ['1', '2'].map(Number)
 function isProto(o) { return o === Object.prototype || o === Array.prototype; }
 console.log(isProto({}), isProto(Object.prototype));
 console.log(ArrayBuffer.isView(new Uint8Array(1)), ArrayBuffer.isView([]));
-function k(m) { let n = 0; for (const x of m.keys()) n++; return n + m.size + (m.has(1) ? 100 : 0); }
+function k(m) { let n = 0; for (const _ of m.keys()) n++; return n + m.size + (m.has(1) ? 100 : 0); }
 const mm = new Map(); mm.set(1, 2); console.log(k(mm));
 function dt(d) { return d.getTime(); } console.log(dt(new Date(5)));
 function show2(o) { const k = c(o); console.log(typeof k, k === undefined ? 'undef' : k.name); }
