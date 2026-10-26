@@ -800,6 +800,25 @@ export const GLOBAL_CALLS = {
   parseFloat: { arity: 1, fn: 'jsrt_global_parse_float', result: 'number', throws: false },
   isNaN: { arity: 1, fn: 'jsrt_global_is_nan', result: 'boolean', throws: false },
   isFinite: { arity: 1, fn: 'jsrt_global_is_finite', result: 'boolean', throws: false },
+  'Number.isFinite': { arity: 1, fn: 'jsrt_number_is_finite', result: 'boolean', throws: false },
+  'Number.isNaN': { arity: 1, fn: 'jsrt_number_is_nan', result: 'boolean', throws: false },
+  'ArrayBuffer.isView': {
+    arity: 1,
+    fn: 'jsrt_arraybuffer_is_view',
+    result: 'boolean',
+    throws: false,
+  },
+  // Builtin constructors and prototypes read as VALUES (docs/VALUE.md §4.24): the one argument
+  // is the builtin's name as a string literal, and the runtime interns one value per name, so
+  // `ctor === Date` and `o === Object.prototype` compare identities exactly.
+  '%ctor': { arity: 1, fn: 'jsrt_builtin_ctor_value', result: 'unknown', throws: false },
+  '%proto': { arity: 1, fn: 'jsrt_builtin_proto_value', result: 'unknown', throws: false },
+  '%objectProto': {
+    arity: 1,
+    fn: 'jsrt_object_proto_method_value',
+    result: 'unknown',
+    throws: false,
+  },
   RegExp: { arity: 2, fn: 'jsrt_regexp_construct', result: 'regexp', throws: true },
   Array: { arity: 1, fn: 'jsrt_array_construct', result: 'array', throws: true },
   'Array.from': { arity: 1, fn: 'jsrt_array_from', result: 'array', throws: true },
@@ -809,7 +828,7 @@ export const GLOBAL_CALLS = {
   {
     readonly arity: number;
     readonly fn: string;
-    readonly result: 'number' | 'boolean' | 'regexp' | 'array';
+    readonly result: 'number' | 'boolean' | 'regexp' | 'array' | 'unknown';
     readonly throws: boolean;
   }
 >;

@@ -502,11 +502,15 @@ static uint8_t **capture_buffer(const JSRTRegExp *re) {
 }
 
 bool jsrt_regexp_test(jsrt_value re_value, jsrt_value str) {
-  /* The gate accepts an UNTYPED subject -- in js mode that is the norm -- so the string tag is
-   * settled here, jsrt_json_parse's rule: ToString of anything else is a conversion this bridge
-   * does not perform, and reading a non-string as UTF-16 units would fault or answer nonsense. */
+  /* The gate accepts an UNTYPED subject -- in js mode that is the norm -- so the subject is
+   * ToString'd here (§22.2.6.16 step 3 via RegExpBuiltinExec): `/^\d+$/.test(5)` tests "5" and
+   * `.test(undefined)` tests "undefined". A conversion that throws leaves the exception pending
+   * for the call site and answers false. */
   if (!jsrt_is(str, JSRT_TAG_STRING)) {
-    jsrt_panic("STA2005: RegExp.prototype.test of a value that is not a string is not yet supported");
+    str = jsrt_to_string(str);
+    if (jsrt_pending()) {
+      return false;
+    }
   }
   JSRTRegExp *re = jsrt_as_regexp(re_value);
   const JSString *subject = (const JSString *)jsrt_ptr(str);

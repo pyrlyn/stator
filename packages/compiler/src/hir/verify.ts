@@ -1529,7 +1529,17 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
         expr.spread !== true &&
         expr.target.type.kind !== 'unknown' &&
         expr.target.type.kind !== 'fn' &&
-        !undeclaredMember(expr.target.type, expr.method)
+        !undeclaredMember(expr.target.type, expr.method) &&
+        // A declared FIELD called by name (`flags.unknownFn(x)` with `unknownFn: null`): the
+        // field holds whatever was stored, and `jsrt_get_prop` reads a fixed slot by name.
+        !(
+          expr.target.type.kind === 'object' &&
+          expr.target.type.fields.some((field) => field.name === expr.method)
+        ) &&
+        // An array the checker widened to `any` (an evolving `var xs = []` reassigned) while
+        // the binding kept its array type: `jsrt_get_prop` answers the bound Array.prototype
+        // method on any array value, so the by-name call is the same call.
+        !(expr.target.type.kind === 'array' && Object.hasOwn(ARRAY_OPS, expr.method))
       ) {
         problems.push({
           kind: 'dyn-method-call',
@@ -1741,11 +1751,14 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
       // any name -- except an array's `length`, the place an assignment in value position resizes
       // through, and a function's own properties, which its closure holds (plan-notes 310).
       const arrayLength = expr.target.type.kind === 'array' && expr.field === 'length';
+      // `a.push` read as a value for `a.push.apply(a, list)`: the runtime's bound method.
+      const arrayMethod = expr.target.type.kind === 'array' && Object.hasOwn(ARRAY_OPS, expr.field);
       if (
         (expr.target.type.kind !== 'unknown' &&
           expr.target.type.kind !== 'object' &&
           expr.target.type.kind !== 'fn' &&
-          !arrayLength) ||
+          !arrayLength &&
+          !arrayMethod) ||
         expr.type.kind !== 'unknown'
       ) {
         problems.push({
@@ -2278,10 +2291,16 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
       const typed =
         row.result === 'array'
           ? expr.type.kind === 'array'
-          : hTypeEquals(
-              expr.type,
-              row.result === 'number' ? H_NUMBER : row.result === 'boolean' ? H_BOOLEAN : H_REGEXP,
-            );
+          : row.result === 'unknown'
+            ? expr.type.kind === 'unknown'
+            : hTypeEquals(
+                expr.type,
+                row.result === 'number'
+                  ? H_NUMBER
+                  : row.result === 'boolean'
+                    ? H_BOOLEAN
+                    : H_REGEXP,
+              );
       if (expr.args.length !== row.arity) {
         problems.push({
           kind: 'global-call',

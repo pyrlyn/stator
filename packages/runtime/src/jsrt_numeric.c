@@ -806,3 +806,11 @@ jsrt_value jsrt_global_parse_float(jsrt_value string) {
 jsrt_value jsrt_global_is_nan(jsrt_value v) { return jsrt_bool(isnan(jsrt_to_number(v))); }
 
 jsrt_value jsrt_global_is_finite(jsrt_value v) { return jsrt_bool(isfinite(jsrt_to_number(v))); }
+
+/* `Number.isFinite(x)` and `Number.isNaN(x)` (§21.1.2.2, §21.1.2.4): no ToNumber -- a non-Number
+ * operand answers false. */
+jsrt_value jsrt_number_is_finite(jsrt_value v) {
+  return jsrt_bool(jsrt_is_number(v) && isfinite(jsrt_to_number(v)));
+}
+
+jsrt_value jsrt_number_is_nan(jsrt_value v) { return jsrt_bool(jsrt_is_number(v) && isnan(jsrt_to_number(v))); }

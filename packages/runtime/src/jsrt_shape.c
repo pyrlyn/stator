@@ -499,6 +499,35 @@ jsrt_value jsrt_get_prop(jsrt_value obj, const char *key, JSRTIC *ic) {
   if (jsrt_is(obj, JSRT_TAG_ARRAY) && strcmp(key, "length") == 0) {
     return jsrt_number((double)jsrt_as_array(obj)->length);
   }
+  /* `v.constructor` on a builtin value, and the Map/Set/Date members an Unknown receiver reads
+   * by name (jsrt_builtin_values.c). Neither kind can carry an own `constructor`. */
+  {
+    jsrt_value builtin = JSRT_UNDEFINED;
+    if (strcmp(key, "constructor") == 0 && jsrt_builtin_constructor_of(obj, &builtin)) {
+      return builtin;
+    }
+    if (jsrt_builtin_member(obj, key, &builtin)) {
+      return builtin;
+    }
+  }
+  /* A fixed object's inherited `constructor`. An object literal's is Object (§20.1.3.1); a class
+   * instance's is its class object, which the descriptor cannot reach yet, so it panics loudly
+   * (STA4105) rather than answer a wrong `undefined`. A declared `constructor` field wins. */
+  if (strcmp(key, "constructor") == 0 && jsrt_is_fixed_object(obj)) {
+    const JSRTClass *cls = ((const JSRTObject *)jsrt_ptr(obj))->cls;
+    bool declared = false;
+    for (uint32_t i = 0; i < cls->field_count; i++) {
+      if (strcmp(cls->fields[i], "constructor") == 0) {
+        declared = true;
+      }
+    }
+    if (!declared && cls->method_count == 0 && cls->name[0] == '\0') {
+      return jsrt_builtin_ctor("Object");
+    }
+    if (!declared && cls->name[0] != '\0') {
+      jsrt_panic("STA4105: `.constructor` of a class instance read through an untyped value is not supported yet");
+    }
+  }
   /* A closure's own answers (`fn.length`, and `fn.name` for every function): the closure's own
    * fields, which never count a method's receiver (docs/VALUE.md §4.16, plan.md §8 step 21b). A
    * closure has no shape, so without these the read falls through to the table walk and answers
@@ -515,6 +544,14 @@ jsrt_value jsrt_get_prop(jsrt_value obj, const char *key, JSRTIC *ic) {
     }
     if (strcmp(key, "length") == 0) {
       return jsrt_number((double)c->arity);
+    }
+    /* Function.prototype.call / apply (§20.2.3.1, §20.2.3.3), bound to this closure. */
+    if (c->klass == NULL && (strcmp(key, "call") == 0 || strcmp(key, "apply") == 0)) {
+      jsrt_value own = JSRT_UNDEFINED;
+      if (function_own_get(obj, key, &own)) {
+        return own;
+      }
+      return jsrt_function_call_method(obj, key[0] == 'a');
     }
     if (strcmp(key, "name") == 0) {
       return jsrt_string_from_utf8(c->name, strlen(c->name));
@@ -592,6 +629,11 @@ jsrt_value jsrt_get_prop(jsrt_value obj, const char *key, JSRTIC *ic) {
      * slot", and an inherited member is neither. */
     if (jsrt_is_dynobj(obj) && inherited_get(obj, key, obj, &method)) {
       return method;
+    }
+    /* An ordinary object's inherited `constructor` is Object (§20.1.3.1), unless the walk above
+     * found one of its own. */
+    if (jsrt_is_dynobj(obj) && strcmp(key, "constructor") == 0) {
+      return jsrt_builtin_ctor("Object");
     }
     return JSRT_UNDEFINED;
   }

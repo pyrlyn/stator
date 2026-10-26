@@ -157,7 +157,7 @@ test('expando declarations merged with a real binding do not become reference-er
 
 test('real declarations without lowered bindings retain their internal diagnostic', () => {
   for (const code of [
-    'String;',
+    'Reflect;',
     'later.a = 1; let later;',
     'declared.a = 1; declare const declared: { a: number };',
   ]) {

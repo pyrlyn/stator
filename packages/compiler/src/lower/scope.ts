@@ -139,6 +139,13 @@ export class Scope {
     this.ownHirNames.set(name, hir);
   }
 
+  /** Whether this function unit (this frame's slot space) declared `name` anywhere -- a
+   * parameter, a hoisted function, a binding of any block of the same function. A binding only
+   * an ENCLOSING function owns is not here. */
+  declaredInUnit(name: string): boolean {
+    return this.unitDeclared.has(name);
+  }
+
   has(name: string): boolean {
     return this.ownTypes.has(name) || (this.parent?.has(name) ?? false);
   }

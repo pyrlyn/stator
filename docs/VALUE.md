@@ -1644,6 +1644,48 @@ remainder of the surface stays `STA1214` until the value path is widened.
 `C.name` (Node allows it on a function) cannot be expressed here. `C === D` across two distinct
 declarations is not yet observable — the opaque identity surface (`f(C)`, printing) is refused.
 
+## 4.27 Builtin constructors and prototypes as values (feat/realworld-gate-pass)
+
+Real packages (dequal, minimist, ms) read builtins as plain values: `foo.constructor === Date`,
+`var has = Object.prototype.hasOwnProperty; has.call(o, k)`, `[].filter(Boolean)`,
+`ArrayBuffer.isView(x)`. This section is how those land without a global object.
+
+- **Interned values.** A builtin constructor name read as a value (`Object`, `Array`, `Boolean`,
+  `Number`, `String`, `Date`, `RegExp`, `Map`, `Set`, `WeakMap`, `WeakSet`, `ArrayBuffer`,
+  `DataView`, the typed arrays, `Promise`, `Function`) lowers to the global-call `%ctor`
+  (`jsrt_builtin_ctor_value`), and `X.prototype` to `%proto`. Each name is interned once per process,
+  so `===` is identity, as in Node. The result is typed Unknown.
+- **`.constructor`.** `jsrt_get_prop` answers `constructor` for arrays, typed arrays, ArrayBuffer,
+  Map/Set/WeakMap/WeakSet, Date, RegExp, Promise and the number/string/boolean primitives with the
+  interned constructor. Ordinary (dynamic or literal-layout) objects answer `Object`. A class
+  instance read through an untyped value panics **STA4105**, because its descriptor cannot reach the class
+  object yet. That is a loud failure, never a wrong `undefined`.
+- **Calling a constructor value.** `Boolean`, `Number` and `String` convert, exactly like the
+  callee forms. Any other constructor called without `new` throws a TypeError.
+- **`Object.prototype.hasOwnProperty` / `toString`** read as values (`%objectProto`) are closures
+  that take their receiver from `call`/`apply`.
+- **`f.call(t, ...args)` / `f.apply(t, list)`** on any plain function value: every closure answers
+  both names (§20.2.3.1/3). The result is Unknown. A class object and a spread argument stay
+  not-yet (STA1214).
+- **Untyped Map/Set/Date receivers.** `size`, `has/get/set/add/delete/clear/keys/values/entries/
+  forEach`, `getTime/valueOf/toISOString` resolve by name on an Unknown receiver.
+- **New statics.** `Number.isFinite` and `Number.isNaN` (no ToNumber, unlike the globals) and
+  `ArrayBuffer.isView` are GLOBAL_CALLS rows typed `boolean`.
+- **Totality fixes.** `Object.keys` on an untyped value no longer needs a typed argument. It throws a
+  TypeError on null/undefined and answers `[]` for other primitives and builtins. `RegExp.prototype.test`
+  ToStrings a non-string subject.
+
+Lowering changes that ride along: `e satisfies T` erases to `e`, and the layout ignores the
+`satisfies` context. `for (x of it)` and `for (k in o)` over an existing name assign through a fresh
+temporary. A `var` owned by a nested function no longer aliases the enclosing function's var of the
+same name. In js mode, a literal element key the layout does not declare (`argv['--']`) goes through
+the overflow table (§4.24). A field declared `null`/`undefined` and later holding a function can be
+called.
+
+Proved by `tests/golden/js/{builtin_values,for_of_existing_binding,var_shadow_nested,
+dynamic_literal_keys,regexp_test_coercion}.js` and by the vendored packages
+`tests/golden/js/{realworld_ms,realworld_dequal,node_realworld_minimist}`.
+
 ## 5. What Phase 2 actually implements
 
 The layout above is complete, but the walking skeleton uses only part of it. Recorded so the gap

@@ -34,7 +34,14 @@ import {
   OBJECT_STATICS,
   PROMISE_STATICS,
 } from '../frontend/gate.ts';
-import { globalFunctionOf, globalTypeofOf, isGlobalArray } from '../frontend/gate.ts';
+import {
+  builtinValueOf,
+  isPlainFunctionValue,
+  isSelfBoundCallApply,
+  globalFunctionOf,
+  globalTypeofOf,
+  isGlobalArray,
+} from '../frontend/gate.ts';
 import { numberConstant } from '../frontend/gate.ts';
 import type { GlobalFunction } from '../frontend/gate.ts';
 import {
@@ -2504,6 +2511,43 @@ function lowerForOf(
   const dispatched = wrapDynamicIterator(iterable);
 
   const list = node.initializer;
+  // `for (x of it)` assigns an EXISTING binding each iteration: the loop walks a fresh temporary
+  // and the body opens with `x = temp`, through the same assignment edge `x = e` takes (a
+  // boundary check for a typed `x`, the TypeError for a named function's own name).
+  if (ts.isIdentifier(list)) {
+    const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
+    const temp = nextBindTemp();
+    const elementType = forOfElementType(
+      dispatched.type,
+      peeled === undefined ? 'identity' : peeled.view,
+    );
+    const inner = bindings.child();
+    inner.set(temp, elementType);
+    const tempId: Identifier = { kind: 'identifier', type: elementType, span, name: temp };
+    const assignment = identifierAssignment(
+      list,
+      () => tempId,
+      sourceFile,
+      checker,
+      inner,
+      diagnostics,
+    );
+    const body = lowerBody(node.statement, sourceFile, checker, inner, diagnostics);
+    if (assignment === null || !body) {
+      return null;
+    }
+    return {
+      kind: 'for-of-statement',
+      type: H_UNDEFINED,
+      span,
+      binding: temp,
+      declKind: 'const',
+      iterable: dispatched,
+      view: peeled === undefined ? 'identity' : peeled.view,
+      body: { ...body, statements: [assignmentStatement(assignment, span), ...body.statements] },
+      ...(label !== undefined && { label }),
+    };
+  }
   const declaration = ts.isVariableDeclarationList(list) ? list.declarations[0] : undefined;
   if (declaration === undefined || !ts.isIdentifier(declaration.name)) {
     diagnostics.push(
@@ -3239,6 +3283,22 @@ function targetIsDynamic(target: ts.Expression, checker: ts.TypeChecker, binding
   );
 }
 
+/** Whether a layout declares `key` as a field, a method, or either accessor half. A literal
+ * element key it does not declare (`argv['--']` in js mode) reads and writes by NAME through the
+ * overflow table instead (docs/VALUE.md §4.24). */
+function declaresMember(type: HType, key: string): boolean {
+  return (
+    type.kind === 'object' &&
+    (type.fields.some((field) => field.name === key) ||
+      type.methods.some(
+        (m) =>
+          m.name === key ||
+          m.name === accessorName('get', key) ||
+          m.name === accessorName('set', key),
+      ))
+  );
+}
+
 /** The slot `field` occupies in `target`'s class, or `null` after reporting an internal error.
  *
  * A miss is never a user error: the checker proved the name is declared and the gate proved the
@@ -3752,7 +3812,11 @@ function memberAssignment(
         return null;
       }
       ({ current, write } = place);
-    } else if (literalKey !== null && target.type.kind === 'object') {
+    } else if (
+      literalKey !== null &&
+      target.type.kind === 'object' &&
+      declaresMember(target.type, literalKey)
+    ) {
       const slot = slotOf(target, literalKey, targetNode, sourceFile, diagnostics);
       if (slot === null) {
         return null;
@@ -4066,10 +4130,21 @@ function lowerUpdatePlace(
   if (accessorTarget !== undefined) {
     return accessorTarget;
   }
-  const expr = lowerExpression(node, sourceFile, checker, bindings, diagnostics);
-  if (expr === null) {
+  const lowered = lowerExpression(node, sourceFile, checker, bindings, diagnostics);
+  if (lowered === null) {
     return null;
   }
+  // A narrowed read of an Unknown binding arrives wrapped in its boundary check (`len` after
+  // `len = view.byteLength` reads as a checked number). The PLACE is the binding itself; the
+  // update writes the binding and its own arithmetic coerces, so the check is not the target.
+  const expr =
+    lowered.kind === 'boundary-check' &&
+    (lowered.value.kind === 'identifier' ||
+      lowered.value.kind === 'index-access' ||
+      lowered.value.kind === 'field-access' ||
+      lowered.value.kind === 'dyn-field-access')
+      ? lowered.value
+      : lowered;
   if (
     expr.kind === 'identifier' ||
     expr.kind === 'index-access' ||
@@ -4182,6 +4257,7 @@ function lowerForIn(
   let binding: string;
   let hirBinding: string;
   let declKind: 'let' | 'const' = 'let';
+  let existingTarget: ts.Identifier | undefined;
   if (ts.isVariableDeclarationList(node.initializer)) {
     const decl = node.initializer.declarations[0];
     if (decl === undefined || !ts.isIdentifier(decl.name)) {
@@ -4201,10 +4277,14 @@ function lowerForIn(
     hirBinding = inner.declare(binding, H_STRING);
     hirNameOfDeclaration.set(decl, hirBinding);
   } else if (ts.isIdentifier(node.initializer)) {
-    // `for (x in o)` assigns an existing binding; the HIR still writes through a declaration, and
-    // it must write to the name that binding actually has.
-    binding = node.initializer.text;
-    hirBinding = inner.hirName(binding);
+    // `for (x in o)` assigns an EXISTING binding: each key lands in a fresh temporary, and the
+    // body opens with `x = temp` through the ordinary assignment edge -- redeclaring `x` as a
+    // string would shadow the outer binding (whose type may be Unknown) instead of writing it.
+    existingTarget = node.initializer;
+    binding = nextBindTemp();
+    hirBinding = binding;
+    declKind = 'const';
+    inner.set(binding, H_STRING);
   } else {
     diagnostics.push(
       lowerDiagnostic(
@@ -4280,11 +4360,27 @@ function lowerForIn(
     declKind,
     value: keyRead,
   };
+  const keyAssign: Statement[] = [];
+  if (existingTarget !== undefined) {
+    const tempId: Identifier = { kind: 'identifier', type: H_STRING, span, name: hirBinding };
+    const assignment = identifierAssignment(
+      existingTarget,
+      () => tempId,
+      sourceFile,
+      checker,
+      inner,
+      diagnostics,
+    );
+    if (assignment === null) {
+      return null;
+    }
+    keyAssign.push(assignmentStatement(assignment, span));
+  }
   const loopBody: Block = {
     kind: 'block',
     type: H_UNDEFINED,
     span,
-    statements: [bindStmt, ...body.statements],
+    statements: [bindStmt, ...keyAssign, ...body.statements],
   };
   const loop: Statement = {
     kind: 'for-statement',
@@ -4511,7 +4607,8 @@ function emptyArrayContextType(
   checker: ts.TypeChecker,
   ground: (type: HType) => HType = (type) => type,
 ): HType | undefined {
-  const contextual = node.elements.length === 0 ? checker.getContextualType(node) : undefined;
+  const contextual =
+    node.elements.length === 0 ? frontendTypes.layoutContextualType(node, checker) : undefined;
   if (contextual === undefined) {
     return undefined;
   }
@@ -5089,6 +5186,40 @@ function lowerExpression(
   // every other case, since a parenthesized anything can appear wherever an expression can.
   if (ts.isParenthesizedExpression(node)) {
     return lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
+  }
+
+  // A builtin constructor or prototype read as a value (docs/VALUE.md §4.24): one interned
+  // runtime value per name, so identity comparison is exact. A local binding of the same name
+  // fails the declaration-file test inside `builtinValueOf`, so it never reaches here.
+  // `a.push.apply(a, list)`: the array method read as a value is the runtime's closure bound to
+  // `a`, which the gate admitted only where `thisArg` is that same receiver.
+  if (
+    ts.isPropertyAccessExpression(node) &&
+    isSelfBoundCallApply(node) &&
+    typeAt(node.expression, checker, bindings).kind === 'array'
+  ) {
+    const target = lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
+    if (target === null) {
+      return null;
+    }
+    return {
+      kind: 'dyn-field-access',
+      type: hUnknown(false),
+      span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
+      target,
+      field: node.name.text,
+    };
+  }
+  const builtin = builtinValueOf(node, checker);
+  if (builtin !== undefined) {
+    const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
+    return {
+      kind: 'global-call',
+      type: hUnknown(false),
+      span,
+      name: builtin.row,
+      args: [{ kind: 'string-literal', type: H_STRING, span, value: builtin.name }],
+    };
   }
 
   // `delete o.a` / `delete o[e]`. The gate already refused every operand that is not one of the
@@ -5684,7 +5815,7 @@ function lowerExpression(
       if (target === null) {
         return null;
       }
-      if (target.type.kind === 'object') {
+      if (target.type.kind === 'object' && declaresMember(target.type, literalKey)) {
         return lowerClassMemberRead(
           target,
           literalKey,
@@ -6195,7 +6326,7 @@ function lowerExpression(
     // against the ANNOTATION's field order, so the literal must store to those same slots. Taking
     // the literal's own type here stored `"s"` in y's slot and read it back as `o.y`, silently
     // (plan-notes 181). Enumeration order stays the literal's -- the emitter carries it separately.
-    const contextual = checker.getContextualType(node);
+    const contextual = frontendTypes.layoutContextualType(node, checker);
     const contextualType =
       contextual === undefined
         ? undefined
@@ -6704,6 +6835,10 @@ function lowerExpression(
 
   // `x as T`. A widening or identity cast asserts nothing and lowers to its operand alone; anything
   // else is the program overruling the checker, and the check is what makes that safe.
+  // `e satisfies T` asserts nothing at runtime: the operand is the value, with its own type.
+  if (ts.isSatisfiesExpression(node)) {
+    return lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
+  }
   if (ts.isAsExpression(node)) {
     const operand = lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
     if (!operand) {
@@ -7776,7 +7911,31 @@ function lowerDynMethodCall(
   // `info.cb()` where `cb` was grown onto a fixed object: the overflow table holds it, and its
   // result is Unknown for the same reason (docs/VALUE.md §4.24).
   const grown = frontendTypes.isUndeclaredMemberRead(expr, checker);
-  if (receiver.kind !== 'unknown' && slot === undefined && !functionMember && !grown) {
+  // `f.call(t, ...)` / `f.apply(t, list)` on a plain function: the runtime answers both names on
+  // every closure, and the result is whatever `f` returns, read as Unknown.
+  const callApply =
+    (expr.name.text === 'call' || expr.name.text === 'apply') && isPlainFunctionValue(obj, checker);
+  // A declared field that is not callable by its type (`unknownFn: null`, later a function):
+  // the gate admitted the call in js mode, and the dynamic read finds the field by name.
+  const fieldValue =
+    slot === undefined &&
+    receiver.kind === 'object' &&
+    receiver.namespace !== true &&
+    receiver.fields.some(
+      (field) =>
+        field.name === expr.name.text &&
+        (field.type.kind === 'null' ||
+          field.type.kind === 'undefined' ||
+          field.type.kind === 'unknown'),
+    );
+  if (
+    receiver.kind !== 'unknown' &&
+    slot === undefined &&
+    !functionMember &&
+    !grown &&
+    !callApply &&
+    !fieldValue
+  ) {
     return undefined;
   }
   const target = lowerExpression(obj, sourceFile, checker, bindings, diagnostics);
@@ -7787,7 +7946,10 @@ function lowerDynMethodCall(
   if (args === null) {
     return null;
   }
-  const type = functionMember || grown ? hUnknown(false) : typeAt(node, checker, bindings);
+  const type =
+    functionMember || grown || callApply || fieldValue
+      ? hUnknown(false)
+      : typeAt(node, checker, bindings);
   const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
   const field = expr.name.text;
   if (slot !== undefined) {
@@ -8094,7 +8256,12 @@ function hoistVarDeclarations(
           return;
         }
         const name = decl.name.text;
-        if (seen.has(name) || bindings.has(name)) {
+        // Only a binding of THIS function is the spec's "already instantiated" case. A `var`
+        // whose name an ENCLOSING function also binds is a fresh local that shadows it: sharing
+        // the outer slot made the inner loop write a binding its frame never captured
+        // (`Undefined identifier`), and would have clobbered the outer one besides.
+        const ownedHere = root === sourceFile || bindings.declaredInUnit(name);
+        if (seen.has(name) || (bindings.has(name) && ownedHere)) {
           seen.add(name);
           continue;
         }
@@ -8104,8 +8271,13 @@ function hoistVarDeclarations(
         // another module declared too takes a fresh name (plan.md §11c T11.5a). Inside a
         // function the var keeps sharing what is visible, as before.
         let hir = name;
-        if (root === sourceFile) {
+        if (root === sourceFile || bindings.has(name)) {
           hir = bindings.declare(name, type);
+          // Every spelling of this var resolves to the renamed binding through its declaration
+          // (capture analysis keys on the symbol's declaration, not the string).
+          for (const declaration of checker.getSymbolAtLocation(decl.name)?.declarations ?? []) {
+            hirNameOfDeclaration.set(declaration, hir);
+          }
         } else {
           bindings.set(name, type);
         }
@@ -11592,8 +11764,15 @@ function globalFunctionNode(
     case 'parseInt':
     case 'parseFloat':
       return globalCallNode(name, args, H_NUMBER, span);
+    case '%ctor':
+    case '%proto':
+    case '%objectProto':
+      return globalCallNode(name, args, hUnknown(false), span);
     case 'isNaN':
     case 'isFinite':
+    case 'Number.isFinite':
+    case 'Number.isNaN':
+    case 'ArrayBuffer.isView':
       return globalCallNode(name, args, H_BOOLEAN, span);
   }
 }

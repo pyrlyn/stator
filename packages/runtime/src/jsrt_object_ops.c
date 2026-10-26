@@ -143,7 +143,28 @@ static jsrt_value collect(jsrt_value v, ObjSelect select) {
   return result;
 }
 
-jsrt_value jsrt_object_keys(jsrt_value v) { return collect(v, OBJ_KEYS); }
+/* Object.keys (§20.1.2.18) over ANY value, so the gate can admit an Unknown argument: null and
+ * undefined throw ToObject's TypeError; a builtin object with no own enumerable string keys (a
+ * Map, a Set, a Date, a RegExp, a Promise, an ArrayBuffer) and every other primitive answer [];
+ * objects, arrays and strings take the walk. A Uint8Array keeps the loud STA4084 -- its index
+ * keys are not walked yet. A closure answers [] (its own properties are not walked yet). */
+jsrt_value jsrt_object_keys(jsrt_value v) {
+  if (jsrt_is_nullish(v)) {
+    jsrt_throw_error(&jsrt_class_type_error, "Cannot convert undefined or null to object");
+    return JSRT_UNDEFINED;
+  }
+  if (jsrt_is_uint8array(v)) {
+    jsrt_panic("STA4084: Object.keys on a Uint8Array is not yet supported");
+  }
+  jsrt_value ctor = JSRT_UNDEFINED;
+  const bool builtin = !jsrt_is(v, JSRT_TAG_ARRAY) && !jsrt_is(v, JSRT_TAG_STRING) &&
+                       jsrt_builtin_constructor_of(v, &ctor);
+  if (builtin || (!jsrt_is(v, JSRT_TAG_OBJECT) && !jsrt_is(v, JSRT_TAG_ARRAY) &&
+                  !jsrt_is(v, JSRT_TAG_STRING))) {
+    return jsrt_array_new(0, NULL);
+  }
+  return collect(v, OBJ_KEYS);
+}
 
 jsrt_value jsrt_object_values(jsrt_value v) { return collect(v, OBJ_VALUES); }
 
