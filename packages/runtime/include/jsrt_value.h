@@ -242,6 +242,20 @@ jsrt_value jsrt_global_parse_int(jsrt_value string, jsrt_value radix);
 jsrt_value jsrt_global_parse_float(jsrt_value string);
 jsrt_value jsrt_global_is_nan(jsrt_value v);
 jsrt_value jsrt_global_is_finite(jsrt_value v);
+jsrt_value jsrt_number_is_finite(jsrt_value v);
+jsrt_value jsrt_number_is_nan(jsrt_value v);
+
+/* Builtin constructors and prototypes as values (jsrt_builtin_values.c, docs/VALUE.md §4.24). */
+jsrt_value jsrt_builtin_ctor(const char *name);
+jsrt_value jsrt_builtin_proto(const char *name);
+bool jsrt_builtin_constructor_of(jsrt_value v, jsrt_value *out);
+bool jsrt_builtin_member(jsrt_value obj, const char *key, jsrt_value *out);
+jsrt_value jsrt_object_proto_method(const char *name);
+jsrt_value jsrt_arraybuffer_is_view(jsrt_value v);
+jsrt_value jsrt_function_call_method(jsrt_value fn, bool apply);
+jsrt_value jsrt_builtin_ctor_value(jsrt_value name);
+jsrt_value jsrt_builtin_proto_value(jsrt_value name);
+jsrt_value jsrt_object_proto_method_value(jsrt_value name);
 
 /* `n.toString(radix)` and `n.toFixed(digits)` (§21.1.3): `number` is the receiver, a number; the
  * argument is any value, JSRT_UNDEFINED when omitted. An out-of-range argument leaves Node's

@@ -129,7 +129,15 @@ export function tsTypeToHType(type: ts.Type, checker: ts.TypeChecker, depth = 0)
   if (f & (ts.TypeFlags.Number | ts.TypeFlags.NumberLiteral)) {
     return H_NUMBER;
   }
-  if (f & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral)) {
+  // A template literal type (`${number}ms`) and a string mapping (`Uppercase<S>`) are subsets of
+  // string: every value they admit is a runtime string.
+  if (
+    f &
+    (ts.TypeFlags.String |
+      ts.TypeFlags.StringLiteral |
+      ts.TypeFlags.TemplateLiteral |
+      ts.TypeFlags.StringMapping)
+  ) {
     return H_STRING;
   }
   // A `CString` VALUE is a runtime string on this side of the extern edge: an argument is copied
@@ -775,12 +783,27 @@ function spreadReadsUnknown(expr: ts.Expression, checker: ts.TypeChecker): boole
   }
 }
 
+/** The contextual type that decides a literal's LAYOUT, or undefined. `e satisfies T` checks `e`
+ * against `T` but the expression keeps `e`'s own type (every later read resolves through it), so a
+ * literal under `satisfies` takes no layout from `T` -- `{ a: 1 } satisfies Record<string, number>`
+ * is a fixed shape, not a dictionary. */
+export function layoutContextualType(
+  node: ts.Expression,
+  checker: ts.TypeChecker,
+): ts.Type | undefined {
+  let outer: ts.Node = node.parent;
+  while (ts.isParenthesizedExpression(outer)) {
+    outer = outer.parent;
+  }
+  return ts.isSatisfiesExpression(outer) ? undefined : checker.getContextualType(node);
+}
+
 export function objectLiteralIsDynamic(
   literal: ts.ObjectLiteralExpression,
   checker: ts.TypeChecker,
 ): boolean {
   const own = checker.getTypeAtLocation(literal);
-  const contextual = checker.getContextualType(literal);
+  const contextual = layoutContextualType(literal, checker);
   return (
     // The checker typed the literal `any`: a spread of an `any` value, or one it refused (TS2698,
     // a js-mode runtime code). Its key set is then a run-time question, and only the shape table

@@ -298,6 +298,12 @@ function gateConstruct(
     return moduleSyntax;
   }
 
+  // A builtin constructor or prototype read as a value, and the names it is spelled with
+  // (docs/VALUE.md §4.24): the lowering answers each with one interned runtime value.
+  if (isBuiltinValueOrPart(node, typeChecker)) {
+    return { kind: 'accept' };
+  }
+
   switch (kind) {
     // Structure that maps 1:1 onto HIR statements.
     case ts.SyntaxKind.SourceFile:
@@ -444,6 +450,11 @@ function gateConstruct(
       return gateDelete(node as ts.DeleteExpression, typeChecker, mode);
 
     case ts.SyntaxKind.AsExpression:
+      return { kind: 'accept' };
+
+    // `e satisfies T` checks `e` against `T` without changing its type: nothing to run, so it
+    // erases to its operand exactly like a widening `as`.
+    case ts.SyntaxKind.SatisfiesExpression:
       return { kind: 'accept' };
 
     case ts.SyntaxKind.CallExpression:
@@ -2882,7 +2893,13 @@ function gateCall(call: ts.CallExpression, typeChecker: ts.TypeChecker, mode: Mo
       if (call.arguments.some((a) => ts.isSpreadElement(a))) {
         return notYet('a spread argument to an Object method is not yet supported', 5);
       }
-      if (!acceptsObjectArgument(shape.receiver, argument, typeChecker)) {
+      // `Object.keys(u)` on an Unknown value: the runtime entry is total over every value
+      // (ToObject's TypeError for null/undefined, [] for a keyless builtin or primitive).
+      const unknownKeys =
+        method === 'keys' &&
+        frontendTypes.tsTypeToHType(typeChecker.getTypeAtLocation(argument), typeChecker).kind ===
+          'unknown';
+      if (!unknownKeys && !acceptsObjectArgument(shape.receiver, argument, typeChecker)) {
         return notYet(`Object.${method} on this argument type is not yet supported`, 5);
       }
       if (shape.second === 'none') {
@@ -3354,6 +3371,38 @@ function gateCall(call: ts.CallExpression, typeChecker: ts.TypeChecker, mode: Mo
       // through the overflow table, then call it with the object as receiver.
       if (mode === 'js' && frontendTypes.isUndeclaredMemberRead(callee, typeChecker)) {
         return { kind: 'accept' };
+      }
+      // `flags.unknownFn(arg)` in js mode where the field was declared `null` and later holds a
+      // function (a placeholder typed null, undefined or Unknown): read the field by name and
+      // call what it holds. A field typed as a non-function primitive stays refused.
+      if (
+        mode === 'js' &&
+        shape.kind === 'object' &&
+        shape.namespace !== true &&
+        shape.fields.some(
+          (field) =>
+            field.name === callee.name.text &&
+            (field.type.kind === 'null' ||
+              field.type.kind === 'undefined' ||
+              field.type.kind === 'unknown'),
+        )
+      ) {
+        return { kind: 'accept' };
+      }
+      // `f.call(thisArg, ...args)` / `f.apply(thisArg, list)` on a plain function value
+      // (`has.call(o, k)` with `has = Object.prototype.hasOwnProperty`): the runtime answers
+      // both names on every closure (Function.prototype.call/apply, §20.2.3.1/3), so the call
+      // reads the member dynamically. A class object is refused -- calling one throws.
+      if (
+        (callee.name.text === 'call' || callee.name.text === 'apply') &&
+        isPlainFunctionValue(callee.expression, typeChecker)
+      ) {
+        return call.arguments.some((a) => ts.isSpreadElement(a))
+          ? notYet(
+              `a spread argument to Function.prototype.${callee.name.text} is not yet supported`,
+              5,
+            )
+          : { kind: 'accept' };
       }
       return notYet('method calls are not yet supported', 5);
     }
@@ -6056,6 +6105,9 @@ function gateMemberAccess(
     access.name.text !== 'length' &&
     !(ts.isCallExpression(access.parent) && access.parent.expression === access)
   ) {
+    if (Object.hasOwn(ARRAY_OPS, access.name.text) && isSelfBoundCallApply(access)) {
+      return { kind: 'accept' };
+    }
     return Object.hasOwn(ARRAY_OPS, access.name.text)
       ? notYet('using an array method as a value is not yet supported', 5)
       : notYet(`Array.prototype.${access.name.text} is not yet supported`, 5);
@@ -6071,6 +6123,13 @@ function gateMemberAccess(
   // `Uint8Array.from`, `ArrayBuffer.isView` and the rest of the two namespaces: none has landed
   // (plan.md T11.1 lands the instances; the statics follow the corpus).
   const typedNamespace = typedConstructorOf(access.expression, checker);
+  if (
+    typedNamespace !== undefined &&
+    access.name.text === 'isView' &&
+    isGlobalNamed(access.expression, checker, 'ArrayBuffer')
+  ) {
+    return calleeOnlyMember(access, 'ArrayBuffer.isView');
+  }
   if (typedNamespace !== undefined) {
     return notYet(`${typedClassName(typedNamespace)}.${access.name.text} is not yet supported`, 11);
   }
@@ -6256,6 +6315,15 @@ function gateMemberAccess(
     if (frontendTypes.isFunctionValueMember(access.expression, access.name.text, checker)) {
       return functionMemberResult(mode);
     }
+    // `f.call` / `f.apply` as the callee of a call on a plain function value: gateCall vetted it.
+    if (
+      (access.name.text === 'call' || access.name.text === 'apply') &&
+      ts.isCallExpression(access.parent) &&
+      access.parent.expression === access &&
+      isPlainFunctionValue(access.expression, checker)
+    ) {
+      return { kind: 'accept' };
+    }
     return notYet('property access is not yet supported', 5);
   }
   // A class name reaching here with no static of that name is a member the subset cannot resolve
@@ -6365,6 +6433,11 @@ function gateElementAccess(
       ) {
         return { kind: 'accept' };
       }
+      // `argv['--'] = x` in js mode: a literal key the layout never declared reads and writes by
+      // NAME through the overflow table, exactly as the computed spelling below does.
+      if (mode === 'js' && hir.namespace !== true) {
+        return { kind: 'accept' };
+      }
       return notYet('index access on a non-array is not yet supported', 5);
     }
     // An object-typed key on a fixed shape coerces via ToPropertyKey (plan.md §8 step 44b): the
@@ -6459,8 +6532,13 @@ function gateForOf(statement: ts.ForOfStatement, mode: Mode, checker: ts.TypeChe
     }
   }
   const initializer = statement.initializer;
+  // `for (x of it)` over a plain existing name: the lowering assigns it from a fresh temporary.
+  // A member or pattern target (`for (o.k of it)`, `for ([a, b] of it)`) stays refused.
+  if (ts.isIdentifier(initializer)) {
+    return { kind: 'accept' };
+  }
   if (!ts.isVariableDeclarationList(initializer)) {
-    return notYet('for-of over an existing binding is not yet supported', 5);
+    return notYet('for-of over a member or pattern target is not yet supported', 5);
   }
   const [declaration] = initializer.declarations;
   if (declaration === undefined || !ts.isIdentifier(declaration.name)) {
@@ -6767,7 +6845,7 @@ function calleeOnlyMember(access: ts.Expression, what: string): GateResult {
  * (§21.1.2.12-13). */
 const CALLEE_ONLY_STATICS: Readonly<Record<string, readonly string[]>> = {
   Array: ['isArray', 'from'],
-  Number: ['parseInt', 'parseFloat'],
+  Number: ['parseInt', 'parseFloat', 'isFinite', 'isNaN'],
 };
 
 /** The three conversion functions: each lowers to the operation it is (`String(x)` to a template
@@ -6775,6 +6853,187 @@ const CALLEE_ONLY_STATICS: Readonly<Record<string, readonly string[]>> = {
 const GLOBAL_CONVERSIONS: ReadonlySet<string> = new Set(['String', 'Number', 'Boolean']);
 
 export type GlobalFunction = GlobalCallName | 'String' | 'Number' | 'Boolean';
+
+/** `a.m.apply(a, list)` / `a.m.call(a, ...)`: a builtin method read as a value and invoked with
+ * its OWN receiver as `this`. The runtime's method value is bound to the receiver it was read
+ * from, so it is exact only when `thisArg` is that same receiver -- required here by spelling: the
+ * same identifier or the same side-effect-free property chain. */
+export function isSelfBoundCallApply(access: ts.PropertyAccessExpression): boolean {
+  const outer = access.parent;
+  if (
+    !ts.isPropertyAccessExpression(outer) ||
+    outer.expression !== access ||
+    (outer.name.text !== 'call' && outer.name.text !== 'apply') ||
+    !ts.isCallExpression(outer.parent) ||
+    outer.parent.expression !== outer
+  ) {
+    return false;
+  }
+  const thisArg = outer.parent.arguments[0];
+  return (
+    thisArg !== undefined &&
+    isPureChain(access.expression) &&
+    isPureChain(thisArg) &&
+    thisArg.getText() === access.expression.getText()
+  );
+}
+
+function isPureChain(node: ts.Expression): boolean {
+  if (ts.isIdentifier(node) || node.kind === ts.SyntaxKind.ThisKeyword) {
+    return true;
+  }
+  return ts.isPropertyAccessExpression(node) && node.questionDotToken === undefined
+    ? isPureChain(node.expression)
+    : false;
+}
+
+/** Whether `expression` is a function value that is not a class: its type has call signatures and
+ * no construct signatures. */
+export function isPlainFunctionValue(expression: ts.Expression, checker: ts.TypeChecker): boolean {
+  if (builtinValueOf(expression, checker)?.row === '%objectProto') {
+    return true;
+  }
+  const type = checker.getTypeAtLocation(expression);
+  return type.getCallSignatures().length > 0 && type.getConstructSignatures().length === 0;
+}
+
+/** The builtin constructors a program may read as a VALUE (docs/VALUE.md §4.24): compared
+ * (`ctor === Date`), passed (`xs.filter(Boolean)`), or stored. The runtime interns one value per
+ * name and answers the same one for `v.constructor`, so identity is exact. Only `Boolean`,
+ * `Number` and `String` are callable through the value (they convert); the rest throw a
+ * TypeError when called and are not constructible through the value. */
+export const BUILTIN_VALUE_NAMES: ReadonlySet<string> = new Set([
+  'Object',
+  'Array',
+  'Boolean',
+  'Number',
+  'String',
+  'Date',
+  'RegExp',
+  'Map',
+  'Set',
+  'WeakMap',
+  'WeakSet',
+  'ArrayBuffer',
+  'DataView',
+  'Uint8Array',
+  'Promise',
+  'Function',
+  'Error',
+]);
+
+/** The prototypes a program may read as an identity value (`o === Object.prototype`). */
+const BUILTIN_PROTO_NAMES: ReadonlySet<string> = new Set([
+  'Object',
+  'Array',
+  'Number',
+  'String',
+  'Boolean',
+  'Function',
+]);
+
+/** `Object.prototype` methods a program may read as a value (`has.call(o, k)`). */
+const OBJECT_PROTO_VALUE_METHODS: ReadonlySet<string> = new Set(['hasOwnProperty', 'toString']);
+
+export type BuiltinValue =
+  | { readonly row: '%ctor'; readonly name: string }
+  | { readonly row: '%proto'; readonly name: string }
+  | { readonly row: '%objectProto'; readonly name: string };
+
+/** Whether `node` sits where an expression is read as a VALUE rather than named by a construct
+ * that has its own rule: a callee, a `new` target, a member base, an `instanceof` right side, a
+ * `typeof` operand, or a class heritage clause. */
+function isPlainValuePosition(node: ts.Expression): boolean {
+  let child: ts.Node = node;
+  let parent = node.parent;
+  while (ts.isParenthesizedExpression(parent)) {
+    child = parent;
+    parent = parent.parent;
+  }
+  if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === child) {
+    return false;
+  }
+  if (
+    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+    parent.expression === child
+  ) {
+    return false;
+  }
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+    parent.right === child
+  ) {
+    return false;
+  }
+  if (ts.isTypeOfExpression(parent) || ts.isExpressionWithTypeArguments(parent)) {
+    return false;
+  }
+  return !ts.isShorthandPropertyAssignment(parent);
+}
+
+/** The builtin value `node` reads, or undefined. Exported for the lowering, which builds the
+ * `%ctor`/`%proto`/`%objectProto` global-call this names. */
+export function builtinValueOf(
+  node: ts.Expression,
+  checker: ts.TypeChecker,
+): BuiltinValue | undefined {
+  if (ts.isIdentifier(node)) {
+    return BUILTIN_VALUE_NAMES.has(node.text) &&
+      isGlobalNamed(node, checker, node.text) &&
+      isPlainValuePosition(node)
+      ? { row: '%ctor', name: node.text }
+      : undefined;
+  }
+  if (!ts.isPropertyAccessExpression(node)) {
+    return undefined;
+  }
+  const base = node.expression;
+  // `Object.prototype.hasOwnProperty`: a member base is fine here -- `.call` is the point.
+  if (
+    OBJECT_PROTO_VALUE_METHODS.has(node.name.text) &&
+    ts.isPropertyAccessExpression(base) &&
+    base.name.text === 'prototype' &&
+    isGlobalNamed(base.expression, checker, 'Object') &&
+    !(ts.isCallExpression(node.parent) && node.parent.expression === node)
+  ) {
+    return { row: '%objectProto', name: node.name.text };
+  }
+  if (
+    node.name.text === 'prototype' &&
+    ts.isIdentifier(base) &&
+    BUILTIN_PROTO_NAMES.has(base.text) &&
+    isGlobalNamed(base, checker, base.text) &&
+    isPlainValuePosition(node)
+  ) {
+    return { row: '%proto', name: base.text };
+  }
+  return undefined;
+}
+
+/** Whether `node` is a builtin value or one of the parts it is spelled with -- `Object` and
+ * `Object.prototype` inside `Object.prototype.hasOwnProperty`. */
+function isBuiltinValueOrPart(node: ts.Node, checker: ts.TypeChecker): boolean {
+  if (!ts.isIdentifier(node) && !ts.isPropertyAccessExpression(node)) {
+    return false;
+  }
+  let current: ts.Node = node;
+  for (let depth = 0; depth < 3; depth++) {
+    if (ts.isExpression(current) && builtinValueOf(current, checker) !== undefined) {
+      return true;
+    }
+    const parent: ts.Node | undefined = current.parent;
+    if (
+      parent === undefined ||
+      !ts.isPropertyAccessExpression(parent) ||
+      parent.expression !== current
+    ) {
+      return false;
+    }
+    current = parent;
+  }
+  return false;
+}
 
 /** The global function this callee names, by the declaration-file test, or undefined. */
 export function globalFunctionOf(
@@ -6787,8 +7046,22 @@ export function globalFunctionOf(
   ) {
     return isGlobalNamed(node.expression, checker, 'Number') ? node.name.text : undefined;
   }
+  // `Number.isFinite(x)` / `Number.isNaN(x)`: the no-coercion namesakes of the globals.
+  if (
+    ts.isPropertyAccessExpression(node) &&
+    (node.name.text === 'isFinite' || node.name.text === 'isNaN')
+  ) {
+    return isGlobalNamed(node.expression, checker, 'Number')
+      ? (`Number.${node.name.text}` as GlobalFunction)
+      : undefined;
+  }
   if (ts.isPropertyAccessExpression(node) && node.name.text === 'from') {
     return isGlobalArray(node.expression, checker) ? 'Array.from' : undefined;
+  }
+  if (ts.isPropertyAccessExpression(node) && node.name.text === 'isView') {
+    return isGlobalNamed(node.expression, checker, 'ArrayBuffer')
+      ? 'ArrayBuffer.isView'
+      : undefined;
   }
   if (!ts.isIdentifier(node)) {
     return undefined;

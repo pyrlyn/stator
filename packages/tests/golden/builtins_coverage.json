@@ -75,9 +75,9 @@
     "NaN": ["js/number_methods.js"],
     "NEGATIVE_INFINITY": ["ts/number_methods.ts", "js/number_methods.js"],
     "POSITIVE_INFINITY": ["js/number_methods.js"],
-    "isFinite": [],
+    "isFinite": ["js/builtin_values.js"],
     "isInteger": [],
-    "isNaN": [],
+    "isNaN": ["js/builtin_values.js"],
     "isSafeInteger": [],
     "parseFloat": ["ts/number_methods.ts", "js/number_methods.js"],
     "parseInt": ["ts/number_methods.ts", "js/number_methods.js"]
@@ -392,7 +392,7 @@
     "setFromHex": []
   },
   "ArrayBuffer": {
-    "isView": []
+    "isView": ["js/builtin_values.js"]
   },
   "ArrayBuffer.prototype": {
     "byteLength": ["ts/typed_arrays.ts", "js/typed_arrays.js"],

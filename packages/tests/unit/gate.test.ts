@@ -888,9 +888,10 @@ test('String.fromCharCode lands with any count; the rest of String is named', ()
   // A namespace method as a value: there is no function object to hand out.
   assert.deepEqual(codesFor('const f = String.fromCharCode;\nconsole.log(typeof f);'), ['STA1214']);
   // `String(x)` the converter is a different surface: it landed with the global functions
-  // (plan.md §11c T11.4), and `String` read as a value stays deferred.
+  // (plan.md §11c T11.4); `String` read as a value is the interned builtin constructor
+  // (docs/VALUE.md §4.27), and calling it converts.
   assert.deepEqual(codesFor('console.log(String(42));'), []);
-  assert.deepEqual(codesFor('const S = String;\nconsole.log(S(42));'), ['STA1214']);
+  assert.deepEqual(codesFor('const S = String;\nconsole.log(S(42));'), []);
 });
 
 test('Array.prototype ops in the landed set are accepted', () => {
