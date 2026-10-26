@@ -1,0 +1,1210 @@
+{
+  "recordedAt": "2026-10-25T20:08:36.591Z",
+  "host": {
+    "platform": "darwin",
+    "release": "27.0.0",
+    "arch": "arm64",
+    "cpu": "Apple M3 Max"
+  },
+  "runs": 5,
+  "results": [
+    {
+      "tool": "stator",
+      "kind": "TS/JS -> C -> native (this repo)",
+      "version": "working tree",
+      "cells": [
+        {
+          "program": "hello",
+          "ok": true,
+          "peakRssMedian": 3342336,
+          "peakRssRuns": [
+            3342336,
+            3325952,
+            3342336,
+            3342336,
+            3342336
+          ],
+          "wallMsMedian": 15.506291,
+          "binaryBytes": 283232,
+          "sharedLibs": [
+            "/opt/homebrew/opt/bdw-gc/lib/libgc.1.dylib"
+          ]
+        },
+        {
+          "program": "objects-churn",
+          "ok": true,
+          "peakRssMedian": 4489216,
+          "peakRssRuns": [
+            4489216,
+            4489216,
+            4505600,
+            4505600,
+            4489216
+          ],
+          "wallMsMedian": 1065.743083,
+          "binaryBytes": 283520,
+          "sharedLibs": [
+            "/opt/homebrew/opt/bdw-gc/lib/libgc.1.dylib"
+          ]
+        },
+        {
+          "program": "objects-retained",
+          "ok": true,
+          "peakRssMedian": 137822208,
+          "peakRssRuns": [
+            139264000,
+            137789440,
+            135233536,
+            138362880,
+            137822208
+          ],
+          "wallMsMedian": 909.301583,
+          "binaryBytes": 283952,
+          "sharedLibs": [
+            "/opt/homebrew/opt/bdw-gc/lib/libgc.1.dylib"
+          ]
+        },
+        {
+          "program": "fib",
+          "ok": true,
+          "peakRssMedian": 3325952,
+          "peakRssRuns": [
+            3325952,
+            3325952,
+            3325952,
+            3325952,
+            3325952
+          ],
+          "wallMsMedian": 1368.85,
+          "binaryBytes": 283872,
+          "sharedLibs": [
+            "/opt/homebrew/opt/bdw-gc/lib/libgc.1.dylib"
+          ]
+        },
+        {
+          "program": "json-roundtrip",
+          "ok": true,
+          "peakRssMedian": 3555328,
+          "peakRssRuns": [
+            3571712,
+            3538944,
+            3555328,
+            3555328,
+            3555328
+          ],
+          "wallMsMedian": 10.052792,
+          "binaryBytes": 300704,
+          "sharedLibs": [
+            "/opt/homebrew/opt/bdw-gc/lib/libgc.1.dylib"
+          ]
+        },
+        {
+          "program": "nbody",
+          "ok": true,
+          "peakRssMedian": 3325952,
+          "peakRssRuns": [
+            3325952,
+            3325952,
+            3325952,
+            3325952,
+            3325952
+          ],
+          "wallMsMedian": 37.733875,
+          "binaryBytes": 283456,
+          "sharedLibs": [
+            "/opt/homebrew/opt/bdw-gc/lib/libgc.1.dylib"
+          ]
+        },
+        {
+          "program": "string-churn",
+          "ok": true,
+          "peakRssMedian": 4505600,
+          "peakRssRuns": [
+            4505600,
+            4489216,
+            4505600,
+            4505600,
+            4505600
+          ],
+          "wallMsMedian": 15.322708,
+          "binaryBytes": 283664,
+          "sharedLibs": [
+            "/opt/homebrew/opt/bdw-gc/lib/libgc.1.dylib"
+          ]
+        }
+      ]
+    },
+    {
+      "tool": "perry",
+      "kind": "TS -> LLVM native",
+      "version": "perry 0.5.1520",
+      "cells": [
+        {
+          "program": "hello",
+          "ok": true,
+          "peakRssMedian": 5881856,
+          "peakRssRuns": [
+            5881856,
+            5881856,
+            5881856,
+            5881856,
+            5898240
+          ],
+          "wallMsMedian": 46.141334,
+          "binaryBytes": 14900672,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-churn",
+          "ok": true,
+          "peakRssMedian": 7585792,
+          "peakRssRuns": [
+            7585792,
+            7585792,
+            7585792,
+            7602176,
+            7602176
+          ],
+          "wallMsMedian": 115.418417,
+          "binaryBytes": 14917200,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-retained",
+          "ok": true,
+          "peakRssMedian": 144654336,
+          "peakRssRuns": [
+            144654336,
+            144654336,
+            144670720,
+            144637952,
+            144670720
+          ],
+          "wallMsMedian": 923.100292,
+          "binaryBytes": 14950272,
+          "sharedLibs": []
+        },
+        {
+          "program": "fib",
+          "ok": true,
+          "peakRssMedian": 6045696,
+          "peakRssRuns": [
+            6045696,
+            6062080,
+            6045696,
+            6045696,
+            6045696
+          ],
+          "wallMsMedian": 65.024167,
+          "binaryBytes": 14900688,
+          "sharedLibs": []
+        },
+        {
+          "program": "json-roundtrip",
+          "ok": true,
+          "peakRssMedian": 15073280,
+          "peakRssRuns": [
+            15073280,
+            15056896,
+            15073280,
+            15073280,
+            15056896
+          ],
+          "wallMsMedian": 31.067667,
+          "binaryBytes": 14900672,
+          "sharedLibs": []
+        },
+        {
+          "program": "nbody",
+          "ok": true,
+          "peakRssMedian": 5947392,
+          "peakRssRuns": [
+            5947392,
+            5947392,
+            5947392,
+            5931008,
+            5947392
+          ],
+          "wallMsMedian": 40.467792,
+          "binaryBytes": 14900672,
+          "sharedLibs": []
+        },
+        {
+          "program": "string-churn",
+          "ok": true,
+          "peakRssMedian": 6291456,
+          "peakRssRuns": [
+            6291456,
+            6291456,
+            6291456,
+            6291456,
+            6291456
+          ],
+          "wallMsMedian": 34.109417,
+          "binaryBytes": 14933712,
+          "sharedLibs": []
+        }
+      ]
+    },
+    {
+      "tool": "scriptc",
+      "kind": "TS -> LLVM native (Vercel Labs)",
+      "version": "0.4.4",
+      "cells": [
+        {
+          "program": "hello",
+          "ok": true,
+          "peakRssMedian": 1916928,
+          "peakRssRuns": [
+            1916928,
+            1933312,
+            1916928,
+            1916928,
+            1933312
+          ],
+          "wallMsMedian": 39.248333,
+          "binaryBytes": 91776,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-churn",
+          "ok": true,
+          "peakRssMedian": 1916928,
+          "peakRssRuns": [
+            1916928,
+            1916928,
+            1916928,
+            1916928,
+            1933312
+          ],
+          "wallMsMedian": 85.013416,
+          "binaryBytes": 91744,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-retained",
+          "ok": true,
+          "peakRssMedian": 75481088,
+          "peakRssRuns": [
+            75448320,
+            75481088,
+            75497472,
+            75481088,
+            75464704
+          ],
+          "wallMsMedian": 62.152791,
+          "binaryBytes": 110944,
+          "sharedLibs": []
+        },
+        {
+          "program": "fib",
+          "ok": true,
+          "peakRssMedian": 1966080,
+          "peakRssRuns": [
+            1966080,
+            1966080,
+            1966080,
+            1966080,
+            1949696
+          ],
+          "wallMsMedian": 49.790458,
+          "binaryBytes": 111104,
+          "sharedLibs": []
+        },
+        {
+          "program": "json-roundtrip",
+          "ok": true,
+          "peakRssMedian": 2228224,
+          "peakRssRuns": [
+            2228224,
+            2228224,
+            2211840,
+            2228224,
+            2228224
+          ],
+          "wallMsMedian": 77.354584,
+          "binaryBytes": 260640,
+          "sharedLibs": []
+        },
+        {
+          "program": "nbody",
+          "ok": true,
+          "peakRssMedian": 1933312,
+          "peakRssRuns": [
+            1933312,
+            1916928,
+            1916928,
+            1933312,
+            1933312
+          ],
+          "wallMsMedian": 111.818917,
+          "binaryBytes": 91744,
+          "sharedLibs": []
+        },
+        {
+          "program": "string-churn",
+          "ok": true,
+          "peakRssMedian": 2080768,
+          "peakRssRuns": [
+            2080768,
+            2080768,
+            2080768,
+            2064384,
+            2064384
+          ],
+          "wallMsMedian": 226.498167,
+          "binaryBytes": 109600,
+          "sharedLibs": []
+        }
+      ]
+    },
+    {
+      "tool": "porffor",
+      "kind": "JS -> Wasm -> C -> native",
+      "version": "alpha 19 (0c135ce 2026-10-21)",
+      "cells": [
+        {
+          "program": "hello",
+          "ok": true,
+          "peakRssMedian": 1998848,
+          "peakRssRuns": [
+            1998848,
+            1998848,
+            1998848,
+            1998848,
+            1998848
+          ],
+          "wallMsMedian": 117.32425,
+          "binaryBytes": 117736,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-churn",
+          "ok": true,
+          "peakRssMedian": 38977536,
+          "peakRssRuns": [
+            38977536,
+            38993920,
+            38961152,
+            38993920,
+            38961152
+          ],
+          "wallMsMedian": 328.788667,
+          "binaryBytes": 134352,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-retained",
+          "ok": true,
+          "peakRssMedian": 119439360,
+          "peakRssRuns": [
+            119422976,
+            119439360,
+            123797504,
+            120078336,
+            119439360
+          ],
+          "wallMsMedian": 472.176791,
+          "binaryBytes": 150880,
+          "sharedLibs": []
+        },
+        {
+          "program": "fib",
+          "ok": true,
+          "peakRssMedian": 2015232,
+          "peakRssRuns": [
+            2015232,
+            2015232,
+            2015232,
+            2015232,
+            2015232
+          ],
+          "wallMsMedian": 189.232292,
+          "binaryBytes": 134336,
+          "sharedLibs": []
+        },
+        {
+          "program": "json-roundtrip",
+          "ok": true,
+          "peakRssMedian": 2768896,
+          "peakRssRuns": [
+            2768896,
+            2768896,
+            2785280,
+            2785280,
+            2768896
+          ],
+          "wallMsMedian": 28.933792,
+          "binaryBytes": 200480,
+          "sharedLibs": []
+        },
+        {
+          "program": "nbody",
+          "ok": true,
+          "peakRssMedian": 2015232,
+          "peakRssRuns": [
+            2015232,
+            1998848,
+            1998848,
+            2015232,
+            2015232
+          ],
+          "wallMsMedian": 45.529542,
+          "binaryBytes": 134280,
+          "sharedLibs": []
+        },
+        {
+          "program": "string-churn",
+          "ok": true,
+          "peakRssMedian": 20463616,
+          "peakRssRuns": [
+            20480000,
+            20463616,
+            20480000,
+            20463616,
+            20463616
+          ],
+          "wallMsMedian": 26.97725,
+          "binaryBytes": 150896,
+          "sharedLibs": []
+        }
+      ]
+    },
+    {
+      "tool": "qjsc",
+      "kind": "JS -> QuickJS bytecode in C -> native",
+      "version": "QuickJS version 2026-06-04",
+      "cells": [
+        {
+          "program": "hello",
+          "ok": true,
+          "peakRssMedian": 2342912,
+          "peakRssRuns": [
+            2326528,
+            2342912,
+            2342912,
+            2326528,
+            2342912
+          ],
+          "wallMsMedian": 22.621958,
+          "binaryBytes": 795248,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-churn",
+          "ok": true,
+          "peakRssMedian": 2359296,
+          "peakRssRuns": [
+            2375680,
+            2359296,
+            2359296,
+            2375680,
+            2359296
+          ],
+          "wallMsMedian": 1957.420792,
+          "binaryBytes": 795264,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-retained",
+          "ok": true,
+          "peakRssMedian": 166854656,
+          "peakRssRuns": [
+            166854656,
+            166871040,
+            166854656,
+            166854656,
+            166854656
+          ],
+          "wallMsMedian": 559.816375,
+          "binaryBytes": 795280,
+          "sharedLibs": []
+        },
+        {
+          "program": "fib",
+          "ok": true,
+          "peakRssMedian": 2392064,
+          "peakRssRuns": [
+            2408448,
+            2408448,
+            2392064,
+            2375680,
+            2392064
+          ],
+          "wallMsMedian": 705.861291,
+          "binaryBytes": 795248,
+          "sharedLibs": []
+        },
+        {
+          "program": "json-roundtrip",
+          "ok": true,
+          "peakRssMedian": 2441216,
+          "peakRssRuns": [
+            2441216,
+            2441216,
+            2424832,
+            2441216,
+            2457600
+          ],
+          "wallMsMedian": 18.7705,
+          "binaryBytes": 795280,
+          "sharedLibs": []
+        },
+        {
+          "program": "nbody",
+          "ok": true,
+          "peakRssMedian": 2375680,
+          "peakRssRuns": [
+            2375680,
+            2375680,
+            2375680,
+            2375680,
+            2375680
+          ],
+          "wallMsMedian": 56.528125,
+          "binaryBytes": 795248,
+          "sharedLibs": []
+        },
+        {
+          "program": "string-churn",
+          "ok": true,
+          "peakRssMedian": 2441216,
+          "peakRssRuns": [
+            2441216,
+            2441216,
+            2457600,
+            2441216,
+            2457600
+          ],
+          "wallMsMedian": 30.093291,
+          "binaryBytes": 795264,
+          "sharedLibs": []
+        }
+      ]
+    },
+    {
+      "tool": "shermes",
+      "kind": "JS -> Static Hermes native",
+      "version": "Static Hermes static_h@393a539 (2026-10-23, source build)",
+      "cells": [
+        {
+          "program": "hello",
+          "ok": true,
+          "peakRssMedian": 10223616,
+          "peakRssRuns": [
+            10240000,
+            10207232,
+            10240000,
+            10223616,
+            10125312
+          ],
+          "wallMsMedian": 40.983792,
+          "binaryBytes": 51248,
+          "sharedLibs": [
+            "@rpath/libshermes_console.dylib",
+            "@rpath/libhermesvm.dylib"
+          ]
+        },
+        {
+          "program": "objects-churn",
+          "ok": true,
+          "peakRssMedian": 10207232,
+          "peakRssRuns": [
+            10207232,
+            10240000,
+            10207232,
+            10190848,
+            10223616
+          ],
+          "wallMsMedian": 89.238375,
+          "binaryBytes": 51184,
+          "sharedLibs": [
+            "@rpath/libshermes_console.dylib",
+            "@rpath/libhermesvm.dylib"
+          ]
+        },
+        {
+          "program": "objects-retained",
+          "ok": true,
+          "peakRssMedian": 146767872,
+          "peakRssRuns": [
+            144539648,
+            146817024,
+            144867328,
+            148717568,
+            146767872
+          ],
+          "wallMsMedian": 360.131666,
+          "binaryBytes": 52160,
+          "sharedLibs": [
+            "@rpath/libshermes_console.dylib",
+            "@rpath/libhermesvm.dylib"
+          ]
+        },
+        {
+          "program": "fib",
+          "ok": true,
+          "peakRssMedian": 10207232,
+          "peakRssRuns": [
+            10141696,
+            10240000,
+            10174464,
+            10207232,
+            10240000
+          ],
+          "wallMsMedian": 336.882084,
+          "binaryBytes": 51648,
+          "sharedLibs": [
+            "@rpath/libshermes_console.dylib",
+            "@rpath/libhermesvm.dylib"
+          ]
+        },
+        {
+          "program": "json-roundtrip",
+          "ok": true,
+          "peakRssMedian": 10305536,
+          "peakRssRuns": [
+            10321920,
+            10305536,
+            10305536,
+            10371072,
+            10305536
+          ],
+          "wallMsMedian": 71.692875,
+          "binaryBytes": 51312,
+          "sharedLibs": [
+            "@rpath/libshermes_console.dylib",
+            "@rpath/libhermesvm.dylib"
+          ]
+        },
+        {
+          "program": "nbody",
+          "ok": true,
+          "peakRssMedian": 10207232,
+          "peakRssRuns": [
+            10207232,
+            10174464,
+            10223616,
+            10158080,
+            10223616
+          ],
+          "wallMsMedian": 81.8405,
+          "binaryBytes": 51296,
+          "sharedLibs": [
+            "@rpath/libshermes_console.dylib",
+            "@rpath/libhermesvm.dylib"
+          ]
+        },
+        {
+          "program": "string-churn",
+          "ok": true,
+          "peakRssMedian": 12206080,
+          "peakRssRuns": [
+            12140544,
+            12206080,
+            12238848,
+            12206080,
+            12107776
+          ],
+          "wallMsMedian": 98.37725,
+          "binaryBytes": 51424,
+          "sharedLibs": [
+            "@rpath/libshermes_console.dylib",
+            "@rpath/libhermesvm.dylib"
+          ]
+        }
+      ]
+    },
+    {
+      "tool": "bun-compile",
+      "kind": "bundle + embedded JSC runtime",
+      "version": "1.3.14",
+      "cells": [
+        {
+          "program": "hello",
+          "ok": true,
+          "peakRssMedian": 22921216,
+          "peakRssRuns": [
+            22937600,
+            22921216,
+            23003136,
+            22839296,
+            22855680
+          ],
+          "wallMsMedian": 166.078375,
+          "binaryBytes": 63446114,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-churn",
+          "ok": true,
+          "peakRssMedian": 45973504,
+          "peakRssRuns": [
+            45023232,
+            47349760,
+            44613632,
+            46940160,
+            45973504
+          ],
+          "wallMsMedian": 195.388583,
+          "binaryBytes": 63446114,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-retained",
+          "ok": true,
+          "peakRssMedian": 134594560,
+          "peakRssRuns": [
+            139411456,
+            133971968,
+            125485056,
+            134594560,
+            135036928
+          ],
+          "wallMsMedian": 258.376792,
+          "binaryBytes": 63446114,
+          "sharedLibs": []
+        },
+        {
+          "program": "fib",
+          "ok": true,
+          "peakRssMedian": 29294592,
+          "peakRssRuns": [
+            29179904,
+            29294592,
+            29294592,
+            29376512,
+            29310976
+          ],
+          "wallMsMedian": 157.387417,
+          "binaryBytes": 63446114,
+          "sharedLibs": []
+        },
+        {
+          "program": "json-roundtrip",
+          "ok": true,
+          "peakRssMedian": 23134208,
+          "peakRssRuns": [
+            23003136,
+            23052288,
+            23134208,
+            23166976,
+            23134208
+          ],
+          "wallMsMedian": 80.173875,
+          "binaryBytes": 63446114,
+          "sharedLibs": []
+        },
+        {
+          "program": "nbody",
+          "ok": true,
+          "peakRssMedian": 30621696,
+          "peakRssRuns": [
+            30818304,
+            29671424,
+            29474816,
+            30621696,
+            30769152
+          ],
+          "wallMsMedian": 216.231541,
+          "binaryBytes": 63446114,
+          "sharedLibs": []
+        },
+        {
+          "program": "string-churn",
+          "ok": true,
+          "peakRssMedian": 27557888,
+          "peakRssRuns": [
+            27279360,
+            26525696,
+            27557888,
+            27688960,
+            27738112
+          ],
+          "wallMsMedian": 79.79025,
+          "binaryBytes": 63446114,
+          "sharedLibs": []
+        }
+      ]
+    },
+    {
+      "tool": "deno-compile",
+      "kind": "bundle + embedded V8 runtime",
+      "version": "deno 2.9.7 (stable, release, aarch64-apple-darwin)",
+      "cells": [
+        {
+          "program": "hello",
+          "ok": true,
+          "peakRssMedian": 24510464,
+          "peakRssRuns": [
+            24412160,
+            24444928,
+            24510464,
+            24592384,
+            24510464
+          ],
+          "wallMsMedian": 36.639709,
+          "binaryBytes": 67662226,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-churn",
+          "ok": true,
+          "peakRssMedian": 33325056,
+          "peakRssRuns": [
+            33357824,
+            33292288,
+            33325056,
+            33259520,
+            33423360
+          ],
+          "wallMsMedian": 109.91425,
+          "binaryBytes": 67662226,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-retained",
+          "ok": true,
+          "peakRssMedian": 199540736,
+          "peakRssRuns": [
+            199540736,
+            200212480,
+            198934528,
+            200343552,
+            199229440
+          ],
+          "wallMsMedian": 139.162333,
+          "binaryBytes": 67662226,
+          "sharedLibs": []
+        },
+        {
+          "program": "fib",
+          "ok": true,
+          "peakRssMedian": 30228480,
+          "peakRssRuns": [
+            30162944,
+            30195712,
+            30392320,
+            30228480,
+            30277632
+          ],
+          "wallMsMedian": 126.783041,
+          "binaryBytes": 67662226,
+          "sharedLibs": []
+        },
+        {
+          "program": "json-roundtrip",
+          "ok": true,
+          "peakRssMedian": 25133056,
+          "peakRssRuns": [
+            25165824,
+            25116672,
+            25296896,
+            25133056,
+            25116672
+          ],
+          "wallMsMedian": 48.175417,
+          "binaryBytes": 67662226,
+          "sharedLibs": []
+        },
+        {
+          "program": "nbody",
+          "ok": true,
+          "peakRssMedian": 33505280,
+          "peakRssRuns": [
+            33292288,
+            33554432,
+            33488896,
+            33505280,
+            33505280
+          ],
+          "wallMsMedian": 92.282375,
+          "binaryBytes": 67662226,
+          "sharedLibs": []
+        },
+        {
+          "program": "string-churn",
+          "ok": true,
+          "peakRssMedian": 29179904,
+          "peakRssRuns": [
+            27852800,
+            29179904,
+            29474816,
+            29392896,
+            27721728
+          ],
+          "wallMsMedian": 38.719083,
+          "binaryBytes": 67662226,
+          "sharedLibs": []
+        }
+      ]
+    },
+    {
+      "tool": "node-sea",
+      "kind": "Node single executable (embedded V8)",
+      "version": "v26.7.0",
+      "cells": [
+        {
+          "program": "hello",
+          "ok": true,
+          "peakRssMedian": 51036160,
+          "peakRssRuns": [
+            51068928,
+            51167232,
+            51036160,
+            50888704,
+            50855936
+          ],
+          "wallMsMedian": 87.688875,
+          "binaryBytes": 143589456,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-churn",
+          "ok": true,
+          "peakRssMedian": 60768256,
+          "peakRssRuns": [
+            60588032,
+            60801024,
+            60833792,
+            60653568,
+            60768256
+          ],
+          "wallMsMedian": 117.249,
+          "binaryBytes": 143589456,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-retained",
+          "ok": true,
+          "peakRssMedian": 227115008,
+          "peakRssRuns": [
+            227049472,
+            227508224,
+            227229696,
+            226918400,
+            227115008
+          ],
+          "wallMsMedian": 129.638666,
+          "binaryBytes": 143589456,
+          "sharedLibs": []
+        },
+        {
+          "program": "fib",
+          "ok": true,
+          "peakRssMedian": 57622528,
+          "peakRssRuns": [
+            57573376,
+            57671680,
+            57589760,
+            57638912,
+            57622528
+          ],
+          "wallMsMedian": 130.701375,
+          "binaryBytes": 143589456,
+          "sharedLibs": []
+        },
+        {
+          "program": "json-roundtrip",
+          "ok": true,
+          "peakRssMedian": 51363840,
+          "peakRssRuns": [
+            51380224,
+            51347456,
+            51396608,
+            51314688,
+            51363840
+          ],
+          "wallMsMedian": 35.490542,
+          "binaryBytes": 143589456,
+          "sharedLibs": []
+        },
+        {
+          "program": "nbody",
+          "ok": true,
+          "peakRssMedian": 60375040,
+          "peakRssRuns": [
+            60538880,
+            60375040,
+            60293120,
+            60342272,
+            60522496
+          ],
+          "wallMsMedian": 106.032709,
+          "binaryBytes": 143589456,
+          "sharedLibs": []
+        },
+        {
+          "program": "string-churn",
+          "ok": true,
+          "peakRssMedian": 59801600,
+          "peakRssRuns": [
+            59801600,
+            55197696,
+            59850752,
+            55115776,
+            59801600
+          ],
+          "wallMsMedian": 138.009625,
+          "binaryBytes": 143589456,
+          "sharedLibs": []
+        }
+      ]
+    },
+    {
+      "tool": "pkg",
+      "kind": "@yao-pkg/pkg (Node base binary + snapshot fs)",
+      "version": "6.24.0",
+      "cells": [
+        {
+          "program": "hello",
+          "ok": true,
+          "peakRssMedian": 40632320,
+          "peakRssRuns": [
+            40419328,
+            40632320,
+            40648704,
+            40632320,
+            40452096
+          ],
+          "wallMsMedian": 38.918583,
+          "binaryBytes": 60422912,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-churn",
+          "ok": true,
+          "peakRssMedian": 47185920,
+          "peakRssRuns": [
+            47267840,
+            47185920,
+            47857664,
+            47120384,
+            47185920
+          ],
+          "wallMsMedian": 60.448625,
+          "binaryBytes": 60423088,
+          "sharedLibs": []
+        },
+        {
+          "program": "objects-retained",
+          "ok": true,
+          "peakRssMedian": 173867008,
+          "peakRssRuns": [
+            173735936,
+            174325760,
+            173867008,
+            173129728,
+            174260224
+          ],
+          "wallMsMedian": 144.934208,
+          "binaryBytes": 60423360,
+          "sharedLibs": []
+        },
+        {
+          "program": "fib",
+          "ok": true,
+          "peakRssMedian": 44728320,
+          "peakRssRuns": [
+            44597248,
+            44728320,
+            45154304,
+            44597248,
+            44843008
+          ],
+          "wallMsMedian": 89.4,
+          "binaryBytes": 60423200,
+          "sharedLibs": []
+        },
+        {
+          "program": "json-roundtrip",
+          "ok": true,
+          "peakRssMedian": 40665088,
+          "peakRssRuns": [
+            40599552,
+            40648704,
+            40697856,
+            40665088,
+            40697856
+          ],
+          "wallMsMedian": 39.028875,
+          "binaryBytes": 60423120,
+          "sharedLibs": []
+        },
+        {
+          "program": "nbody",
+          "ok": true,
+          "peakRssMedian": 48381952,
+          "peakRssRuns": [
+            48381952,
+            48332800,
+            48529408,
+            48857088,
+            48381952
+          ],
+          "wallMsMedian": 43.511708,
+          "binaryBytes": 60423200,
+          "sharedLibs": []
+        },
+        {
+          "program": "string-churn",
+          "ok": true,
+          "peakRssMedian": 46252032,
+          "peakRssRuns": [
+            46170112,
+            46252032,
+            46268416,
+            46333952,
+            46088192
+          ],
+          "wallMsMedian": 42.004125,
+          "binaryBytes": 60423040,
+          "sharedLibs": []
+        }
+      ]
+    },
+    {
+      "tool": "nexe",
+      "kind": "nexe (Node base binary + payload)",
+      "version": "5.0.0-beta.4",
+      "cells": [
+        {
+          "program": "hello",
+          "ok": false,
+          "reason": "Error: https://github.com/nexe/nexe/releases/download/v3.3.3/mac-arm64-26.7.0 is not available, create it using the --build flag"
+        },
+        {
+          "program": "objects-churn",
+          "ok": false,
+          "reason": "Error: https://github.com/nexe/nexe/releases/download/v3.3.3/mac-arm64-26.7.0 is not available, create it using the --build flag"
+        },
+        {
+          "program": "objects-retained",
+          "ok": false,
+          "reason": "Error: https://github.com/nexe/nexe/releases/download/v3.3.3/mac-arm64-26.7.0 is not available, create it using the --build flag"
+        },
+        {
+          "program": "fib",
+          "ok": false,
+          "reason": "Error: https://github.com/nexe/nexe/releases/download/v3.3.3/mac-arm64-26.7.0 is not available, create it using the --build flag"
+        },
+        {
+          "program": "json-roundtrip",
+          "ok": false,
+          "reason": "Error: https://github.com/nexe/nexe/releases/download/v3.3.3/mac-arm64-26.7.0 is not available, create it using the --build flag"
+        },
+        {
+          "program": "nbody",
+          "ok": false,
+          "reason": "Error: https://github.com/nexe/nexe/releases/download/v3.3.3/mac-arm64-26.7.0 is not available, create it using the --build flag"
+        },
+        {
+          "program": "string-churn",
+          "ok": false,
+          "reason": "Error: https://github.com/nexe/nexe/releases/download/v3.3.3/mac-arm64-26.7.0 is not available, create it using the --build flag"
+        }
+      ]
+    }
+  ],
+  "note": "pkg row re-recorded at 2026-10-25T20:10:39.471Z (its version probe timed out under load in the main run)"
+}
