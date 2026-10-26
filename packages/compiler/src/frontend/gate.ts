@@ -189,6 +189,11 @@ function visitNode(
   // to accept or defer, and running them through gateConstruct would reject `let x: number = 1`
   // -- the NumberKeyword node is not in any value-level accept list. The `any` checks above still
   // apply, and we still recurse so a nested `any` (e.g. `Array<any>`) is found.
+  // A qualified name (`ts.Node`, `NodeJS.Platform`) is the entity name of a type reference or
+  // type query: it never evaluates at runtime, so it is erased like the type around it.
+  if (ts.isQualifiedName(node)) {
+    return;
+  }
   if (ts.isTypeNode(node)) {
     ts.forEachChild(node, (child) =>
       visitNode(child, sourceFile, typeChecker, mode, diagnostics, classNameCounts, onNode),
@@ -6398,7 +6403,7 @@ function gateForOf(statement: ts.ForOfStatement, mode: Mode, checker: ts.TypeChe
       ? frontendTypes.tsTypeToHType(iterableType, checker)
       : frontendTypes.tsTypeToHType(constraint, checker);
   if (
-    !checker.isArrayType(target) &&
+    !isArrayOrTuple(target, checker) &&
     (target.flags & ts.TypeFlags.StringLike) === 0 &&
     hir.kind !== 'map' &&
     hir.kind !== 'set' &&

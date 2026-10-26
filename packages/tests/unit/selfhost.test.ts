@@ -146,7 +146,7 @@ test('syntax kinds are named by the kind, not by a range marker', () => {
   assert.equal(syntaxKindName(ts.SyntaxKind.EqualsToken), 'EqualsToken');
 });
 
-test('the not-yet message for a qualified type name says QualifiedName', async () => {
+test('a qualified type name is erased like the type around it', async () => {
   const work = mkdtempSync(join(tmpdir(), 'stator-selfhost-'));
   try {
     writeFileSync(join(work, 'm.ts'), 'export interface T { x: number }\n');
@@ -158,8 +158,26 @@ test('the not-yet message for a qualified type name says QualifiedName', async (
     );
     const explanation = await explainFile(join(work, 'main.ts'), 'ts');
     const messages = (explanation.diagnostics ?? []).map((diagnostic) => diagnostic.message);
-    assert.ok(messages.some((message) => message.includes('(QualifiedName)')));
+    assert.ok(!messages.some((message) => message.includes('QualifiedName')));
     assert.ok(!messages.some((message) => message.includes('FirstNode')));
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('for-of over a tuple walks it like an array', async () => {
+  const work = mkdtempSync(join(tmpdir(), 'stator-selfhost-'));
+  try {
+    writeFileSync(
+      join(work, 'main.ts'),
+      "const keys = ['a', 'b'] as const;\n" +
+        'for (const key of keys) { console.log(key); }\n' +
+        'const pair: [number, number] = [3, 4];\n' +
+        'for (const n of pair) { console.log(n * 2); }\n',
+    );
+    const explanation = await explainFile(join(work, 'main.ts'), 'ts');
+    const messages = (explanation.diagnostics ?? []).map((diagnostic) => diagnostic.message);
+    assert.ok(!messages.some((message) => message.includes('user iterable')));
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
