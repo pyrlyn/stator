@@ -12945,7 +12945,7 @@ fixtures are T17's `string_range_error` and T16's `keys.js`. What T20 still asks
 
 **Evidence.** pyrlyn/ci `.github/workflows/sonarcloud.yml` at
 `c875cd763ad0c4abbd936e480be5752330d3b66b` describes itself as "unifying the sonarcloud.yml of
-rtok, ketch, cox, runa, crates-packages, slint_dart and stator". Its steps are the ones stator's
+The token-reduction CLI, the package manager, the coding agent, the local model runner, crates-packages, slint_dart and stator". Its steps are the ones stator's
 `sonarcloud.yml` carries by hand: skip with a notice without `SONAR_TOKEN`, full-history
 checkout, tool setup, a setup and a coverage command, the scan with soft-fail. What differs: the
 shared workflow sets tools up with mise (`mise-install-args`), not with `pnpm/action-setup`,
@@ -14049,3 +14049,47 @@ ASan/UBSan, seven sanitized concurrency fixtures, all selfhost/coverage/leak gat
 probe proves 32 sequential writes create one worker and 96 reads stay within four workers;
 error recovery, forced GC, reuse across waves and shutdown/restart all passed. T10.2a's card
 and full command evidence moved to done.md.
+
+## 390. T11.6: `node:process` grows to the global `process`, `stdout`/`stderr` and `nextTick` (2026-10-25)
+
+**Merge.** Written on 2026-10-19 as note 361 on the #168 branch; main then took 361 for Task 6.31
+and landed a smaller `node:process` slice in note 374 (`hrtime()` included). This note is the
+branch rebased on that: 374's `hrtime()` and its `argv` construction are kept, and the members
+below are added on top.
+The frontend rewrite (`location.ts`) and the spread rule (`gate.ts`) add seven `STA1214`
+(`ts.*` qualified type names, one generic function value) to the compiler's selfhost count:
+`packages/tests/selfhost/baseline.json` moves 1887 → 1894 in the same change.
+
+**Slice, not the Check.** `packages/node/src/process.ts` is the members `tsc` reads, over
+`std/process`, `std/env`, `std/os` and `std/io`. The Check (`tsc --version` / `tsc -p`
+byte-for-byte, N1 at 100%) stays open: `node:os`, `Buffer`, `crypto.createHash`,
+`perf_hooks.performance`, timers and the N2 `fs` watchers are still unlanded, and compiling the
+`tsc` bundle still waits on T11.4. `plan.md` records the slice and does not strike the task.
+
+**Global.** A free `process` under `--node` is not a runtime global. `frontend/location.ts`
+inserts `import process from "node:process"` into every project file and the vendor module that
+reads one it does not bind, the same text rewrite as `import.meta`. `packages/node/src/globals.d.ts`
+declares the type with a type-only import, so a program that never reads `process` does not link
+it. Without the flag the name is `STA0012`.
+
+**What the binary answers.** `argv` is Node's single-executable shape (`execPath`, the invoked
+program, then the user's arguments from index 2); `execArgv` is empty. `env` is a startup
+snapshot from new `std/env.names()` (`jsrt_std_env_count` / `jsrt_std_env_name` walk libc's
+`environ`); writes and `delete` update the object and not the OS, because a forwarding object
+would be a `Proxy`. `exitCode` starts `undefined`, and assigning it sets `std/process`'s status.
+`nextTick` is `Promise.resolve(0).then`, so it shares the microtask queue instead of running
+ahead of it. `memoryUsage()` reports `rss` and zeroes the four heap fields. `stdout.write` /
+`stderr.write` are synchronous and return `true`; `isTTY` is `true` or `undefined`.
+
+**Spread into `unknown`.** `nextTick` calls its callback with `task(...args)`. In js mode a
+spread into an annotated parameter is `STA1214`, because the edge check has no position to
+stand on. A parameter annotated `unknown`, or a rest parameter annotated `unknown[]`, claims
+nothing that check could reject, so `claimsNothing` lets that spread through. A `number`
+annotation stays refused (`subset_spread_annotated_callee_js`).
+
+**Proof.** Goldens `ts/node_process` and `js/node_process` print shapes (absolute, `> 0`,
+`TZ === "UTC"`), never a path, a pid, an argv element before index 2, or an environment value
+other than the runner's `TZ` pin. `// @args:` is the argument list both runs get. `require('process')`
+is the same object as the default export. Coverage claims are in `node_coverage.json`;
+`docs/NODE.md` regenerates in the same change.
+

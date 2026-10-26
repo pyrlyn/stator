@@ -60,4 +60,4 @@ stator explain app.ts --json
 
 - Repository: <https://github.com/pyrlyn/stator>
 - Documentation: <https://github.com/pyrlyn/stator/tree/main/docs>
-- License: your choice of GNU GPLv3 or a commercial license (see <https://github.com/pyrlyn/stator#license>)
+- License: free, GNU GPLv3 (see <https://github.com/pyrlyn/stator/blob/main/LICENSE>)

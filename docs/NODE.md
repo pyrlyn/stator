@@ -18,8 +18,8 @@ for the module and expected to pass under Stator, from
 `packages/tests/node-suite/expectations.json`, which `pnpm run test:node-suite` holds to the
 truth (plan.md §11c T11.7).
 
-**Total: 69 / 2370 members covered (3%) across 58 modules.**
-**Slice N1 (`tsc`): 22 / 37 (59%).**
+**Total: 74 / 2370 members covered (3%) across 58 modules.**
+**Slice N1 (`tsc`): 25 / 37 (68%).**
 **Node tests: 0 / 17 selected files pass.**
 
 | Module | Covered | Members | % | Corpus uses | tsc members | Node tests |
@@ -53,7 +53,7 @@ truth (plan.md §11c T11.7).
 | [`node:path/posix`](#nodepathposix) | 14 | 16 | 88% | 0 | 0 | 0 / 2 |
 | [`node:path/win32`](#nodepathwin32) | 0 | 16 | 0% | 2 | 0 | 0 / 2 |
 | [`node:perf_hooks`](#nodeperf_hooks) | 0 | 69 | 0% | 61 | 1 |  |
-| [`node:process`](#nodeprocess) | 12 | 68 | 18% | 822 | 10 |  |
+| [`node:process`](#nodeprocess) | 17 | 68 | 25% | 822 | 10 |  |
 | [`node:punycode`](#nodepunycode) | 0 | 6 | 0% | 0 | 0 |  |
 | [`node:querystring`](#nodequerystring) | 0 | 7 | 0% | 1 | 0 |  |
 | [`node:readline`](#nodereadline) | 0 | 9 | 0% | 9 | 0 |  |
@@ -1877,7 +1877,7 @@ truth (plan.md §11c T11.7).
 
 ### node:process
 
-<details><summary><code>node:process</code> — 12 / 68 (18%)</summary>
+<details><summary><code>node:process</code> — 17 / 68 (25%)</summary>
 
 | Member | Kind | Covered | Corpus | tsc |
 | --- | --- | --- | --- | --- |
@@ -1886,7 +1886,7 @@ truth (plan.md §11c T11.7).
 | `allowedNodeEnvironmentFlags` | getter | — |  |  |
 | `arch` | value | ✅ | 29 |  |
 | `argv` | value | ✅ | 19 | ✓ |
-| `argv0` | value | — |  |  |
+| `argv0` | value | ✅ |  |  |
 | `availableMemory` | function | — |  |  |
 | `binding` | function | — |  |  |
 | `chdir` | function | — | 4 |  |
@@ -1899,7 +1899,7 @@ truth (plan.md §11c T11.7).
 | `domain` | getter | — |  |  |
 | `emitWarning` | function | — | 7 |  |
 | `env` | value | ✅ | 274 | ✓ |
-| `execArgv` | value | — | 9 | ✓ |
+| `execArgv` | value | ✅ | 9 | ✓ |
 | `execPath` | value | ✅ | 6 |  |
 | `execve` | function | — |  |  |
 | `exit` | function | ✅ | 35 | ✓ |
@@ -1920,7 +1920,7 @@ truth (plan.md §11c T11.7).
 | `loadEnvFile` | function | — |  |  |
 | `memoryUsage` | function | ✅ | 6 | ✓ |
 | `moduleLoadList` | value | — |  |  |
-| `nextTick` | function | — | 44 | ✓ |
+| `nextTick` | function | ✅ | 44 | ✓ |
 | `noDeprecation` | value | — | 3 |  |
 | `openStdin` | function | — |  |  |
 | `pid` | value | ✅ | 12 | ✓ |
@@ -1939,9 +1939,9 @@ truth (plan.md §11c T11.7).
 | `setgroups` | function | — |  |  |
 | `setuid` | function | — |  |  |
 | `sourceMapsEnabled` | getter | — | 1 |  |
-| `stderr` | getter | — | 27 |  |
+| `stderr` | getter | ✅ | 27 |  |
 | `stdin` | getter | — | 18 |  |
-| `stdout` | getter | — | 66 | ✓ |
+| `stdout` | getter | ✅ | 66 | ✓ |
 | `threadCpuUsage` | function | — |  |  |
 | `title` | value | — |  |  |
 | `umask` | function | — |  |  |

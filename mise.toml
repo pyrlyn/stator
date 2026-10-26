@@ -3,16 +3,16 @@
 # Unix only: Windows CI never links the runtime, and the asdf/conda clang backends are not a
 # Windows story. ar/pkg-config/diff stay the system ones (Xcode CLT / apt); just is pinned here.
 [tools]
-node = "26.7.0"
+node = "26.12.0"
 "npm:agent-browser" = "0.39.2" # browser automation CLI for agents: Open and check the project site in a real browser.
 pnpm = "12.15.0"
 "npm:@moonrepo/cli" = "2.5.4"
-just = "1.58.0"
+just = "1.59.0"
 "conda:llvm" = { version = "21.1.8", os = ["linux", "macos"] }
 "conda:clang" = { version = "21.1.8", os = ["linux", "macos"] }
 # The runtime's memory core (packages/runtime/src/*.zig, plan-notes 238). Unix only, like clang.
 zig = { version = "0.16.0", os = ["linux", "macos"] }
 # Workflow lint: ci.yml's `static` job, the pre-push hook (hk.pkl) and local `mise x -- jactionlint`.
-"github:jdx/jactionlint" = "2.0.2"
-hk = "2.5.0" # runs jactionlint as a pre-push hook (hk.pkl); `mise x -- hk install --mise`
+"github:jdx/jactionlint" = "2.2.0"
+hk = "2.7.0" # runs jactionlint as a pre-push hook (hk.pkl); `mise x -- hk install --mise`
 shellcheck = "0.11.0" # used by jactionlint for run: scripts; CI uses the runner image's copy
