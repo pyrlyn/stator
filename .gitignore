@@ -44,3 +44,6 @@ site/.astro/
 .env
 .env.local
 .rtok/
+# Zig compiler core build output (docs/zig-core.md).
+packages/compiler-zig/.zig-cache/
+packages/compiler-zig/zig-out/

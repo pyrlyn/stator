@@ -14144,3 +14144,19 @@ other than the runner's `TZ` pin. `// @args:` is the argument list both runs get
 is the same object as the default export. Coverage claims are in `node_coverage.json`;
 `docs/NODE.md` regenerates in the same change.
 
+
+## 391. Zig compiler core started beside the TypeScript compiler (2026-10-26)
+
+**Direction.** The creator asked (2026-10-26) to begin rewriting the compiler core in Zig,
+alongside the TypeScript codebase. This contradicts AGENTS.md golden rule 5 (use the
+`typescript` package rather than writing a parser or type checker) and the "compiler is strict
+TypeScript" rule; this note records the conflict. Neither rule is edited yet: the Zig core is
+experimental and ships nothing, and the TypeScript compiler stays authoritative until a
+switch-over is approved (docs/zig-core.md, phase 6).
+
+**Landed.** `packages/compiler-zig/` (Zig 0.16.0 from `mise.toml`): `build.zig`, `build.zig.zon`,
+`src/lexer.zig`, a `statorc-zig tokens` CLI, golden tests against `ts.createScanner` output
+(`tools/gen-golden.ts`), and `tools/compare-corpus.ts`.
+
+**Evidence.** `zig build test --summary all` → 5/5 tests pass (3 unit, golden over 6 samples).
+`compare-corpus.ts $(git ls-files '*.ts')` → `1157 same, 0 differ`.
