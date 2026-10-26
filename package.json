@@ -57,7 +57,7 @@
     "oxlint-tsgolint": "7.0.2004",
     "react": "19.3.1",
     "typebox": "1.4.2",
-    "typescript": "6.0.3",
+    "typescript": "7.0.2",
     "vite-stator": "workspace:*",
     "vitest": "5.0.5"
   },
