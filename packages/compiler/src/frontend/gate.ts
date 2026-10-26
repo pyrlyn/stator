@@ -899,6 +899,14 @@ function notYet(message: string, phase: number): GateResult {
   };
 }
 
+function refuseGenericValue(): GateResult {
+  return notYet(
+    'using a generic function as a value is not yet supported: no call site determines ' +
+      'its type tuple, so no monomorphic specialization can be chosen',
+    5,
+  );
+}
+
 /** A BigInt literal, or a value whose type may be a bigint (plan.md §9 Task 6.25).
  *
  * A name is judged by its DECLARED type, not the narrowed one: `typeof u === 'bigint'` narrows an
@@ -1264,17 +1272,17 @@ function gateIdentifier(
     aliased.typeParameters.length > 0 &&
     !genericValueExempt(ts.getNameOfDeclaration(aliased))
   ) {
-    return notYet('using a generic function as a value is not yet supported', 5);
+    return refuseGenericValue();
   }
   // A `const` holding a generic arrow has no value either — only its specializations do.
   if (
     aliased !== undefined &&
     ts.isVariableDeclaration(aliased) &&
     aliased.initializer !== undefined &&
-    genericArrowKey(aliased.initializer) !== undefined &&
+    genericArrowKey(aliased.initializer, typeChecker) !== undefined &&
     !genericValueExempt(aliased.name)
   ) {
-    return notYet('using a generic function as a value is not yet supported', 5);
+    return refuseGenericValue();
   }
   // An alias has no value either — only the calls through it do. Formation and argument
   // positions were accepted above, so what reaches here escapes (returned, stored, branched on)
@@ -1285,7 +1293,7 @@ function gateIdentifier(
     !genericValueExempt(decl.name) &&
     genericAliasTarget(node, typeChecker) !== undefined
   ) {
-    return notYet('using a generic function as a value is not yet supported', 5);
+    return refuseGenericValue();
   }
   // An extern name (docs/FFI.md §1): the call arm already decided the direct call, so the
   // callee position accepts here and every other position is refused — an extern has no VALUE
@@ -1980,7 +1988,16 @@ function gateBinary(bin: ts.BinaryExpression, typeChecker: ts.TypeChecker, mode:
         declaration?.typeParameters ??
         (like !== undefined && ts.isClassExpression(like) ? like.typeParameters : undefined);
       if (typeParameters !== undefined && typeParameters.length > 0) {
-        return notYet('instanceof against a generic class is not yet supported', 5);
+        // docs/HIR.md §7.3: one descriptor per tuple, so the bare name identifies no
+        // descriptor to compare against. The left type can name a tuple (`b: Box<number>`),
+        // but the specialization path still drops an unsubstituted `T` under a generic
+        // subclass (STA4054/STA4048) — the comparison-site slice stays refused until that
+        // collection is sound. (There is no `instanceof Box<number>` spelling.)
+        return notYet(
+          'instanceof against a generic class is not yet supported: one descriptor per tuple, ' +
+            'and the bare name identifies no descriptor to compare against',
+          5,
+        );
       }
       return like !== undefined || INSTANCEOF_BUILTINS.has(bin.right.text)
         ? { kind: 'accept' }
@@ -2720,7 +2737,11 @@ function gateCall(call: ts.CallExpression, typeChecker: ts.TypeChecker, mode: Mo
       mentionsUnboundParameter(type, enclosingTypeParameterNames(call)),
     )
   ) {
-    return notYet('a generic call at a generic type is not yet supported', 5);
+    return notYet(
+      'a generic call at a generic type is not yet supported: self-application infers a ' +
+        'generic tuple that no monomorphic copy can spell',
+      5,
+    );
   }
   const callee = skipParens(call.expression);
 
@@ -3546,10 +3567,15 @@ function gateFunction(
     fn.typeParameters !== undefined &&
     fn.typeParameters.length > 0 &&
     !ts.isFunctionDeclaration(fn) &&
-    genericArrowKey(fn) === undefined &&
+    genericArrowKey(fn, typeChecker) === undefined &&
     inlineGenericTuple(fn, typeChecker) === undefined
   ) {
-    return notYet('a generic function expression or arrow is not yet supported', 5);
+    return notYet(
+      'a generic function expression or arrow outside a `const` (or single-assignment `let`) ' +
+        'binding has no specialization home: no parameter type to read a tuple from and no ' +
+        'stable key to lower a second copy under',
+      5,
+    );
   }
   if (fn.body === undefined) {
     // An overload signature declares nothing to emit; the implementation runs. Mirror the

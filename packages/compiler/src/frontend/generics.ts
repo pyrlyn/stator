@@ -68,7 +68,7 @@ export function genericCallInstantiation(
     key = declaration.name?.text ?? '';
   } else if (ts.isFunctionExpression(declaration) || ts.isArrowFunction(declaration)) {
     target = declaration;
-    key = genericArrowKey(declaration);
+    key = genericArrowKey(declaration, checker);
   }
   if (target === undefined || key === undefined) {
     return { kind: 'not-generic' };
@@ -161,6 +161,44 @@ function isSingleConstList(list: ts.Node | undefined): list is ts.VariableDeclar
     (list.flags & ts.NodeFlags.Const) !== 0 &&
     list.declarations.length === 1
   );
+}
+
+/** Whether a `let`/`var` declarator's binding is written exactly once — its initializer.
+ *
+ * A later reassignment would change which function a collected tuple stands for, so the
+ * single-assignment rule (docs/HIR.md §7.2) is what lets a non-`const` home specialize.
+ * Walks the enclosing source for writes to the same symbol; the declaration's own name is
+ * not a write. */
+function isSingleAssignmentBinding(decl: ts.VariableDeclaration, checker: ts.TypeChecker): boolean {
+  const symbol = checker.getSymbolAtLocation(decl.name);
+  if (symbol === undefined) {
+    return false;
+  }
+  let writes = 0;
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && node !== decl.name) {
+      const parent = node.parent;
+      const isWriteTarget =
+        (ts.isBinaryExpression(parent) &&
+          parent.left === node &&
+          parent.operatorToken.kind === ts.SyntaxKind.EqualsToken) ||
+        (ts.isPrefixUnaryExpression(parent) &&
+          (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+            parent.operator === ts.SyntaxKind.MinusMinusToken)) ||
+        (ts.isPostfixUnaryExpression(parent) &&
+          (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+            parent.operator === ts.SyntaxKind.MinusMinusToken)) ||
+        (ts.isForInStatement(parent) && parent.initializer === node) ||
+        (ts.isForOfStatement(parent) && parent.initializer === node);
+      if (isWriteTarget && checker.getSymbolAtLocation(node) === symbol) {
+        writes += 1;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(decl.getSourceFile(), visit);
+  return writes === 0;
 }
 
 /** Unify same-named members of two object layouts (fields against fields, methods against
@@ -303,7 +341,7 @@ export function genericArgumentTuple(
   }
   const key = ts.isFunctionDeclaration(generic)
     ? (generic.name?.text ?? '')
-    : genericArrowKey(generic);
+    : genericArrowKey(generic, checker);
   if (key === undefined) {
     return undefined;
   }
@@ -443,7 +481,7 @@ export function inlineGenericTuple(
   // and through parentheses that position is the chain's top, which is what the call holds.
   const instantiated = instantiateAtParameter(
     unwrapped,
-    inlineGenericKey(unwrapped),
+    positionGenericKey(unwrapped),
     raw,
     parent,
     checker,
@@ -454,16 +492,26 @@ export function inlineGenericTuple(
   return { ...instantiated, declaration: unwrapped };
 }
 
-/** The position-derived specialization key for an inline generic: `arrow@test.ts#128`.
+/** The position-derived specialization key: `<home>@<file>#<offset>` (docs/HIR.md §7).
  *
- * The offset is content-derived, so identical input keys identically (plan.md §9 Task 6.9);
- * `@` and `#` are unspellable in identifiers, so the key can never collide with a variable
- * the way two same-named declarations could. */
-function inlineGenericKey(fn: ts.FunctionExpression | ts.ArrowFunction): string {
+ * `home` is the variable's name for a block-homed generic (`id@app.ts#128`) and the
+ * anonymous kind for an inline one (`arrow@app.ts#128` / `fn@app.ts#128`). The offset is
+ * content-derived, so identical input keys identically (plan.md §9 Task 6.9); `@` and `#`
+ * are unspellable in identifiers, so the key can never collide with a variable the way two
+ * same-named block bindings could. */
+function positionGenericKey(fn: ts.FunctionExpression | ts.ArrowFunction, home?: string): string {
   const sourceFile = fn.getSourceFile();
   const base = sourceFile.fileName.split('/').pop() ?? sourceFile.fileName;
-  const kind = ts.isArrowFunction(fn) ? 'arrow' : 'fn';
+  const kind = home ?? (ts.isArrowFunction(fn) ? 'arrow' : 'fn');
   return `${kind}@${base}#${String(fn.getStart(sourceFile))}`;
+}
+
+/** The name a specialization prints under: the variable's own name, never the position
+ * suffix (`id` from `id@app.ts#128`). Identifiers cannot spell `@`, so the split cannot
+ * collide with a source name. */
+export function genericArrowPrintName(key: string): string {
+  const at = key.indexOf('@');
+  return at < 0 ? key : key.slice(0, at);
 }
 
 /** Whether the function's body reads anything a module-level specialization could not see.
@@ -697,7 +745,7 @@ export function genericValueInstantiation(
   }
   const key = ts.isFunctionDeclaration(target)
     ? (target.name?.text ?? '')
-    : genericArrowKey(target);
+    : genericArrowKey(target, checker);
   if (key === undefined) {
     return undefined;
   }
@@ -733,17 +781,23 @@ export function classReferenceTuple(
   return args.map((arg) => tsTypeToHType(arg, checker));
 }
 
-/** The variable a generic arrow or function expression is aliased to, if it is one.
+/** The variable a generic arrow or function expression is aliased to, if it is one
+ * (docs/HIR.md §7).
  *
  * Monomorphization needs a declaration to lower a second time, and for an expression that is
  * the variable holding it: `const id = <T>(x: T): T => x` specializes `id` per tuple, exactly
- * as a declaration specializes its own name. Anything else — an inline arrow, a callback, a
- * `let` that reassignment could change under a collected tuple, a nesting whose scope the
- * module-level specializations would leak — has no home to specialize under and answers
- * `undefined` here. The gate refuses those shapes except an inline arrow at a direct call
- * argument, which takes the parameter's tuple under a position-derived key
- * (`inlineGenericTuple`). Returns the variable's name, which keys the specializations. */
-export function genericArrowKey(node: ts.Expression): string | undefined {
+ * as a declaration specializes its own name. A block-homed `const` (or a `let`/`var` whose
+ * only write is its initializer) qualifies under a **position-derived key** `name@file#offset`,
+ * because two blocks can bind the same name and sharing one body would be a miscompile
+ * (§7.1). A module-scope `const` keeps its plain name as the key — module-level names are
+ * unique per file, and cross-file collection already disambiguates by dependency ordinal.
+ *
+ * Anything else — an inline arrow, a callback, a reassignable `let`, a nesting whose body
+ * captures an enclosing scope — has no home to specialize under and answers `undefined`.
+ * The gate refuses those shapes except an inline arrow at a direct call argument, which takes
+ * the parameter's tuple under a position-derived key (`inlineGenericTuple`). Returns the key,
+ * which identifies the specializations; `genericArrowPrintName` recovers the printable name. */
+export function genericArrowKey(node: ts.Expression, checker?: ts.TypeChecker): string | undefined {
   let fn: ts.Expression = node;
   while (ts.isParenthesizedExpression(fn)) {
     fn = fn.expression;
@@ -763,18 +817,28 @@ export function genericArrowKey(node: ts.Expression): string | undefined {
     return undefined;
   }
   const list = parent.parent;
-  if (!isSingleConstList(list)) {
+  if (list === undefined || !ts.isVariableDeclarationList(list) || list.declarations.length !== 1) {
     return undefined;
+  }
+  const isConst = (list.flags & ts.NodeFlags.Const) !== 0;
+  if (!isConst) {
+    // A `let`/`var` qualifies only when the initializer is its sole write (§7.2). The
+    // checker counts the writes; without one, only `const` has the guarantee by construction.
+    if (checker === undefined || !isSingleAssignmentBinding(parent, checker)) {
+      return undefined;
+    }
   }
   const statement = list.parent;
-  if (
-    statement === undefined ||
-    !ts.isVariableStatement(statement) ||
-    !ts.isSourceFile(statement.parent)
-  ) {
+  if (statement === undefined || !ts.isVariableStatement(statement)) {
     return undefined;
   }
-  return parent.name.text;
+  const name = parent.name.text;
+  // Module-scope `const` keeps the plain name (existing key form, §7.1). Every other home
+  // takes the position form so two blocks cannot share one specialization body.
+  if (isConst && ts.isSourceFile(statement.parent)) {
+    return name;
+  }
+  return positionGenericKey(fn, name);
 }
 
 /** The generic a value position names, following `const` aliases and imports.
@@ -817,7 +881,10 @@ export function genericAliasTarget(
       // An arrow or function expression is only a generic value where it is assigned (the same
       // rule that lets it specialize); anywhere else it is the unassigned shape the gate
       // refuses, not an alias source.
-      if (!ts.isFunctionDeclaration(declaration) && genericArrowKey(declaration) === undefined) {
+      if (
+        !ts.isFunctionDeclaration(declaration) &&
+        genericArrowKey(declaration, checker) === undefined
+      ) {
         return undefined;
       }
       return declaration;
@@ -840,7 +907,7 @@ export function genericAliasTarget(
       init.typeParameters !== undefined &&
       init.typeParameters.length > 0
     ) {
-      return genericArrowKey(declaration.initializer) === undefined ? undefined : init;
+      return genericArrowKey(declaration.initializer, checker) === undefined ? undefined : init;
     }
     if (!ts.isIdentifier(init)) {
       return undefined;

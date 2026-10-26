@@ -12,6 +12,7 @@ Per plan.md §6 Task 3.1, this document is read before implementing any phase be
 4. [TypeScript types map to HType](#4-typescript-types-map-to-htype)
 5. [The HIR verifier](#5-the-hir-verifier)
 6. [The optimization passes](#6-the-optimization-passes)
+7. [Generic specialization keys](#7-generic-specialization-keys)
 
 ---
 
@@ -845,6 +846,69 @@ otherwise break:
 - Inlining declines a body that names anything but its own parameters. The HIR resolves identifiers
   by **name**, so a body reading a module-level `g` moved into a caller with its own `g` would
   silently read the wrong one — and the same condition makes recursion impossible by construction.
+
+---
+
+## 7. Generic specialization keys
+
+Monomorphization (Task 3.4) emits one module-level function per concrete type tuple a call asks
+for. Two call sites share one specialization exactly when their tuples are equal **and** they
+name the same generic. The key is therefore the identity of the *generic*, not of the call: it
+must be unique across the whole program, unspellable from source (so a user identifier can never
+collide with it), and content-derived (so identical input keys identically — plan.md §9 Task 6.9).
+
+### 7.1 The three key forms
+
+| Home | Key | Example |
+|---|---|---|
+| Named declaration | the declared name | `box` |
+| Module-scope `const` holding a generic arrow/function expression | the variable's name | `id` |
+| Block-homed `const`, or `let`/`var` whose only write is the initializer | `name@file#offset` | `id@app.ts#128` |
+| Inline generic at a direct call argument | `arrow@file#offset` / `fn@file#offset` | `arrow@app.ts#128` |
+
+The module-scope `const` key is just the name because module-level names are unique per file, and
+cross-file collection already appends `@<dependency ordinal>` to every function specialization.
+A block has no such guarantee: two functions can each hold `const f`, and sharing one body between
+them would be a miscompile, not a saving. The position suffix (`@` and `#` are unspellable in
+identifiers) makes the key unique and content-derived at once. An inline generic has no variable
+at all, so it always takes the position form.
+
+### 7.2 When a block-homed generic is sound
+
+A block-homed generic specializes under its position key exactly when all three hold:
+
+1. **Single assignment.** The only write to the binding is its initializer. A later reassignment
+   could change which function a collected tuple stands for (`let f = <T>…; f = other`), so a
+   second write refuses. `const` has this by construction; `let`/`var` must prove it.
+2. **No capture.** The body reads nothing a module-level specialization could not see
+   (`capturesEnclosingScope` in `src/frontend/generics.ts`): no enclosing parameter or local,
+   no `this`/`super`/`new.target`, no same-file binding outside the function. Specializations
+   lower as module-level functions; a capture would resolve to no binding there.
+3. **Stable identity.** The binding's initializer *is* the generic. An alias chain
+   (`const g = f`) is the existing `genericAliasTarget` path and does not need a new key —
+   it resolves to the target's.
+
+When those hold, the specialization body is the same function every call site through that
+binding reaches, and the position key is its program-wide name. When any fails, the gate keeps
+its named refusal (see §7.3) rather than manufacturing an internal error.
+
+### 7.3 What stays refused, and why
+
+The key rule does not make every homeless shape landable. These keep named `STA1214`s that
+state the blocker, never a bare "not yet supported":
+
+| Shape | Blocker the message names |
+|---|---|
+| Generic arrow in a branch / spread / `new` argument | no single parameter type to read a tuple from |
+| Generic returned or stored as a value | no call site determines a tuple (dynamic tier owns the value path) |
+| Generic call at a generic type (self-application) | the tuple still mentions a type parameter no monomorphic copy can spell |
+| `instanceof` against a generic class | one descriptor per tuple; the bare name identifies no descriptor to compare against |
+| Generic that captures enclosing scope | the module-level specialization has no binding to read |
+
+The tuple at a call is whatever unification recovers from that call (§2.2 / `genericCallInstantiation`);
+at a value position with no call it is the declared defaults in order, else `Unknown`
+(`finishTuple`) — the same rule for every home. The key names *which* generic; the tuple names
+*which* copy of it.
 
 ---
 

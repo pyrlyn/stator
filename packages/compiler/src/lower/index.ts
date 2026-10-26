@@ -42,6 +42,7 @@ import {
   genericAliasTarget,
   genericArgumentTuple,
   genericArrowKey,
+  genericArrowPrintName,
   genericCallInstantiation,
   genericNewInstantiation,
   genericValueInstantiation,
@@ -2406,7 +2407,7 @@ function lowerDeclarator(
   // specializations are already above (collected by tuple), and the name itself binds no value
   // (the gate refuses reading one outside a call). Only the assigned shape reaches here — the
   // gate refuses every other generic arrow, so this is the backstop, not the rule.
-  if (decl.initializer !== undefined && genericArrowKey(decl.initializer) !== undefined) {
+  if (decl.initializer !== undefined && genericArrowKey(decl.initializer, checker) !== undefined) {
     return {
       kind: 'block',
       type: H_UNDEFINED,
@@ -11165,13 +11166,16 @@ function lowerSpecialization(
   // own name (what Node prints for it); an anonymous arrow keeps none (what Node prints for a
   // callback-position arrow), exactly as a non-generic inline arrow lowers today. Every other
   // specialization prints its home, as before.
-  const homeless = !ts.isFunctionDeclaration(node) && genericArrowKey(node) === undefined;
+  const homeless = !ts.isFunctionDeclaration(node) && genericArrowKey(node, checker) === undefined;
   return {
     kind: 'function-declaration',
     type: H_UNDEFINED,
     span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
     name: specialization.name,
-    fn: fn.name === undefined && !homeless ? { ...fn, name: specialization.key } : fn,
+    fn:
+      fn.name === undefined && !homeless
+        ? { ...fn, name: genericArrowPrintName(specialization.key) }
+        : fn,
   };
 }
 
