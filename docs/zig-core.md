@@ -139,3 +139,44 @@ binary is a last resort (two runtimes, GC, threads in one process).
 
 Risks: the API is unstable; per-query IPC latency may dominate on large programs (batching
 needed); TS 7 must agree with TS 6.0.3 on every verdict before phase 6.
+
+## Gate parity (`statorc-zig gate`)
+
+`statorc-zig gate [--mode=ts|js] [--node] <files...>` runs the unsupported-constructs gate on
+each file and prints one line per finding: `file:line:col CODE [mode] message`. The format
+matches the TypeScript compiler's output. `statorc-zig check` runs the parse first and then the gate,
+and exits 1 when either one fails. The rules live in `src/gate.zig`. They use the same codes and
+message text as `packages/compiler/src/frontend/gate.ts` and `docs/DIAGNOSTICS.md`.
+
+The Zig core has no type checker yet (phase 3, tsgo), so only the **syntactic** rules are ported:
+
+| Code | Mode | Construct | Phase |
+|---|---|---|---|
+| STA1002 | ts | a `.js`/`.cjs`/`.mjs`/`.jsx` file in ts mode | never |
+| STA1101 / STA1206 | ts / js | `eval(...)` | never / Phase 8 |
+| STA1103 / STA1206 | ts / js | `new Function(...)` | never / Phase 8 |
+| STA1104 | ts | `var` | never |
+| STA1105 / STA1202 | ts / js | `arguments` | never / Phase 5 |
+| STA1106 / STA1203 | ts / js | `new Proxy(...)` | never / Phase 8 |
+| STA1109 | both | `with` | never |
+| STA1110 | ts; js without `--node` | `require()`, `module.exports`, `__filename`, `__dirname` | never |
+| STA1112 | both | decorators | never |
+| STA1113 | both | an extensionless relative import or re-export specifier | never |
+| STA1201 | both | `for await`, `async function*` | Phase 5 |
+| STA1207 | both | `import()` with a non-literal specifier | Phase 8 |
+| STA1212 | both | `Symbol(...)` | Phase 5 |
+| STA1213 | both | BigInt literals | Phase 5 |
+
+The Zig gate does **not** reject anything the TypeScript compiler supports. In particular, the constructs
+added by feat/realworld-gate-pass are accepted, and a unit test in `gate.zig` pins this. Those constructs are builtin constructors and prototypes as values, `.constructor`, `call`/`apply`,
+`satisfies`, for-of over an existing binding, `Number.isFinite`/`isNaN` and
+`ArrayBuffer.isView` (docs/VALUE.md §4.27).
+
+Known gaps, which close when bindings and types arrive:
+- The bridge does not export Oxc's symbol table yet, so a user binding that shadows `require`, `eval`, `Symbol` or `arguments` is still flagged.
+- Every type-directed STA12xx rule, and STA1001/STA1003, is still TypeScript-only.
+
+On the real-world corpus, the result matches the TypeScript pipeline:
+- ms passes in ts mode.
+- dequal passes under `--mode=js` and gets STA1002 in ts mode.
+- minimist passes under `--mode=js --node` and gets STA1110 without `--node`.
