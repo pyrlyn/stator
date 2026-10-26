@@ -14144,3 +14144,47 @@ other than the runner's `TZ` pin. `// @args:` is the argument list both runs get
 is the same object as the default export. Coverage claims are in `node_coverage.json`;
 `docs/NODE.md` regenerates in the same change.
 
+
+## 391. Zig compiler core started beside the TypeScript compiler (2026-10-26)
+
+**Direction.** The creator asked (2026-10-26) to begin rewriting the compiler core in Zig,
+alongside the TypeScript codebase. This contradicts AGENTS.md golden rule 5 (use the
+`typescript` package rather than writing a parser or type checker) and the "compiler is strict
+TypeScript" rule; this note records the conflict. Neither rule is edited yet: the Zig core is
+experimental and ships nothing, and the TypeScript compiler stays authoritative until a
+switch-over is approved (docs/zig-core.md, phase 6).
+
+**Landed.** `packages/compiler-zig/` (Zig 0.16.0 from `mise.toml`): `build.zig`, `build.zig.zon`,
+`src/lexer.zig`, a `statorc-zig tokens` CLI, golden tests against `ts.createScanner` output
+(`tools/gen-golden.ts`), and `tools/compare-corpus.ts`.
+
+**Evidence.** `zig build test --summary all` → 5/5 tests pass (3 unit, golden over 6 samples).
+`compare-corpus.ts $(git ls-files '*.ts')` → `1157 same, 0 differ`.
+
+## 392. Zig core front end: Oxc instead of a hand-written lexer; TS 7 API for typing (2026-10-26)
+
+**Direction.** The creator asked (2026-10-26) not to hand-write the lexer/parser for the Zig core
+but to use SWC or Oxc, and to type-check through TypeScript 7 (`tsgo --api`) as a separate
+process instead of porting a checker. The hand-written Zig lexer from §391 (~490 lines), its
+golden files and the TypeScript-side token tools are removed.
+
+**Choice: Oxc.** Faster parser than SWC (roughly 2–3x) with an arena AST; `oxc_semantic` gives
+scopes, symbols and references (most of a binder); oxlint/oxfmt are already in the toolchain.
+SWC's strengths (transforms, minify) are not needed. Neither has a type checker.
+
+**Landed.** `packages/compiler-zig/oxc-bridge/` (Rust staticlib, Oxc 0.155, C ABI: flat
+pre-order nodes `{kind,parent,start,end}`, diagnostics, scope/symbol/reference counts),
+`src/oxc.zig`, `statorc-zig parse|check`, `build.zig` driving cargo. Scripts `zig-core:test`,
+`zig-core:corpus`. Phase 3 is documented only (docs/zig-core.md): pinned
+`@typescript/native-preview`, thin Zig client over stdio/socket (MessagePack sync or JSON-RPC
+async), protocol-compat tests, Oxc↔TS node mapping by span; fallback tsgolint-style vendored Go
+backend, `c-shared` last.
+
+**Re-estimate.** Phase 3 drops from 25–40k (ported checker) to 6–10k (API integration + gate);
+new phase 2 (AST payload bridge) 2–4k; total remaining ~33–50k lines (was ~58–88k).
+
+**Conflict.** Still contradicts AGENTS.md rule 5 as written (it names the `typescript`
+package); using Oxc for parsing and TS 7 for typing is closer to its intent. Rule unchanged.
+
+**Evidence.** `zig build test --summary all` → 4/4 pass. Corpus over 1158 tracked TS files →
+1153 ok, 5 failed; all 5 are negative subset tests with invalid source (expected).

@@ -34,6 +34,8 @@
     "dupes": "cpd .",
     "dupes:baseline": "cpd . --update-baseline",
     "ci": "node scripts/check-node.ts && node scripts/check-js-sources.ts && pnpm run typecheck && pnpm run lint && pnpm run dupes && pnpm run runtime && pnpm run test && pnpm run test:runtime && pnpm run test:subset && pnpm run test:golden && pnpm run test:selfhost && pnpm run test:builtins && pnpm run test:node-coverage && pnpm run test:leak && pnpm run test:asan",
+    "zig-core:test": "zig build test --build-file packages/compiler-zig/build.zig",
+    "zig-core:corpus": "zig build --build-file packages/compiler-zig/build.zig && git ls-files '*.ts' '*.tsx' '*.mts' '*.cts' | xargs packages/compiler-zig/zig-out/bin/statorc-zig check",
     "test:builtins": "node packages/tests/golden/builtins.ts",
     "docs:node": "node packages/tests/golden/node-coverage.ts",
     "schema:config": "node packages/tests/support/config-schema.ts",
