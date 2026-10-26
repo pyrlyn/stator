@@ -723,3 +723,10 @@ the `--link=` channel — the `extraLinkFlags` consumer path, exercised by a tes
 instead of asserted by a comment. The `extern_ptr` golden is the shape's proof:
 a two-function fixture C (sentinel identity, no header) beside real-libc
 allocation (header pragmas, true prototypes), byte-identical against Node.
+
+## Internal concurrency bridge
+
+T10.2's `std/thread` and `std/sync` wrappers use a closed, private boxed ABI from the exact
+`packages/std/src/native/concurrency.d.ts` declaration file. This does not widen the user extern
+table: user closures, unknown values and arbitrary foreign-thread callbacks remain refused or
+undefined as specified above. C exports still require the main thread. See THREADS.md.

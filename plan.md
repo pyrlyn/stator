@@ -109,7 +109,7 @@ Not added: exposing `ffi-gen` as a `stator ffi-gen` subcommand is optional, and 
 
 ---
 
-## Open work cards from the 2026-10-24 roadmap/ideas sweep (T27–T34)
+## Open work cards from the 2026-10-24 roadmap/ideas sweep (T27–T35)
 
 `roadmap.md` held no unfiled approved work and `ideas.md` holds no unapproved ideas. What the
 roadmap *pointed at* was open residue still living only as prose inside finished phases. Each
@@ -151,8 +151,10 @@ remainder is recorded here).
 class-object row; `C.name` / `K.name` folds to the display name (verdict `static`); `K.static`
 keeps alias erasure; `C.prototype` stays `STA1214` ("the prototype surface", Phase 8). Fixtures
 `subset_class_object_name_*` / `subset_class_object_prototype_*`, goldens `class_object_name` both
-modes. **Remainder (this card keeps its number and title):** materializing a class object as a
-value (`f(C)`, `console.log(K)`, `typeof C`, `K.length`, `C === D` observability), static reads
+modes. **`typeof C` / `typeof K` folds to `"function"` landed 2026-10-25 (plan-notes 387)** beside
+the `C.name` fold (no class object built); fixtures `subset_class_typeof_*`, goldens `class_typeof`
+both modes. **Remainder (this card keeps its number and title):** materializing a class object as a
+value (`f(C)`, `console.log(K)`, `K.length`, `C === D` observability), static reads
 through a *materialized* value (`ClassValue` + `staticProps` / `JSRTClass.statics` population),
 `this` in a static method (step 4), and `C.prototype` itself. HIR `ClassValue`/`NewValue`/
 `InstanceOfValue` and the runtime class-object entries stay declared but unreachable for those
@@ -295,7 +297,136 @@ Steps:
 **Check:** goldens match Node; `subset_bind_*` rows leave `expected-fail`; no regression in the
 existing `has_receiver` method-value goldens.
 
+### T35. Choose the C compiler: `--cc` / `CC` instead of hard-wired `clang` **[D2 · P2]**
+
+Requested by the creator on 2026-10-25 (modelled on V's `-cc`). `packages/compiler/src/cli/build.ts`
+calls `clang` by name for every compile and link; the only exception is the macOS ASan override to
+`/usr/bin/clang` (conda-clang 21.1.8 deadlock). There is no way to pick another C compiler.
+
+Steps:
+1. **Resolver.** One function decides the C compiler, in this precedence: CLI `--cc=<name|path>` >
+   `stator.config.json` `cc` (if the card adds it; `docs/CONFIG.md` + schema in the same change) >
+   env `CC` > default `clang`. The macOS ASan override still applies only when nothing was chosen
+   explicitly; an explicit choice under ASan prints a one-line warning instead.
+2. **Validation.** Resolve the value on `PATH` (or as a path), run `<cc> --version` once per build,
+   and classify the family (`clang`, `apple-clang`, `gcc`). Missing binary, non-zero exit, or an
+   unknown family is refused with a new named diagnostic (`docs/DIAGNOSTICS.md`), naming the value,
+   its source (`--cc`, `CC`, default) and how to fix it. No stack trace.
+3. **Flags per family.** The flags `build.ts` passes today (`-O`, `-flto`, sanitizers, `--link=`
+   passthrough) map through a per-family table; a flag a family lacks is refused by name, not passed
+   blindly.
+4. **One source of truth.** Every clang call site in `build.ts` (compile, `-c` for C-exposed units,
+   link, parallel jobs) uses the resolved compiler; the chosen compiler and its source show in the
+   `link/clang` trace span attributes (rename the span to `link/cc`).
+
+Tests:
+- Unit tests for precedence: `--cc` beats `CC`, `CC` beats the default, empty `CC` means unset.
+- Unit tests for validation: missing binary, `CC=/usr/bin/false`, unknown `--version` output each
+  give the named diagnostic and its fix text.
+- Goldens pass with the default and with `CC=gcc` on the Linux CI runner (gcc installed there);
+  with `CC=cc` on macOS.
+
+Docs: `docs/TOOLCHAIN.md` gains a "C compiler" section: how it works (precedence, detection),
+enable (`--cc`, `CC`) / disable (unset both, default `clang`), test commands, and limitations
+(supported families, ASan override, no bundled tcc, Windows out of scope). `stator build --help`
+lists `--cc`.
+
+**Check:** `CC=gcc pnpm run test:golden` passes on Linux; `stator build --cc=nope examples/hello`
+exits non-zero with the new diagnostic and no stack trace; `rg -n "'clang'" packages/compiler/src/cli`
+shows only the default in the resolver and the ASan override.
+
+**Blocked on nothing.**
+
 ---
+
+## Open work cards: self-hosting bootstrap, V-style (T35–T40)
+
+Requested by the creator on 2026-10-25. Today `statorc` is TypeScript run on Node: source ->
+program -> gate -> HIR -> **C** -> `clang` -> executable (`packages/compiler/src/cli/build.ts`).
+Task 6.19 only *explains* the compiler with itself (`packages/compiler` is `not-yet`: STA1214
+×1887, STA1213 ×2, STA1207 ×1 in `packages/tests/selfhost/baseline.json`) and reserves a
+stage-2 check that is not built. These cards take the compiler from "explained by itself" to
+"built by itself", the way V does it: the compiler is written in the language, a generated C
+snapshot (`vlang/vc`'s `v.c`) bootstraps it with any C compiler, and the result rebuilds itself
+(`make`: `cc v.c -> v1`, `v1 -> v2`, `v2 -> v`; `v self`). Design and usage live in
+`docs/SELF-HOSTING.md`. §1's "self-hosting the compiler" non-goal is for v1; these cards are
+post-v1 and are worked in card order.
+
+### T35. Compiler subset: drive `packages/compiler` to `static`/`dynamic` **[D5 · P2]**
+
+Steps:
+1. Group the 1887 STA1214 sites by construct; card the top constructs as gate/lowering work or
+   rewrite the compiler code into the admitted subset (documented choice per construct).
+2. Replace or wrap Node-only dependencies of the compiler (`node:child_process`, `node:fs`,
+   `typescript`/tsgo program APIs) behind an interface that `packages/std` / `packages/node`
+   can satisfy; list what cannot and why.
+3. Run `--update` on the selfhost baseline in every change that shrinks a count.
+
+**Check:** `pnpm run test:selfhost` reports `packages/compiler` as `static` or `dynamic` with
+zero codes; the stage-2 guard from Task 6.19 then fires, which T37 resolves.
+
+### T36. Bootstrap C snapshot (`statorc.c`) **[D3 · P2]**
+
+Steps:
+1. `stator build --emit-c-only` writes the compiler's C plus the runtime sources it needs into
+   one reproducible tree (`bootstrap/` or a separate `pyrlyn/stator-c` repo, like `vlang/vc`;
+   decide and document).
+2. No absolute paths, timestamps or host-specific defines in the output; one header stamps the
+   source commit.
+3. Script `scripts/bootstrap/regen-snapshot.ts` regenerates it; CI fails when the committed
+   snapshot is stale.
+
+**Check:** on a clean macOS arm64 and Linux x64 box, `cc -O2 -o statorc0 <snapshot>/*.c -lm`
+(plus the documented GC link) produces a binary that compiles `examples/hello` to a running
+executable, with no Node installed.
+
+### T37. Stage0/1/2 bootstrap with a fixed-point check **[D3 · P2]**
+
+Steps:
+1. `scripts/bootstrap/stages.ts`: stage0 = Node-hosted `statorc` (or `statorc0` from T36);
+   stage1 = stage0 builds the compiler; stage2 = stage1 builds the compiler.
+2. Fixed point: stage1 and stage2 emit **byte-identical C** for the compiler and for every
+   golden fixture; stage2's C for hello-world equals the Node-hosted compiler's C (Task 6.19's
+   stage-2 check).
+3. `stator self` (like `v self`): rebuilds the running compiler from source via stage1->stage2
+   and atomically replaces the binary only when the fixed point holds.
+
+**Check:** `pnpm run bootstrap:stages` exits 0 and prints matching SHA-256 for stage1/stage2 C;
+a deliberately non-deterministic emitter change makes it exit non-zero.
+
+### T38. C compiler driver detection **[D2 · P2]**
+
+Steps:
+1. Replace the hard-wired `clang` in `build.ts` with a resolver: `--cc` / `STATOR_CC` / `CC`,
+   then `clang`, `cc`, `gcc` on `PATH` (V order: `-cc`, then system cc; a bundled tcc is a
+   later option, not in this card).
+2. Probe once per build (`--version`), map flags per family (clang/gcc; `-flto`, ASan, `-O`),
+   refuse unknown families with a named diagnostic.
+3. Keep the macOS ASan `/usr/bin/clang` override (plan-notes for conda-clang 21.1.8).
+
+**Check:** goldens pass with `STATOR_CC=gcc` on Linux and `STATOR_CC=clang`; `STATOR_CC=/bin/false`
+gives the named diagnostic, not a stack trace.
+
+### T39. CI job `bootstrap` **[D2 · P2]**
+
+Steps:
+1. Job on macOS arm64 + Linux x64: build from the T36 snapshot with system cc, run T37 stages,
+   run the goldens with the stage2 binary.
+2. Skipped (green) until T35 lands, via a flag in `packages/tests/selfhost/targets.json`;
+   required on `main` after.
+
+**Check:** the job is green on a PR that only touches docs and red on a PR that breaks the
+fixed point.
+
+### T40. Docs: `docs/SELF-HOSTING.md` kept true **[D1 · P2]**
+
+Steps: each of T35–T39 updates `docs/SELF-HOSTING.md` (how it works, enable/disable, test,
+limitations) in the same change; `docs/HOW-IT-WORKS.md` and `docs/DEVELOPMENT.md` link to it.
+
+**Check:** every command in `docs/SELF-HOSTING.md` runs as written on `main`.
+
+---
+
 
 ---
 
@@ -312,7 +443,7 @@ existing `has_receiver` method-value goldens.
 9. **The compiler itself is strict TypeScript.** Locked `tsconfig` (§4 Task 1.0), no `any` in compiler source, vitest for unit tests (dev-only, run on Node's own type stripping — plan-notes 285), runtime dependency budget: the `typescript` package only — **owner-directed exception (2026-09-04, plan-notes 187):** `src/cli/` may use ink + react (human-facing rendering plus per-command help, long-form flags) and dotenv (environment loading), and `typebox` + `jsonc-parser` for `stator.config.json` (`src/cli/config.ts` only, plan-notes 303), and OpenTelemetry tracing (`@opentelemetry/*`, opt-in via `STATOR_OTEL`, standard OTLP env config — works with Maple and any OTLP backend) is wired through `src/support/telemetry.ts`; execa is dev-only for `tests/unit/cli.test.ts`. The budget still rules everything else: no pass, lowering, or codegen code may depend on these. The compiler must always pass its own `ts` mode's *philosophy*: fully typed, no dynamic escape hatches.
 10. **No JavaScript in the project's own source** (creator's direction 2026-10-02, plan-notes 289). The compiler, runtime, `std`, the `node:*` wrappers, test harnesses, oracle shims and scripts are strict TypeScript, C or Zig. `.js` / `.mjs` / `.cjs` files exist only as: `js`-mode test inputs and examples (the thing under test), vendored upstream code, generated output, and assets a browser loads as-is (`site/public/`). Tracked files outside that set fail `scripts/check-js-sources.ts`, which `pnpm run ci` runs (Task 6.15, plan-notes 369).
 
-**Non-goals (v1):** npm-ecosystem compatibility (Phase 11 targets Node *programs* such as `tsc`, not the npm ecosystem at large); `eval`/`new Function` (never in `ts` mode; `js` mode not before Phase 8); `Proxy`; `with`; prototype mutation after construction; decorators; full Intl; Node API emulation outside Phase 11's `--node` platform (§11c); Windows (POSIX + clang first); self-hosting the compiler.
+**Non-goals (v1):** npm-ecosystem compatibility (Phase 11 targets Node *programs* such as `tsc`, not the npm ecosystem at large); `eval`/`new Function` (never in `ts` mode; `js` mode not before Phase 8); `Proxy`; `with`; prototype mutation after construction; decorators; full Intl; Node API emulation outside Phase 11's `--node` platform (§11c); Windows (POSIX + clang first); self-hosting the compiler (post-v1, carded as T35–T40).
 
 ---
 
@@ -525,6 +656,8 @@ stay here so `§6 Task 3.N` references resolve:
 - ~~**Task 3.10** — Exception unwinding.~~ ✅
 - ~~**Task 3.11** — Modules.~~ ✅
 - ~~**Task 3.12** — Tree-shaking builtins.~~ ✅
+
+### ~~Task 3.9a. Avoid temporary arrays in unchanged HIR walks~~ — completed; record in [done.md](done.md).
 
 ---
 
@@ -1545,7 +1678,7 @@ the existing pipeline (`node:worker_threads` / a process pool), not Zig/Rust/Go 
    | `std/env` | `get`/`set`/`has`/`unset`, `cwd` | `args` moved to T11.3 as `std/process.argv` (plan-notes 294), which landed: the generated `main` takes `argc`/`argv` |
    | `std/process` | `exit`, `pid`, `abort`; T11.3 added `argv`, `execPath`, `platform`, `arch`, `ppid`, `hrtimeNs`, `memoryUsage`, `exitCode`/`setExitCode` | no signals yet |
    | `std/path` | `join`/`dirname`/`basename`/`isAbsolute` | pure TS or tiny C; UTF-16 ↔ bytes at the FS edge only |
-   | `std/fs` | sync read/write/stat/mkdir/unlink/rmdir; T11.3 added descriptors, `readBytes`, `readdir`, `realpath`, `utimes`, `exists`; Promise twins | Promise twins (`readTextAsync`, … — the sync name plus `Async`) are thin `async` wrappers that `await` a thread-pool job (see B) once T10.2 exists; until then importing one is not-yet naming Phase 10 (T10.1 step 5) |
+   | `std/fs` | sync read/write/stat/mkdir/unlink/rmdir; T11.3 added descriptors, `readBytes`, `readdir`, `realpath`, `utimes`, `exists`; Promise twins | Promise twins (`readTextAsync`, … — the sync name plus `Async`) offload through a reusable pool of up to four OS workers and return the join Promise (see B; T10.2a, plan-notes 389) |
    | `std/time` | `nowMs`, `sleepMs` (sync) | timers in the microtask sense stay out until a macrotask phase exists |
    | `std/sync` | `Mutex`, `CondVar`, `Channel` | with T10.2 |
    | `std/thread` | `spawn`, `join`, `availableParallelism` | with T10.2 |
@@ -1555,8 +1688,9 @@ the existing pipeline (`node:worker_threads` / a process pool), not Zig/Rust/Go 
 3. **Implementation layers:** `packages/std/*.ts` (types + thin wrappers users import) →
    compiler recognizes `std/*` as a value-import edge into runtime symbols → Zig backings exporting
    `jsrt_std_*` (§0.5; plan-notes 289). The package layout is §11c's: `packages/std` holds both
-   the TS surface and the Zig, and builds `libjsrt_std.a`, linked only when a program imports `std/*`. No second RegExp, no
-   Node `fs` semantics chase: match POSIX + document deltas in `STD.md`.
+   the TS surface and the Zig, and builds `libjsrt_std.a`, linked only when a program imports `std/*`. Thread/sync primitives are the exception: they live in the runtime Zig core because they
+   manage GC-visible values, with their public wrappers in `std` (plan-notes 388). No second
+   RegExp, no Node `fs` semantics chase: match POSIX + document deltas in `STD.md`.
 4. **Gate:** unknown `std/foo` is a hard error; partial modules use `not-yet` codes that name
    **Phase 10** as the blocker owner (§15.9).
 
@@ -1570,7 +1704,7 @@ green-thread M:N (second scheduler beside Task 4.6).
 Rules that make async ↔ threads sound:
 
 1. **The main thread owns `jsrt_run_microtasks()`.** Worker threads never drain it.
-2. **`std.thread.spawn(fn, ...args)`** runs `fn` on an OS thread. `fn` must be a Stator function
+2. **`std.thread.spawn(fn)`** runs a synchronous zero-argument closure on an OS thread; arguments are captured (plan-notes 388). `fn` must be a Stator function
    whose environment is heap-reachable (same discipline as async/generator envs). It may use
    `std/sync` and may call sync `std/fs`. It must not assume TLS frame state from main without
    installing its own `JSRT_FRAME`.
@@ -1578,10 +1712,10 @@ Rules that make async ↔ threads sound:
    fulfills/rejects by pushing a completion into a **thread-safe MPSC queue**. Main's drain
    (already called after module body / at await boundaries) also pops that queue and settles the
    promises — one mechanism, no second loop.
-4. **`std.async.runOnMain(fn)`** (name TBD in the doc) lets a worker schedule a thunk onto the
+4. **`std.thread.runOnMain(fn)`** (docs/THREADS.md) lets a worker schedule a thunk onto the
    main microtask queue. That is the only supported way for a worker to touch Promise reactions
    or non-thread-safe builtins.
-5. **Blocking I/O from async code:** prefer `await std.fs.readFile(path)` implemented as
+5. **Blocking I/O from async code:** prefer `await std.fs.readTextAsync(path)` implemented as
    spawn-join under the hood, so the main thread stays responsive. Do not block main inside an
    async function's sync prefix.
 6. **GC:** build/link Boehm with threads; every spawn registers the thread with the collector;
@@ -1623,27 +1757,11 @@ step remains). `pnpm run ci` green.
 ~~**T10.1. `std` low-level API (sans threads).**~~ ✅ **landed 2026-10-02** — evidence in
 [done.md](done.md) → Phase 10 T10.1 (plan-notes 284, 294, 307).
 `std/env`, `std/path`, `std/process`, sync `std/fs` and `std/time` live in `packages/std`. The
-`std/fs` Promise twins (`readTextAsync`, …) are `STA1214` naming Phase 10 until T10.2 implements
-them as `async` wrappers over the thread pool (docs/STD.md §2).
+`std/fs` Promise twins (`readTextAsync`, …) offload through T10.2 (docs/STD.md §2).
 
-### T10.2. OS threads + async bridge — **[D5]**
+~~**T10.2. OS threads + async bridge — [D5].**~~ ✅ **completed 2026-10-25** — evidence in [done.md](done.md) → Phase 10 T10.2 (plan-notes 388).
 
-Depends on: T10.1's docs (threads chapters), Task 4.6 machinery, threads-enabled GC.
-
-Steps:
-
-1. Write `docs/THREADS.md` — the seven rules in Design B, plus Boehm build flags.
-2. Runtime: thread registry, MPSC completion queue, `jsrt_thread_spawn` / `join` promise.
-3. `std/sync` (`Mutex`, `CondVar`, bounded `Channel`).
-4. `std/thread.spawn` / `join` / `availableParallelism`.
-5. Bridge: `await join` + `runOnMain`; golden where a worker resolves a Promise the main `await`s,
-   and an async function offloads CPU work via spawn-join.
-6. Update Phase 7 Task 7.2 step 6 text/header when foreign threads may call in **only** via the
-   bridge (or keep "undefined" until a 7.2 follow-up — record the choice in plan-notes).
-7. Stress: N threads allocating under GC; ASan/UBSan where available.
-
-**Check:** goldens byte-stable where Node has an analogue (Promise side); thread-only fixtures
-use Stator's own oracle. Multi-thread GC stress does not crash under ASan.
+~~**T10.2a. Reuse OS workers for asynchronous filesystem operations — [D3].**~~ ✅ **completed 2026-10-25** — evidence in [done.md](done.md) → Phase 10 T10.2a (plan-notes 389).
 
 ### T10.3. Threaded / parallel host compiler — **[D4]**
 
@@ -1867,7 +1985,10 @@ functions `tsc` calls (`closeSync`, `existsSync`, `mkdirSync`, `openSync`, `read
 snapshot via new `std/env.names()`), `cwd`, `exit`, `exitCode`, `pid`, `ppid`, `platform`,
 `arch`, `execPath`, `hrtime()` and `memoryUsage()` (rss), with goldens `ts/node_process.ts` and
 `js/node_process.js`, three decision tests, and `docs/NODE.md` at 12/68 for `node:process`.
-`hrtime.bigint`, `stdout`/`stderr`, `nextTick` and the free `process` global stay open. **Next**,
+**Follow-up slice** (plan-notes 390, #168): `argv0`, `execArgv`, `stdout`/`stderr`
+(`write`, `fd`, `isTTY`, `columns`, `rows`), `nextTick`, and the free `process` global under `--node`
+(rewritten to `import process from "node:process"`); `node:process` 17/68, slice N1 25/37. `hrtime.bigint`
+stays open. The task stays open: N1 is not 100%. **Next**,
 in the order `tsc` needs them: `node:os`, `Buffer.from`/`toString` (then `readFileSync` without an
 encoding answers a `Buffer`), `crypto.createHash`, `perf_hooks.performance`, timers; `path.win32` is
 its own slice (13 of T11.7's `path` tests need it).
@@ -2747,3 +2868,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.82** (2026-10-19): **Cloud-review rows T20, T22, T25 and T26 were already fixed** (plan-notes 364). The table still said confirmed. `ci.yml` pushes `main`, `pipeline.yml` calls `pyrlyn/ci` at `@main` (#158), the repo map no longer lists Ryū as vendored, and `memfs` is gone. T21 (required checks) and T24 (split the C emitter) stay open. These rows were never given Steps and a Check, so they are struck in the table the way T23 was, not moved to `done.md`.
 - **v4.85** (2026-10-23): **Cloud-review T21 lands: `protect-main` requires the real test jobs** (plan-notes 370). The ruleset required only `pipeline / gate`, which is why T17 merged with red CI. It now also requires `static analysis`, `frontend (linux/x64)`, `frontend (windows/x64)` and `frontend (windows/arm64)`. A leading-space key in the `frontend-desktop` `fromJSON` matrix had been reporting those legs as `frontend (/x64)` — unmatchable as check contexts — and is fixed in the same change. macOS legs stay unrequired because `MACOS_CI_DISABLED=true` removes them from the matrix instead of skipping them.
 - **v4.86** (2026-10-24): **T33 lands: Ryū is vendored and `shortest_digits()` uses it** (plan-notes 385). `packages/runtime/vendor/ryu/` pins `v2.0` (`72e18e8…`) through `update.ts`; `d2s_buffered` replaces the `%.*e` round-trip search. `test:runtime` and 475 goldens stay byte-for-byte against the pinned Node. §12 loses the Ryū rung — the directed card landed the swap without a bench before/after, which plan-notes 385 records.
+- **v4.87** (2026-10-25): **T11.6: `node:process` follow-up slice** (plan-notes 390). The members `tsc` reads (`argv`, `cwd`, `env`, `execArgv`, `exit`, `memoryUsage`, `nextTick`, `pid`, `platform`, `stdout`) plus `argv0`, `execPath`, `exitCode`, `arch`, `ppid` and `stderr`. A free `process` under `--node` is rewritten to `import process from "node:process"`. `std/env.names()` lists libc's `environ`. A js-mode spread into `unknown` or rest `unknown[]` is accepted. Slice N1 is 25 / 37 (68%). The Check stays open.

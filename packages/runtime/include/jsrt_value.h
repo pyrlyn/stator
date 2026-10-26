@@ -1760,6 +1760,16 @@ jsrt_value jsrt_promise_construct(jsrt_value executor); /* new Promise(executor)
 /* The event loop, such as it is: drain the microtask queue until it is empty. Generated `main`
  * calls it once, after the module body, and that is the whole loop until timers or I/O exist to
  * need more (plan.md Task 4.6). */
+/* Internal std/thread bridge; main alone owns Promise state. */
+bool jsrt_thread_poll(void);
+bool jsrt_thread_is_worker(void);
+double jsrt_thread_pool_started(void); /* internal lifecycle probe, main-only */
+void jsrt_thread_require_main(void);
+void jsrt_gc_safepoint(void);
+void jsrt_gc_collect(void);
+void jsrt_shape_metadata_lock(void);
+void jsrt_shape_metadata_unlock(void);
+jsrt_value jsrt_gc_handoff(jsrt_value value);
 void jsrt_run_microtasks(void);
 
 /* ---------------------------------------------------------- async bodies */

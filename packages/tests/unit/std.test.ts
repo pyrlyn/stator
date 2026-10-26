@@ -43,11 +43,13 @@ function buildAndRun(
   source: string,
   options: {
     readonly input?: string;
+    readonly bindings?: string;
     readonly terminal?: boolean;
     readonly args?: readonly string[];
   } = {},
 ): ReturnType<typeof spawnSync> & { stdout: string } {
   return withProgram(source, (entry, dir) => {
+    if (options.bindings !== undefined) writeFileSync(join(dir, 'native.d.ts'), options.bindings);
     const out = join(dir, 'main');
     const build = spawnSync(process.execPath, [CLI, 'build', entry, '-o', out], {
       encoding: 'utf8',
@@ -305,3 +307,265 @@ test(
     assert.ok(Number(rss) >= 1 << 20 && Number(rss) < 2 ** 34, `rss ${String(rss)}`);
   },
 );
+
+// Thread-only oracles deliberately do not substitute Node workers: Stator shares closure cells.
+test('std/thread publishes captured results, errors and main callbacks', NATIVE_ONLY, () => {
+  const result = buildAndRun(`
+    import { spawn, join, runOnMain, availableParallelism } from 'std/thread';
+    import { Channel } from 'std/sync';
+    const ready = new Channel<number>(1);
+    const release = new Channel<number>(1);
+    let observed = 0;
+    let fulfill: (value: number) => void = () => {};
+    const promised = new Promise<number>((resolve) => { fulfill = (value: number) => resolve(value); });
+    Promise.resolve(1).then(() => console.log('microtask'));
+    const worker = spawn(() => {
+      runOnMain(() => { observed = 9; fulfill(15); release.send(1); });
+      ready.send(1);
+      release.receive();
+      return 'answer';
+    });
+    const bad = spawn(() => { throw new Error('worker failed'); });
+    async function errors(): Promise<void> {
+      try { await bad.join(); } catch (e) { console.log((e as Error).message); }
+    }
+    async function main(): Promise<void> {
+      ready.receive();
+      console.log(availableParallelism() >= 1);
+      console.log(worker.join() === join(worker));
+      console.log(await promised);
+      console.log(await worker.join());
+      console.log(observed);
+    }
+    // No ordering assumption between independent completions.
+    async function ordered(): Promise<void> { await main(); await errors(); }
+    // Attach the error handler immediately; output ordering is pinned by awaiting it below.
+    const handled = bad.join().catch(() => 'handled');
+    ordered();
+  `);
+  assert.equal(result.status, 0, result.stderr.toString());
+  assert.equal(result.stdout, 'true\ntrue\nmicrotask\n15\nanswer\n9\nworker failed\n');
+});
+
+test('std/sync mutex contention and condition predicates publish shared state', NATIVE_ONLY, () => {
+  const result = buildAndRun(`
+    import { spawn } from 'std/thread';
+    import { Mutex, CondVar, Channel } from 'std/sync';
+    const mutex = new Mutex();
+    const condition = new CondVar();
+    const ready = new Channel<number>(2);
+    const awake = new Channel<number>(2);
+    let released = false;
+    let total = 0;
+    function work(): number {
+      mutex.lock();
+      ready.send(1);
+      while (!released) condition.wait(mutex);
+      mutex.unlock();
+      awake.send(1);
+      for (let i = 0; i < 1000; i++) {
+        mutex.lock(); total += 1; mutex.unlock();
+      }
+      return 1;
+    }
+    const a = spawn(work);
+    const b = spawn(work);
+    ready.receive(); ready.receive();
+    mutex.lock(); released = true; condition.signal(); mutex.unlock();
+    awake.receive();
+    mutex.lock(); condition.broadcast(); mutex.unlock();
+    awake.receive();
+    async function main(): Promise<void> {
+      await a.join(); await b.join();
+      console.log(total);
+      console.log(mutex.tryLock()); console.log(mutex.tryLock()); mutex.unlock();
+      condition.destroy(); mutex.destroy();
+      try { mutex.lock(); } catch { console.log('destroyed'); }
+    }
+    main();
+  `);
+  assert.equal(result.status, 0, result.stderr.toString());
+  assert.equal(result.stdout, '2000\ntrue\nfalse\ndestroyed\n');
+});
+
+test('std/sync channels preserve FIFO, backpressure and close semantics', NATIVE_ONLY, () => {
+  const result = buildAndRun(`
+    import { spawn } from 'std/thread';
+    import { Channel } from 'std/sync';
+    const channel = new Channel<string>(1);
+    const worker = spawn(() => {
+      for (let i = 0; i < 100; i++) channel.send('item:' + i);
+      channel.close();
+      return 100;
+    });
+    let ordered = true;
+    for (let i = 0; i < 100; i++) if (channel.receive() !== 'item:' + i) ordered = false;
+    console.log(ordered);
+    try { channel.receive(); } catch { console.log('empty closed'); }
+    try { channel.send('late'); } catch { console.log('send closed'); }
+    channel.close();
+    async function main(): Promise<void> { console.log(await worker.join()); }
+    main();
+    try { new Channel<number>(0); } catch { console.log('capacity'); }
+  `);
+  assert.equal(result.status, 0, result.stderr.toString());
+  assert.equal(result.stdout, 'true\nempty closed\nsend closed\ncapacity\n100\n');
+});
+
+test(
+  'std/thread collects while other threads hold closure, channel and return values',
+  NATIVE_ONLY,
+  () => {
+    const result = buildAndRun(
+      `
+    import { collect } from './native.js';
+    import { spawn } from 'std/thread';
+    import { Channel } from 'std/sync';
+    class Item {
+      text: string;
+      constructor(text: string) { this.text = text; }
+    }
+    const channel = new Channel<Item>(2);
+    const prefix = 'prefix:'.repeat(30);
+    function work(): string {
+      let held = new Item(prefix);
+      for (let i = 0; i < 150; i++) {
+        const item = new Item(prefix + i);
+        const data = { a: i };
+        const spread = { b: i, ...data };
+        if (Object.keys(spread).join(',') !== 'b,a') throw new Error('spread order');
+        channel.send(item);
+        collect();
+        if (held.text.length < prefix.length) throw new Error('lost root');
+        held = item;
+      }
+      return held.text;
+    }
+    const a = spawn(work); const b = spawn(work); const c = spawn(work); const d = spawn(work);
+    let valid = true;
+    for (let i = 0; i < 600; i++) {
+      const item = channel.receive();
+      collect();
+      if (!item.text.startsWith(prefix)) valid = false;
+    }
+    async function main(): Promise<void> {
+      const x = await a.join(); const y = await b.join();
+      const z = await c.join(); const w = await d.join();
+      collect();
+      console.log(valid, x === prefix + 149, y === x, z === x, w === x);
+    }
+    main();
+  `,
+      { bindings: '/** @statorExtern jsrt_gc_collect */ export declare function collect(): void;' },
+    );
+    assert.equal(result.status, 0, result.stderr.toString());
+    assert.equal(result.stdout, 'true true true true true\n');
+  },
+);
+
+test('std/fs Promise twins perform native worker I/O and reject failures', NATIVE_ONLY, () => {
+  const result = buildAndRun(`
+    import { mkdirAsync, writeTextAsync, readTextAsync, statAsync, unlinkAsync, rmdirAsync } from 'std/fs';
+    import { pid } from 'std/process';
+    import { tmpdir } from 'std/os';
+    async function main(): Promise<void> {
+      const dir = tmpdir() + '/stator-thread-fs-' + pid();
+      const file = dir + '/data';
+      await mkdirAsync(dir);
+      await writeTextAsync(file, 'thread I/O');
+      console.log(await readTextAsync(file));
+      const info = await statAsync(file);
+      console.log(info.size);
+      await unlinkAsync(file); await rmdirAsync(dir);
+      try { await readTextAsync(file); } catch { console.log('missing'); }
+    }
+    main();
+  `);
+  assert.equal(result.status, 0, result.stderr.toString());
+  assert.equal(result.stdout, 'thread I/O\n10\nmissing\n');
+});
+
+test('std/fs Promise pool reuses workers across waves, errors and collection', NATIVE_ONLY, () => {
+  const result = buildAndRun(
+    `
+    import { writeTextAsync, readTextAsync, unlinkAsync } from 'std/fs';
+    import { pid } from 'std/process';
+    import { tmpdir } from 'std/os';
+    import { started, collect, drain } from './native.js';
+    const file = tmpdir() + '/stator-pool-' + pid();
+    const text = 'pool-'.repeat(4096);
+    async function main(): Promise<void> {
+      for (let i = 0; i < 32; i++) await writeTextAsync(file, text);
+      console.log(started() === 1);
+      try { await readTextAsync(file + '-missing'); } catch { console.log('missing'); }
+      console.log(await readTextAsync(file) === text, started() === 1);
+      const jobs: Promise<string>[] = [];
+      for (let i = 0; i < 96; i++) jobs.push(readTextAsync(file));
+      for (let i = 0; i < 100; i++) collect();
+      const values = await Promise.all(jobs);
+      console.log(values.length, values.every((value) => value === text));
+      console.log(started() >= 1 && started() <= 4);
+      const before = started();
+      for (let i = 0; i < 16; i++) await readTextAsync(file);
+      console.log(started() === before);
+      await unlinkAsync(file);
+    }
+    main();
+    drain();
+    const beforeRestart = started();
+    // A later drain starts a fresh pool; exit also waits for this unawaited chain.
+    writeTextAsync(file, 'restart').then(() => {
+      console.log(started() === beforeRestart + 1);
+      return unlinkAsync(file);
+    }).then(() => { console.log('drained'); });
+    `,
+    {
+      bindings: `
+        /** @statorExtern jsrt_thread_pool_started */
+        export declare function started(): number;
+        /** @statorExtern jsrt_gc_collect */
+        export declare function collect(): void;
+        /** @statorExtern jsrt_run_microtasks */
+        export declare function drain(): void;
+      `,
+    },
+  );
+  assert.equal(result.status, 0, result.stderr.toString());
+  assert.equal(result.stdout, 'true\nmissing\ntrue true\n96 true\ntrue\ntrue\ntrue\ndrained\n');
+});
+
+test('std/thread enforces worker restrictions and drains unjoined work', NATIVE_ONLY, () => {
+  const result = buildAndRun(`
+    import { spawn, runOnMain } from 'std/thread';
+    import { Mutex, CondVar, Channel } from 'std/sync';
+    const mutex = new Mutex();
+    const condition = new CondVar();
+    mutex.lock();
+    try { mutex.lock(); } catch { console.log('recursive'); }
+    try { mutex.destroy(); } catch { console.log('busy'); }
+    mutex.unlock();
+    try { mutex.unlock(); } catch { console.log('owner'); }
+    try { condition.wait(mutex); } catch { console.log('wait owner'); }
+    const blocked = new Channel<number>(1);
+    blocked.send(1);
+    const closed = spawn(() => {
+      try { blocked.send(2); } catch { return 'closed'; }
+      return 'sent';
+    });
+    blocked.close();
+    const bad = spawn(async () => 1);
+    const rejected = bad.join().catch(() => 'async rejected');
+    spawn(() => { runOnMain(() => console.log('posted')); return 0; });
+    async function main(): Promise<void> {
+      console.log(await closed.join());
+      console.log(await rejected);
+    }
+    main();
+  `);
+  assert.equal(result.status, 0, result.stderr.toString());
+  // Publication order between independent workers is deliberately unspecified.
+  assert.deepEqual(
+    result.stdout.trim().split('\n').sort(),
+    ['recursive', 'busy', 'owner', 'wait owner', 'closed', 'async rejected', 'posted'].sort(),
+  );
+});

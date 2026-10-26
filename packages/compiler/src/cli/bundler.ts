@@ -283,8 +283,9 @@ async function bundledFrontend(
   };
 }
 
-/** Under `--node`, the frontend again with every module-location read rewritten into a run-time
- * call (`frontend/location.ts`, plan-notes 316); the same frontend when nothing reads one. */
+/** Under `--node`, the frontend again with every module-location read and every free `process`
+ * rewritten (`frontend/location.ts`, plan-notes 316, 361); the same frontend when nothing reads
+ * either. */
 function located(entry: string, mode: Mode, { frontend, files }: Overlaid): Frontend {
   const entryFile = frontend.program.getSourceFile(resolve(entry).replace(/\\/g, '/'));
   if (entryFile === undefined) return frontend;

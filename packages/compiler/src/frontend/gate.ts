@@ -189,6 +189,11 @@ function visitNode(
   // to accept or defer, and running them through gateConstruct would reject `let x: number = 1`
   // -- the NumberKeyword node is not in any value-level accept list. The `any` checks above still
   // apply, and we still recurse so a nested `any` (e.g. `Array<any>`) is found.
+  // A qualified name (`ts.Node`, `NodeJS.Platform`) is the entity name of a type reference or
+  // type query: it never evaluates at runtime, so it is erased like the type around it.
+  if (ts.isQualifiedName(node)) {
+    return;
+  }
   if (ts.isTypeNode(node)) {
     ts.forEachChild(node, (child) =>
       visitNode(child, sourceFile, typeChecker, mode, diagnostics, classNameCounts, onNode),
@@ -894,17 +899,6 @@ function notYet(message: string, phase: number): GateResult {
   };
 }
 
-/** A generic has no value — only its specializations do. The declaration's own name is exempt,
- * and so is a callee (the one position with a type tuple) and an import specifier's spelling
- * (which merely binds the name). */
-function isGenericValueEscape(node: ts.Node, self: ts.Node | undefined): boolean {
-  return (
-    self !== node &&
-    !ts.isImportSpecifier(node.parent) &&
-    !(ts.isCallExpression(node.parent) && node.parent.expression === node)
-  );
-}
-
 function refuseGenericValue(): GateResult {
   return notYet(
     'using a generic function as a value is not yet supported: no call site determines ' +
@@ -1264,33 +1258,39 @@ function gateIdentifier(
     symbol !== undefined && (symbol.flags & ts.SymbolFlags.Alias) !== 0
       ? aliasedDeclaration(symbol, typeChecker)
       : decl;
+  // The shared exemption of the three generic-as-value refusals below: the declaration's own
+  // name binds rather than reads, an import specifier only spells the binding, and a callee is
+  // the one position where a tuple exists to pick a specialization by.
+  const genericValueExempt = (boundName: ts.Node | undefined): boolean =>
+    boundName === node ||
+    ts.isImportSpecifier(node.parent) ||
+    (ts.isCallExpression(node.parent) && node.parent.expression === node);
   if (
     aliased !== undefined &&
     ts.isFunctionDeclaration(aliased) &&
     aliased.typeParameters !== undefined &&
     aliased.typeParameters.length > 0 &&
-    isGenericValueEscape(node, ts.getNameOfDeclaration(aliased))
+    !genericValueExempt(ts.getNameOfDeclaration(aliased))
   ) {
     return refuseGenericValue();
   }
-  // A `const` holding a generic arrow has no value either — only its specializations do. The
-  // declarator's own name is exempt, and so is a callee, the one position with a tuple.
+  // A `const` holding a generic arrow has no value either — only its specializations do.
   if (
     aliased !== undefined &&
     ts.isVariableDeclaration(aliased) &&
     aliased.initializer !== undefined &&
     genericArrowKey(aliased.initializer, typeChecker) !== undefined &&
-    isGenericValueEscape(node, aliased.name)
+    !genericValueExempt(aliased.name)
   ) {
     return refuseGenericValue();
   }
-  // An alias has no value either — only the calls through it do. The declarator's own name is
-  // exempt, and so is a callee; formation and argument positions were accepted above, so what
-  // reaches here escapes (returned, stored, branched on) and has no tuple to specialize to.
+  // An alias has no value either — only the calls through it do. Formation and argument
+  // positions were accepted above, so what reaches here escapes (returned, stored, branched on)
+  // and has no tuple to specialize to.
   if (
     decl !== undefined &&
     ts.isVariableDeclaration(decl) &&
-    isGenericValueEscape(node, decl.name) &&
+    !genericValueExempt(decl.name) &&
     genericAliasTarget(node, typeChecker) !== undefined
   ) {
     return refuseGenericValue();
@@ -1497,6 +1497,11 @@ function isClassAliasUseInPlace(node: ts.Identifier, checker: ts.TypeChecker): b
   if (ts.isNewExpression(parent) && parent.expression === node) {
     return true;
   }
+  // `typeof K` folds to `"function"` beside `C.name` (docs/VALUE.md §4.26): the receiver names
+  // the class, and the operator answers a fixed string without materializing a value.
+  if (ts.isTypeOfExpression(parent) && parent.expression === node) {
+    return true;
+  }
   if (
     ts.isBinaryExpression(parent) &&
     parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
@@ -1516,6 +1521,11 @@ function namesAClassInPlace(node: ts.Identifier, checker: ts.TypeChecker): boole
   const parent = node.parent;
   if (ts.isNewExpression(parent)) {
     return parent.expression === node;
+  }
+  // `typeof C` folds to `"function"` beside `C.name` (docs/VALUE.md §4.26): the receiver names
+  // the class, and the operator answers a fixed string without materializing a value.
+  if (ts.isTypeOfExpression(parent) && parent.expression === node) {
+    return true;
   }
   // `class B extends A` -- the base of a heritage clause, which names a layout rather than reading
   // a value. It is not a type NODE, so the type-position exemption does not cover it.
@@ -3398,11 +3408,24 @@ function gateCall(call: ts.CallExpression, typeChecker: ts.TypeChecker, mode: Mo
   return { kind: 'accept' };
 }
 
+/** A parameter annotated `unknown`, or a rest parameter annotated `unknown[]`: every value meets
+ * it, so there is no claim for a spread to slip past (plan-notes 390). `node:process`'s
+ * `nextTick(callback: (...args: unknown[]) => void, ...args: unknown[])` calls its callback so. */
+function claimsNothing(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker): boolean {
+  const type = checker.getTypeAtLocation(parameter);
+  const element =
+    parameter.dotDotDotToken !== undefined && checker.isArrayType(type)
+      ? checker.getTypeArguments(type as ts.TypeReference)[0]
+      : type;
+  return element !== undefined && (element.flags & ts.TypeFlags.Unknown) !== 0;
+}
+
 /** What every spread call is still refused for (plan.md §11c T11.4 step 5): a call inside an
  * optional chain, whose short-circuit the spread lowering does not build, and -- in js mode -- a
- * callee with a TypeScript-annotated parameter. That annotation is a claim the edge check keeps
- * (`STA2001`, plan-notes 308), and a spread's elements reach parameters by position only at run
- * time, where no check stands. ts mode's checker proved the spread against the parameters itself. */
+ * callee with a TypeScript-annotated parameter that claims a type. That annotation is a claim the
+ * edge check keeps (`STA2001`, plan-notes 308), and a spread's elements reach parameters by
+ * position only at run time, where no check stands. An `unknown` parameter claims nothing
+ * (plan-notes 390). ts mode's checker proved the spread against the parameters itself. */
 function spreadCallRefusal(
   call: ts.CallExpression,
   checker: ts.TypeChecker,
@@ -3417,7 +3440,9 @@ function spreadCallRefusal(
   const declaration = checker.getResolvedSignature(call)?.declaration;
   return declaration !== undefined &&
     !ts.isJSDocSignature(declaration) &&
-    declaration.parameters.some((parameter) => hasTypeScriptAnnotation(parameter))
+    declaration.parameters.some(
+      (parameter) => hasTypeScriptAnnotation(parameter) && !claimsNothing(parameter, checker),
+    )
     ? notYet(
         'a spread argument to a function with annotated TypeScript parameters is not yet supported in js mode',
         5,
@@ -6404,7 +6429,7 @@ function gateForOf(statement: ts.ForOfStatement, mode: Mode, checker: ts.TypeChe
       ? frontendTypes.tsTypeToHType(iterableType, checker)
       : frontendTypes.tsTypeToHType(constraint, checker);
   if (
-    !checker.isArrayType(target) &&
+    !isArrayOrTuple(target, checker) &&
     (target.flags & ts.TypeFlags.StringLike) === 0 &&
     hir.kind !== 'map' &&
     hir.kind !== 'set' &&

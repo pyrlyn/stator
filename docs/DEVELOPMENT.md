@@ -32,3 +32,5 @@ just -f packages/std/justfile -d packages/std std                         # libj
 ```
 
 Dev runs TypeScript directly on the pinned Node — no `pnpm run build` step for the CLI. GitHub Actions runs `pnpm run ci` plus a Test262 heartbeat on every push; nightly fuzz and weekly benches are `.github/workflows/nightly.yml`.
+
+Self-hosting plan (V-style bootstrap): [SELF-HOSTING.md](SELF-HOSTING.md).

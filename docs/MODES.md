@@ -513,7 +513,10 @@ subset `tsc` calls: `closeSync`, `existsSync`, `mkdirSync`, `openSync`, `readFil
 `readFileSync` without an encoding answers a `Uint8Array` until `Buffer` lands; `readdirSync` lists
 in byte order; a `Dirent` follows symbolic links; a `Stats` carries `size`, `mtimeMs`, `mtime`,
 `isFile`, `isDirectory` and `isSymbolicLink` only; a system error is not an `Error` instance;
-`watch`, `watchFile` and `unwatchFile` wait on the event loop (N2). Each module's default export is the module object
+`watch`, `watchFile` and `unwatchFile` wait on the event loop (N2). `node:process` (T11.6), the
+members `tsc` reads plus their neighbours: `argv`, `argv0`, `execArgv`, `execPath`, `env`, `cwd`,
+`exit`, `exitCode`, `platform`, `arch`, `pid`, `ppid`, `memoryUsage`, `nextTick`, `stdout` and
+`stderr` (below). Each module's default export is the module object
 (`import path from 'node:path'`), which the bundle's `import * as m` plus `m.default` also needs.
 `path.win32`, `node:path/win32` and `path.matchesGlob` have not landed.
 
@@ -565,6 +568,46 @@ to `packages/node/src/internal/location.ts` that carries the file's path relativ
 (`frontend/location.ts`); the call joins it to the binary's directory when the program runs. The
 rule keeps the common idiom working: `join(__dirname, "data.json")` finds assets laid out beside
 the binary the way they sat beside the source.
+
+**The global `process`** (T11.6, plan-notes 390). Under `--node` a free `process` is the
+`node:process` module's default export: the frontend gives every project file, and the vendor
+module, that reads one an `import process from "node:process"` (`frontend/location.ts`), resolved
+like any other built-in, and `packages/node/src/globals.d.ts` declares its type. A file that binds
+its own `process` keeps it. Without the flag `process` is undeclared (`STA0012`); `std/process`
+is the non-Node spelling. What the binary answers:
+
+- **`argv` has the shape of Node's single-executable applications**: `argv[0]` is the absolute
+  path of the executable (`execPath`), `argv[1]` is the program as it was invoked, and the user's
+  arguments start at index 2. Node's single-executable doc
+  (https://raw.githubusercontent.com/nodejs/node/v26.7.0/doc/api/single-executable-applications.md,
+  checked 2026-10-19, section "Execution arguments") shows a binary launched as
+  `sea user-arg1 user-arg2` printing `['/path/to/sea', 'path/to/sea', 'user-arg1', 'user-arg2']`,
+  and states that "The user-provided arguments are in the `process.argv` array starting from
+  index 2". So `process.argv.slice(2)` reads the same arguments under Node and in the binary.
+  `argv0` is `argv[1]`. `execArgv` is empty, because a binary takes no runtime flags of its own.
+  A golden fixture's `// @args:` line is the argument list both runs receive.
+- **`env` is a plain object**, filled from the environment at startup (`std/env.names()`). Writes
+  and `delete` are seen by every later read in the program. They do not reach the OS environment
+  or child processes, because an object that forwards writes needs a `Proxy`, which the subset
+  does not have.
+- **`exit(code)`** ends the process with `code` (the low 8 bits). The method takes the code:
+  calling it with no argument is the same shape, at the call, as a method call with no receiver
+  (docs/VALUE.md §4.16), so the no-argument form is the function export `exit()`, which uses
+  `exitCode` when the code is omitted, else 0. **`exitCode`** is `undefined` until the program
+  sets it; the status a normal end uses is set when the program assigns it.
+- **`memoryUsage()`** reports a real `rss`. `heapTotal`, `heapUsed`, `external` and
+  `arrayBuffers` are 0.
+- **`nextTick(fn, ...args)`** runs `fn` as a promise job once the current job ends. Node runs
+  every tick before any promise job; here a tick takes its place in the queue. In `ts` mode a
+  callback with typed parameters is passed as a closure that calls it.
+- **`stdout` and `stderr`** have `write(string | Uint8Array)`, which writes now and answers
+  `true`, plus `fd`, `isTTY`, `columns` and `rows`. `isTTY` is `true` on a terminal and
+  `undefined` otherwise, as on Node. An encoding argument and a callback are not landed (an
+  omitted optional method parameter collides with the receiver, docs/VALUE.md §4.16). There are
+  no stream events: `node:events` and `node:stream` are N2, and so are `on`, `once` and `emit`
+  on `process`. A string containing a NUL is written as bytes.
+- **`browser` and `recordreplay`** are not properties. `tsc` reads both. In `js` mode a missing
+  property of the process object reads as `undefined`, which is what those checks test.
 
 ## 7. One pipeline, one gate
 

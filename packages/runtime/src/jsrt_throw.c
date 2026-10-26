@@ -39,7 +39,7 @@ bool jsrt_pending(void) {
 jsrt_value jsrt_take_exception(void) {
   /* Clear the cell as well as the flag: a taken exception the cell kept alive would be a leak
    * under a real collector, invisible under this one. */
-  jsrt_value v = pending_value;
+  jsrt_value v = jsrt_gc_handoff(pending_value);
   pending_value = JSRT_UNDEFINED;
   pending_flag = false;
   return v;

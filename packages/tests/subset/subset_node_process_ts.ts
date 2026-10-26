@@ -1,7 +1,7 @@
 // @mode: ts
-// @verdict: not-yet
-// @code: STA1214
-// SUBSET.md: node:process — without --node, `node:*` names the flag (docs/MODES.md §6).
-import process from 'node:process';
+// @verdict: error
+// @code: STA0012
+// SUBSET.md: node:process — without --node the global `process` is undeclared. `std/process` is
+// the non-Node spelling.
 
-console.log(process.platform);
+console.log(process.pid);

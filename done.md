@@ -4106,6 +4106,123 @@ naming Phase 10.
 
 **Check:** goldens for env/path/process/fs sync; subset rows match; no Node polyfill dependency.
 
+## Phase 10 — T10.2 OS threads + async bridge ✅ (2026-10-25)
+
+Creator-directed std expansion (plan-notes 388). The existing basic std modules gain
+`std/thread` (`spawn`, `join`, `runOnMain`, `availableParallelism`), `std/sync` (`Mutex`,
+`CondVar`, bounded `Channel<T>`), and the six `std/fs` Promise twins. Public wrappers are
+strict TypeScript. POSIX thread/sync primitives and the completion bridge are Zig in the
+runtime because they hold GC-visible values. The existing main microtask drain settles joins,
+runs posted callbacks and reaps unjoined workers; no second event loop or dependency.
+
+Each worker registers its stack and TLS roots with Boehm. Statement safepoints and return
+handoffs keep transient NaN-boxed values alive across collection by another thread. Shape
+metadata, spread-order caching and immutable-string append storage are synchronized; std
+result/error/I/O state and generated inline caches are thread-local. Native tests exercise
+shared captures, mutex/condition contention, FIFO/backpressure/close, rejected joins,
+main-thread callbacks, filesystem offload and forced collections with four live workers.
+
+**Check evidence (macOS arm64, pinned Node 26.7.0 / Zig 0.16.0, Boehm):**
+
+`mise exec node zig just -- pnpm run ci` exited **0** on 2026-10-25:
+
+- typecheck and lint/format clean; source-policy check clean;
+- `dupes`: **113 clones, 1.8%**, no new clones; baseline shrunk by four fingerprints;
+- `test`: **62 test files, 808 tests passed**;
+- runtime: **roots ok; print corpus matches Node**;
+- subset: **999 fixtures — 968 passed, 31 expected-fail, 0 failed**;
+- golden: **483 fixtures — 483 passed, 0 failed** (the two optional Intl fixtures excluded);
+- selfhost: compiler counts unchanged (**STA1207 1, STA1213 2, STA1214 1887**), **11 std
+  modules built and run + 10 std goldens**, **5 Node modules + 13 Node goldens**;
+- builtins gate passed; **docs/NODE.md is current**;
+- leak: **10M objects 4384 KB**, **10M FFI strings 4480 KB**, **2M computed-key reads
+  4432 KB** peak RSS, each plateaued below the 65536 KB cap;
+- ASan/UBSan: runtime roots/print corpus and two static libraries passed; **6 thread/sync/fs
+  native tests passed**, including multi-thread forced-GC stress; full golden-asan **483/483**,
+  `asan: golden-asan green — recorded 14e6479129b6…`.
+
+The focused `subset --filter subset_std` pass was **29/29**. Thread-only fixtures use explicit
+stdout oracles; the ordinary and sanitized golden corpora retain Node's byte-for-byte Promise
+checks. Zig primitives run in ReleaseSafe; ASan/UBSan cover C and generated C.
+
+The v0 scope is POSIX, synchronous worker bodies and main-owned Promise operations. Foreign
+C-thread callbacks remain undefined (the Task 7.2 follow-up remains required). Filesystem
+Promise twins create one OS thread per call; a bounded reusable pool is deferred explicitly
+in plan.md and docs/THREADS.md. Shared mutable application objects require synchronization.
+
+The completed card:
+
+### T10.2. OS threads + async bridge — **[D5]**
+
+Depends on: T10.1's docs (threads chapters), Task 4.6 machinery, threads-enabled GC.
+
+Steps:
+
+1. Write `docs/THREADS.md` — the seven rules in Design B, plus Boehm build flags.
+2. Runtime: thread registry, MPSC completion queue, `jsrt_thread_spawn` / `join` promise.
+3. `std/sync` (`Mutex`, `CondVar`, bounded `Channel`).
+4. `std/thread.spawn` / `join` / `availableParallelism`.
+5. Bridge: `await join` + `runOnMain`; golden where a worker resolves a Promise the main `await`s,
+   and an async function offloads CPU work via spawn-join.
+6. Update Phase 7 Task 7.2 step 6 text/header when foreign threads may call in **only** via the
+   bridge (or keep "undefined" until a 7.2 follow-up — record the choice in plan-notes).
+7. Stress: N threads allocating under GC; ASan/UBSan where available.
+
+**Check:** goldens byte-stable where Node has an analogue (Promise side); thread-only fixtures
+use Stator's own oracle. Multi-thread GC stress does not crash under ASan.
+
+## Phase 10 — T10.2a Reusable filesystem workers ✅ (2026-10-25)
+
+The six filesystem Promise twins share a lazy pool capped at four POSIX workers. Excess
+jobs queue without blocking main, and workers survive across Promise continuations. The
+existing completion queue, active-job GC roots and std cleanup serve both dedicated and
+pooled work. Idle workers release transient roots; quiescence stops and joins the pool, and a
+later drain may restart it. Public `std/thread.spawn` remains a dedicated-thread operation.
+Native primitives are Zig; the internal typed submission helper and filesystem API are
+TypeScript. No dependency, public configuration or new public API was added.
+
+**Check evidence:** `mise exec node zig just -- pnpm run ci` exited **0** on 2026-10-25,
+macOS arm64, pinned Node 26.7.0 / Zig 0.16.0 with Boehm:
+
+- typecheck, lint/format and source-policy checks passed; duplication **113 clones / 1.8%**,
+  no new clones or baseline changes;
+- unit: **62 files, 809 tests passed**; focused std suite **21/21**;
+- subset: **999 fixtures — 968 passed, 31 expected-fail, 0 failed**; focused std slice **29/29**;
+- golden: **483/483**, plain and ASan/UBSan; optional Intl fixtures excluded;
+- selfhost: **17 targets match**; **11 std modules + 10 goldens**, **5 Node modules + 13
+  goldens**; compiler diagnostic counts unchanged (**1 STA1207, 2 STA1213, 1887 STA1214**);
+- builtin coverage passed; **docs/NODE.md is current**;
+- leak: **10M objects 4384 KB**, **10M FFI strings 4448 KB**, **2M computed-key reads
+  4448 KB** peak RSS, all plateaued below the 65536 KB cap;
+- ASan/UBSan runtime and static-library gates passed; **7/7 thread/sync/fs tests passed**,
+  `asan: golden-asan green — recorded 6c481a23ebed…`.
+
+The pool fixture measures successful OS thread creation: **32 sequential writes use one
+worker**, 96 queued reads complete within the four-worker limit, a subsequent wave reuses
+those workers, and a failed read does not poison the next job. It forces 100 collections
+with queued/live results, drains and restarts the pool, and checks the final reaction of an
+unawaited filesystem chain before process exit. The same fixture passed under ASan/UBSan.
+
+Removing the intermediate `Thread<T>` wrapper makes the six filesystem subset fixtures and
+fs selfhost target static; their expectations and docs were updated (plan-notes 389). Pending
+queue length remains unbounded; callers control the number of queued operations.
+
+The completed card:
+
+### T10.2a. Reuse OS workers for asynchronous filesystem operations — **[D3]**
+
+Creator-directed follow-up to T10.2.
+Reuse the existing thread completion queue, GC registration and per-job std cleanup. Extend
+its private spawn ABI with pooled submission, keep public `std/thread.spawn` dedicated, and
+route the six `std/fs` Promise twins through a shared internal TypeScript helper. Lazily start
+at most four workers; queue excess jobs without blocking main. Reuse workers across Promise
+continuations, then stop and join idle workers when the main drain is quiescent. No new
+public API, dependencies, pool configuration, cancellation or foreign-thread support.
+
+**Check:** native tests prove one worker serves sequential filesystem jobs, bursts stay within
+four workers while completing every job, failures do not poison subsequent jobs, and GC/shutdown
+stay correct. Run those tests under ASan/UBSan and `pnpm run ci`; update docs in the same change.
+
 ## Phase 11 — T11.5a per-module namespaces ✅ (2026-10-02)
 
 ### T11.5a. `packages/compiler`: per-module namespaces — **[D4]**
@@ -4677,3 +4794,83 @@ The empty-receiver `repeat` fixtures and the computed-key leak row were already 
 The program cache keyed on the entry's sha256 and the overlay key. An edit to an on-disk import left the entry hash unchanged, so a later watch mode would have served a stale `ts.Program`. The key now also hashes every other on-disk source file the program loaded. Default libs are omitted. Overlay files are omitted, because their bytes are the overlay key and a vendor module is not on disk. A dependency that cannot be re-read is a miss. That hash is the invalidation a watch mode must keep using (`docs/BUNDLER.md` §7).
 
 Check: `pnpm exec vitest run --config packages/tests/vitest.config.ts packages/tests/unit/toolchain-sdk.test.ts packages/tests/unit/program-cache.test.ts packages/tests/unit/graph.test.ts` — `Test Files  3 passed (3)`, `Tests  15 passed (15)` (the new rows are the non-SDK rank and a transitive leaf edit that must miss). `pnpm exec tsc --noEmit -p packages/compiler/tsconfig.json` and `-p packages/tests/tsconfig.json` were clean. `pnpm exec oxlint --deny-warnings` on the touched sources was clean. `pnpm run dupes` reported 180 clones and exited 0 (no new clone). `stator explain` of `packages/compiler` reports `1844 × STA1214` (was 1845): the old `match[1] ?? ''` was one not-yet nullish coalescing, and the rank helper does not need it. The baseline records that shrink.
+
+
+### Task 3.9a. Avoid temporary arrays in unchanged HIR walks
+
+Owner-requested compiler performance work. Preserve HIR contents, identity, callback order and
+the public rewriter API; do not change optimization rules.
+
+**Steps.**
+1. Measure the shared rewriter on unchanged, sparsely changed and fully changed HIR lists.
+2. Reuse `rewriteEach` and copy lists only after their first change; avoid singleton statement
+   wrappers when there is no statement hook. Add regression tests for order, sharing and splicing.
+3. Document the allocation policy in `docs/HIR.md` and record same-host results in `done.md`.
+
+**Check.** `mise exec node -- pnpm run ci` passes. Run
+`mise exec node -- node --expose-gc --max-semi-space-size=128 packages/tests/bench/hir-rewrite.ts`
+against both revisions: unchanged/sparse walks must reduce temporary heap growth and time without
+changing the results; fully changed walks must retain correctness and avoid a material slowdown.
+
+**Completed 2026-10-25.** The shared HIR walker now allocates list replacements only at the
+first change. Fixed-length child lists copy once at their final size and overwrite entries;
+statement lists retain their variable-length splicing behavior. Walks without a statement hook
+reuse `rewriteEach` and avoid one-element result arrays per statement. Expanded statement lists
+use iteration rather than a variadic push, so a 150,000-element expansion works without hitting
+Node's argument limit.
+
+Reuse: extended the existing `rewriteEach`, `rebuildStatement` and HIR test constructors rather
+than adding another walker or dependency. Tests preserve frozen inputs, unchanged identities,
+sibling sharing, bottom-up hook order, whole-list hooks, deletion and expansion. `docs/HIR.md`
+records the allocation policy and benchmark procedure. No plan-notes entry or baseline growth
+was needed.
+
+**Measurements.** Apple M3 Max, Darwin arm64, Node v26.7.0, reference source at
+`47e1d01a02e0329e59629526bce2357665459218`. Two runs of:
+
+```
+mise exec node -- node --expose-gc --max-semi-space-size=128 packages/tests/bench/hir-rewrite.ts /Users/listepo/GitHub/listepo/apps/stator
+```
+
+Each run alternates the current and reference implementations in one process: 15 samples of
+25 walks, after 20 warmups, on 10,000 statements with eight numeric arguments each. Every sampled
+result is checked against the other implementation's result. The shared host also runs CI;
+paired measurements reduce that load bias. These are walker measurements, not whole-compiler
+or native-program speed claims. Heap growth is temporary allocation plus any changed result,
+not retained memory or process RSS.
+
+| Scenario | Before ms, runs 1 / 2 | After ms, runs 1 / 2 | Heap growth bytes, before → after |
+|---|---:|---:|---:|
+| Unchanged expressions | 1.2353 / 1.1809 | 1.1525 / 1.0874 | 12,801,632 → 10,404,624 |
+| Sparse expression changes | 1.5459 / 1.5905 | 1.4692 / 1.4436 | 12,814,624 → 10,511,232 |
+| All expressions changed | 2.5045 / 2.5575 | 2.5162 / 2.5329 | 19,760,056 → 18,567,608 |
+| Identity statement hook | 1.6129 / 1.2565 | 1.3984 / 1.0620 | 13,375,088 → 10,404,000 |
+
+Geometric-mean elapsed time falls **6.25% / 8.54%** across the four cases. Unchanged/sparse walks
+improve in both runs; fully changing walks remain within 1% of the original time. Heap growth
+falls **6.03–22.21%**, with **17.97–22.21%** savings on unchanged/sparse cases.
+
+**Check output.** `mise exec node -- pnpm run ci` exited **0** on the final implementation:
+
+```
+Test Files  63 passed (63)
+Tests  804 passed (804)
+runtime: print corpus matches Node
+subset: 969 fixtures — 938 passed, 31 expected-fail, 0 failed
+golden: 475 fixtures — 475 passed, 0 failed
+selfhost: 15 targets match the baseline
+node-coverage: docs/NODE.md is current
+leak: 10M objects — peak RSS 3872 KB of a 65536 KB cap, 36 samples, plateau
+leak: 10M FFI strings — peak RSS 3904 KB of a 65536 KB cap, 719 samples, plateau
+leak: 2M computed-key reads — peak RSS 3936 KB of a 65536 KB cap, 81 samples, plateau
+runtime: print corpus matches Node (ASan/UBSan)
+ffi static-lib: ok (asan, two libraries, forced Boehm collections)
+golden: 475 fixtures — 475 passed, 0 failed
+asan: golden-asan green
+```
+
+Typecheck and lint passed; duplication stayed at 143 clones with no baseline change. The default
+gate skips two `intl_*` fixtures as usual. The untracked local `.claude/settings.local.json`
+seeded by worktree setup was temporarily parked because its formatting failed lint, then restored
+byte-for-byte; no repository configuration was changed. Raw paired measurements and the final
+CI log are retained locally under `.cache/perf-hir-arrays/` in the task worktree.

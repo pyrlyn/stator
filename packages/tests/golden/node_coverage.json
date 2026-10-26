@@ -73,17 +73,22 @@
     "toNamespacedPath": ["ts/node_path_posix.ts"]
   },
   "process": {
-    "arch": ["ts/node_process.ts", "js/node_process.js"],
+    "arch": ["ts/node_process.ts"],
     "argv": ["ts/node_process.ts", "js/node_process.js"],
-    "cwd": ["ts/node_process.ts", "js/node_process.js"],
+    "argv0": ["ts/node_process.ts"],
+    "cwd": ["ts/node_process.ts"],
     "env": ["ts/node_process.ts", "js/node_process.js"],
-    "exit": ["ts/node_process.ts", "js/node_process.js"],
+    "execArgv": ["ts/node_process.ts"],
+    "execPath": ["ts/node_process.ts"],
+    "exit": ["ts/node_process.ts"],
     "exitCode": ["ts/node_process.ts", "js/node_process.js"],
-    "execPath": ["ts/node_process.ts", "js/node_process.js"],
     "hrtime": ["ts/node_process.ts", "js/node_process.js"],
     "memoryUsage": ["ts/node_process.ts", "js/node_process.js"],
-    "pid": ["ts/node_process.ts", "js/node_process.js"],
-    "platform": ["ts/node_process.ts", "js/node_process.js"],
-    "ppid": ["ts/node_process.ts", "js/node_process.js"]
+    "nextTick": ["ts/node_process.ts", "js/node_process.js"],
+    "pid": ["ts/node_process.ts"],
+    "platform": ["ts/node_process.ts"],
+    "ppid": ["ts/node_process.ts"],
+    "stderr": ["ts/node_process.ts"],
+    "stdout": ["ts/node_process.ts", "js/node_process.js"]
   }
 }
