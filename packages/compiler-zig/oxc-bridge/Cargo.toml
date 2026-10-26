@@ -1,0 +1,28 @@
+[package]
+name = "stator-oxc-bridge"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+description = "C ABI over Oxc (parser + semantic) for the Stator Zig compiler core"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+oxc_allocator = "0.155"
+oxc_ast = "0.155"
+oxc_parser = "0.155"
+oxc_semantic = "0.155"
+oxc_span = "0.155"
+oxc_diagnostics = "0.155"
+
+[profile.release]
+panic = "abort"
+lto = "thin"
+codegen-units = 4
+
+[profile.dev]
+panic = "abort"
+
+[workspace]

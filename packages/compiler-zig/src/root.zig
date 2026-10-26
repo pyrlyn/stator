@@ -1,8 +1,7 @@
-//! Stator compiler core in Zig (docs/zig-core.md). Phase 1: the lexer.
+//! Stator compiler core in Zig (docs/zig-core.md). Front end: Oxc via `oxc-bridge` (C ABI).
 
-pub const lexer = @import("lexer.zig");
+pub const oxc = @import("oxc.zig");
 
 test {
-    _ = lexer;
-    _ = @import("golden_test.zig");
+    _ = oxc;
 }

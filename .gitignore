@@ -47,3 +47,4 @@ site/.astro/
 # Zig compiler core build output (docs/zig-core.md).
 packages/compiler-zig/.zig-cache/
 packages/compiler-zig/zig-out/
+packages/compiler-zig/oxc-bridge/target/
