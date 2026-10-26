@@ -104,10 +104,15 @@ jobs:
       - &pnpm-install
         run: pnpm install --frozen-lockfile
       - run: pnpm run test262:fetch
-      - name: Run Test262
+      - name: tests skipped (SKIP_CI_TESTS)
+        if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
+        run: echo "::notice title=SKIP_CI_TESTS::tests skipped by SKIP_CI_TESTS"
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        name: Run Test262
         # STATOR_TEST_JOBS left unset: pool width defaults to os.availableParallelism() on the runner.
         run: pnpm run test262 -- --shard=${{ matrix.shard }}/8
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
         with:
           name: test262-shard-${{ matrix.shard }}
           path: packages/tests/test262/results-${{ matrix.shard }}-of-8.json
@@ -130,10 +135,15 @@ jobs:
       - *setup
       - *pnpm-install
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
         with:
           pattern: test262-shard-*
           path: shards
-      - name: Aggregate and gate
+      - name: tests skipped (SKIP_CI_TESTS)
+        if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
+        run: echo "::notice title=SKIP_CI_TESTS::tests skipped by SKIP_CI_TESTS"
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        name: Aggregate and gate
         # `pipefail` is NOT the default for a `run:` step, and without it `tee` decides this job's
         # exit status -- the ratchet could fail and the job would still be green, which is the
         # dishonest version of a conformance heartbeat (§9's opening paragraph).
@@ -194,10 +204,15 @@ jobs:
           uname -srm || true
       - *pnpm-install
       - run: pnpm run typecheck
-      - run: pnpm run test:subset
+      - name: tests skipped (SKIP_CI_TESTS)
+        if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
+        run: echo "::notice title=SKIP_CI_TESTS::tests skipped by SKIP_CI_TESTS"
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: pnpm run test:subset
       - name: Build runtime archive
         run: pnpm run runtime
-      - name: Unit tests with coverage
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        name: Unit tests with coverage
         run: pnpm run test:coverage
       - name: Upload coverage
         if: always()
@@ -231,7 +246,11 @@ jobs:
       - *record-toolchain
       - *pnpm-install
       - run: pnpm run typecheck
-      - run: pnpm run test:subset
+      - name: tests skipped (SKIP_CI_TESTS)
+        if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
+        run: echo "::notice title=SKIP_CI_TESTS::tests skipped by SKIP_CI_TESTS"
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: pnpm run test:subset
       # A handful of unit tests compile and execute a native binary, so they need the archive the
       # Unix justfile builds. Windows has no such toolchain, so those tests skip THEMSELVES there
       # (`NATIVE_ONLY` in tests/unit/helpers.ts) and the rest of the file still runs -- which is
@@ -239,7 +258,8 @@ jobs:
       - name: Build runtime archive
         if: runner.os != 'Windows'
         run: pnpm run runtime
-      - name: Unit tests
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        name: Unit tests
         run: pnpm run test
 
   # STAGE 2. macOS and Windows frontend legs: only after every stage-1 job passed.
@@ -298,11 +318,19 @@ jobs:
           uname -srm
       - *pnpm-install
       - run: pnpm run runtime
-      - run: pnpm run test:runtime
-      - run: pnpm run test:golden
-      - run: pnpm run test:selfhost
-      - run: pnpm run test:builtins
-      - run: pnpm run test:leak
+      - name: tests skipped (SKIP_CI_TESTS)
+        if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
+        run: echo "::notice title=SKIP_CI_TESTS::tests skipped by SKIP_CI_TESTS"
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: pnpm run test:runtime
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: pnpm run test:golden
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: pnpm run test:selfhost
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: pnpm run test:builtins
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: pnpm run test:leak
 
   runtime-macos:
     name: runtime (${{ matrix.platform }}/${{ matrix.arch }})
@@ -333,7 +361,11 @@ jobs:
       - *setup
       - *install-boehm
       - *pnpm-install
-      - run: pnpm run test:asan
+      - name: tests skipped (SKIP_CI_TESTS)
+        if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
+        run: echo "::notice title=SKIP_CI_TESTS::tests skipped by SKIP_CI_TESTS"
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: pnpm run test:asan
         env:
           STATOR_ASAN_FORCE: '1'
 
@@ -371,7 +403,11 @@ jobs:
             echo "PKG_CONFIG_PATH=$(brew --prefix icu4c)/lib/pkgconfig" >> "$GITHUB_ENV"
           fi
       - *pnpm-install
-      - run: pnpm run test:intl
+      - name: tests skipped (SKIP_CI_TESTS)
+        if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
+        run: echo "::notice title=SKIP_CI_TESTS::tests skipped by SKIP_CI_TESTS"
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: pnpm run test:intl
 
   intl-macos:
     name: intl (${{ matrix.platform }}/${{ matrix.arch }})
@@ -408,7 +444,11 @@ jobs:
           fi
       - *pnpm-install
       - run: pnpm run runtime
-      - run: pnpm run test:ffi
+      - name: tests skipped (SKIP_CI_TESTS)
+        if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
+        run: echo "::notice title=SKIP_CI_TESTS::tests skipped by SKIP_CI_TESTS"
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: pnpm run test:ffi
       # Task 7.2 step 9: the C-consumer example — a C main() calling an exported TS unit
       # through the emitted header (success + last_error paths, header double-build cmp).
       # `--emit-header`/`--unit-name` exist (cli/main.ts), so this builds, links, runs, and
@@ -476,7 +516,11 @@ jobs:
       - name: Install Boehm GC and SQLite
         run: sudo apt-get update && sudo apt-get install -y libgc-dev libsqlite3-dev clang llvm
       - run: pnpm install --frozen-lockfile
-      - name: Record impact map
+      - name: tests skipped (SKIP_CI_TESTS)
+        if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
+        run: echo "::notice title=SKIP_CI_TESTS::tests skipped by SKIP_CI_TESTS"
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        name: Record impact map
         run: pnpm run test:impact:record
       - name: Upload impact map artifact
         if: always()
@@ -532,7 +576,11 @@ jobs:
           else
             echo "impact: no map restored — test:impact will fall back to the full run"
           fi
-      - name: Run tests the change reaches
+      - name: tests skipped (SKIP_CI_TESTS)
+        if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
+        run: echo "::notice title=SKIP_CI_TESTS::tests skipped by SKIP_CI_TESTS"
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        name: Run tests the change reaches
         run: pnpm run test:impact
 
   # T10.3 step 5: a race in the parallel clang path (`STATOR_COMPILE_JOBS>1`) must fail the
@@ -559,7 +607,11 @@ jobs:
         run: |
           node packages/compiler/src/cli/main.ts build packages/tests/golden/ts/modules/main.ts -o "$RUNNER_TEMP/stator-jobs-smoke" --mode=ts
           "$RUNNER_TEMP/stator-jobs-smoke"
-      - name: compile-jobs unit tests under STATOR_COMPILE_JOBS=2
+      - name: tests skipped (SKIP_CI_TESTS)
+        if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
+        run: echo "::notice title=SKIP_CI_TESTS::tests skipped by SKIP_CI_TESTS"
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        name: compile-jobs unit tests under STATOR_COMPILE_JOBS=2
         env:
           STATOR_COMPILE_JOBS: '2'
         run: pnpm exec vitest run packages/tests/unit/compile-jobs.test.ts

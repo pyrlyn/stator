@@ -46,8 +46,13 @@ jobs:
       # refreshes what pull requests restore. Same handoff as ci.yml's `impact-map` job: an
       # artifact for humans, a cache entry (`impact-map-<sha>`) that the PR job's
       # `restore-keys: impact-map-` picks up as the newest map.
+      - name: tests skipped (SKIP_CI_TESTS)
+        if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
+        run: echo "::notice title=SKIP_CI_TESTS::tests skipped by SKIP_CI_TESTS"
       - name: Record impact map
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 2 * * *'
+        if: >-
+          (github.event_name == 'workflow_dispatch' || github.event.schedule == '0 2 * * *')
+          && vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
         run: pnpm run test:impact:record
       - name: Upload impact map artifact
         if: always() && (github.event_name == 'workflow_dispatch' || github.event.schedule == '0 2 * * *')
