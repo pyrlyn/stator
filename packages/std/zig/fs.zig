@@ -49,7 +49,7 @@ export fn jsrt_std_fs_stat_size() f64 {
 }
 
 export fn jsrt_std_fs_stat_kind() f64 {
-    return @floatFromInt(@intFromEnum(stat_kind));
+    return @floatFromInt(@backingInt(stat_kind));
 }
 
 export fn jsrt_std_fs_stat_mtime_ms() f64 {
@@ -157,7 +157,7 @@ export fn jsrt_std_fs_readdir(path: [*:0]const u8) f64 {
     var it = dir.iterate();
     while (true) {
         const entry = (it.next(root.io()) catch |err| return discard(&names, err)) orelse break;
-        const name = root.allocator.dupeZ(u8, entry.name) catch return discard(&names, error.OutOfMemory);
+        const name = root.allocator.dupeSentinel(u8, entry.name, 0) catch return discard(&names, error.OutOfMemory);
         names.append(root.allocator, name) catch {
             root.allocator.free(name);
             return discard(&names, error.OutOfMemory);

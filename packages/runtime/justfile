@@ -234,10 +234,24 @@ _runtime flavor:
       fi
     done
 
-    # No timestamp walk for Zig: its own cache tracks every input, the @cImport'ed headers included,
-    # so an unchanged tree costs one cache lookup. `fmt --check` is the Zig side's style gate.
+    # No timestamp walk for Zig: its own cache tracks every input, so an unchanged tree costs one
+    # cache lookup. Headers are retranslated every build, and the cache sees the generated module
+    # change only when they did. `fmt --check` is the Zig side's style gate.
     zig fmt --check src/*.zig
-    zig build-obj ${ZIG_FLAGS} --cache-dir "${DIR}/zig-cache" -femit-bin="${DIR}/jsrt_zig.o" src/jsrt_mem.zig
+    zig translate-c ${ZIG_TARGET} -lc ${ZIG_C} src/jsrt_c.h > "${DIR}/jsrt_c.zig"
+    if [[ "${ZIG_C}" == *JSRT_HAVE_BOEHM* ]]; then
+      zig translate-c ${ZIG_TARGET} -lc ${ZIG_C} src/jsrt_gc_c.h > "${DIR}/jsrt_gc_c.zig"
+    else
+      # jsrt_gc.zig reaches this module only behind JSRT_HAVE_BOEHM, but --dep needs a file.
+      : > "${DIR}/jsrt_gc_c.zig"
+    fi
+    # Optimize mode, target and PIC are per module, so each -M repeats them: translated headers
+    # carry inline functions that end up in this object.
+    ZIG_MODULE="-O ${ZIG_OPT} ${ZIG_TARGET} -fPIC -mcpu=baseline -fno-stack-check"
+    zig build-obj ${ZIG_FLAGS} --cache-dir "${DIR}/zig-cache" -femit-bin="${DIR}/jsrt_zig.o" \
+      --dep jsrt_c --dep jsrt_gc_c -Mroot=src/jsrt_mem.zig \
+      ${ZIG_MODULE} -Mjsrt_c="${DIR}/jsrt_c.zig" \
+      ${ZIG_MODULE} -Mjsrt_gc_c="${DIR}/jsrt_gc_c.zig"
     objs+=("${DIR}/jsrt_zig.o")
 
     # Recreated, never incrementally updated: `ar r` replaces matching members but keeps

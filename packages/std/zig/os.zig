@@ -37,7 +37,7 @@ export fn jsrt_std_os_arch() [*:0]const u8 {
 }
 
 fn parkCopy(text: []const u8) f64 {
-    const owned = root.allocator.dupeZ(u8, text) catch return root.fail("ENOMEM");
+    const owned = root.allocator.dupeSentinel(u8, text, 0) catch return root.fail("ENOMEM");
     root.setResult(owned);
     return 0;
 }

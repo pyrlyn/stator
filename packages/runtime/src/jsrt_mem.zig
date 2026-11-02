@@ -9,16 +9,10 @@ const std = @import("std");
 
 /// The C headers are the single definition of every layout this code touches: jsrt_value.h stays
 /// the codegen<->runtime contract, and Zig compiles against it rather than a mirrored copy.
-/// `jsrt_env_copy_slots` is renamed on the way in only because Zig 0.16's translate-c derives a
-/// `slots` method from it that collides with JSRTEnv's flexible `slots` member; the symbol itself
-/// is defined under its real name in jsrt_alloc.zig. A Zig module never calls through `c` to a
-/// symbol Zig defines -- it calls the Zig function -- so no extern and export of one name meet.
-pub const c = @cImport({
-    @cDefine("jsrt_env_copy_slots", "jsrt_env_copy_slots_translate_c_alias");
-    @cInclude("jsrt.h");
-    @cInclude("jsrt_value.h");
-    @cInclude("jsrt_mem.h");
-});
+/// The justfile generates this module from jsrt_c.h with `zig translate-c`. A Zig module never
+/// calls through `c` to a symbol Zig defines -- it calls the Zig function -- so no extern and
+/// export of one name meet.
+pub const c = @import("jsrt_c");
 
 /// A boxed value's payload is its low 48 bits; a raw pointer's top 16 bits are zero (jsrt_init
 /// asserts that), so masking is the identity on raw pointers.
@@ -74,7 +68,7 @@ pub fn classDescriptor(comptime name: [*:0]const u8) c.JSRTClass {
 /// pops it with `pop` on every exit path, which `defer` makes structural.
 pub fn Frame(comptime n: usize) type {
     return struct {
-        slots: [n]c.jsrt_value = [_]c.jsrt_value{c.JSRT_UNDEFINED} ** n,
+        slots: [n]c.jsrt_value = @splat(c.JSRT_UNDEFINED),
         frame: c.JSRTFrame = undefined,
 
         pub fn open(self: *@This(), values: [n]c.jsrt_value) void {

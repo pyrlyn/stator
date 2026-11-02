@@ -142,7 +142,7 @@ fn numberText(d: f64, buf: []u8) []const u8 {
 fn throwFmt(cls: *const c.JSRTClass, comptime fmt: []const u8, args: anytype) void {
     @branchHint(.cold);
     var buf: [256]u8 = undefined;
-    const msg = std.fmt.bufPrintZ(&buf, fmt, args) catch buf[0 .. buf.len - 1 :0];
+    const msg = std.fmt.bufPrintSentinel(&buf, fmt, args, 0) catch buf[0 .. buf.len - 1 :0];
     c.jsrt_throw_error(cls, msg.ptr);
 }
 
@@ -265,7 +265,7 @@ fn elementOf(source: Value, i: usize) Value {
         return c.jsrt_string_from_units(&unit, 1);
     }
     var key: [24]u8 = undefined;
-    const text = std.fmt.bufPrintZ(&key, "{d}", .{i}) catch unreachable;
+    const text = std.fmt.bufPrintSentinel(&key, "{d}", .{i}, 0) catch unreachable;
     return c.jsrt_get_prop(source, text.ptr, null);
 }
 
@@ -570,7 +570,7 @@ fn methodCall(argc: u32, argv: [*c]const Value, env: ?*c.JSRTEnv) callconv(.c) V
     const receiver = slots[0];
     const a0 = if (argc > 0) argv[0] else undefined_value;
     const a1 = if (argc > 1) argv[1] else undefined_value;
-    const op: Method = @enumFromInt(@as(u8, @intFromFloat(c.jsrt_number_value(slots[1]))));
+    const op: Method = @fromBackingInt(@intCast(@as(u8, @intFromFloat(c.jsrt_number_value(slots[1])))));
     return switch (op) {
         .subarray => jsrt_uint8array_subarray(receiver, a0, a1),
         .slice => jsrt_uint8array_slice(receiver, a0, a1),
@@ -583,7 +583,7 @@ fn methodCall(argc: u32, argv: [*c]const Value, env: ?*c.JSRTEnv) callconv(.c) V
 fn boundMethod(receiver: Value, op: Method, name: [*:0]const u8, arity: u32) Value {
     const env = alloc.jsrt_env_new(null, 2);
     env.slots()[0] = receiver;
-    env.slots()[1] = c.jsrt_number(@floatFromInt(@intFromEnum(op)));
+    env.slots()[1] = c.jsrt_number(@floatFromInt(@backingInt(op)));
     return alloc.jsrt_closure_new(methodCall, arity, name, env, false);
 }
 

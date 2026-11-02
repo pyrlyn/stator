@@ -48,7 +48,7 @@ var previous_bus: std.c.Sigaction = undefined;
 
 fn sigNumber(sig: anytype) c_int {
     return switch (@typeInfo(@TypeOf(sig))) {
-        .@"enum" => @intCast(@intFromEnum(sig)),
+        .@"enum" => @intCast(@backingInt(sig)),
         else => @intCast(sig),
     };
 }
@@ -128,7 +128,7 @@ fn faultAddress(info: *const std.c.siginfo_t) usize {
 }
 
 const SigactionFn = @typeInfo(@FieldType(@FieldType(std.c.Sigaction, "handler"), "sigaction")).optional.child;
-const SigArg = @typeInfo(@typeInfo(SigactionFn).pointer.child).@"fn".params[0].type.?;
+const SigArg = @typeInfo(@typeInfo(SigactionFn).pointer.child).@"fn".param_types[0].?;
 
 fn onFault(sig: SigArg, info: *const std.c.siginfo_t, _: ?*anyopaque) callconv(.c) void {
     const number = sigNumber(sig);
