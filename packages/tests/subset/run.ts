@@ -23,12 +23,13 @@
  * first. In-process `explainFile` is single-threaded CPU, so `--shards` is what scales a local
  * iteration with cores; the default stays single-process.
  */
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { explainFile } from '../../compiler/src/cli/explain.ts';
 import type { InProcessRecorder } from '../impact/recorder.ts';
+import { directive, subsetNames } from '../support/corpus.ts';
 import { impactRecorder } from '../support/impact-hook.ts';
 import {
   fanOutWorkers,
@@ -66,11 +67,6 @@ function allocatedCodes(): ReadonlySet<string> {
   const table = readFileSync(join(REPO, '..', 'docs', 'DIAGNOSTICS.md'), 'utf8');
   const live = table.split('## Retired codes')[0] ?? table;
   return new Set(live.match(/^\| (STA\d{4}) \|/gm)?.map((row) => row.slice(2, 9)) ?? []);
-}
-
-function directive(source: string, name: string): string | undefined {
-  const match = new RegExp(`^//\\s*@${name}:\\s*(.+)$`, 'm').exec(source);
-  return match?.[1]?.trim();
 }
 
 function parseDirectives(file: string, source: string): Directives {
@@ -250,9 +246,7 @@ async function main(): Promise<void> {
     },
     missingFilterMessage: '--filter requires a value (substring)',
   });
-  const allFixtures = readdirSync(HERE)
-    .filter((name) => name.startsWith('subset_'))
-    .sort();
+  const allFixtures = subsetNames(HERE);
   const filter = args.filter;
   const only = args.only === undefined ? undefined : readOnlyList(args.only);
   const fixtures = allFixtures.filter(

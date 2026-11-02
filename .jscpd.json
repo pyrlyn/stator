@@ -22,6 +22,9 @@
   ],
   "format": ["typescript", "tsx", "javascript", "c", "zig"],
   "ignoreIdentifiers": true,
+  "ignorePattern": [
+    "(?m)^(pub[ \\t]+)?const[ \\t]+[A-Za-z_][A-Za-z0-9_]*[ \\t]*=[ \\t]*(@import\\(\"[^\"\\n]*\"\\)|[A-Za-z_][A-Za-z0-9_]*)(\\.[A-Za-z_][A-Za-z0-9_]*)*;[ \\t]*$"
+  ],
   "baseline": ".jscpd-baseline.json",
   "failOnNewClones": 0
 }

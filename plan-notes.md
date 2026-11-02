@@ -14188,3 +14188,79 @@ package); using Oxc for parsing and TS 7 for typing is closer to its intent. Rul
 
 **Evidence.** `zig build test --summary all` → 4/4 pass. Corpus over 1158 tracked TS files →
 1153 ok, 5 failed; all 5 are negative subset tests with invalid source (expected).
+
+## 393. T41: the compiler moves to Zig on stator-ts; `typescript` stays at 6.0.3 as the oracle (2026-11-02)
+
+**Direction.** The creator's words: rewrite the compiler in Zig, use stator-ts, add what it lacks
+there, with regression coverage. This supersedes 391 and 392: no Oxc, no Rust bridge, no `tsgo --api`
+client. `stator-ts` follows `tsc` 7.0.2, so that is the new compiler's language baseline.
+
+**Why `packages/compiler` is back on 6.0.3.** Renovate's #229 moved `typescript` to 7.0.2. That package
+has no in-process compiler API: its `"."` export is only `lib/version.cjs`, and the API sits under
+`./unstable/*`. `statorc explain` then failed at import with `ts.SyntaxKind` undefined. Reverting
+it restored the baseline on Node 26.7.0: subset 1009 fixtures, 978 passed, 31 expected-fail, 0 failed;
+golden 491/491. Dependabot already ignored TypeScript majors, but the organisation's Renovate config
+did not, so `renovate.json` now disables that major until T41 removes the package. Why the pipeline
+stayed green with a compiler that could not start was not proven: the workflows have a
+`SKIP_CI_TESTS` path, and the repository variables list showed only `CI_RUNNER`.
+
+**Zig 0.17.0.** The creator approved the bump for the whole project. `@cImport` is gone, so the runtime
+translates `src/jsrt_c.h` and `src/jsrt_gc_c.h` with `zig translate-c` in the justfile and imports them
+as modules. After the bump: `test:subset`, `test:golden`, `test:runtime` and `test:asan` all exited 0,
+with the same subset and golden counts as above.
+
+**stator-ts gaps found.** It was executable-only, so it gained a `stator_ts` module. Checkers lived for
+one run, so `Session` holds one open over a loaded program. A degraded type (`Data.err`) was not visible
+from outside, and `Session.degraded` now reports it while keeping `t_unresolved`, a missing name, apart.
+
+**Measurement.** `packages/tests/typediff` compares `typeToString` per span against the 6.0.3 checker,
+over 737 ts-mode fixtures, with 6.0.3's lib files: 37629 expressions, 32828 same (87%), 4800 different,
+55 degraded, 1 unmatched, 0 crashed. Most differences are printer noise; the semantic ones are tracked
+in T41. A 6.0.3 oracle against a 7.0.2-following checker can show real language differences too: each
+one is judged on its own, not assumed to be a stator-ts bug.
+
+**Cost.** 47.6K lines of TypeScript to port (frontend 14.5K, lower 12.4K, codegen 7K, hir 6K, cli 3.8K,
+ffi-gen 1.8K, passes 1.3K, support 0.7K), using 22 `TypeChecker` methods and 203 `ts.*` names.
+
+**First port wave (same day).** Every stage now exists in `packages/compiler-zig/src`, measured with
+`STATOR_ZIG=... pnpm run test:zigdiff` against the TypeScript compiler over 1507 subset and golden
+fixtures: gate 1469/1506 identical, lower 1127/1148 (10 different, 11 refused, all bundler or package
+paths), verifier 4590/4590, passes 1148/1148, codegen 1147/1147 byte-identical. All 491 golden programs
+built from Zig-emitted C and linked against `libjsrt.a` print what Node prints. stator-ts after its
+fixes: `typediff` 36886/36886 identical with 0 degraded, `tests/differential.sh` 1544/1538/1538 with
+0 false positives, and the TS7 ratchet at 8577 passing with 0 lost (345 gained); each fix has a fixture
+checked against `tsc`. The `selfhost` baseline is re-recorded: `packages/compiler` went from 457 to
+441 `STA1214` with #232 (799b81fa), whose CI run skipped the tests. Not ported: `frontend/export.ts`,
+`frontend/vendor.ts`, the bundler path, Ink and OpenTelemetry. Found on the way: `**` in V8 is libc
+`pow` with exact results for an exponent of 2 or 0.5 (checked over 1,921,600 pairs), and
+`jsrt_math_pow` lacks those two rules.
+
+**jscpd and Zig headers (creator's decision).** Zig 0.17 has no `usingnamespace`, so a file that uses
+another module's declarations names each one in a block of top-level `const X = mod.X;` and
+`@import` lines, and jscpd with `ignoreIdentifiers` matched those blocks across about 80 files. The
+creator chose to exclude exactly those lines and to remove every other clone by refactoring.
+`.jscpd.json` gains one `ignorePattern`: a top-level `const` whose whole value is an `@import(...)` or a
+dotted name, nothing else. That took the new clones from 440 to 265; the baseline is unchanged.
+
+Refactoring then took them to 76, with `test:zigdiff` exact at every step. The shared pieces are
+listed in `docs/zig-core.md` under "Shared helpers". Node structs of up to four fields in
+`hir/nodes.zig` are now one line each, the style that file already used for its smallest nodes.
+None of the 76 left is a copy of logic:
+
+- 39 are in `hir/nodes.zig`. A list of same-shaped lines matches itself shifted by one line once
+  identifiers are ignored. This covers the `Expression` and `Statement` unions, the
+  `STRING_OPS`/`ARRAY_OPS`/`SET_OPS` tables, and the node structs with five or more fields. The
+  unions cannot be built at comptime instead, because a reified union carries no `getType`/`getSpan`
+  declarations, and 155 call sites use those.
+- 27 are two neighbouring functions whose tail and signature match token for token once
+  identifiers are ignored, for example `return l.internal(...); } fn lowerX(l: *Lower, node: *Node,
+  b: *Scope) E!Expression { const x = node.data.x;`.
+- 2 are test arena preambles (`cli/compile_jobs.zig`–`cli/link.zig`, `cli/config.zig`–`cli/outputs.zig`).
+- 8 are in `packages/compiler` and `packages/runtime`, which this work did not touch.
+
+`ffigen/text.zig` `lessUtf16` and `passes/jsvalue.zig` `compareStrings` both order strings by UTF-16
+units. jscpd does not match them, and they treat bytes that are not UTF-8 differently, so they stay
+apart until one caller can take the other's rule.
+
+The creator then chose to leave the 76 as they are. `pnpm run dupes` keeps failing on them until
+the switch, and the baseline is not grown to hide them.

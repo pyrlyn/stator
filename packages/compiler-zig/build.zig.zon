@@ -2,6 +2,11 @@
     .name = .stator_core,
     .version = "0.0.0",
     .fingerprint = 0x5b7938fe09a406f1,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        // Points at the stator-ts worktree until its T20 session API is merged; then this becomes
+        // a pinned url + hash, like every other dependency.
+        .stator_ts = .{ .path = "../../../../../../stator-ts/.rtok/worktrees/stator-ts-t20" },
+    },
     .paths = .{ "build.zig", "build.zig.zon", "src" },
 }
