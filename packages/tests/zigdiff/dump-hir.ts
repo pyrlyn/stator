@@ -16,6 +16,7 @@ import type { Module } from '../../compiler/src/hir/nodes.ts';
 import { verifyHir } from '../../compiler/src/hir/verify.ts';
 import { optimize } from '../../compiler/src/passes/index.ts';
 import type { Diagnostic } from '../../compiler/src/support/diagnostics.ts';
+import { compareStrings } from '../support/order.ts';
 
 const FORMAT = 1;
 
@@ -32,7 +33,7 @@ function ownEntries(value: Plain, where: string): (readonly [string, unknown])[]
   if (Object.getOwnPropertySymbols(value).length > 0) {
     throw new Error(`${where}: symbol key`);
   }
-  const names = Object.getOwnPropertyNames(value).sort();
+  const names = Object.getOwnPropertyNames(value).sort(compareStrings);
   if (names.length !== Object.keys(value).length) {
     throw new Error(`${where}: non-enumerable key`);
   }

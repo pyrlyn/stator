@@ -5,6 +5,7 @@ import { writeFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { compareStrings } from '../../support/order.ts';
 
 const PREFIX = 'node:';
 
@@ -29,7 +30,7 @@ function memberNames(id: string): readonly string[] {
       names.add(name);
     }
   }
-  return [...names].sort();
+  return [...names].sort(compareStrings);
 }
 
 // `zig fmt` writes an empty list as `{}`, so the table needs no formatting pass to stay stable.
@@ -39,8 +40,8 @@ const builtin = [
   ...new Set(
     builtinModules.map((m) => m.slice(m.startsWith(PREFIX) ? PREFIX.length : 0)).filter(isPublic),
   ),
-].sort();
-const bare = builtinModules.filter(isPublic).sort();
+].sort(compareStrings);
+const bare = builtinModules.filter(isPublic).sort(compareStrings);
 const rows = builtin.map(
   (id) => `    .{ .id = ${JSON.stringify(id)}, .names = &.{${quoted(memberNames(id))}} },`,
 );
@@ -58,10 +59,7 @@ const rows = [_]Row{
 ${rows.join('\n')}
 };
 
-fn contains(list: []const []const u8, name: []const u8) bool {
-    for (list) |item| if (std.mem.eql(u8, item, name)) return true;
-    return false;
-}
+const contains = @import("../support/names.zig").contains;
 
 pub fn isBuiltinId(id: []const u8) bool {
     return contains(&builtin_ids, id);

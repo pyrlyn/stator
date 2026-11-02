@@ -3,6 +3,7 @@
  * here so a new fixture shape reaches all of them at once. */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { compareStrings } from './order.ts';
 
 type Mode = 'ts' | 'js';
 
@@ -50,7 +51,7 @@ export function goldenNames(dir: string, mode: Mode): string[] {
         name.endsWith(`.${mode}`) ||
         statSync(join(dir, name), { throwIfNoEntry: false })?.isDirectory(),
     )
-    .sort();
+    .sort(compareStrings);
 }
 
 /** The subset fixture names under `dir`, sorted; `helper_*` and friends are imported, not run. */

@@ -8,12 +8,14 @@ import { createHash } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
+  linkSync,
   mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,9 +23,18 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as ts from 'typescript';
 import { writeTree } from './tree.ts';
+import { onPath } from '../support/on-path.ts';
+import { compareStrings } from '../support/order.ts';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const ORACLE = join(REPO, 'packages', 'compiler', 'src', 'ffi-gen', 'main.ts');
+
+/** An absolute path, so a directory later on PATH cannot stand in for the tool. */
+function tool(name: string): string {
+  const path = onPath(name);
+  if (path === undefined) throw new Error(`${name} is not on PATH`);
+  return path;
+}
 
 function flag(name: string): string | undefined {
   return process.argv.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
@@ -56,7 +67,7 @@ interface Outcome {
 }
 
 function git(...args: readonly string[]): string[] {
-  const run = spawnSync('git', args, { cwd: REPO, encoding: 'utf8', maxBuffer: 1 << 28 });
+  const run = spawnSync(tool('git'), args, { cwd: REPO, encoding: 'utf8', maxBuffer: 1 << 28 });
   if (run.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${run.stderr}`);
   return run.stdout.split('\n').filter((line) => line !== '');
 }
@@ -284,8 +295,10 @@ function stressCases(): Case[] {
     args: [basename(path), `-I${join(REPO, 'packages', 'runtime', 'include')}`],
     files: { [basename(path)]: repoFile(path) },
   }));
-  const sdk = spawnSync('xcrun', ['--show-sdk-path'], { encoding: 'utf8' });
-  if (sdk.status === 0) {
+  const xcrun = onPath('xcrun');
+  const sdk =
+    xcrun === undefined ? undefined : spawnSync(xcrun, ['--show-sdk-path'], { encoding: 'utf8' });
+  if (sdk?.status === 0) {
     const include = join(sdk.stdout.trim(), 'usr', 'include');
     for (const name of [
       'stdio.h',
@@ -537,10 +550,14 @@ function mutatedHand(headers: readonly Named[], hand: readonly Named[], rng: Rng
 function astDump(header: Named): Buffer | undefined {
   const dir = mkdtempSync(join(tmpdir(), 'ffigen-dump-'));
   writeFileSync(join(dir, header.name), header.bytes);
-  const run = spawnSync('clang', ['-Xclang', '-ast-dump=json', '-fsyntax-only', header.name], {
-    cwd: dir,
-    maxBuffer: 1 << 28,
-  });
+  const run = spawnSync(
+    tool('clang'),
+    ['-Xclang', '-ast-dump=json', '-fsyntax-only', header.name],
+    {
+      cwd: dir,
+      maxBuffer: 1 << 28,
+    },
+  );
   rmSync(dir, { recursive: true, force: true });
   return run.status === 0 ? run.stdout : undefined;
 }
@@ -622,8 +639,8 @@ function prepare(dir: string, c: Case): void {
   writeTree(dir, c.files, c.dirs ?? []);
   for (const name of c.executable ?? []) chmodSync(join(dir, name), 0o755);
   if (c.group === 'args') {
-    spawnSync('ln', ['-s', 'h.h', 'link.h'], { cwd: dir });
-    spawnSync('ln', ['hand.d.ts', 'hard.d.ts'], { cwd: dir });
+    symlinkSync('h.h', join(dir, 'link.h'));
+    linkSync(join(dir, 'hand.d.ts'), join(dir, 'hard.d.ts'));
   }
 }
 
@@ -640,7 +657,7 @@ function listing(dir: string, prefix = ''): string[] {
           .digest('hex')}`,
       );
   }
-  return out.sort();
+  return out.sort(compareStrings);
 }
 
 /** Streams go to files: `process.exit` drops what a pipe has not taken, so the oracle's output past
@@ -675,7 +692,10 @@ const CRASH =
   /panic|Segmentation|STA4\d\d\d|reached unreachable|integer overflow|index out of bounds|attempt to use null/;
 
 /** An uncaught exception of the oracle prints a stack: an oracle bug, kept apart from a difference. */
-const ORACLE_CRASH = /^\s+at .*\.ts:\d+:\d+|RangeError|node:internal/m;
+function oracleCrashed(stderr: string): boolean {
+  if (stderr.includes('RangeError') || stderr.includes('node:internal')) return true;
+  return stderr.split('\n').some((line) => /^\s+at /.test(line) && /\.ts:\d+:\d+/.test(line));
+}
 
 interface Tally {
   identical: number;
@@ -764,7 +784,7 @@ async function main(): Promise<void> {
         oracle.left.join('\n') === zig.left.join('\n')
       ) {
         row.identical += 1;
-      } else if (oracle.signal !== null || ORACLE_CRASH.test(oracle.stderr)) {
+      } else if (oracle.signal !== null || oracleCrashed(oracle.stderr)) {
         row.oracleCrashed += 1;
         oracleCrashes.push({ c, oracle, zig });
       } else if (hasSyntaxError(c)) {
@@ -819,7 +839,7 @@ async function main(): Promise<void> {
   rmSync(root, { recursive: true, force: true });
 
   const total = { identical: 0, different: 0, recovery: 0, crashed: 0, oracleCrashed: 0 };
-  for (const [group, row] of [...tally].sort(([l], [r]) => (l < r ? -1 : l > r ? 1 : 0))) {
+  for (const [group, row] of [...tally].sort(([l], [r]) => compareStrings(l, r))) {
     process.stdout.write(`${group}: ${line(row)}\n`);
     total.identical += row.identical;
     total.different += row.different;

@@ -58,7 +58,7 @@ const NUMBERS: readonly number[] = [
   1.7976931348623157e308,
   5e-324,
   2.2250738585072014e-308,
-  NaN,
+  Number.NaN,
   Infinity,
   -Infinity,
 ];
