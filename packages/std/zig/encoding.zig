@@ -22,7 +22,7 @@ export fn jsrt_std_encoding_to_text(kind: f64, data: [*]const u8, len: usize) f6
     const bytes = data[0..len];
     const a = root.allocator;
     const text: [:0]u8 = switch (k) {
-        .utf8 => a.dupeZ(u8, bytes),
+        .utf8 => a.dupeSentinel(u8, bytes, 0),
         .latin1 => blk: {
             const out = a.allocSentinel(u8, latin1Length(bytes), 0) catch return root.fail("ENOMEM");
             var i: usize = 0;

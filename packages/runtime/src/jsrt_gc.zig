@@ -26,7 +26,7 @@
 //!
 //! Without Boehm this is plain malloc and no collection, which is the configuration every machine
 //! without bdw-gc installed builds. The justfile passes -DJSRT_HAVE_BOEHM to this object exactly
-//! when it passes it to the C objects, and @cImport makes that macro visible here.
+//! when it passes it to the C objects, and the translated header sees that macro too.
 
 const std = @import("std");
 const mem = @import("jsrt_mem.zig");
@@ -69,11 +69,7 @@ pub export fn jsrt_gc_handoff(value: c.jsrt_value) c.jsrt_value {
 }
 
 const impl = if (boehm) struct {
-    const gc = @cImport({
-        @cDefine("GC_THREADS", "1");
-        @cInclude("gc.h");
-        @cInclude("gc/gc_mark.h");
-    });
+    const gc = @import("jsrt_gc_c");
 
     var kind: c_int = 0;
 
