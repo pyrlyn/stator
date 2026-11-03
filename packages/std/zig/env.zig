@@ -56,7 +56,7 @@ export fn jsrt_std_env_name(index: f64) f64 {
     const entry = environ[n] orelse return root.fail("EINVAL");
     const text = std.mem.span(entry);
     const end = std.mem.indexOfScalar(u8, text, '=') orelse text.len;
-    root.setResult(root.allocator.dupeZ(u8, text[0..end]) catch |err| return root.failWith(err));
+    root.setResult(root.allocator.dupeSentinel(u8, text[0..end], 0) catch |err| return root.failWith(err));
     return 0;
 }
 

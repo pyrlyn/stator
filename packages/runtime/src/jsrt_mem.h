@@ -1,7 +1,7 @@
 /* jsrt_mem.h — the runtime's memory core, implemented in Zig (src/jsrt_*.zig) behind a C ABI.
  *
  * Internal to the runtime: generated code never includes it, and the codegen<->runtime contract is
- * still jsrt_value.h. The Zig side @cImports this header (and jsrt_value.h), so every layout here is
+ * still jsrt_value.h. The Zig side translates this header (and jsrt_value.h), so every layout here is
  * the one definition both languages compile against -- there is no mirrored copy to drift. */
 #ifndef JSRT_MEM_H
 #define JSRT_MEM_H

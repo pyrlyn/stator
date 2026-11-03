@@ -257,7 +257,7 @@ Beyond Node/pnpm (pinned above), the build shells out to:
 | `nm`            | `packages/tests/impact/` (`test:impact:record`)                      | which `libjsrt.a` members a test's binary linked (Task 6.17); a missing `nm` records "all of the runtime" |
 | `git`           | `packages/tests/impact/` (`test:impact`)                             | the diff against the impact map's commit                  |
 
-`clang` (and the rest of LLVM) and `zig` 0.16.0 are `mise install` on Unix. The others still come from the Xcode
+`clang` (and the rest of LLVM) and `zig` 0.17.0 are `mise install` on Unix. The others still come from the Xcode
 command-line tools (`xcode-select --install`) on macOS and from `binutils`/`pkg-config`/
 `diffutils` on Debian/Ubuntu. A missing compiler is a diagnostic with the install hint (`STA0008`),
 not a crash.
