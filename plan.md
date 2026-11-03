@@ -20,6 +20,7 @@ An ahead-of-time compiler from TypeScript and JavaScript to native binaries.
 | ~~T32~~ | done (already landed) | P2 | 3 | 100% | plan-notes 283, 373, 382 |
 | T33 | open | P3 | 2 | 100% | — |
 | T34 | open | P2 | 3 | 100% | — |
+| T41 | open | P1 | 5 | 70% | Claude Code / claude-opus-5-5 |
 
 ### ~~T15. Required root docs~~
 
@@ -430,17 +431,51 @@ limitations) in the same change; `docs/HOW-IT-WORKS.md` and `docs/DEVELOPMENT.md
 
 ---
 
+## Open work card: the compiler in Zig on stator-ts (T41)
+
+### T41. Rewrite the compiler in Zig on top of stator-ts **[D5 · P1]**
+
+Creator's direction, plan-notes 393: the compiler moves to Zig, with
+[stator-ts](https://github.com/pyrlyn/stator-ts) as its parser and type checker. It supersedes the
+Oxc bridge and the `tsgo --api` client of plan-notes 391 and 392. A gap in stator-ts is fixed there,
+with a fixture checked against real `tsc`, and its `tests/ts7/passing.txt` ratchet must not drop.
+
+`packages/compiler` stays as the oracle, on `typescript` 6.0.3, until parity. Every stage proves
+itself against it:
+
+| Stage | Zig path | Proof |
+| --- | --- | --- |
+| Types | stator-ts `Session` | `pnpm run test:typediff` |
+| Gate, diagnostics | `src/frontend/gate*.zig`, `src/support/` | `explain --json` identical |
+| HIR model | `src/hir/` | every dump round-trips through `src/hir/json.zig` |
+| Verifier, passes | `src/hir/verify.zig`, `src/passes/` | post-pass dump identical |
+| Codegen | `src/codegen/` | `--emit=c` byte-identical |
+| Lowering, type bridge | `src/lower/`, `src/frontend/types.zig`, `generics.zig` | HIR dump identical |
+| CLI, module graph | `src/cli/`, `src/frontend/` | same output, exit codes, file sets |
+
+State and the per-stage counts: `docs/zig-core.md`. Open: the gate and lowering differences, `frontend/export.ts`, `frontend/vendor.ts` and the bundler path, and the 68 jscpd clones the port still adds (plan-notes 393).
+
+Consequences to settle before the switch: `packages/vite-stator` calls the binary instead of
+`statorc/api`; Task 6.19 and T35–T40 lose their meaning for the compiler itself, while `std` and
+`node` stay Stator-compiled; 77 test and support files import compiler internals.
+
+**Check:** `pnpm run test:zigdiff` shows every stage at parity with no `not ported` entry, then
+`test:subset`, `test:golden`, `test:asan` and `test:typediff` pass with the Zig binary and
+`packages/compiler` deleted, and with `typescript` removed from runtime dependencies.
+
+---
+
 ## 0. Prime directives (read before anything)
 
 1. **Compile a typed subset. Never attempt untyped, full-semantics JS→native via static analysis.** Every dead project in the field (JSSAT, NectarJS, TSLL, ts2c…) tried to statically compile untyped JS with full semantics; every living one (Static Hermes, Perry, Porffor, scriptc) compiles a typed or restricted subset and is explicit about what it drops. Path explosion in abstract interpretation of untyped JS is what killed JSSAT. In Stator, untyped code is handled by *dynamic representation at runtime* (tagged values, shapes, inline caches) or the Phase-8 interpreter tier — never by heroic static analysis.
 2. **TypeScript types are unsound. Never trust an annotation without a boundary check.** `as` casts, out-of-date `.d.ts` files, bivariant method params, and `JSON.parse` all let lies into the type system. Trust types *inside* checked code; insert runtime checks wherever untyped/external values enter (Static Hermes model).
-3. **Don't write a parser. Don't write a type checker.** The compiler is TypeScript, so use the `typescript` npm package **in-process**: `ts.createProgram(...)` for parsing + module graph, `program.getTypeChecker()` for types. Lower directly from the TS AST (`ts.Node`) — no ESTree conversion layer. Do **not** build on `tsgo`/TypeScript 7's compiler API (explicitly incomplete as of the TS 7.0 RC) — re-evaluate quarterly in `plan-notes.md`.
+3. **Don't write a parser. Don't write a type checker.** T41 (plan-notes 393) moves the compiler to Zig over stator-ts, and this rule then means: fix stator-ts, never fork its work here. Until the switch the compiler is TypeScript, so use the `typescript` npm package **in-process**: `ts.createProgram(...)` for parsing + module graph, `program.getTypeChecker()` for types. Lower directly from the TS AST (`ts.Node`) — no ESTree conversion layer. Do **not** build on `tsgo`/TypeScript 7's compiler API (explicitly incomplete as of the TS 7.0 RC) — re-evaluate quarterly in `plan-notes.md`.
 4. **Emit C first, LLVM IR later.** Static Hermes, Porffor, and scriptc all print C: easier debugging, `#line` source mapping for free, clang does the heavy optimization. A direct LLVM backend is a later optimization (and can be plain `.ll` text emission — no bindings needed), not a starting point.
-5. **Never emit Rust, and don't use Rust anywhere in this project.** Rust-as-target was measured and rejected (dyn-dispatch overhead, DSTs, `Rc<RefCell>` aliasing, slow borrow-check on generated megafiles). The compiler is TypeScript; the runtime is **C11 with a Zig memory core** (plan-notes 238 / T9.1). Generated code stays C. The C11-only runtime was reopened on the creator's direction, not measured evidence — C11-only returns only on the same kind of direction. No FFI between compiler components. **Zig rule (creator's direction 2026-10-02, plan-notes 289):** new runtime code that manages memory or must be cross-platform — typed-array storage, the `std` backings, the event loop, OS abstraction — is written in Zig. C stays for the C ABI headers generated code includes (`jsrt.h`, `jsrt_value.h`), for generated code, for vendored upstream code, and for existing C until a card ports it. No wholesale port of the C runtime without a card.
+5. **Never emit Rust, and don't use Rust anywhere in this project.** Rust-as-target was measured and rejected (dyn-dispatch overhead, DSTs, `Rc<RefCell>` aliasing, slow borrow-check on generated megafiles). The compiler is TypeScript until T41 lands, then Zig; the runtime is **C11 with a Zig memory core** (plan-notes 238 / T9.1). Generated code stays C. The C11-only runtime was reopened on the creator's direction, not measured evidence — C11-only returns only on the same kind of direction. No FFI between compiler components. **Zig rule (creator's direction 2026-10-02, plan-notes 289):** new runtime code that manages memory or must be cross-platform — typed-array storage, the `std` backings, the event loop, OS abstraction — is written in Zig. C stays for the C ABI headers generated code includes (`jsrt.h`, `jsrt_value.h`), for generated code, for vendored upstream code, and for existing C until a card ports it. No wholesale port of the C runtime without a card.
 6. **The runtime is the moat, not the codegen.** GC, builtins coverage, strings, RegExp, and ICU are where the years go. Budget accordingly; tree-shake builtins from day 1.
 7. **Allocation dominates, not dispatch.** Boa's Cranelift JIT experiment proved it: 10× on numeric loops, <5% on allocation-bound benchmarks; GC tracing 10–16% of time, dispatch only ~13%. This ordering drives the optimization ladder (§12).
 8. **One pipeline, two modes.** A mode is a *policy layer* (which files are accepted, which constructs are errors, how untyped code is typed) over one shared pipeline. If a feature seems to require forking the pipeline per mode, the design is wrong — stop and fix the design (usually: the feature belongs to the dynamic representation or the Phase-8 tier).
-9. **The compiler itself is strict TypeScript.** Locked `tsconfig` (§4 Task 1.0), no `any` in compiler source, vitest for unit tests (dev-only, run on Node's own type stripping — plan-notes 285), runtime dependency budget: the `typescript` package only — **owner-directed exception (2026-09-04, plan-notes 187):** `src/cli/` may use ink + react (human-facing rendering plus per-command help, long-form flags) and dotenv (environment loading), and `typebox` + `jsonc-parser` for `stator.config.json` (`src/cli/config.ts` only, plan-notes 303), and OpenTelemetry tracing (`@opentelemetry/*`, opt-in via `STATOR_OTEL`, standard OTLP env config — works with Maple and any OTLP backend) is wired through `src/support/telemetry.ts`; execa is dev-only for `tests/unit/cli.test.ts`. The budget still rules everything else: no pass, lowering, or codegen code may depend on these. The compiler must always pass its own `ts` mode's *philosophy*: fully typed, no dynamic escape hatches.
+9. **The compiler itself is strict TypeScript until T41 replaces it with Zig (plan-notes 393).** Locked `tsconfig` (§4 Task 1.0), no `any` in compiler source, vitest for unit tests (dev-only, run on Node's own type stripping — plan-notes 285), runtime dependency budget: the `typescript` package only — **owner-directed exception (2026-09-04, plan-notes 187):** `src/cli/` may use ink + react (human-facing rendering plus per-command help, long-form flags) and dotenv (environment loading), and `typebox` + `jsonc-parser` for `stator.config.json` (`src/cli/config.ts` only, plan-notes 303), and OpenTelemetry tracing (`@opentelemetry/*`, opt-in via `STATOR_OTEL`, standard OTLP env config — works with Maple and any OTLP backend) is wired through `src/support/telemetry.ts`; execa is dev-only for `tests/unit/cli.test.ts`. The budget still rules everything else: no pass, lowering, or codegen code may depend on these. The compiler must always pass its own `ts` mode's *philosophy*: fully typed, no dynamic escape hatches.
 10. **No JavaScript in the project's own source** (creator's direction 2026-10-02, plan-notes 289). The compiler, runtime, `std`, the `node:*` wrappers, test harnesses, oracle shims and scripts are strict TypeScript, C or Zig. `.js` / `.mjs` / `.cjs` files exist only as: `js`-mode test inputs and examples (the thing under test), vendored upstream code, generated output, and assets a browser loads as-is (`site/public/`). Tracked files outside that set fail `scripts/check-js-sources.ts`, which `pnpm run ci` runs (Task 6.15, plan-notes 369).
 
 **Non-goals (v1):** npm-ecosystem compatibility (Phase 11 targets Node *programs* such as `tsc`, not the npm ecosystem at large); `eval`/`new Function` (never in `ts` mode; `js` mode not before Phase 8); `Proxy`; `with`; prototype mutation after construction; decorators; full Intl; Node API emulation outside Phase 11's `--node` platform (§11c); Windows (POSIX + clang first); self-hosting the compiler (post-v1, carded as T35–T40).
@@ -2869,3 +2904,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.85** (2026-10-23): **Cloud-review T21 lands: `protect-main` requires the real test jobs** (plan-notes 370). The ruleset required only `pipeline / gate`, which is why T17 merged with red CI. It now also requires `static analysis`, `frontend (linux/x64)`, `frontend (windows/x64)` and `frontend (windows/arm64)`. A leading-space key in the `frontend-desktop` `fromJSON` matrix had been reporting those legs as `frontend (/x64)` — unmatchable as check contexts — and is fixed in the same change. macOS legs stay unrequired because `MACOS_CI_DISABLED=true` removes them from the matrix instead of skipping them.
 - **v4.86** (2026-10-24): **T33 lands: Ryū is vendored and `shortest_digits()` uses it** (plan-notes 385). `packages/runtime/vendor/ryu/` pins `v2.0` (`72e18e8…`) through `update.ts`; `d2s_buffered` replaces the `%.*e` round-trip search. `test:runtime` and 475 goldens stay byte-for-byte against the pinned Node. §12 loses the Ryū rung — the directed card landed the swap without a bench before/after, which plan-notes 385 records.
 - **v4.87** (2026-10-25): **T11.6: `node:process` follow-up slice** (plan-notes 390). The members `tsc` reads (`argv`, `cwd`, `env`, `execArgv`, `exit`, `memoryUsage`, `nextTick`, `pid`, `platform`, `stdout`) plus `argv0`, `execPath`, `exitCode`, `arch`, `ppid` and `stderr`. A free `process` under `--node` is rewritten to `import process from "node:process"`. `std/env.names()` lists libc's `environ`. A js-mode spread into `unknown` or rest `unknown[]` is accepted. Slice N1 is 25 / 37 (68%). The Check stays open.
+- **v4.88** (2026-11-02): **T41 opens: the compiler moves to Zig on stator-ts** (plan-notes 393). `packages/compiler` stays on `typescript` 6.0.3 as the oracle; Zig goes to 0.17.0 project-wide; `test:typediff` measures stator-ts against the checker.

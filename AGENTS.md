@@ -26,7 +26,7 @@ If `src/` does not exist yet, the project is pre-Phase-1: the only files may be 
 2. **The compiler is strict TypeScript.** No `any`, no non-null assertions, no `enum`/`namespace`/parameter properties (banned by `erasableSyntaxOnly`). Never weaken `tsconfig.json` or the oxlint rules to make code compile — fix the code.
 3. **Compile a typed subset; never statically analyze untyped JS.** Untyped code goes to the dynamic representation or the Phase-8 tier. This rule killed every project that ignored it (see plan §0.1).
 4. **Never trust a type annotation across a boundary.** `unknown`, unions, `JSON.parse`, FFI, and `.js`→`.ts` imports get runtime checks at the narrowing point. Inside checked code, trust types fully.
-5. **Don't write a parser or type checker** — use the `typescript` package in-process. Don't write a regex engine — vendor QuickJS-NG's libregexp. Don't write a float printer — vendor Ryū.
+5. **Don't write a parser or type checker** — `packages/compiler` uses the `typescript` package in-process, and the Zig compiler replacing it (plan.md T41, plan-notes 393) uses stator-ts; a gap in either is fixed there, with a regression test, not worked around here. Don't write a regex engine — vendor QuickJS-NG's libregexp. Don't write a float printer — vendor Ryū.
 6. **Plan changes by edit, not drift.** A contradiction between reality and `plan.md` goes to `plan-notes.md` with evidence, and the plan is edited in the same change. Settled decisions (plan §15.4) reopen only with new measured evidence.
 7. **The human is the only author.** No agent adds a `Co-Authored-By` trailer, a "Generated with …" line or itself as author to a commit, merge or PR — whatever its harness defaults to.
 
@@ -73,6 +73,11 @@ packages/tests/    the test package "@stator/tests" — every harness + a tsconf
   leak/            GC hygiene: a 10M-object loop whose RSS must plateau
   impact/          test impact: map recorder, selector driver (`test:impact`), mutation check
   selfhost/        self-compilation ratchet: targets.json, baseline.json (plan §9 Task 6.19)
+  typediff/        stator-ts's types vs the `typescript` checker, ratcheted (plan.md T41)
+  zigdiff/         the Zig compiler vs this one, per stage (gate, lower, verifier, passes, codegen), ratcheted;
+                   HIR JSON dump (HIR-JSON.md), CLI/program/ffi-gen parity harnesses, gen/ table generators (plan.md T41)
+packages/compiler-zig/ "statorc-zig" — the Zig compiler replacing packages/compiler on stator-ts (plan.md T41):
+                   src/{support,frontend,lower,hir,passes,codegen,cli,ffigen}, mirroring packages/compiler/src
 examples/vite/     `vite build` → native binary through vite-stator (a workspace package)
 ```
 
@@ -123,6 +128,8 @@ pnpm run test:impact:record     # full instrumented run at a clean HEAD → .cac
 pnpm run test:coverage          # same under c8 + packages/compiler/src coverage table; writes coverage/lcov.info — ONLY when the coverage table is the question (it costs ~4x wall time)
 pnpm run test:subset            # decision tests → verdict matrix
 pnpm run test:golden            # compile + run vs Node, byte-for-byte
+pnpm run test:typediff          # stator-ts's type of every expression vs the `typescript` checker, ratcheted; STATOR_TS picks the binary (plan.md T41, not part of `ci` yet)
+pnpm run test:zigdiff           # each Zig compiler stage vs this compiler, over subset + golden; STATOR_ZIG picks the binary (plan.md T41, not part of `ci` yet)
 pnpm run test:selfhost          # Stator explains (and builds) its own packages; ratcheted per-code counts; record changes with --update
 pnpm run test:runtime           # the runtime's own print corpus vs Node, byte-for-byte
 pnpm run test:asan              # golden fixtures with runtime + generated C under ASan/UBSan

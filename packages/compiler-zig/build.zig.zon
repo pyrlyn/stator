@@ -2,6 +2,12 @@
     .name = .stator_core,
     .version = "0.0.0",
     .fingerprint = 0x5b7938fe09a406f1,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .stator_ts = .{
+            .url = "git+https://github.com/pyrlyn/stator-ts#9e992ea96a14ad30c785067f7e8bfd1052e8ef2b",
+            .hash = "stator_ts-0.1.0-kp_ZBFO9EwDiDBtXEIUXWQWOM5jDV8yUbG1d185Nal-z",
+        },
+    },
     .paths = .{ "build.zig", "build.zig.zon", "src" },
 }

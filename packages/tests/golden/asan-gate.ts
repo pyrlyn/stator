@@ -41,6 +41,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { version as typescriptVersion } from 'typescript';
 import { nodePath } from '../support/node-path.ts';
+import { compareStrings } from '../support/order.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..', '..');
@@ -102,10 +103,6 @@ export interface AsanGreenRecord {
 
 export function recordPath(): string {
   return join(REPO, 'packages', 'tests', '.asan-last-green.json');
-}
-
-function compareStrings(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 /* Length-prefixed chunks: an archive byte run ending where a version string begins

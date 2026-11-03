@@ -1,0 +1,241 @@
+//! `--emit=lib`: a Stator unit with a private runtime as one static archive and its `.pc`.
+const std = @import("std");
+const builtin = @import("builtin");
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const fspath = std.fs.path;
+const failure = @import("failure.zig");
+const link = @import("link.zig");
+const outputs = @import("outputs.zig");
+const Error = failure.Error;
+const Host = link.Host;
+const oom = failure.oom;
+
+/// `lib<name>.a` is the only spelling a consumer's `-l<name>` finds.
+pub fn libraryName(out: []const u8) ?[]const u8 {
+    const base = fspath.basename(out);
+    if (!std.mem.startsWith(u8, base, "lib") or !std.mem.endsWith(u8, base, ".a")) return null;
+    if (base.len <= "lib.a".len) return null;
+    const name = base["lib".len .. base.len - ".a".len];
+    const first = name[0];
+    if (!std.ascii.isAlphanumeric(first) and first != '_') return null;
+    for (name[1..]) |b| {
+        if (!std.ascii.isAlphanumeric(b) and b != '_' and b != '.' and b != '+' and b != '-') return null;
+    }
+    return name;
+}
+
+/// Next to the archive: `${pcfiledir}` then locates both without a path.
+pub fn pkgConfigPath(a: Allocator, out: []const u8, name: []const u8) []const u8 {
+    const file = std.fmt.allocPrint(a, "lib{s}.pc", .{name}) catch oom();
+    return fspath.join(a, &.{ fspath.dirname(out) orelse ".", file }) catch oom();
+}
+
+/// Runtime symbols every library keeps global beside its own: the weak Boehm kind the private
+/// runtime copies share (packages/runtime/src/jsrt_mem.h).
+pub const shared_runtime_symbols = [_][]const u8{"jsrt_gc_shared_kind_p48"};
+
+pub const ObjectFormat = enum { macho, elf };
+
+/// Windows has no `--emit=lib` yet (STA1219).
+pub fn objectFormat() ?ObjectFormat {
+    return switch (builtin.os.tag) {
+        .windows => null,
+        .macos => .macho,
+        else => .elf,
+    };
+}
+
+pub fn keptSymbolsText(a: Allocator, format: ObjectFormat, symbols: []const []const u8) []const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    for (symbols) |symbol| {
+        if (format == .macho) out.append(a, '_') catch oom();
+        out.appendSlice(a, symbol) catch oom();
+        out.append(a, '\n') catch oom();
+    }
+    return out.items;
+}
+
+pub fn prelinkArgs(a: Allocator, format: ObjectFormat, object: []const u8, archives: []const []const u8, keep_list: []const u8, out: []const u8, debug: bool) []const []const u8 {
+    var args: std.ArrayList([]const u8) = .empty;
+    // A clang configuration file adds link flags for executables, and `ld -r` refuses some.
+    args.appendSlice(a, &.{ "--no-default-config", "-r", "-nostdlib", object }) catch oom();
+    args.appendSlice(a, archives) catch oom();
+    if (format == .macho) args.append(a, std.fmt.allocPrint(a, "-Wl,-exported_symbols_list,{s}", .{keep_list}) catch oom()) catch oom();
+    // The runtime's Zig object carries debug info naming paths on the build machine.
+    if (!debug) args.append(a, "-Wl,-S") catch oom();
+    args.appendSlice(a, &.{ "-o", out }) catch oom();
+    return args.items;
+}
+
+const ArchiverCall = struct { args: []const []const u8, zero_date: bool };
+
+/// Apple's `ar` refuses the `D` modifier and reads `ZERO_AR_DATE` instead.
+pub fn archiverCall(a: Allocator, format: ObjectFormat, archive: []const u8, member: []const u8) ArchiverCall {
+    const mode: []const u8 = if (format == .macho) "rcs" else "rcsD";
+    return .{ .args = a.dupe([]const u8, &.{ mode, archive, member }) catch oom(), .zero_date = format == .macho };
+}
+
+/// pkg-config splits `Cflags`/`Libs` like a shell, so a space would cut the path in two.
+fn pcEscape(a: Allocator, value: []const u8) []const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < value.len) {
+        const b = value[i];
+        const len = if (b < 0x80) 1 else (std.unicode.utf8ByteSequenceLength(b) catch 1);
+        const end = @min(value.len, i + len);
+        const safe = b < 0x80 and (std.ascii.isAlphanumeric(b) or std.mem.indexOfScalar(u8, "_./+-", b) != null);
+        if (!safe) out.append(a, '\\') catch oom();
+        out.appendSlice(a, value[i..end]) catch oom();
+        i = end;
+    }
+    return out.items;
+}
+
+pub const PkgConfig = struct {
+    name: []const u8,
+    unit: []const u8,
+    /// The header's directory relative to the `.pc` file's; empty when they share one.
+    include_dir: []const u8,
+    libs: []const []const u8,
+};
+
+/// Everything goes in `Libs`: there is no shared variant, and `pkg-config --libs` without
+/// `--static` must still give a working link line.
+pub fn renderPkgConfig(a: Allocator, spec: PkgConfig, abi_version: u32) []const u8 {
+    const include_dir = if (spec.include_dir.len == 0)
+        "${prefix}"
+    else
+        std.fmt.allocPrint(a, "${{prefix}}/{s}", .{pcEscape(a, spec.include_dir)}) catch oom();
+    var libs: std.ArrayList(u8) = .empty;
+    libs.print(a, "Libs: -L${{libdir}} -l{s}", .{spec.name}) catch oom();
+    for (spec.libs) |flag| libs.print(a, " {s}", .{flag}) catch oom();
+    return std.fmt.allocPrint(a,
+        \\# Generated by `stator build --emit=lib` for unit `{s}` (docs/FFI.md §8).
+        \\prefix=${{pcfiledir}}
+        \\libdir=${{prefix}}
+        \\includedir={s}
+        \\
+        \\Name: lib{s}
+        \\Description: Stator unit {s} as a static library with a private runtime
+        \\Version: {d}
+        \\Cflags: -I${{includedir}}
+        \\{s}
+        \\
+    , .{ spec.unit, include_dir, spec.name, spec.unit, abi_version, libs.items }) catch oom();
+}
+
+pub const StaticLibrary = struct {
+    cc: []const u8,
+    object: []const u8,
+    /// In link order: `libjsrt_std.a` when the unit imports `std/*`, then `libjsrt.a`.
+    archives: []const []const u8,
+    symbols: []const []const u8,
+    out: outputs.Named,
+    pc: outputs.Named,
+    header: []const u8,
+    unit: []const u8,
+    libs: []const []const u8,
+    scratch: []const u8,
+    format: ObjectFormat,
+    /// Keep debug information: the sanitized flavor, whose reports want line numbers.
+    debug: bool,
+    abi_version: u32,
+};
+
+/// The tool's own output comes first, so the user sees its reason before the diagnostic.
+fn runTool(h: Host, tool: []const u8, args: []const []const u8, env: *const std.process.Environ.Map, step: []const u8, override: []const u8) Error!void {
+    const a = h.a;
+    const argv = std.mem.concat(a, []const u8, &.{ &.{tool}, args }) catch oom();
+    const result = std.process.run(a, h.io, .{ .argv = argv, .environ_map = env }) catch |err| {
+        if (err == error.FileNotFound) return h.r.fail("STA0020", "{s}: \"{s}\" not found — install it (Linux: binutils; macOS: `xcode-select --install`) or set {s}", .{ step, tool, override });
+        return h.r.fail("STA0020", "{s}: \"{s}\" failed (spawnSync {s} {s})", .{ step, tool, tool, @errorName(err) });
+    };
+    if (result.term == .exited and result.term.exited == 0) return;
+    h.stderr(result.stdout);
+    h.stderr(result.stderr);
+    const status = switch (result.term) {
+        .exited => |code| std.fmt.allocPrint(a, "{d}", .{code}) catch oom(),
+        else => "signal",
+    };
+    return h.r.fail("STA0020", "{s}: \"{s}\" failed (exit {s})", .{ step, tool, status });
+}
+
+/// Prelink, localize, archive, then write the archive and its `.pc` to their outputs.
+pub fn writeStaticLibrary(h: Host, lib: StaticLibrary) Error!void {
+    const a = h.a;
+    const name = libraryName(lib.out.path) orelse return h.r.fail("STA4072", "internal error: --emit=lib output \"{s}\" passed build()'s name check — this is a compiler bug; report it with the input that triggered it", .{lib.out.path});
+    const keep_list = fspath.join(a, &.{ lib.scratch, "keep.txt" }) catch oom();
+    const kept = std.mem.concat(a, []const u8, &.{ lib.symbols, &shared_runtime_symbols }) catch oom();
+    try link.writeScratch(h, keep_list, keptSymbolsText(a, lib.format, kept));
+    // The member keeps the library's name, so an archive listing says whose runtime it holds.
+    const prelinked = fspath.join(a, &.{ lib.scratch, std.fmt.allocPrint(a, "{s}.o", .{name}) catch oom() }) catch oom();
+    try runTool(h, lib.cc, prelinkArgs(a, lib.format, lib.object, lib.archives, keep_list, prelinked, lib.debug), h.env, "static library prelink", "CC");
+    if (lib.format == .elf) {
+        const objcopy = h.env.get("OBJCOPY") orelse "objcopy";
+        const keep = std.fmt.allocPrint(a, "--keep-global-symbols={s}", .{keep_list}) catch oom();
+        try runTool(h, objcopy, &.{ keep, prelinked }, h.env, "static library symbol localization", "OBJCOPY");
+    }
+    const archive = fspath.join(a, &.{ lib.scratch, std.fmt.allocPrint(a, "lib{s}.a", .{name}) catch oom() }) catch oom();
+    const call = archiverCall(a, lib.format, archive, prelinked);
+    var env = h.env.clone(a) catch oom();
+    if (call.zero_date) env.put("ZERO_AR_DATE", "1") catch oom();
+    try runTool(h, h.env.get("AR") orelse "ar", call.args, &env, "static library archive", "AR");
+    const bytes = Io.Dir.cwd().readFileAlloc(h.io, archive, a, .unlimited) catch |err|
+        return h.r.fail("STA4072", "internal error: cannot read {s}: {s} — this is a compiler bug; report it with the input that triggered it", .{ archive, @errorName(err) });
+    try outputs.write(h.io, h.r, lib.out, bytes);
+    const include_dir = relativeDir(a, h.io, lib.pc.path, lib.header);
+    try outputs.write(h.io, h.r, lib.pc, renderPkgConfig(a, .{ .name = name, .unit = lib.unit, .include_dir = include_dir, .libs = lib.libs }, lib.abi_version));
+}
+
+fn relativeDir(a: Allocator, io: Io, from_file: []const u8, to_file: []const u8) []const u8 {
+    const from = fspath.dirname(outputs.absolutePath(a, io, from_file)) orelse "/";
+    const to = fspath.dirname(outputs.absolutePath(a, io, to_file)) orelse "/";
+    return fspath.relativeAllocPosix(a, "/", from, to) catch oom();
+}
+
+test {
+    std.testing.refAllDecls(@This());
+}
+
+test "libraryName reads only the spelling -l finds" {
+    try std.testing.expectEqualStrings("foo", libraryName("out/libfoo.a").?);
+    try std.testing.expectEqualStrings("foo.bar+x-1", libraryName("libfoo.bar+x-1.a").?);
+    try std.testing.expect(libraryName("foo.a") == null);
+    try std.testing.expect(libraryName("lib.a") == null);
+    try std.testing.expect(libraryName("lib-x.a") == null);
+    try std.testing.expect(libraryName("libfoo.so") == null);
+}
+
+test "the .pc text" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const text = renderPkgConfig(arena.allocator(), .{ .name = "x", .unit = "u", .include_dir = "../a b", .libs = &.{ "-lm", "-lc" } }, 0);
+    try std.testing.expectEqualStrings(
+        \\# Generated by `stator build --emit=lib` for unit `u` (docs/FFI.md §8).
+        \\prefix=${pcfiledir}
+        \\libdir=${prefix}
+        \\includedir=${prefix}/../a\ b
+        \\
+        \\Name: libx
+        \\Description: Stator unit u as a static library with a private runtime
+        \\Version: 0
+        \\Cflags: -I${includedir}
+        \\Libs: -L${libdir} -lx -lm -lc
+        \\
+    , text);
+}
+
+test "the archiver spells zero dates per platform" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectEqualStrings("rcsD", archiverCall(a, .elf, "x", "y").args[0]);
+    try std.testing.expect(archiverCall(a, .macho, "x", "y").zero_date);
+}
+
+test "the keep list has the Mach-O underscore" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    try std.testing.expectEqualStrings("_a\n_b\n", keptSymbolsText(arena.allocator(), .macho, &.{ "a", "b" }));
+}
