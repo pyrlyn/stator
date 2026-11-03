@@ -4,9 +4,10 @@
     .fingerprint = 0x5b7938fe09a406f1,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
-        // Points at the stator-ts worktree until its T20 session API is merged; then this becomes
-        // a pinned url + hash, like every other dependency.
-        .stator_ts = .{ .path = "../../../../../../stator-ts/.rtok/worktrees/stator-ts-t20" },
+        .stator_ts = .{
+            .url = "git+https://github.com/pyrlyn/stator-ts#9e992ea96a14ad30c785067f7e8bfd1052e8ef2b",
+            .hash = "stator_ts-0.1.0-kp_ZBFO9EwDiDBtXEIUXWQWOM5jDV8yUbG1d185Nal-z",
+        },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src" },
 }
