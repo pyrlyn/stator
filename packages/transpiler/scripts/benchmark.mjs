@@ -31,7 +31,11 @@ for (let round = -warmups; round < rounds; round++) {
         if (run.error || ![0, 2].includes(run.status)) {
             throw new Error(`${binaries[variant]}: ${run.error ?? run.signal ?? run.status}\n${run.stderr}`);
         }
-        const timing = run.stderr.match(/([\d.]+) real\s+([\d.]+) user\s+([\d.]+) sys/);
+        // Split into fields instead of matching: an unanchored regex over the whole stderr backtracks.
+        const timing = run.stderr
+            .split('\n')
+            .map((line) => line.trim().split(/\s+/))
+            .find((f) => f[1] === 'real' && f[3] === 'user' && f[5] === 'sys');
         if (!timing) throw new Error('No timing data from /usr/bin/time');
         const verdict = { status: run.status, stdoutSha256: createHash('sha256').update(run.stdout).digest('hex') };
         expected ??= verdict;
@@ -43,7 +47,7 @@ for (let round = -warmups; round < rounds; round++) {
         };
         if (round >= 0) samples[variant].push({
             wallMs,
-            cpuMs: (Number(timing[2]) + Number(timing[3])) * 1000,
+            cpuMs: (Number(timing[2]) + Number(timing[4])) * 1000,
             rssBytes: counter('maximum resident set size'),
             footprintBytes: counter('peak memory footprint'),
             instructions: counter('instructions retired'),

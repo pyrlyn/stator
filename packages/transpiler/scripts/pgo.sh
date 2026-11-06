@@ -13,7 +13,7 @@ cd "$(dirname "$0")/.."
 zig=${ZIG:-zig}
 clang=${CLANG:-clang}
 profdata=${LLVM_PROFDATA:-llvm-profdata}
-if [ $# -eq 0 ]; then
+if [[ $# -eq 0 ]]; then
 	echo "usage: scripts/pgo.sh <check arguments>" >&2
 	exit 2
 fi
@@ -41,7 +41,7 @@ opt=(-O3 -mcpu=native -x ir -Wno-override-module)
 # a profile of a failed load.
 status=0
 "$tmp/gen" check "$@" >/dev/null || status=$?
-if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
+if [[ "$status" -ne 0 && "$status" -ne 2 ]]; then
 	echo "error: the instrumented check exited with status $status" >&2
 	exit 1
 fi
