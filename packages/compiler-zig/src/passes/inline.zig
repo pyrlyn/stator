@@ -154,18 +154,30 @@ const CallSites = struct {
 };
 
 const Substitution = struct {
+    arena: Allocator,
     params: []const Parameter,
     args: []const Expression,
 
+    /// Every node that is not a substituted parameter comes back as a fresh copy: the emitter keys
+    /// a node's frame slots and call sites by identity, so a body node shared with the callee's own
+    /// unit would hand the call site the callee's slot numbers (a zero-parameter wrapper at module
+    /// level wrote its result over an unrelated global, plan-notes 394).
     pub fn expression(self: *Substitution, expr: Expression) Error!Expression {
-        if (expr != .identifier) return expr;
-        // From the end: a repeated parameter name binds the last argument, as the language does.
-        var index = self.params.len;
-        while (index > 0) {
-            index -= 1;
-            if (std.mem.eql(u8, self.params[index].name, expr.identifier.name)) return self.args[index];
+        if (expr == .identifier) {
+            // From the end: a repeated parameter name binds the last argument, as the language does.
+            var index = self.params.len;
+            while (index > 0) {
+                index -= 1;
+                if (std.mem.eql(u8, self.params[index].name, expr.identifier.name)) return self.args[index];
+            }
         }
-        return expr;
+        switch (expr) {
+            inline else => |node, tag| {
+                const copy = try self.arena.create(@TypeOf(node.*));
+                copy.* = node.*;
+                return @unionInit(Expression, @tagName(tag), copy);
+            },
+        }
     }
 };
 
@@ -184,6 +196,6 @@ fn inlineCall(site: *CallSites, expr: Expression) Error!Expression {
     // verifier a subtree whose type contradicts its parent.
     if (!types.hTypeEquals(candidate.result.getType(), call.type)) return expr;
 
-    var substitution: Substitution = .{ .params = candidate.params, .args = call.args };
+    var substitution: Substitution = .{ .arena = site.arena, .params = candidate.params, .args = call.args };
     return rewrite.rewriteExpression(candidate.result, rewrite.visiting(Substitution, site.arena, &substitution));
 }

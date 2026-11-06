@@ -11,8 +11,11 @@ import assert from './assert.ts';
 import { NodeError } from './internal/errors.ts';
 import fs from './fs.ts';
 import { fileHrefToPath } from './internal/url.ts';
+import os from './os.ts';
 import path from './path.ts';
+import perfHooks from './perf_hooks.ts';
 import process from './process.ts';
+import timers from './timers.ts';
 
 /** The pinned Node's `require('node:module').builtinModules` (v26.7.0, checked 2026-10-02):
  * every bare id, then the four that exist only with the `node:` prefix. */
@@ -110,11 +113,17 @@ function landed(id: string): unknown {
       return fs;
     case 'module':
       return moduleObject;
+    case 'os':
+      return os;
     case 'path':
     case 'path/posix':
       return path;
+    case 'perf_hooks':
+      return perfHooks;
     case 'process':
       return process;
+    case 'timers':
+      return timers;
     default:
       return undefined;
   }

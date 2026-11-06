@@ -221,11 +221,7 @@ pub fn emitStatement(e: *Emitter, stmt: Statement) Error!void {
             for (s.args, 0..) |arg, index| {
                 _ = try e.sequenceAssign(&parts, arg, s.span, base + 1 + index);
             }
-            try parts.append(e.arena, try e.fmt("jsrt_call({s}, {d}, &{s})", .{
-                try e.closureValue(ctor.@"fn"),
-                1 + s.args.len,
-                try e.slotAt(base),
-            }));
+            try parts.append(e.arena, try helpers.receiverCall(e.arena, try e.closureValue(ctor.@"fn"), try e.slotAt(base), s.args.len));
             try e.flushParts(&parts, s.span);
             try e.emitPendingCheck(s.span);
         },

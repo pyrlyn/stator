@@ -11,6 +11,10 @@ export declare function jsrtStdOsArch(): CString;
 /** @statorExtern jsrt_std_os_release */
 export declare function jsrtStdOsRelease(): number;
 
+/** `field`: 0 sysname, 1 release, 2 version, 3 machine. */
+/** @statorExtern jsrt_std_os_uname */
+export declare function jsrtStdOsUname(field: number): number;
+
 /** @statorExtern jsrt_std_os_hostname */
 export declare function jsrtStdOsHostname(): number;
 

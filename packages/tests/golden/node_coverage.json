@@ -40,6 +40,22 @@
     "createRequire": ["ts/node_module.ts", "js/node_module.js"],
     "isBuiltin": ["ts/node_module.ts", "js/node_module.js"]
   },
+  "os": {
+    "EOL": ["ts/node_os.ts", "js/node_os.js"],
+    "arch": ["ts/node_os.ts"],
+    "availableParallelism": ["ts/node_os.ts"],
+    "devNull": ["ts/node_os.ts"],
+    "endianness": ["ts/node_os.ts"],
+    "homedir": ["ts/node_os.ts"],
+    "hostname": ["ts/node_os.ts"],
+    "machine": ["ts/node_os.ts", "js/node_os.js"],
+    "platform": ["ts/node_os.ts", "js/node_os.js"],
+    "release": ["ts/node_os.ts"],
+    "tmpdir": ["ts/node_os.ts"],
+    "totalmem": ["ts/node_os.ts"],
+    "type": ["ts/node_os.ts", "js/node_os.js"],
+    "version": ["ts/node_os.ts"]
+  },
   "path": {
     "basename": ["ts/node_path.ts", "js/node_path.js"],
     "delimiter": ["ts/node_path.ts"],
@@ -72,6 +88,24 @@
     "sep": ["ts/node_path_posix.ts"],
     "toNamespacedPath": ["ts/node_path_posix.ts"]
   },
+  "perf_hooks": {
+    "Performance": ["ts/node_perf_hooks.ts"],
+    "Performance.prototype.clearMarks": ["ts/node_perf_hooks.ts"],
+    "Performance.prototype.clearMeasures": ["ts/node_perf_hooks.ts"],
+    "Performance.prototype.getEntries": ["ts/node_perf_hooks.ts"],
+    "Performance.prototype.getEntriesByName": ["ts/node_perf_hooks.ts"],
+    "Performance.prototype.getEntriesByType": ["ts/node_perf_hooks.ts"],
+    "Performance.prototype.mark": ["ts/node_perf_hooks.ts"],
+    "Performance.prototype.measure": ["ts/node_perf_hooks.ts"],
+    "Performance.prototype.now": ["ts/node_perf_hooks.ts"],
+    "Performance.prototype.timeOrigin": ["ts/node_perf_hooks.ts"],
+    "PerformanceEntry": ["ts/node_perf_hooks.ts"],
+    "PerformanceEntry.prototype.duration": ["ts/node_perf_hooks.ts"],
+    "PerformanceEntry.prototype.entryType": ["ts/node_perf_hooks.ts"],
+    "PerformanceEntry.prototype.name": ["ts/node_perf_hooks.ts"],
+    "PerformanceEntry.prototype.startTime": ["ts/node_perf_hooks.ts"],
+    "performance": ["ts/node_perf_hooks.ts"]
+  },
   "process": {
     "arch": ["ts/node_process.ts"],
     "argv": ["ts/node_process.ts", "js/node_process.js"],
@@ -90,5 +124,13 @@
     "ppid": ["ts/node_process.ts"],
     "stderr": ["ts/node_process.ts"],
     "stdout": ["ts/node_process.ts", "js/node_process.js"]
+  },
+  "timers": {
+    "clearImmediate": ["ts/node_timers.ts"],
+    "clearInterval": ["ts/node_timers.ts"],
+    "clearTimeout": ["ts/node_timers.ts"],
+    "setImmediate": ["ts/node_timers.ts", "js/node_timers.js"],
+    "setInterval": ["ts/node_timers.ts"],
+    "setTimeout": ["ts/node_timers.ts", "js/node_timers.js"]
   }
 }

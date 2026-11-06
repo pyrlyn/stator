@@ -2,7 +2,7 @@
 status: in progress
 priority: P1
 complexity: 4
-readiness: 0%
+readiness: 80%
 agent: Claude Code / opus-5-5
 ---
 
@@ -13,7 +13,8 @@ scratch). Surface, from the corpus (`docs/NODE.md` **tsc** column): `node:fs` sy
 functions `tsc` calls), `node:path` (posix), `node:os`, `node:perf_hooks.performance`,
 `crypto.createHash`, `process` (`argv`/`env`/`cwd`/`exit`/`exitCode`/`platform`/`pid`/
 `stdout.write`/`memoryUsage`/`nextTick`), `Buffer.from`/`toString`, timers. Without a loop (N2),
-`nextTick` and zero-delay timers drain after `main` like microtasks; a real delay is not-yet.
+timers are `std/thread.runOnMain` macrotasks in libuv's phase order, and the main thread sleeps
+until the earliest one is due (plan-notes 394).
 Every member lands with a golden and a `node_coverage.json` claim; `docs/NODE.md` regenerates in
 the same change.
 
@@ -35,10 +36,14 @@ snapshot via new `std/env.names()`), `cwd`, `exit`, `exitCode`, `pid`, `ppid`, `
 **Follow-up slice** (plan-notes 390, #168): `argv0`, `execArgv`, `stdout`/`stderr`
 (`write`, `fd`, `isTTY`, `columns`, `rows`), `nextTick`, and the free `process` global under `--node`
 (rewritten to `import process from "node:process"`); `node:process` 17/68, slice N1 25/37. `hrtime.bigint`
-stays open. The task stays open: N1 is not 100%. **Next**,
-in the order `tsc` needs them: `node:os`, `Buffer.from`/`toString` (then `readFileSync` without an
-encoding answers a `Buffer`), `crypto.createHash`, `perf_hooks.performance`, timers; `path.win32` is
-its own slice (13 of T11.7's `path` tests need it).
+stays open. **`os`, `perf_hooks` and timers slice** (plan-notes 394, 395): `node:os` 14/23
+(new `std/os` `kernelName`/`kernelVersion`/`machine` over `uname(2)`), `node:perf_hooks`
+`performance` 16/69, `node:timers` 6/7, and the globals `performance` and the six timer functions
+under `--node`; slice N1 30/37. Two compiler bugs fixed on the way: the inliner shared nodes with its
+callee, and receiver calls guessed `this` from the argument count. The task stays open: N1 is not
+100%. **Next**, in the order `tsc` needs them: `Buffer.from`/`toString` (then `readFileSync` without
+an encoding answers a `Buffer`), `crypto.createHash`, `hrtime.bigint`; `path.win32` is its own slice
+(13 of T11.7's `path` tests need it).
 
 **Check:** `tsc --version` and `tsc -p` on a small fixture project, compiled by Stator, print
 byte-for-byte what `node _tsc.js` prints on Node 26.7.0; `docs/NODE.md` slice N1 at 100%.

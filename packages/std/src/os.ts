@@ -12,6 +12,7 @@ import {
   jsrtStdOsRelease,
   jsrtStdOsTmpdir,
   jsrtStdOsTotalMemory,
+  jsrtStdOsUname,
 } from './native/os.js';
 import { __stdFailure } from './internal/error.ts';
 
@@ -39,6 +40,22 @@ export function arch(): string {
 /** The kernel release from `uname(2)` (Darwin's version on macOS, not the marketing one). */
 export function release(): string {
   return __stdOsText(jsrtStdOsRelease(), 'release');
+}
+
+/** The kernel's name from `uname(2)` (`'Darwin'`, `'Linux'`, …). */
+export function kernelName(): string {
+  return __stdOsText(jsrtStdOsUname(0), 'kernelName');
+}
+
+/** The kernel's build string from `uname(2)`'s version field. */
+export function kernelVersion(): string {
+  return __stdOsText(jsrtStdOsUname(2), 'kernelVersion');
+}
+
+/** The hardware name from `uname(2)` (`'arm64'` on macOS, `'aarch64'`/`'x86_64'` on Linux),
+ * which is not `arch()`'s spelling. */
+export function machine(): string {
+  return __stdOsText(jsrtStdOsUname(3), 'machine');
 }
 
 export function hostname(): string {

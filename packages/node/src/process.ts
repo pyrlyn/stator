@@ -12,8 +12,7 @@
 // - `nextTick` callbacks run as promise jobs once the current job ends, so they interleave with
 //   `then` callbacks in queue order where Node runs every tick before any promise job;
 // - `stdout`/`stderr` answer `write(chunk)`, `fd`, `isTTY`, `columns` and `rows` only. `write`
-//   takes one argument: an optional encoding would be an omitted method parameter, which this
-//   calling convention cannot tell from a call with no receiver (docs/VALUE.md §4.16). No stream
+//   takes one argument: the encoding and callback forms have not landed. No stream
 //   events (`node:events` and `node:stream` are N2);
 // - `browser` and `recordreplay` are not properties. In `js` mode a read of either is `undefined`,
 //   which is what `tsc` tests. `on`, `once` and `emit` wait on `node:events`;
@@ -184,11 +183,9 @@ export class Process {
     return hrtimePair();
   }
 
-  /** Ends the process now with `code`. A missing argument is the function `exit` below: an
-   * omitted method parameter is the same argc as a call with no receiver (docs/VALUE.md §4.16). */
-  exit(code: number): never {
-    stdExit(statusOf(code));
-    throw new Error('unreachable: std/process.exit returned');
+  /** Ends the process now with `code`, else `exitCode`, else 0. */
+  exit(code?: number): never {
+    exit(code);
   }
 }
 

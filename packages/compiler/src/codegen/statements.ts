@@ -11,7 +11,7 @@ import type {
 } from '../hir/nodes.ts';
 import { consoleMayThrow } from '../hir/nodes.ts';
 import type { TryFinallyScope } from './types.ts';
-import { cNameLiteral, ITER_KINDS, indexSetCall } from './helpers.ts';
+import { cNameLiteral, ITER_KINDS, indexSetCall, receiverCall } from './helpers.ts';
 
 /** Opens a `while`-shaped loop with `cond` already captured. A compact condition stays on the
  * `while (...)` line; one that needed statements becomes `while (1)` plus a goto test. */
@@ -480,7 +480,7 @@ export function emitStatement(emitter: Emitter, stmt: Statement): void {
         );
       });
       parts.push(
-        `jsrt_call(${emitter.closureValue(ctor.fn)}, ${1 + stmt.args.length}, &${emitter.slotAt(base)})`,
+        receiverCall(emitter.closureValue(ctor.fn), emitter.slotAt(base), stmt.args.length),
       );
       emitter.flushParts(parts, stmt.span);
       emitter.emitPendingCheck(stmt.span);

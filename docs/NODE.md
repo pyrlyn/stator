@@ -18,8 +18,8 @@ for the module and expected to pass under Stator, from
 `packages/tests/node-suite/expectations.json`, which `pnpm run test:node-suite` holds to the
 truth (plan.md §11c T11.7).
 
-**Total: 74 / 2370 members covered (3%) across 58 modules.**
-**Slice N1 (`tsc`): 25 / 37 (68%).**
+**Total: 110 / 2370 members covered (5%) across 58 modules.**
+**Slice N1 (`tsc`): 30 / 37 (81%).**
 **Node tests: 0 / 17 selected files pass.**
 
 | Module | Covered | Members | % | Corpus uses | tsc members | Node tests |
@@ -48,11 +48,11 @@ truth (plan.md §11c T11.7).
 | [`node:inspector/promises`](#nodeinspectorpromises) | 0 | 10 | 0% | 0 | 0 |  |
 | [`node:module`](#nodemodule) | 3 | 48 | 6% | 38 | 0 |  |
 | [`node:net`](#nodenet) | 0 | 79 | 0% | 6 | 0 |  |
-| [`node:os`](#nodeos) | 0 | 23 | 0% | 43 | 2 |  |
+| [`node:os`](#nodeos) | 14 | 23 | 61% | 43 | 2 |  |
 | [`node:path`](#nodepath) | 14 | 16 | 88% | 402 | 3 | 0 / 13 |
 | [`node:path/posix`](#nodepathposix) | 14 | 16 | 88% | 0 | 0 | 0 / 2 |
 | [`node:path/win32`](#nodepathwin32) | 0 | 16 | 0% | 2 | 0 | 0 / 2 |
-| [`node:perf_hooks`](#nodeperf_hooks) | 0 | 69 | 0% | 61 | 1 |  |
+| [`node:perf_hooks`](#nodeperf_hooks) | 16 | 69 | 23% | 61 | 1 |  |
 | [`node:process`](#nodeprocess) | 17 | 68 | 25% | 822 | 10 |  |
 | [`node:punycode`](#nodepunycode) | 0 | 6 | 0% | 0 | 0 |  |
 | [`node:querystring`](#nodequerystring) | 0 | 7 | 0% | 1 | 0 |  |
@@ -69,7 +69,7 @@ truth (plan.md §11c T11.7).
 | [`node:sys`](#nodesys) | 0 | 53 | 0% | 0 | 0 |  |
 | [`node:test`](#nodetest) | 0 | 17 | 0% | 0 | 0 |  |
 | [`node:test/reporters`](#nodetestreporters) | 0 | 5 | 0% | 0 | 0 |  |
-| [`node:timers`](#nodetimers) | 0 | 7 | 0% | 185 | 2 |  |
+| [`node:timers`](#nodetimers) | 6 | 7 | 86% | 185 | 2 |  |
 | [`node:timers/promises`](#nodetimerspromises) | 0 | 4 | 0% | 6 | 0 |  |
 | [`node:tls`](#nodetls) | 0 | 44 | 0% | 1 | 0 |  |
 | [`node:trace_events`](#nodetrace_events) | 0 | 2 | 0% | 0 | 0 |  |
@@ -1692,33 +1692,33 @@ truth (plan.md §11c T11.7).
 
 ### node:os
 
-<details><summary><code>node:os</code> — 0 / 23 (0%)</summary>
+<details><summary><code>node:os</code> — 14 / 23 (61%)</summary>
 
 | Member | Kind | Covered | Corpus | tsc |
 | --- | --- | --- | --- | --- |
-| `EOL` | value | — | 1 | ✓ |
-| `arch` | function | — |  |  |
-| `availableParallelism` | function | — | 18 |  |
+| `EOL` | value | ✅ | 1 | ✓ |
+| `arch` | function | ✅ |  |  |
+| `availableParallelism` | function | ✅ | 18 |  |
 | `constants` | value | — | 1 |  |
 | `cpus` | function | — | 11 |  |
-| `devNull` | value | — |  |  |
-| `endianness` | function | — |  |  |
+| `devNull` | value | ✅ |  |  |
+| `endianness` | function | ✅ |  |  |
 | `freemem` | function | — |  |  |
 | `getPriority` | function | — |  |  |
-| `homedir` | function | — | 3 |  |
-| `hostname` | function | — | 1 |  |
+| `homedir` | function | ✅ | 3 |  |
+| `hostname` | function | ✅ | 1 |  |
 | `loadavg` | function | — |  |  |
-| `machine` | function | — |  |  |
+| `machine` | function | ✅ |  |  |
 | `networkInterfaces` | function | — | 2 |  |
-| `platform` | function | — | 1 | ✓ |
-| `release` | function | — | 1 |  |
+| `platform` | function | ✅ | 1 | ✓ |
+| `release` | function | ✅ | 1 |  |
 | `setPriority` | function | — |  |  |
-| `tmpdir` | function | — | 3 |  |
-| `totalmem` | function | — | 1 |  |
-| `type` | function | — |  |  |
+| `tmpdir` | function | ✅ | 3 |  |
+| `totalmem` | function | ✅ | 1 |  |
+| `type` | function | ✅ |  |  |
 | `uptime` | function | — |  |  |
 | `userInfo` | function | — |  |  |
-| `version` | function | — |  |  |
+| `version` | function | ✅ |  |  |
 
 </details>
 
@@ -1799,33 +1799,33 @@ truth (plan.md §11c T11.7).
 
 ### node:perf_hooks
 
-<details><summary><code>node:perf_hooks</code> — 0 / 69 (0%)</summary>
+<details><summary><code>node:perf_hooks</code> — 16 / 69 (23%)</summary>
 
 | Member | Kind | Covered | Corpus | tsc |
 | --- | --- | --- | --- | --- |
-| `Performance` | class | — |  |  |
-| `Performance.prototype.clearMarks` | method | — |  |  |
-| `Performance.prototype.clearMeasures` | method | — |  |  |
+| `Performance` | class | ✅ |  |  |
+| `Performance.prototype.clearMarks` | method | ✅ |  |  |
+| `Performance.prototype.clearMeasures` | method | ✅ |  |  |
 | `Performance.prototype.clearResourceTimings` | method | — |  |  |
 | `Performance.prototype.eventLoopUtilization` | method | — |  |  |
-| `Performance.prototype.getEntries` | method | — |  |  |
-| `Performance.prototype.getEntriesByName` | method | — |  |  |
-| `Performance.prototype.getEntriesByType` | method | — |  |  |
-| `Performance.prototype.mark` | method | — |  |  |
+| `Performance.prototype.getEntries` | method | ✅ |  |  |
+| `Performance.prototype.getEntriesByName` | method | ✅ |  |  |
+| `Performance.prototype.getEntriesByType` | method | ✅ |  |  |
+| `Performance.prototype.mark` | method | ✅ |  |  |
 | `Performance.prototype.markResourceTiming` | method | — |  |  |
-| `Performance.prototype.measure` | method | — |  |  |
+| `Performance.prototype.measure` | method | ✅ |  |  |
 | `Performance.prototype.nodeTiming` | method | — |  |  |
-| `Performance.prototype.now` | method | — |  |  |
+| `Performance.prototype.now` | method | ✅ |  |  |
 | `Performance.prototype.onresourcetimingbufferfull` | accessor | — |  |  |
 | `Performance.prototype.setResourceTimingBufferSize` | method | — |  |  |
-| `Performance.prototype.timeOrigin` | accessor | — |  |  |
+| `Performance.prototype.timeOrigin` | accessor | ✅ |  |  |
 | `Performance.prototype.timerify` | method | — |  |  |
 | `Performance.prototype.toJSON` | method | — |  |  |
-| `PerformanceEntry` | class | — |  |  |
-| `PerformanceEntry.prototype.duration` | accessor | — |  |  |
-| `PerformanceEntry.prototype.entryType` | accessor | — |  |  |
-| `PerformanceEntry.prototype.name` | accessor | — |  |  |
-| `PerformanceEntry.prototype.startTime` | accessor | — |  |  |
+| `PerformanceEntry` | class | ✅ |  |  |
+| `PerformanceEntry.prototype.duration` | accessor | ✅ |  |  |
+| `PerformanceEntry.prototype.entryType` | accessor | ✅ |  |  |
+| `PerformanceEntry.prototype.name` | accessor | ✅ |  |  |
+| `PerformanceEntry.prototype.startTime` | accessor | ✅ |  |  |
 | `PerformanceEntry.prototype.toJSON` | method | — |  |  |
 | `PerformanceMark` | class | — |  |  |
 | `PerformanceMark.prototype.detail` | accessor | — |  |  |
@@ -1870,7 +1870,7 @@ truth (plan.md §11c T11.7).
 | `createHistogram` | function | — |  |  |
 | `eventLoopUtilization` | function | — |  |  |
 | `monitorEventLoopDelay` | function | — |  |  |
-| `performance` | value | — | 61 | ✓ |
+| `performance` | value | ✅ | 61 | ✓ |
 | `timerify` | function | — |  |  |
 
 </details>
@@ -2478,17 +2478,17 @@ truth (plan.md §11c T11.7).
 
 ### node:timers
 
-<details><summary><code>node:timers</code> — 0 / 7 (0%)</summary>
+<details><summary><code>node:timers</code> — 6 / 7 (86%)</summary>
 
 | Member | Kind | Covered | Corpus | tsc |
 | --- | --- | --- | --- | --- |
-| `clearImmediate` | function | — | 4 |  |
-| `clearInterval` | function | — | 14 |  |
-| `clearTimeout` | function | — | 65 | ✓ |
+| `clearImmediate` | function | ✅ | 4 |  |
+| `clearInterval` | function | ✅ | 14 |  |
+| `clearTimeout` | function | ✅ | 65 | ✓ |
 | `promises` | getter | — |  |  |
-| `setImmediate` | function | — | 23 |  |
-| `setInterval` | function | — | 10 |  |
-| `setTimeout` | function | — | 69 | ✓ |
+| `setImmediate` | function | ✅ | 23 |  |
+| `setInterval` | function | ✅ | 10 |  |
+| `setTimeout` | function | ✅ | 69 | ✓ |
 
 </details>
 

@@ -257,6 +257,11 @@ export function finishStatement(
 
 export function emitExternCall(emitter: Emitter, expr: ExternCall, base: number): string {
   const site = String(emitter.externSiteCount++);
+  // A main-queue post runs only inside the drain `main` emits after the module body; without
+  // it a program whose one event source is a post (`node:timers`) exits before the post runs.
+  if (expr.cName === 'jsrt_thread_run_on_main') {
+    emitter.usedAsync = true;
+  }
   const argStart = expr.retKind === 'void' ? 0 : 1;
   const parts: string[] = [];
   emitter.sequenceArgs(parts, expr.args, expr.span, base, argStart);
