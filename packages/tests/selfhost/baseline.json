@@ -19,11 +19,23 @@
     "verdict": "dynamic",
     "codes": {}
   },
+  "packages/node/src/os.ts": {
+    "verdict": "static",
+    "codes": {}
+  },
   "packages/node/src/path.ts": {
     "verdict": "dynamic",
     "codes": {}
   },
+  "packages/node/src/perf_hooks.ts": {
+    "verdict": "dynamic",
+    "codes": {}
+  },
   "packages/node/src/process.ts": {
+    "verdict": "dynamic",
+    "codes": {}
+  },
+  "packages/node/src/timers.ts": {
     "verdict": "dynamic",
     "codes": {}
   },

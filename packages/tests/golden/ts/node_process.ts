@@ -42,7 +42,7 @@ console.log(process.stdout.fd, process.stderr.fd);
 nextTick(() => console.log("tick one"));
 process.nextTick(() => {
   console.log("tick two");
-  process.exit(0);
+  process.exit();
   console.log("never printed");
 });
 console.log("sync done");

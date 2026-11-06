@@ -14,6 +14,7 @@
 | Package | Where | Source | Why here |
 | --- | --- | --- | --- |
 | coroutines | local, `build.zig.zon` | https://github.com/pyrlyn/coroutines | `state_machine.runParallel` runs the parallel passes |
+| jstext | local path `../jstext`, `build.zig.zon` | `packages/jstext` in this repository | `Number::toString` and WTF-8 decoding, shared with `packages/compiler-zig` |
 
 ## npm
 

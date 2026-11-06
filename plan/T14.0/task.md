@@ -51,6 +51,6 @@ choices; T14.1–T14.4 are edited to match; `docs/README.md` lists the new doc.
    called from a `js`-mode program; parse a 640 KB source with it and with stator-ts's parser.
 2. Measure parser options (a)–(d): build or `explain` each, record size and parse speed.
 3. Put the creator's choices (parser, evaluator language) to the creator.
-4. Write `docs/INTERPRETER.md` §0–§9, plan-notes 394, rewrite §11f and plan/T14.1–T14.4, list the
+4. Write `docs/INTERPRETER.md` §0–§9, plan-notes 396, rewrite §11f and plan/T14.1–T14.4, list the
    doc in `docs/README.md`.
 5. Verify: `pnpm run ci` steps, no new failure against the `origin/main` baseline.

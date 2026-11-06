@@ -104,7 +104,7 @@ differ, `std` answers one way and says so (§5).
 | `std/path` | `isAbsolute`, `basename`, `dirname`, `join(a, b)` | pure TypeScript, no backing (see below) |
 | `std/fs` | `readText(path)`, `writeText(path, text)`, `readBytes(path): Uint8Array`, `stat(path): Stat`, `exists(path)`, `realpath(path)`, `utimes(path, atimeMs, mtimeMs)`, `readdir(path): string[]`, `mkdir(path)`, `unlink(path)`, `rmdir(path)`; on descriptors `open(path, flags)`, `read(fd, length, position)`, `write(fd, data, position)`, `close(fd)` | sync (see below); the `…Async` Promise twins offload to workers (§2) |
 | `std/time` | `nowMs(): number`, `sleepMs(ms)` | `nowMs` is whole milliseconds since the Unix epoch (`Date.now()`); `sleepMs` blocks the calling thread on the monotonic clock, fractions truncated |
-| `std/os` | `platform()`, `arch()`, `release()`, `hostname()`, `homedir()`, `tmpdir()`, `cpuCount()`, `totalMemory()`, `eol` | the pinned Node's `node:os` answers (see below) |
+| `std/os` | `platform()`, `arch()`, `kernelName()`, `release()`, `kernelVersion()`, `machine()`, `hostname()`, `homedir()`, `tmpdir()`, `cpuCount()`, `totalMemory()`, `eol` | the pinned Node's `node:os` answers (see below) |
 | `std/io` | `stdin`/`stdout`/`stderr` (`0`/`1`/`2`), `write(fd, text)`, `writeBytes(fd, bytes)`, `read(fd, max): Uint8Array`, `isatty(fd)`, `terminalSize(fd): TerminalSize` | raw descriptors through libc (see below) |
 | `std/encoding` | `utf8ToBytes`/`bytesToUtf8`, `latin1ToBytes`/`bytesToLatin1`, `base64ToBytes`/`bytesToBase64`, `base64urlToBytes`/`bytesToBase64url`, `hexToBytes`/`bytesToHex` | Node's `Buffer` conversions (see below) |
 | `std/hash` | `sha256(data)`, `sha1(data)`, `md5(data)` over `Uint8Array \| string`, `randomBytes(size)` | digests as `Uint8Array`; text hashes as its UTF-8 |
@@ -158,7 +158,10 @@ changes it; `setExitCode` takes an integer `0..255` (else `EINVAL`, and nothing 
 
 **`std/os` semantics** are the pinned Node's, because `packages/node` builds `node:os` on
 them. `platform` and `arch` are spelled as `process.platform`/`process.arch` and fixed at build
-time. `release` is `uname(2)`'s release (on macOS the Darwin kernel version). `homedir` is
+time. `kernelName`, `release`, `kernelVersion` and `machine` are `uname(2)`'s sysname, release,
+version and machine fields, which Node's `os.type()`, `os.release()`, `os.version()` and
+`os.machine()` read through libuv's `uv_os_uname` (on macOS: `Darwin`, the Darwin kernel
+version, the kernel's build string and `arm64`). `homedir` is
 `$HOME` whenever it is set, even to the empty string, else the password database's entry
 (libuv's `uv_os_homedir`). `tmpdir` is the first non-empty of `$TMPDIR`, `$TMP`, `$TEMP`, else
 `/tmp`, minus one trailing `/` unless the path is `/`. `cpuCount` is

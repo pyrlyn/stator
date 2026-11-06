@@ -280,7 +280,7 @@ pub fn emitExpression(e: *Emitter, expr: Expression) Error![]const u8 {
                 try e.flushParts(&parts, x.span);
                 return object;
             };
-            const call = try e.fmt("jsrt_call({s}, {d}, &{s})", .{ try e.closureValue(ctor.@"fn"), 1 + x.args.len, object });
+            const call = try helpers.receiverCall(e.arena, try e.closureValue(ctor.@"fn"), object, x.args.len);
             return e.finishStatement(&parts, call, object, x.span);
         },
         .method_value => |x| {
@@ -300,7 +300,7 @@ pub fn emitExpression(e: *Emitter, expr: Expression) Error![]const u8 {
                 try e.fmt("jsrt_method({s}, {d})", .{ receiver, x.slot })
             else
                 try e.methodCallee(x, receiver);
-            const invoke = try e.fmt("{s} = jsrt_call({s}, {d}, &{s})", .{ receiver, callee, 1 + x.args.len, receiver });
+            const invoke = try e.fmt("{s} = {s}", .{ receiver, try helpers.receiverCall(e.arena, callee, receiver, x.args.len) });
             return e.finishStatement(&call.parts, invoke, receiver, x.span);
         },
         .dyn_method_call => |x| {

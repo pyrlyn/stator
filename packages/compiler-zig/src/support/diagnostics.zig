@@ -99,25 +99,7 @@ pub fn render(a: Allocator, d: Diagnostic) Allocator.Error![]u8 {
 }
 
 /// `JSON.stringify` of a string, so that explain's output compares byte for byte.
-pub fn writeJsonString(w: *std.Io.Writer, s: []const u8) std.Io.Writer.Error!void {
-    try w.writeByte('"');
-    var i: usize = 0;
-    while (i < s.len) : (i += 1) {
-        const b = s[i];
-        switch (b) {
-            '"' => try w.writeAll("\\\""),
-            '\\' => try w.writeAll("\\\\"),
-            '\n' => try w.writeAll("\\n"),
-            '\r' => try w.writeAll("\\r"),
-            '\t' => try w.writeAll("\\t"),
-            0x08 => try w.writeAll("\\b"),
-            0x0c => try w.writeAll("\\f"),
-            0...0x07, 0x0b, 0x0e...0x1f => try w.print("\\u{x:0>4}", .{b}),
-            else => try w.writeByte(b),
-        }
-    }
-    try w.writeByte('"');
-}
+pub const writeJsonString = @import("jstext").writeJsonString;
 
 test "positions count UTF-16 units and every line terminator" {
     const src = "a\r\nb\xF0\x9F\x98\x80c\xE2\x80\xA8d";

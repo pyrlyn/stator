@@ -145,6 +145,9 @@ const OutWrite = struct { name: []const u8, slot: []const u8 };
 pub fn emitExternCall(e: *Emitter, expr: *const nodes.ExternCall, base: usize) Error![]const u8 {
     const site = e.extern_site_count;
     e.extern_site_count += 1;
+    // A main-queue post runs only inside the drain `main` emits after the module body; without
+    // it a program whose one event source is a post (`node:timers`) exits before the post runs.
+    if (std.mem.eql(u8, expr.c_name, "jsrt_thread_run_on_main")) e.used_async = true;
     const span = expr.span;
     const arg_start: usize = if (expr.ret_kind == .void) 0 else 1;
     var parts: Parts = .empty;

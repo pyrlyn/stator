@@ -2,7 +2,7 @@
 
 `js` mode's second fallback: the code compiled code cannot run (`eval`, `new Function`, and the
 `not-yet` constructs §6 assigns to it) runs in an interpreter linked into the binary. This is the
-design T14.0 settled (plan.md §11f, plan-notes 394). The cards that build it are
+design T14.0 settled (plan.md §11f, plan-notes 396). The cards that build it are
 [`plan/T14.1`](../plan/T14.1/task.md) to [`plan/T14.4`](../plan/T14.4/task.md).
 
 Fallbacks are tried in this order: compiled static code, compiled dynamic code (NaN-boxed values,
@@ -24,7 +24,7 @@ The design rests on a measured spike, run on 2026-11-06 on an Apple M3 Max (arm6
 - **Parser spike.** The stator-ts parser (`packages/transpiler/src/parser.zig`, plan/T41) driven by
   a 25-line Zig program that parses an in-memory source.
 
-The spike's sources are not committed; this section and plan-notes 394 hold its numbers.
+The spike's sources are not committed; this section and plan-notes 396 hold its numbers.
 
 | Measurement | Value |
 | --- | --- |
@@ -41,8 +41,9 @@ The spike's sources are not committed; this section and plan-notes 394 hold its 
 | stator-ts parser alone over an empty Zig program, `ReleaseSmall` (stripped) | +66,112 B |
 | stator-ts parser alone over an empty Zig program, `ReleaseFast` (stripped) | +132,240 B |
 
-The spike also found two compiler bugs, which plan-notes 394 lists; one is fixed (`.length` on a
-dynamically read receiver, pyrlyn/stator#248), and the spike worked around the other.
+The spike also found two compiler bugs, which plan-notes 396 lists: `.length` on a dynamically read
+receiver (fixed, pyrlyn/stator#248) and the method-call receiver guess (fixed for direct calls by
+plan-notes 395; the spike worked around it).
 
 ## 1. The parser: stator-ts's, in Zig
 

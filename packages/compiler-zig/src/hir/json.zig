@@ -8,6 +8,7 @@
 //! here or in whatever walks the tree next.
 
 const std = @import("std");
+const jstext = @import("jstext");
 const Allocator = std.mem.Allocator;
 const nodes = @import("nodes.zig");
 const types = @import("types.zig");
@@ -711,34 +712,10 @@ const Writer = struct {
         try self.out.print(self.arena, "\"{x:0>16}\"", .{bits});
     }
 
-    /// What `JSON.stringify` prints, lone surrogates included.
     fn string(self: *Writer, text: []const u8) WriteError!void {
-        try self.raw("\"");
-        var i: usize = 0;
-        while (i < text.len) {
-            const c = text[i];
-            switch (c) {
-                '"' => try self.raw("\\\""),
-                '\\' => try self.raw("\\\\"),
-                0x08 => try self.raw("\\b"),
-                0x0c => try self.raw("\\f"),
-                '\n' => try self.raw("\\n"),
-                '\r' => try self.raw("\\r"),
-                '\t' => try self.raw("\\t"),
-                0...0x07, 0x0b, 0x0e...0x1f => try self.out.print(self.arena, "\\u{x:0>4}", .{c}),
-                0xed => if (i + 2 < text.len and text[i + 1] >= 0xa0) {
-                    const unit = @as(u16, 0xd000) | @as(u16, text[i + 1] & 0x3f) << 6 |
-                        (text[i + 2] & 0x3f);
-                    try self.out.print(self.arena, "\\u{x:0>4}", .{unit});
-                    i += 2;
-                } else {
-                    try self.out.append(self.arena, c);
-                },
-                else => try self.out.append(self.arena, c),
-            }
-            i += 1;
-        }
-        try self.raw("\"");
+        var aw: std.Io.Writer.Allocating = .fromArrayList(self.arena, self.out);
+        defer self.out.* = aw.toArrayList();
+        jstext.writeJsonString(&aw.writer, text) catch return error.OutOfMemory;
     }
 };
 

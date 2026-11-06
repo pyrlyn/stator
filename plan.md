@@ -1523,7 +1523,7 @@ already provides the primitive, the Web API wraps it rather than duplicating it.
 ## 11f. Phase 14 — A JavaScript interpreter in the runtime: `js` mode's second fallback — **[D5]**
 
 Creator's direction (2026-10-02, plan-notes 300; language and parser settled 2026-11-06, plan-notes
-394). Write a QuickJS-class JavaScript interpreter **in Zig, in the runtime**, on **stator-ts's
+396). Write a QuickJS-class JavaScript interpreter **in Zig, in the runtime**, on **stator-ts's
 parser**, and use it as an additional fallback in `js` mode. It runs what compiled code cannot:
 `eval`, `new Function`, and later the constructs that are `not-yet` today (`STA1206` and the rest
 of `STA12xx` that `docs/INTERPRETER.md` §6 assigns to it). The design is `docs/INTERPRETER.md`.
@@ -1739,7 +1739,7 @@ ms/line flat, golden byte-for-byte, full gate green.
 | `--node` (Phase 11) | typed arrays, `packages/std` + `packages/node`, CommonJS, sync `tsc` (N1) | T11.1–T11.6; the largest item is T11.4 (js-mode coverage, not Node). N2 deferred, N3 not planned (plan-notes 289) |
 | Bundler front end (Phase 12) | `statorc/api`, `BundlerAdapter`, `packages/vite-stator`; packages + CommonJS bundled into one vendor module, project stays Stator's graph | T12.0–T12.2 landed (plan-notes 296, 320, 321, `docs/BUNDLER.md`); T12.3 |
 | Web API (Phase 13) | `packages/webapi` (DOM + CSS, strict TS, render API) + `packages/renderer-clay` (default renderer) | T13.0 design first; T13.1–T13.5 (coverage in generated `docs/WEBAPI.md`); other Web APIs low priority (plan-notes 298, 299) |
-| JS interpreter (Phase 14) | `packages/interpreter` in Zig on stator-ts's parser: `eval`, `new Function` and other `not-yet` constructs in `js` mode, on the runtime's own values (`docs/INTERPRETER.md`) | T14.0 done; T14.1–T14.4 (plan-notes 300, 394) |
+| JS interpreter (Phase 14) | `packages/interpreter` in Zig on stator-ts's parser: `eval`, `new Function` and other `not-yet` constructs in `js` mode, on the runtime's own values (`docs/INTERPRETER.md`) | T14.0 done; T14.1–T14.4 (plan-notes 300, 396) |
 | Optimization ladder §12 rows 1–5 | competitive perf story | +3–5 months |
 | Conformance long tail | Porffor is at ~61% Test262 after years with a funded lead | years — the moat, budget honestly |
 
@@ -1979,4 +1979,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.86** (2026-10-24): **T33 lands: Ryū is vendored and `shortest_digits()` uses it** (plan-notes 385). `packages/runtime/vendor/ryu/` pins `v2.0` (`72e18e8…`) through `update.ts`; `d2s_buffered` replaces the `%.*e` round-trip search. `test:runtime` and 475 goldens stay byte-for-byte against the pinned Node. §12 loses the Ryū rung — the directed card landed the swap without a bench before/after, which plan-notes 385 records.
 - **v4.87** (2026-10-25): **T11.6: `node:process` follow-up slice** (plan-notes 390). The members `tsc` reads (`argv`, `cwd`, `env`, `execArgv`, `exit`, `memoryUsage`, `nextTick`, `pid`, `platform`, `stdout`) plus `argv0`, `execPath`, `exitCode`, `arch`, `ppid` and `stderr`. A free `process` under `--node` is rewritten to `import process from "node:process"`. `std/env.names()` lists libc's `environ`. A js-mode spread into `unknown` or rest `unknown[]` is accepted. Slice N1 is 25 / 37 (68%). The Check stays open.
 - **v4.88** (2026-11-02): **T41 opens: the compiler moves to Zig on stator-ts** (plan-notes 393). `packages/compiler` stays on `typescript` 6.0.3 as the oracle; Zig goes to 0.17.0 project-wide; `test:typediff` measures stator-ts against the checker.
-- **v4.89** (2026-11-06): **T14.0: the interpreter is Zig in the runtime, on stator-ts's parser, running bytecode** (plan-notes 394, `docs/INTERPRETER.md`). The creator chose the parser and the language from the spike's numbers; §11f and plan/T14.1–T14.4 follow.
+- **v4.89** (2026-11-06): **T14.0: the interpreter is Zig in the runtime, on stator-ts's parser, running bytecode** (plan-notes 396, `docs/INTERPRETER.md`). The creator chose the parser and the language from the spike's numbers; §11f and plan/T14.1–T14.4 follow.

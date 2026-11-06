@@ -411,6 +411,14 @@ export function indexGetCall(target: HType, object: string, index: string): stri
   }
 }
 
+/** A call whose receiver sits in the rooted slot `receiver`, its `argCount` arguments in the
+ * slots after it: a method call or a constructor. Never `jsrt_call` over the whole run: that one
+ * guesses the receiver from `argc == arity + 1`, so a call that omits an optional parameter or
+ * passes an extra one shifted `this` into the arguments (plan-notes 395). */
+export function receiverCall(callee: string, receiver: string, argCount: number): string {
+  return `jsrt_call_with_this(${callee}, ${receiver}, ${String(argCount)}, &${receiver} + 1)`;
+}
+
 /** The write half of {@link indexGetCall}. */
 export function indexSetCall(target: HType, object: string, index: string, value: string): string {
   switch (target.kind) {

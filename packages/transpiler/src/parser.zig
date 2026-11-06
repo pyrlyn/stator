@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ast = @import("ast.zig");
+const jsdoc = @import("jsdoc.zig");
 const lexer = @import("lexer.zig");
 const spelling = @import("spelling.zig");
 
@@ -70,7 +71,10 @@ pub fn parseBody(a: Allocator, file: *const ast.File, n: *Node) Body {
 
 /// Null when `lazy` could not skip a block; only then is there anything to do over.
 fn parseFile(a: Allocator, path: []const u8, src: []const u8, lazy: bool) ?*ast.File {
-    const is_dts = std.mem.endsWith(u8, path, ".d.ts") or std.mem.endsWith(u8, path, ".d.mts") or std.mem.endsWith(u8, path, ".d.cts") or std.mem.endsWith(u8, path, ".json");
+    const base = std.fs.path.basename(path);
+    // tsc's `isDeclarationFileName`, which also takes `a.d.html.ts` for an arbitrary extension.
+    const is_dts = std.mem.endsWith(u8, path, ".d.mts") or std.mem.endsWith(u8, path, ".d.cts") or std.mem.endsWith(u8, path, ".json") or
+        (std.mem.endsWith(u8, base, ".ts") and std.mem.indexOf(u8, base, ".d.") != null);
     var p = Parser{
         .a = a,
         .lx = .{ .src = src, .a = a },
@@ -86,7 +90,9 @@ fn parseFile(a: Allocator, path: []const u8, src: []const u8, lazy: bool) ?*ast.
     if (p.skip_failed) return null;
     const root = p.mk(0, .{ .source_file = .{ .stmts = stmts.items } });
     root.end = @intCast(src.len);
+    const jsdoc_names: []const ast.JsdocName = if (ast.isJsFile(path)) jsdoc.attach(a, src, root) else &.{};
     setParents(root);
+    const pragmas = scanPragmas(a, src);
     const f = a.create(ast.File) catch oom();
     f.* = .{
         .path = path,
@@ -97,9 +103,38 @@ fn parseFile(a: Allocator, path: []const u8, src: []const u8, lazy: bool) ?*ast.
         .directives = p.lx.ts_ignores.items,
         .is_dts = is_dts,
         .is_module = isExternalModule(stmts.items) or p.saw_import_meta,
-        .references = scanReferences(a, src),
+        .references = pragmas.references,
+        .check_directive = pragmas.check,
+        .jsdoc_names = jsdoc_names,
     };
     return f;
+}
+
+pub const CommentType = struct { node: *Node, optional: bool };
+
+/// Parses a JSDoc type, its braces taken off. Null when it is not one: a comment cannot be a
+/// syntax error of the program, so nothing here is reported.
+pub fn parseCommentType(a: Allocator, src: []const u8, start: u32, end: u32) ?CommentType {
+    var p = Parser{ .a = a, .lx = .{ .src = withoutMargin(a, src, start, end), .a = a, .pos = start }, .tsx = false, .ambient = false, .jsdoc = true };
+    _ = p.lx.next();
+    const rest = p.eat(.dot3);
+    const ty = p.parseType();
+    const optional = p.eat(.assign);
+    if (p.t() != .eof or p.lx.diags.items.len != 0) return null;
+    return .{ .node = if (rest) p.mk(start, .{ .array_type = .{ .elem = ty } }) else ty, .optional = optional };
+}
+
+/// A type that spans lines has the comment's asterisks in it, which are not tokens. Offsets stay.
+fn withoutMargin(a: Allocator, src: []const u8, start: u32, end: u32) []const u8 {
+    if (std.mem.indexOfScalar(u8, src[start..end], '\n') == null) return src[0..end];
+    const copy = a.dupe(u8, src[0..end]) catch oom();
+    var i = start;
+    while (std.mem.indexOfScalarPos(u8, copy, i, '\n')) |nl| {
+        i = @intCast(nl + 1);
+        while (i < end and (copy[i] == ' ' or copy[i] == '\t')) i += 1;
+        if (i < end and copy[i] == '*') copy[i] = ' ';
+    }
+    return copy;
 }
 
 fn setParents(n: *Node) void {
@@ -141,9 +176,14 @@ fn attrValue(line: []const u8, name: []const u8) ?[]const u8 {
     return null;
 }
 
-fn scanReferences(a: Allocator, src: []const u8) []ast.File.Reference {
+const Pragmas = struct { references: []ast.File.Reference, check: ?bool };
+
+/// The comments before the first token: `/// <reference …/>` and `// @ts-check` or `// @ts-nocheck`.
+fn scanPragmas(a: Allocator, src: []const u8) Pragmas {
     var out: std.ArrayList(ast.File.Reference) = .empty;
+    var check: ?bool = null;
     var i: usize = 0;
+    if (std.mem.startsWith(u8, src, "#!")) i = std.mem.indexOfScalar(u8, src, '\n') orelse src.len;
     while (i < src.len) {
         if (std.ascii.isWhitespace(src[i])) {
             i += 1;
@@ -158,16 +198,34 @@ fn scanReferences(a: Allocator, src: []const u8) []ast.File.Reference {
         const end = std.mem.indexOfScalarPos(u8, src, i, '\n') orelse src.len;
         const line = src[i..end];
         i = end;
+        if (checkPragma(line)) |on| check = on;
         if (!std.mem.startsWith(u8, line, "///") or std.mem.indexOf(u8, line, "<reference") == null) continue;
         if (attrValue(line, "lib")) |v| {
             out.append(a, .{ .kind = .lib, .value = v }) catch oom();
         } else if (attrValue(line, "path")) |v| {
             out.append(a, .{ .kind = .path, .value = v }) catch oom();
         } else if (attrValue(line, "types")) |v| {
-            out.append(a, .{ .kind = .types, .value = v }) catch oom();
+            const mode = attrValue(line, "resolution-mode") orelse "";
+            const m: ?ast.ResolutionMode = std.meta.stringToEnum(ast.ResolutionMode, mode);
+            out.append(a, .{ .kind = .types, .value = v, .mode = m }) catch oom();
         }
     }
-    return out.items;
+    return .{ .references = out.items, .check = check };
+}
+
+/// tsc reads the name after `@` as letters and dashes, in any case.
+fn checkPragma(line: []const u8) ?bool {
+    var i: usize = 2;
+    if (i < line.len and line[i] == '/') i += 1;
+    while (i < line.len and (line[i] == ' ' or line[i] == '\t')) i += 1;
+    if (i >= line.len or line[i] != '@') return null;
+    const start = i + 1;
+    i = start;
+    while (i < line.len and (std.ascii.isAlphabetic(line[i]) or line[i] == '-')) i += 1;
+    const name = line[start..i];
+    if (std.ascii.eqlIgnoreCase(name, "ts-check")) return true;
+    if (std.ascii.eqlIgnoreCase(name, "ts-nocheck")) return false;
+    return null;
 }
 
 const Snapshot = struct { lx: Lexer.State, prev_end: u32, strip: usize };
@@ -191,6 +249,8 @@ const Parser = struct {
     pending_new_args: ?ast.TypeList = null,
     lazy: bool = false,
     skip_failed: bool = false,
+    /// In a JSDoc comment, where a type has a few spellings of its own.
+    jsdoc: bool = false,
 
     fn t(p: *const Parser) Tok {
         return p.lx.tok;
@@ -280,6 +340,22 @@ const Parser = struct {
         }
         if (p.t() == .unknown) return;
         p.lx.err(e.start, span, 1434, "Unexpected keyword or identifier.");
+    }
+
+    /// tsc's `parseSemicolonAfterPropertyName`.
+    fn semiAfterProperty(p: *Parser, d: *const ast.Property) void {
+        if (p.t() == .at and !p.lx.nl_before) return p.errHere(1436, "Decorators must precede the name and all keywords of property declarations.");
+        if (p.t() == .l_paren) {
+            p.errHere(1441, "Cannot start a function call in a type annotation.");
+            return p.next();
+        }
+        if (d.type != null and !p.canSemi()) {
+            if (d.init != null) return p.errHere(1005, "';' expected.");
+            return p.errHere(1442, "Expected '=' for property initializer.");
+        }
+        if (p.eat(.semi) or p.canSemi()) return;
+        if (d.init != null or d.name.data != .identifier) return p.errHere(1005, "';' expected.");
+        p.semiAfterWord(d.name);
     }
 
     fn badName(p: *Parser, blank: Tok, code: u32, comptime fmt: []const u8, blank_code: u32, blank_msg: []const u8) void {
@@ -906,6 +982,8 @@ const Parser = struct {
                 .kw_export, .kw_default, .kw_declare, .kw_abstract, .kw_public, .kw_private, .kw_protected, .kw_static, .kw_readonly, .kw_override, .kw_async, .kw_const, .kw_accessor, .kw_in, .kw_out => {},
                 else => break,
             }
+            // tsc's `tryParseModifier`: a second `static` is the member's name.
+            if (tok == .kw_static and m.static) break;
             if (!p.modifierApplies(tok)) break;
             switch (tok) {
                 .kw_export => m.@"export" = true,
@@ -971,6 +1049,7 @@ const Parser = struct {
         };
         n.start = s;
         n.mods = @bitCast(@as(u16, @bitCast(n.mods)) | @as(u16, @bitCast(mods)));
+        if (decorators.len > 0 and n.data != .func and n.data != .class) n.mods.decorated = true;
         return n;
     }
 
@@ -1018,6 +1097,7 @@ const Parser = struct {
                 return;
             }
             p.errHere(1144, "'{' or ';' expected.");
+            f.body_missing = true;
             return;
         }
         const save_a = p.in_async;
@@ -1143,11 +1223,15 @@ const Parser = struct {
     }
 
     fn parseParam(p: *Parser) *Node {
+        // tsc places this error at the full start of the modifiers, leading trivia included.
+        const full = p.prev_end;
         const s = p.lx.start;
         const decorators = p.parseDecorators();
         const mods = p.parseModifiers();
         var d = ast.Param{ .decorators = decorators, .name = undefined };
         d.dotdotdot = p.eat(.dot3);
+        if (p.t() == .kw_this and (decorators.len > 0 or mods != Mods{}))
+            p.lx.err(full, p.lx.start - full, 1433, "Neither decorators nor modifiers may be applied to 'this' parameters.");
         d.name = if (p.t() == .kw_this) p.identNode() else p.parseBindingName();
         d.ann_span.start = p.lx.start;
         d.ann_span.end = p.lx.start;
@@ -1291,6 +1375,8 @@ const Parser = struct {
         const mods = p.parseModifiers();
         const n = p.parseClassMemberRest(s, decorators, mods);
         n.mods = mods;
+        // Only methods, accessors and properties keep their decorators.
+        n.mods.decorated = decorators.len > 0 and n.data == .static_block;
         n.start = s;
         return n;
     }
@@ -1359,11 +1445,14 @@ const Parser = struct {
         if (p.t() == .assign) {
             p.next();
             const save_f = p.in_func;
+            const save_a = p.in_async;
             p.in_func = true;
+            p.in_async = false;
             d.init = p.parseAssignmentAllowIn();
             p.in_func = save_f;
+            p.in_async = save_a;
         }
-        p.semi();
+        p.semiAfterProperty(&d);
         return p.mk(s, .{ .property_decl = p.box(d) });
     }
 
@@ -1557,12 +1646,18 @@ const Parser = struct {
                 type_only = true;
                 p.next();
             }
+            // An import binds its local name, which a reserved word cannot be.
+            var local_start = p.lx.start;
+            var local_reserved = p.t().isReserved();
             var first = p.parseModuleExportName();
             var prop: ?*Node = null;
             if (p.eat(.kw_as)) {
                 prop = first;
+                local_start = p.lx.start;
+                local_reserved = p.t().isReserved();
                 first = p.parseModuleExportName();
             }
+            if (is_import and local_reserved) p.lx.err(local_start, first.end - local_start, 1003, "Identifier expected.");
             const d: Data = if (is_import)
                 .{ .import_spec = .{ .prop_name = prop, .name = first, .type_only = type_only } }
             else
@@ -1963,14 +2058,16 @@ const Parser = struct {
 
     fn isAwaitExpr(p: *Parser) bool {
         if (p.in_async) return true;
-        // Top-level await: outside any function, `await` followed by an expression start is the operator.
-        if (p.in_func) return false;
         const st = p.save();
         defer p.restore(st);
         p.next();
         if (p.lx.nl_before) return false;
+        // tsc's `nextTokenIsIdentifierOrKeywordOrLiteralOnSameLine`: the operator outside an await
+        // context, which the checker then reports.
+        if (p.in_func) return p.t() == .identifier or p.t().isKeyword() or p.t() == .numeric or p.t() == .bigint or p.t() == .string;
+        // Top-level await: outside any function, `await` followed by an expression start is the operator.
         return switch (p.t()) {
-            .identifier, .kw_new, .kw_this, .string, .numeric, .l_paren, .l_bracket, .kw_import, .no_subst_template, .template_head, .kw_await => true,
+            .identifier, .kw_new, .kw_this, .string, .numeric, .l_paren, .l_bracket, .kw_import, .no_subst_template, .template_head, .kw_await, .lt => true,
             else => p.t().isIdentifierLike(),
         };
     }
@@ -2807,8 +2904,50 @@ const Parser = struct {
         return p.mk(s, .{ .kw_type = k });
     }
 
+    /// `?T`, `!T`, `*` and `function(T): U`, or null when the type is one TypeScript spells too.
+    fn parseJsdocType(p: *Parser) ?*Node {
+        const s = p.lx.start;
+        switch (p.t()) {
+            .star => {
+                p.next();
+                return p.mk(s, .{ .kw_type = .any });
+            },
+            .bang => {
+                p.next();
+                return p.parsePostfixType();
+            },
+            .question => {
+                p.next();
+                if (p.t() == .eof or p.t() == .comma or p.t() == .r_paren) return p.mk(s, .{ .kw_type = .any });
+                const types = p.a.alloc(*Node, 2) catch oom();
+                types[0] = p.parsePostfixType();
+                types[1] = p.mk(s, .{ .kw_type = .null });
+                return p.mk(s, .{ .union_type = .{ .types = types } });
+            },
+            .kw_function => {
+                p.next();
+                p.expect(.l_paren);
+                var params: NodeList = .empty;
+                while (p.t() != .r_paren and p.t() != .eof) {
+                    const ps = p.lx.start;
+                    const rest = p.eat(.dot3);
+                    const elem = p.parseType();
+                    const name = p.mk(ps, .{ .identifier = std.fmt.allocPrint(p.a, "arg{d}", .{params.items.len}) catch oom() });
+                    const ty = if (rest) p.mk(ps, .{ .array_type = .{ .elem = elem } }) else elem;
+                    p.push(&params, p.mk(ps, .{ .param = p.box(ast.Param{ .name = name, .dotdotdot = rest, .type = ty, .question = p.eat(.assign) }) }));
+                    if (!p.eat(.comma)) break;
+                }
+                p.expect(.r_paren);
+                const ret = if (p.eat(.colon)) p.parseType() else p.mk(s, .{ .kw_type = .any });
+                return p.mk(s, .{ .func = p.box(ast.Func{ .kind = .function_type, .params = params.items, .ret = ret }) });
+            },
+            else => return null,
+        }
+    }
+
     fn parseNonArrayType(p: *Parser) *Node {
         const s = p.lx.start;
+        if (p.jsdoc) if (p.parseJsdocType()) |n| return n;
         switch (p.t()) {
             .kw_any => if (p.kwType(.any)) |n| return n,
             .kw_unknown => if (p.kwType(.unknown)) |n| return n,
@@ -3083,7 +3222,10 @@ const Parser = struct {
         f.type_params = p.parseTypeParams();
         f.params = p.parseParams();
         p.parseReturnAnnotation(&f, .colon);
-        p.typeMemberEnd();
+        // tsc's `parseFunctionBlockOrSemicolon`: an accessor keeps a body even here, for the checker to reject.
+        if ((kind == .getter_sig or kind == .setter_sig) and p.t() == .l_brace) {
+            p.parseFunctionBody(&f, false);
+        } else p.typeMemberEnd();
         return p.mk(s, .{ .func = p.box(f) });
     }
 };
