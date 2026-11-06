@@ -1,8 +1,8 @@
 # Roadmap
 
-Approved work that is not in `plan.md` yet.
+Approved work that is not in `plan.md` or `plan/` yet.
 
-**Nothing is waiting here (swept 2026-10-24).** Everything the previous roadmap pointed at has
+**Nothing is waiting here for `plan.md` (swept 2026-10-24).** Everything the previous roadmap pointed at has
 either landed or been promoted to a task card:
 
 - Phase 5 step 12 (c)–(f) residue → **T27** (class object / static-`this`), **T28** (generics
@@ -21,3 +21,12 @@ either landed or been promoted to a task card:
 
 `todo.md` lists open cloud-review rows only. Struck-through tasks stay in `plan.md` as
 one-line stubs; their evidence is in `done.md`.
+
+## stator-ts (`packages/transpiler`)
+
+Approved, not yet in `plan/`.
+
+- CommonJS emit.
+- `.d.ts` emit.
+- Source maps.
+- Decorator and target downleveling.
