@@ -64,6 +64,7 @@ import {
   mayRefuseWeakKey,
   iteratorBoxCall,
   collectionCall,
+  receiverCall,
 } from './helpers.ts';
 
 /** Rooted slot pair for an index-shaped node, claimed at counting time. */
@@ -544,7 +545,7 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
       }
       return emitter.finishStatement(
         parts,
-        `jsrt_call(${emitter.closureValue(cls.ctor.fn)}, ${1 + expr.args.length}, &${object})`,
+        receiverCall(emitter.closureValue(cls.ctor.fn), object, expr.args.length),
         object,
         expr.span,
       );
@@ -584,7 +585,7 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
           : emitter.methodCallee(expr, emitter.slotAt(base));
       return emitter.finishStatement(
         parts,
-        `${emitter.slotAt(base)} = jsrt_call(${callee}, ${1 + expr.args.length}, &${emitter.slotAt(base)})`,
+        `${emitter.slotAt(base)} = ${receiverCall(callee, emitter.slotAt(base), expr.args.length)}`,
         emitter.slotAt(base),
         expr.span,
       );

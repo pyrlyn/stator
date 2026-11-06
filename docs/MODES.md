@@ -590,10 +590,8 @@ is the non-Node spelling. What the binary answers:
   and `delete` are seen by every later read in the program. They do not reach the OS environment
   or child processes, because an object that forwards writes needs a `Proxy`, which the subset
   does not have.
-- **`exit(code)`** ends the process with `code` (the low 8 bits). The method takes the code:
-  calling it with no argument is the same shape, at the call, as a method call with no receiver
-  (docs/VALUE.md §4.16), so the no-argument form is the function export `exit()`, which uses
-  `exitCode` when the code is omitted, else 0. **`exitCode`** is `undefined` until the program
+- **`exit(code)`** ends the process with `code` (the low 8 bits), else `exitCode`, else 0.
+  **`exitCode`** is `undefined` until the program
   sets it; the status a normal end uses is set when the program assigns it.
 - **`memoryUsage()`** reports a real `rss`. `heapTotal`, `heapUsed`, `external` and
   `arrayBuffers` are 0.
@@ -602,12 +600,24 @@ is the non-Node spelling. What the binary answers:
   callback with typed parameters is passed as a closure that calls it.
 - **`stdout` and `stderr`** have `write(string | Uint8Array)`, which writes now and answers
   `true`, plus `fd`, `isTTY`, `columns` and `rows`. `isTTY` is `true` on a terminal and
-  `undefined` otherwise, as on Node. An encoding argument and a callback are not landed (an
-  omitted optional method parameter collides with the receiver, docs/VALUE.md §4.16). There are
+  `undefined` otherwise, as on Node. An encoding argument and a callback are not landed. There are
   no stream events: `node:events` and `node:stream` are N2, and so are `on`, `once` and `emit`
   on `process`. A string containing a NUL is written as bytes.
 - **`browser` and `recordreplay`** are not properties. `tsc` reads both. In `js` mode a missing
   property of the process object reads as `undefined`, which is what those checks test.
+
+**The globals `performance`, `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`,
+`setImmediate` and `clearImmediate`** (T11.6) come the same way: a free read of one is a named
+import from `node:perf_hooks` or `node:timers` (`NODE_GLOBALS` in `frontend/location.ts`), and a
+file that binds the name keeps its own. There is no event loop yet (N2). Each timer or immediate
+callback is a macrotask posted with `std/thread.runOnMain`, which the runtime runs only when the
+microtask queue is empty, so promise jobs and `nextTick` callbacks drain between any two of them,
+as on Node. The steps follow libuv's phase order: every timer due at the phase's loop time, in due
+order, then the immediates queued before the check phase began. When nothing is due, the main
+thread sleeps until the earliest timer, so a `std/thread` result that arrives during the sleep
+waits for it. From the main module a zero-delay timer runs before an immediate once its
+millisecond has passed; Node leaves that order to startup timing. `unref` keeps a timer from
+holding the program open, as on Node.
 
 ## 7. One pipeline, one gate
 

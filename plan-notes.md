@@ -14264,3 +14264,84 @@ apart until one caller can take the other's rule.
 
 The creator then chose to leave the 76 as they are. `pnpm run dupes` keeps failing on them until
 the switch, and the baseline is not grown to hide them.
+
+## 394. T11.6: `node:os`, `node:perf_hooks` and `node:timers`; the inliner shared nodes with its callee (2026-11-06)
+
+**Slice, not the Check.** `node:os` (14 of 23 members), `node:perf_hooks` (`performance`,
+`Performance` and `PerformanceEntry`, 16 of 69) and `node:timers` (6 of 7), with the globals
+`performance`, `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `setImmediate` and
+`clearImmediate` under `--node`. Slice N1 moves 25/37 → 30/37 in `docs/NODE.md`. Still open for
+the Check: `Buffer.from`/`toString`, `crypto.createHash`, `hrtime.bigint`, and the N2 `fs`
+watchers.
+
+**`std/os` grows `kernelName`, `kernelVersion` and `machine`.** One Zig export,
+`jsrt_std_os_uname(field)`, answers the four `uname(2)` fields Node reads through libuv's
+`uv_os_uname`; `jsrt_std_os_release` now calls it with field 1.
+
+**The card said a real delay is not-yet; it lands.** T11.6 read: "Without a loop (N2), `nextTick`
+and zero-delay timers drain after `main` like microtasks; a real delay is not-yet." A microtask
+drain cannot order timers against promise jobs the way Node does, and `std/thread.runOnMain`
+already gives a macrotask: the runtime runs a posted callback only when the microtask queue is
+empty. So `node:timers` is a chain of `runOnMain` steps in libuv's phase order, and when nothing
+is due the step sleeps until the earliest timer. Delays are real. The sleep blocks the main thread,
+which without I/O misses nothing but a `std/thread` result that arrives during it. The card text is
+edited to match. `main` drains the queue only when `usedAsync` is set, and a program whose one
+event source is a post never set it, so the extern call to `jsrt_thread_run_on_main` now sets it
+(`codegen/runtime_calls.ts`, and `runtime_calls.zig` in the Zig core).
+
+**Bug: the inliner shared body nodes with the callee.** Importing `node:perf_hooks` before
+`node:process` panicked at startup with `STA2006: calling a non-function at std/process.ts:37`.
+`inlineCall` substituted parameters with `rewriteExpression`, which hands back the SAME node when
+nothing under it changed. `hrtimeNs()` has no parameters, so the call site received the callee's own
+`extern-call` node. The emitter keys frame slots by node identity, and the module-level copy used
+the slot base of the function body: its result went to `JSRT_GLOBAL(1)`, which held the
+`__stdStrings` closure. The inliner now copies every node it moves (`passes/inline.ts`, and
+`passes/inline.zig`), and `unit/passes.test.ts` asserts an inlined body shares no node with the
+function it came from.
+
+**Proof.** Goldens `ts/node_os`, `js/node_os`, `ts/node_perf_hooks`, `ts/node_timers` and
+`js/node_timers` match Node 26.7.0 byte for byte. Times print as shapes, and the timer golden
+schedules far enough apart (10, 22, 35, 60, 90 ms) that the order is the same on a loaded machine.
+Decision tests: `subset_node_os_node_ts` / `_js` (static), `subset_node_perf_hooks_node_ts` /
+`_js` and `subset_node_timers_node_ts` / `_js` (dynamic), and `subset_node_timers_ts` (`STA0012`
+without `--node`). Claims are in `node_coverage.json`, and `docs/NODE.md` regenerates in the same
+change.
+
+**Zig core.** The three compiler changes are mirrored in `packages/compiler-zig`:
+`frontend/location.zig` gets the globals table, and the inliner and extern-call changes are copied.
+`pnpm run test:zigdiff` keeps passes and codegen identical (1161/1161 and 1160/1160). `lower.different`
+moves 10 → 11, and the new difference is `js/node_timers.js`. It is the type-table difference
+`js/node_module.js` already had, at the same place, and this fixture only exposes it again. The
+baseline records that.
+
+## 395. Method and constructor calls guessed the receiver from the argument count (2026-11-06)
+
+**Measured.** In this program, the pinned Node prints `6`, and this compiler printed `1`:
+
+```ts
+class P { m(name: string, a?: string): number { return a === undefined ? name.length + 3 : 1; } }
+console.log(new P().m('xyz'));
+```
+
+`new Q()` with an optional constructor parameter failed the same way. It panicked `STA2001` because
+the new object landed in the parameter.
+
+**Cause.** A direct method call, a constructor and a `super(…)` call emitted
+`jsrt_call(callee, 1 + args, &receiverSlot)`. For a closure with `has_receiver`, `jsrt_call_at`
+decides from `argc == arity + 1` whether argument zero is the receiver (plan-notes 208). That
+guess is right for a method value, `g(a)`. It is wrong for any receiver call that passes fewer or
+more arguments than the method declares. The receiver then became the first argument and `this`
+became `undefined`.
+
+**Fix.** These three call shapes now emit
+`jsrt_call_with_this(callee, receiver, args, &receiver + 1)`. The runtime already has it for
+calls whose receiver is known, so no new runtime code is needed. It copies the arguments once,
+which `jsrt_call_at`'s shift already did. The helper is `receiverCall` in `codegen/helpers.ts`, and
+`helpers.zig` mirrors it.
+
+**Two documented limits go away.** `process.exit()` with no argument was routed to a function
+export, and `stdout.write`'s encoding argument was called impossible "because an omitted method
+parameter collides with the receiver". The first is now the method itself (`exit(code?)`). The
+second is now only not landed. `docs/MODES.md` §6, `docs/SUBSET.md` and `packages/node/src/process.ts`
+are edited to match. Goldens `ts/class_call_arity` (fewer arguments) and `js/class_call_arity` (fewer and
+more) cover methods, constructors and `super`, and `ts/node_process` calls `process.exit()`.

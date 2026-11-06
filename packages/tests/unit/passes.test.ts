@@ -304,6 +304,24 @@ test('an identifier argument inlines too, and the parameter is substituted every
   assert.deepEqual(names, ['x', 'x']);
 });
 
+test('an inlined body shares no node with the function it came from', () => {
+  // The emitter keys frame slots by node identity, so a body node that is also the callee's would
+  // carry the callee's slot numbers into the call site (plan-notes 394).
+  const { module } = lowerSource(`
+    function seven(): number {
+      return 3 + 4;
+    }
+    const x = seven();
+    console.log(x);
+  `);
+  const inlined = inlineCalls(module);
+  assert.ok(!kinds(inlined).includes('call'));
+  // The declaration is still there (the shake runs later), so the sum appears twice.
+  const sums = hirNodes(inlined).filter((node) => node.kind === 'binary-op');
+  assert.equal(sums.length, 2);
+  assert.equal(new Set(sums).size, 2);
+});
+
 test('an argument that could have a side effect is not inlined', () => {
   // A parameter used twice would duplicate the call, and one used zero times would delete it.
   // Neither is a risk worth an analysis when the fix is to decline.

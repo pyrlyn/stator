@@ -44,8 +44,25 @@ fn parkCopy(text: []const u8) f64 {
 
 /// `uname(2)`'s release field: the kernel version (Darwin's, not macOS's marketing version).
 export fn jsrt_std_os_release() f64 {
+    return jsrt_std_os_uname(1);
+}
+
+/// One `uname(2)` field: 0 sysname (`os.type()`), 1 release (`os.release()`), 2 version
+/// (`os.version()`), 3 machine (`os.machine()`). Node reads these four through libuv's
+/// `uv_os_uname`, which copies the same fields.
+export fn jsrt_std_os_uname(field: f64) f64 {
     const uts = std.posix.uname();
-    return parkCopy(std.mem.sliceTo(&uts.release, 0));
+    const text: []const u8 = if (field == 0)
+        std.mem.sliceTo(&uts.sysname, 0)
+    else if (field == 1)
+        std.mem.sliceTo(&uts.release, 0)
+    else if (field == 2)
+        std.mem.sliceTo(&uts.version, 0)
+    else if (field == 3)
+        std.mem.sliceTo(&uts.machine, 0)
+    else
+        return root.fail("EINVAL");
+    return parkCopy(text);
 }
 
 export fn jsrt_std_os_hostname() f64 {
