@@ -2,12 +2,21 @@
 // and has to behave the same on Node and Bun.
 import { isDeepStrictEqual, inspect } from 'node:util';
 
-const nameFilter = process.env.STATOR_TS_TEST_NAME ? new RegExp(process.env.STATOR_TS_TEST_NAME) : null;
+const nameFilter = process.env.STATOR_TS_TEST_NAME
+  ? new RegExp(process.env.STATOR_TS_TEST_NAME)
+  : null;
 const defaultTimeout = Number(process.env.STATOR_TS_TEST_TIMEOUT || 5000);
 
 const newSuite = (name, parent, mode) => ({
-  name, parent, mode, tests: [], suites: [],
-  beforeAll: [], afterAll: [], beforeEach: [], afterEach: [],
+  name,
+  parent,
+  mode,
+  tests: [],
+  suites: [],
+  beforeAll: [],
+  afterAll: [],
+  beforeEach: [],
+  afterEach: [],
 });
 const root = newSuite('', null, 'run');
 let current = root;
@@ -43,11 +52,17 @@ test.todo = (name) => addTest(name, null, 'skip');
 test.each = (rows) => (name, fn) => {
   for (const row of rows) {
     const args = Array.isArray(row) ? row : [row];
-    addTest(name.replace(/%[sdiofj]/g, () => String(args[0])), () => fn(...args), 'run');
+    addTest(
+      name.replace(/%[sdiofj]/g, () => String(args[0])),
+      () => fn(...args),
+      'run',
+    );
   }
 };
 
-const hook = (key) => (fn) => { current[key].push(fn); };
+const hook = (key) => (fn) => {
+  current[key].push(fn);
+};
 
 const show = (v) => inspect(v, { depth: 6, breakLength: 80 });
 
@@ -64,7 +79,8 @@ function makeExpect(actual, negated, wrap) {
   const matchers = {
     toBe: (e) => check(Object.is(actual, e), `${show(actual)} toBe ${show(e)}`),
     toEqual: (e) => check(isDeepStrictEqual(actual, e), `${show(actual)} toEqual ${show(e)}`),
-    toStrictEqual: (e) => check(isDeepStrictEqual(actual, e), `${show(actual)} toStrictEqual ${show(e)}`),
+    toStrictEqual: (e) =>
+      check(isDeepStrictEqual(actual, e), `${show(actual)} toStrictEqual ${show(e)}`),
     toBeTruthy: () => check(!!actual, `${show(actual)} toBeTruthy`),
     toBeFalsy: () => check(!actual, `${show(actual)} toBeFalsy`),
     toBeNull: () => check(actual === null, `${show(actual)} toBeNull`),
@@ -72,28 +88,63 @@ function makeExpect(actual, negated, wrap) {
     toBeDefined: () => check(actual !== undefined, `${show(actual)} toBeDefined`),
     toBeNaN: () => check(Number.isNaN(actual), `${show(actual)} toBeNaN`),
     toBeGreaterThan: (e) => check(actual > e, `${show(actual)} toBeGreaterThan ${show(e)}`),
-    toBeGreaterThanOrEqual: (e) => check(actual >= e, `${show(actual)} toBeGreaterThanOrEqual ${show(e)}`),
+    toBeGreaterThanOrEqual: (e) =>
+      check(actual >= e, `${show(actual)} toBeGreaterThanOrEqual ${show(e)}`),
     toBeLessThan: (e) => check(actual < e, `${show(actual)} toBeLessThan ${show(e)}`),
-    toBeLessThanOrEqual: (e) => check(actual <= e, `${show(actual)} toBeLessThanOrEqual ${show(e)}`),
-    toBeCloseTo: (e, digits = 2) => check(Math.abs(actual - e) < 10 ** -digits / 2, `${show(actual)} toBeCloseTo ${show(e)}`),
+    toBeLessThanOrEqual: (e) =>
+      check(actual <= e, `${show(actual)} toBeLessThanOrEqual ${show(e)}`),
+    toBeCloseTo: (e, digits = 2) =>
+      check(Math.abs(actual - e) < 10 ** -digits / 2, `${show(actual)} toBeCloseTo ${show(e)}`),
     toBeInstanceOf: (e) => check(actual instanceof e, `${show(actual)} toBeInstanceOf ${e?.name}`),
     toHaveLength: (e) => check(actual?.length === e, `${show(actual)} toHaveLength ${e}`),
     toHaveProperty: (k, ...v) => {
-      const got = String(k).split('.').reduce((o, p) => (o == null ? undefined : o[p]), actual);
-      check(got !== undefined && (v.length === 0 || isDeepStrictEqual(got, v[0])), `${show(actual)} toHaveProperty ${k}`);
+      const got = String(k)
+        .split('.')
+        .reduce((o, p) => (o === null || o === undefined ? undefined : o[p]), actual);
+      check(
+        got !== undefined && (v.length === 0 || isDeepStrictEqual(got, v[0])),
+        `${show(actual)} toHaveProperty ${k}`,
+      );
     },
-    toContain: (e) => check(typeof actual === 'string' ? actual.includes(e) : [...actual].includes(e), `${show(actual)} toContain ${show(e)}`),
-    toContainEqual: (e) => check([...actual].some((x) => isDeepStrictEqual(x, e)), `${show(actual)} toContainEqual ${show(e)}`),
-    toMatch: (e) => check(e instanceof RegExp ? e.test(actual) : String(actual).includes(e), `${show(actual)} toMatch ${show(e)}`),
+    toContain: (e) =>
+      check(
+        typeof actual === 'string' ? actual.includes(e) : [...actual].includes(e),
+        `${show(actual)} toContain ${show(e)}`,
+      ),
+    toContainEqual: (e) =>
+      check(
+        [...actual].some((x) => isDeepStrictEqual(x, e)),
+        `${show(actual)} toContainEqual ${show(e)}`,
+      ),
+    toMatch: (e) =>
+      check(
+        e instanceof RegExp ? e.test(actual) : String(actual).includes(e),
+        `${show(actual)} toMatch ${show(e)}`,
+      ),
     toMatchObject: (e) => check(subset(actual, e), `${show(actual)} toMatchObject ${show(e)}`),
     toThrow: (e) => {
       let thrown;
       let threw = false;
-      if (wrap === 'rejects') { thrown = actual; threw = true; }
-      else { try { actual(); } catch (x) { threw = true; thrown = x; } }
+      if (wrap === 'rejects') {
+        thrown = actual;
+        threw = true;
+      } else {
+        try {
+          actual();
+        } catch (x) {
+          threw = true;
+          thrown = x;
+        }
+      }
       const message = thrown?.message ?? String(thrown);
-      const ok = threw && (e === undefined || (e instanceof RegExp ? e.test(message)
-        : typeof e === 'string' ? message.includes(e) : thrown instanceof e));
+      const ok =
+        threw &&
+        (e === undefined ||
+          (e instanceof RegExp
+            ? e.test(message)
+            : typeof e === 'string'
+              ? message.includes(e)
+              : thrown instanceof e));
       check(ok, `function toThrow ${show(e)}, threw ${threw ? show(thrown) : 'nothing'}`);
     },
   };
@@ -103,16 +154,26 @@ function makeExpect(actual, negated, wrap) {
 function expect(actual) {
   const out = makeExpect(actual, false);
   out.not = makeExpect(actual, true);
-  const lift = (settle) => (negated) => new Proxy({}, {
-    get: (_, key) => async (...args) => {
-      const m = makeExpect(await settle(), negated, settle.wrap);
-      return m[key](...args);
-    },
-  });
+  const lift = (settle) => (negated) =>
+    new Proxy(
+      {},
+      {
+        get:
+          (_, key) =>
+          async (...args) => {
+            const m = makeExpect(await settle(), negated, settle.wrap);
+            return m[key](...args);
+          },
+      },
+    );
   const resolves = async () => actual;
   const rejects = async () => {
     let value;
-    try { value = await actual; } catch (e) { return e; }
+    try {
+      value = await actual;
+    } catch (e) {
+      return e;
+    }
     throw new Error(`expected a rejection, resolved with ${show(value)}`);
   };
   rejects.wrap = 'rejects';
@@ -124,7 +185,10 @@ function expect(actual) {
 function withTimeout(fn, ms, label) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms} ms`)), ms);
-    Promise.resolve().then(fn).then(resolve, reject).finally(() => clearTimeout(timer));
+    Promise.resolve()
+      .then(fn)
+      .then(resolve, reject)
+      .finally(() => clearTimeout(timer));
   });
 }
 
@@ -136,14 +200,21 @@ function report(name, err) {
 }
 
 const chain = (s) => (s ? [...chain(s.parent), s] : []);
-const fullName = (s, t) => [...chain(s).map((x) => x.name).filter(Boolean), t.name].join(' ');
+const fullName = (s, t) =>
+  [
+    ...chain(s)
+      .map((x) => x.name)
+      .filter(Boolean),
+    t.name,
+  ].join(' ');
 
 function selected(s, t) {
   if (hasOnly && t.mode !== 'only' && !chain(s).some((x) => x.mode === 'only')) return false;
   return !nameFilter || nameFilter.test(fullName(s, t));
 }
 
-const anyRunnable = (s) => s.tests.some((t) => t.mode !== 'skip' && selected(s, t)) || s.suites.some(anyRunnable);
+const anyRunnable = (s) =>
+  s.tests.some((t) => t.mode !== 'skip' && selected(s, t)) || s.suites.some(anyRunnable);
 
 async function runTest(s, t) {
   const name = fullName(s, t);
@@ -157,14 +228,21 @@ async function runTest(s, t) {
   }
   for (const x of chain(s).reverse()) {
     for (const h of x.afterEach) {
-      try { await withTimeout(h, ms, 'afterEach'); } catch (e) { report(`${name} (afterEach)`, e); }
+      try {
+        await withTimeout(h, ms, 'afterEach');
+      } catch (e) {
+        report(`${name} (afterEach)`, e);
+      }
     }
   }
 }
 
 async function runSuite(s) {
   if (!anyRunnable(s)) {
-    const skip = (x) => { counts.skipped += x.tests.length; x.suites.forEach(skip); };
+    const skip = (x) => {
+      counts.skipped += x.tests.length;
+      x.suites.forEach(skip);
+    };
     skip(s);
     return;
   }
@@ -180,14 +258,23 @@ async function runSuite(s) {
   }
   for (const c of s.suites) await runSuite(c);
   for (const h of s.afterAll) {
-    try { await withTimeout(h, defaultTimeout, 'afterAll'); } catch (e) { report(`${s.name || 'file'} (afterAll)`, e); }
+    try {
+      await withTimeout(h, defaultTimeout, 'afterAll');
+    } catch (e) {
+      report(`${s.name || 'file'} (afterAll)`, e);
+    }
   }
 }
 
 Object.assign(globalThis, {
-  describe, test, it: test, expect,
-  beforeAll: hook('beforeAll'), afterAll: hook('afterAll'),
-  beforeEach: hook('beforeEach'), afterEach: hook('afterEach'),
+  describe,
+  test,
+  it: test,
+  expect,
+  beforeAll: hook('beforeAll'),
+  afterAll: hook('afterAll'),
+  beforeEach: hook('beforeEach'),
+  afterEach: hook('afterEach'),
 });
 
 let started = false;
