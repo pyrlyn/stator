@@ -13,7 +13,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  CLI,
+  RUNTIME_ARCHIVE,
+  RUNTIME_LIB_DIR,
   archiveSystemFlags,
+  expectOutput,
   linkConsumer,
   makeFail,
   run,
@@ -21,10 +25,7 @@ import {
 } from '../../support/c-runner.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const CLI = join(HERE, '..', '..', '..', 'compiler', 'src', 'cli', 'main.ts');
-const RUNTIME_LIB_DIR = join(HERE, '..', '..', '..', 'runtime', 'build');
 const RUNTIME_INCLUDE = join(HERE, '..', '..', '..', 'runtime', 'include');
-const RUNTIME_ARCHIVE = join(RUNTIME_LIB_DIR, 'libjsrt.a');
 
 const fail: Fail = makeFail('ffi c-consumer');
 
@@ -94,11 +95,7 @@ function main(): void {
     linkConsumer('clang', linkArgs, fail);
     const output = run(app, [], 'consumer app', fail);
     const expected = readFileSync(join(HERE, 'expected.txt'), 'utf8');
-    if (output !== expected) {
-      fail(
-        `output differs\n  actual:   ${JSON.stringify(output)}\n  expected: ${JSON.stringify(expected)}`,
-      );
-    }
+    expectOutput('', output, expected, fail);
     process.stdout.write('ffi c-consumer: ok\n');
   } finally {
     rmSync(work, { recursive: true, force: true });
