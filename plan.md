@@ -4,49 +4,7 @@ https://github.com/listepo/stator
 
 An ahead-of-time compiler from TypeScript and JavaScript to native binaries.
 
-| # | Status | Priority | Complexity | Readiness | Agent |
-| --- | --- | --- | --- | --- | --- |
-| T15 | done | P2 | 1 | 100% | Cursor / grok 4.7 |
-| T16 | done | P0 | 3 | 100% | Cursor / grok 4.7 |
-| T17 | done | P1 | 1 | 100% | Cursor / grok 4.7 |
-| T18 | done | P1 | 3 | 100% | Cursor / grok 4.7 |
-| T19 | done | P3 | 1 | 100% | Cursor / grok 4.7 |
-| T20 | done | P2 | 2 | 100% | Cursor / grok 4.7 |
-| T27 | open (narrow slice landed) | P1 | 5 | 100% | plan-notes 382 |
-| T28 | open | P2 | 4 | 100% | — |
-| T29 | open | P2 | 2 | 100% | — |
-| T30 | open | P2 | 3 | 100% | — |
-| T31 | open | P3 | 1 | 100% | — |
-| ~~T32~~ | done (already landed) | P2 | 3 | 100% | plan-notes 283, 373, 382 |
-| T33 | open | P3 | 2 | 100% | — |
-| T34 | open | P2 | 3 | 100% | — |
-| T41 | open | P1 | 5 | 70% | Claude Code / claude-opus-5-5 |
-
-### ~~T15. Required root docs~~
-
-Done — evidence in `done.md`.
-
-### ~~T16. Systemic `jsrt_shape_key` leak on every dynamic property read/write~~
-
-Done — evidence in `done.md`.
-
-### ~~T17. `"".repeat(hugeCount)` hangs and performs an out-of-range double→uint32 conversion~~
-
-Done — evidence in `done.md`.
-
-### ~~T18. GC rooting hazards: boxed values held in C locals across allocating calls~~
-
-Done — evidence in `done.md`.
-
-### ~~T19. Small runtime fixes: RegExp NULL-capture and `replace_impl` double scan~~
-
-Done — evidence in `done.md`.
-
-### ~~T20. Tests for the runtime edges found by the audit~~
-
-Done — evidence in `done.md`.
-
-> **Audience:** AI agents (and humans) executing this project. This file is self-contained: read it top to bottom before doing any task. Every task has numbered **Steps** and a **Check** — do not mark a task done until its Check passes. Findings that contradict this plan go into `plan-notes.md` (repo root), not silently into code. Operational conventions (commands, coding standards, workflow) live in `AGENTS.md`; this file is the roadmap and the spec.
+> **Audience:** AI agents (and humans) executing this project. This file is self-contained: read it top to bottom before doing any task. Tasks live in `plan/<id>/task.md` (see `plan/README.md`); every task has numbered **Steps** and a **Check** — do not mark a task done until its Check passes. Findings that contradict this plan go into `plan-notes.md` (repo root), not silently into code. Operational conventions (commands, coding standards, workflow) live in `AGENTS.md`; this file is the spec; `plan/` holds the tasks.
 >
 > **Name:** **Stator** (formerly "Ketch" — renamed 2026-08-29; "Ketch" collides with an established company). A stator is the static half of an electric motor: it doesn't move, and it's what makes the rotor spin. The compiler's two modes mirror stator/rotor — the static `ts` mode and the dynamic `js` mode. CLI binary: `stator`.
 >
@@ -56,412 +14,16 @@ Done — evidence in `done.md`.
 
 ---
 
-## Cloud review findings (2026-10-08)
-
-New bugs, dead code and moves from a read-only Cursor cloud review of `main` at `ccf9818` (agent `bc-00769179-8c19-518a-869c-66b0c6473943`; full report: `cloud/stator.md` in the private `listepo/roadmap` repo). They take ids T20–T26, after T17 (`done.md`); T15, T16, T18 and T19 are left free because the review's source list uses those labels for other stator items. Ordered P0, P1, P2. **confirmed** means seen in the tree or in GitHub Actions logs; **suspected** means plausible but not proven. Line numbers are as of the review. Nothing here is scheduled into a phase yet: to take one, give it Steps and a Check per §15.
-
-| ID | Priority | Kind | Status | Where | Fix |
-| --- | --- | --- | --- | --- | --- |
-| ~~T20~~ | P0 | bug | fixed | plan-notes 353, 364 | `ci.yml` runs on `push` to `main`, so a merge has a test workflow and `revert-on-failure` can fire. |
-| ~~T21~~ | P0 | bug | fixed | plan-notes 370 | T17 was merged with red CI (`pipeline` failed in 0 s, `frontend (windows/arm64)` failed), so required checks were missing or bypassable. `protect-main` now requires `pipeline / gate`, `static analysis`, `frontend (linux/x64)` and both Windows frontend legs; the desktop matrix name bug that made those legs unmatchable is fixed. |
-| ~~T22~~ | P0 | move | fixed | plan-notes 353, 364; #158 | `pipeline.yml` calls `pyrlyn/ci/.github/workflows/ci.yml@main`. A SHA pin of that caller fails `no-pinned-ci`. |
-| ~~T23~~ | P1 | bug | fixed | plan-notes 354 | The official win-arm64 Node is cross-compiled without a startup snapshot, so `util.format` sees seven later globals. The test follows `node_use_node_snapshot` and still fails on any other difference. |
-| ~~T24~~ | P1 | move | fixed | plan-notes 371 | Split the C emitter by HIR family (expressions, statements, classes, closures, runtime calls); it is the merge bottleneck. |
-| ~~T25~~ | P2 | bug | fixed | plan-notes 353, 364 | The repo map names QuickJS-NG only. `docs/TOOLCHAIN.md` says Ryū is not vendored; fetching it stays on §12. |
-| ~~T26~~ | P2 | dead code | fixed | plan-notes 353, 364 | `memfs` is gone from both package manifests. The custom-host comments say "in-memory CompilerHost". |
-
-Already tracked here, not added again: moving number printing to the vendored Ryū C code (the review's move M3) landed as T33 (plan-notes 385).
-
-### T21. Required status checks on `main` (cloud review)
-
-The other cloud-review rows were struck without Steps and a Check because they needed no change.
-T21 is a live GitHub-state change, so it gets both.
-
-**Steps.**
-
-1. Fix the `frontend-desktop` matrix in `.github/workflows/ci.yml`: a leading space in the JSON
-   key (`" platform"`) left `matrix.platform` empty, so the Windows/macOS legs reported as
-   `frontend (/x64)` / `frontend (/arm64)` — names no ruleset context can match. Trailing spaces
-   in the `os` labels go in the same edit.
-2. Update the `protect-main` ruleset (`pyrlyn/stator`, id 24341905) so
-   `required_status_checks` is exactly: `pipeline / gate`, `static analysis`,
-   `frontend (linux/x64)`, `frontend (windows/x64)`, `frontend (windows/arm64)`.
-   (Apply via `gh api -X PUT repositories/1353641814/rulesets/24341905` — the `listepo/stator`
-   alias 307-redirects and `gh` will not follow a redirected PUT.)
-3. Leave `frontend (macos/arm64)` and the `-macos` twins **unrequired**: when the org variable
-   `MACOS_CI_DISABLED` is true, the macOS matrix entry is removed (not skipped), so a required
-   macOS context would block every PR with a check that never reports. The `if:`-gated
-   `-macos` jobs report `skipped` (success for a required check) when the variable is true;
-   the matrix-excluded desktop legs report nothing.
-4. Do **not** reintroduce the `repo-settings` caller (#170/#171): it never had
-   `REPO_ADMIN_TOKEN` and failed HTTP 401. Re-applying the ruleset after an accidental edit is
-   the `gh api` PUT above, not a workflow.
-
-**Check.**
-
-```
-gh api repos/pyrlyn/stator/rulesets/24341905 \
-  --jq '[.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context]'
-```
-
-Must print exactly `["pipeline / gate","static analysis","frontend (linux/x64)","frontend (windows/x64)","frontend (windows/arm64)"]`, and a PR whose `static analysis` or a Windows `frontend` leg is red must show merge blocked (admin bypass remains available on PRs only — actor `RepositoryRole` admin, `bypass_mode: pull_request`).
-
-Not added: exposing `ffi-gen` as a `stator ffi-gen` subcommand is optional, and the review says to keep it in-tree as it is; the identity string methods (`jsrt_string_to_string`, `jsrt_string_value_of`) are used through the method table.
-
----
-
-## Open work cards from the 2026-10-24 roadmap/ideas sweep (T27–T35)
-
-`roadmap.md` held no unfiled approved work and `ideas.md` holds no unapproved ideas. What the
-roadmap *pointed at* was open residue still living only as prose inside finished phases. Each
-card below is one of those residues promoted to a task with Steps and a Check (§15). Difficulty
-is the `[Dn]` legend in §14. These cards are **not** a new phase: work them in card order
-unless a dependency line says otherwise. Phase 8 (§11) stays gated and is not carded here.
-
-### T27. The class object — opaque class values and `this` in a static method **[D5 · P1]**
-
-Phase 5 step 12(d)/(e) residue. The in-place spellings (`new K`, `K.static`, `o instanceof K`,
-alias formation) work; anything else that needs to *hold* a class is refused at the gate
-(`gate.ts` "using a class as a value"). `this` inside a static **method** is the same object
-(field initializers and `static {}` already erase to static bindings — plan-notes 373).
-
-Steps:
-1. **Design first (§15.6):** `docs/SUBSET.md` + `docs/VALUE.md` gain the class-object model —
-   what a class value *is* (descriptor + constructor function + prototype slot + static table),
-   identity (`C === D`), and which members a class object exposes in v0 (`name`, `prototype`,
-   static fields/methods; `length` optional).
-2. HIR: a `class-object` expression node (or a documented refusal list if v0 admits only
-   `C.name` / `C.static` as reads — decide and write it down).
-3. Lowering + codegen: materialize the descriptor as a value; `C.name` folds to the display
-   name; a static read through a class value routes to the static table.
-4. `this` in a static method erases to the defining class's static binding **only** when the
-   method cannot be reached through a subclass (`S.m()` vs `T.m()`); otherwise the call passes
-   the reached-through class. Document the rule; implement it.
-5. Decision tests both modes + goldens (`class_object_name`, `static_this_method`) byte-for-byte
-   vs Node. Flip every `@expected-fail` in the same commit.
-
-**Check:** `stator explain` on a fixture that stores `const K = C` and reads `K.name` reports
-`static` (or `dynamic` if the card chose the value path) with no `STA1214`; goldens match the
-pinned Node; `pnpm run test:subset` shows the 12(d)/(e) class-value rows out of expected-fail.
-
-**Blocked on nothing.** Narrow slice allowed: land `C.name` + static reads first and leave
-`C.prototype` not-yet with a named code (then the Check covers the landed subset and the
-remainder is recorded here).
-
-**Narrow slice landed 2026-10-24 (plan-notes 382).** `docs/VALUE.md` §4.26 + `docs/SUBSET.md`
-class-object row; `C.name` / `K.name` folds to the display name (verdict `static`); `K.static`
-keeps alias erasure; `C.prototype` stays `STA1214` ("the prototype surface", Phase 8). Fixtures
-`subset_class_object_name_*` / `subset_class_object_prototype_*`, goldens `class_object_name` both
-modes. **`typeof C` / `typeof K` folds to `"function"` landed 2026-10-25 (plan-notes 387)** beside
-the `C.name` fold (no class object built); fixtures `subset_class_typeof_*`, goldens `class_typeof`
-both modes. **Remainder (this card keeps its number and title):** materializing a class object as a
-value (`f(C)`, `console.log(K)`, `K.length`, `C === D` observability), static reads
-through a *materialized* value (`ClassValue` + `staticProps` / `JSRTClass.statics` population),
-`this` in a static method (step 4), and `C.prototype` itself. HIR `ClassValue`/`NewValue`/
-`InstanceOfValue` and the runtime class-object entries stay declared but unreachable for those
-surfaces (plan-notes 283).
-
-### T28. Generics residue: homeless arrows, self-application, `instanceof` a generic class **[D4]**
-
-Phase 5 step 12(f) residue. Module-scope `const f = <T>(x: T) => x` already specializes
-(plan-notes 280/379). Still refused with named `STA1214`s: an arrow in `let` / a branch / a
-spread / a constructor argument (no single parameter type); a generic that is returned or
-stored (dynamic tier); a generic call at a generic type; `instanceof` against a generic class
-(one descriptor per tuple).
-
-**Landed 2026-10-24 (plan-notes 386).** `docs/HIR.md` §7 states the specialization-key rule
-(position key `name@file#offset` for block-homed `const` / single-assignment `let`; module-scope
-keeps the plain name). Block-homed slice is `static` (`subset_generic_block_const_*`; nesting
-and single-assignment-let fixtures flipped). Every remaining shape's message names its blocker.
-**Remainder (this card keeps its number and title):** `instanceof` against a generic class —
-the comparison-site tuple slice was tried and reverted (STA4054/STA4048 under a generic
-subclass; plan-notes 386); branch / spread / ctor-argument homeless arrows stay refused with
-their named blockers; goldens for the landed slice not added (subset decision tests cover it).
-**Check is met for the landed subset and the named refusals.**
-
-Steps:
-1. Write the specialization-key rule for a **block-homed** generic (block `const`/`let` with
-   exactly one assignment) in `docs/HIR.md` — what the key is when no parameter type exists
-   (the variable's declared/inferred generic signature, or a canonical tuple). If that rule
-   cannot be sound, keep the refusal and say so in the doc rather than in code comments.
-2. Land the block-`const`/single-assignment-`let` slice under that rule (or confirm the refusal
-   and skip to 3).
-3. `instanceof` against a generic class: specialize the descriptor per tuple at the comparison
-   site, or refuse with a code that names the one-descriptor-per-tuple blocker.
-4. Decision tests both modes; goldens where landed; every remaining shape's message names its
-   blocker (never a bare "not yet supported").
-
-**Check:** `gate.ts` emits no unnamed `STA1214` for the shapes in this card's list; goldens for
-any landed slice match Node byte-for-byte; `docs/HIR.md` §on generics states the keying rule.
-
-### T29. Nested rest-patterns and defaults beyond one level **[D2]**
-
-Step 12a remainder after plan-notes 379/380. `isSimpleBindingPattern` accepts nested
-object/array + rest + defaults at any depth; still refused precisely: a rest *pattern*
-(`...{a}` / `...[a]`), a computed key in a pattern, object rest over a no-fixed-layout value.
-
-Steps:
-1. Land rest-pattern (`const { a: { ...r } } = o` already landed as object rest; the remainder
-   is array/object **rest elements inside nested patterns** and rest-pattern as a whole).
-2. Computed keys in binding patterns (`const { [k]: v } = o`) — decide static-key only or
-   dynamic; write it in `docs/SUBSET.md`.
-3. Object rest over a dynamic/unknown source: route through the shape table (the spread twin).
-
-**Check:** `subset_nested_destructuring_*` and new `subset_nested_rest_*` rows are `static` or
-`dynamic` (not `expected-fail`) for every shape this card names; goldens match Node; any
-still-refused shape has a message naming the construct.
-
-### T30. Task 6.16 — clone baseline to zero **[D3]**
-
-`.jscpd-baseline.json` is still debt (last measured **129** fingerprints after plan-notes 381;
-the Check wants the baseline *empty*). Families still open per that note: `gate.ts`/`generics.ts`
-`ts.is*` lists, array switch cases, `jsrt_string_ops`, `hir/verify`, `jsrt_print`, `jsrt_date`.
-
-Steps:
-1. One PR per family: extract the helper at the responsible layer (no `dupes` baseline growth
-   in any commit; each PR runs `pnpm run dupes:baseline` and the file must shrink).
-2. When the last family is gone, **delete** `.jscpd-baseline.json` and the `dupes:baseline`
-   script path's baseline argument (or leave the script running with a missing/empty baseline —
-   whatever `jscpd` treats as "no baseline"; document the choice in `AGENTS.md` golden rule 10).
-3. Keep `pnpm run dupes` in `ci` green with zero clones.
-
-**Check:** `pnpm run dupes` exits 0 with no baseline file (or an empty one); the clone count in
-its output is 0; `pnpm run test` still green.
-
-### T31. Task 6.3 noise floor on the weekly runner's machine **[D1]**
-
-The 20% perf gate stands on a 7.4%–14.4% spread measured on **other** hosts (plan-notes 246/374).
-The Check wants repeats on the machine that runs the weekly job.
-
-Steps:
-1. On that host: one commit, ≥5 `pnpm run bench` repeats; record geomeans + spread in
-   `plan-notes.md` (host, CPU, commit sha).
-2. Set `thresholdPercent` in the bench gate from that spread (keep ≥2× headroom; do not lower
-   it onto the noise floor). If the weekly host is unavailable indefinitely, record that fact
-   and leave the gate at 20% — a named "unmeasured" is better than a guessed number.
-
-**Check:** plan-notes cites the weekly-host numbers (or the unavailability record) and the gate
-value in `packages/tests/bench/` matches that decision.
-
-### T32. Abstract accessors and the virtual-accessor rule **[D3]**
-
-Step 12(d) residue (`gate.ts` override arm). Accessors already work as get/set method pairs
-(plan-notes 373 landed the static and compound slices); an `abstract get`/`set` override and
-an accessor override that must dispatch virtually through a base-typed receiver are still
-refused.
-
-Steps:
-1. Finish the virtual rule from plan-notes 373's landed pair-whole override: a base-typed
-   `o.x` on a receiver whose class overrides the accessor must call the override.
-2. `abstract` accessors: throw-stub pattern from plan-notes 275 (already used for abstract
-   members) applied to the get/set pair; subclass supplies the implementation.
-3. Goldens `abstract_accessor`, `accessor_override_virtual` both modes; subset rows flip.
-
-**Check:** goldens match Node; `pnpm run test:subset` has no `expected-fail` row for abstract
-or overridden accessors; the `statics`/`class-members` unit suites stay green.
-
-~~✅ **already landed** (plan-notes 283, 373; confirmed 2026-10-24, plan-notes 382).**~~ The
-card was written from stale roadmap residue: `abstract get`/`set` throw-stubs, pair-whole
-override dispatch and base-typed virtual accessor calls were already in-tree (goldens
-`ts|js/abstract_accessor`, subset `subset_abstract_accessor_*` / `subset_accessor_override_*`).
-No code change; evidence is plan-notes 283.
-
-### T33. Vendor Ryū for number printing **[D2]**
-
-§12 rung and §15.4's settled "Ryū-exact number printing". `docs/TOOLCHAIN.md` records Ryū as
-fetchable but not vendored; the review's move M3 is this card.
-
-Steps:
-1. Vendor the Ryū C sources via the `packages/runtime/vendor/update.ts` route; `VENDOR.md`
-   pins the commit (same rule as QuickJS-NG).
-2. Replace the number printer's shortest-round-trip path with Ryū; keep `-0.0`, non-finites
-   and the `console.log` formatting contract (plan-notes 372's print corpus).
-3. `pnpm run test:runtime` + golden print corpus byte-for-byte vs Node.
-
-**Check:** `pnpm run test:runtime` and `pnpm run test:golden` pass; `docs/TOOLCHAIN.md`'s Ryū
-row flips from "fetchable and unfetched" to "vendored at <commit>"; the vendor script
-regenerates from the pin without network drift.
-
-### T34. `Function.prototype.bind` and the two-slot environment **[D3]**
-
-Step 12(e) residue: method values use `has_receiver` (drop the receiver); `bind` *inserts* one
-and needs the two-slot `JSRTEnv` `docs/VALUE.md` §4.16 reserved.
-
-Steps:
-1. Runtime: `JSRTBound` / env layout with inserted receiver + partial args; `jsrt_call` handles
-   the shift (documented beside `has_receiver`).
-2. `bind` as a builtin method; `length`/`name` of a bound function per spec (or a named
-   not-yet if v0 skips them — decide in `docs/SUBSET.md`).
-3. Goldens `bind_receiver`, `bind_partial_args`, `bind_new` (`new` on a bound function) both
-   modes; decision tests.
-
-**Check:** goldens match Node; `subset_bind_*` rows leave `expected-fail`; no regression in the
-existing `has_receiver` method-value goldens.
-
-### T35. Choose the C compiler: `--cc` / `CC` instead of hard-wired `clang` **[D2 · P2]**
-
-Requested by the creator on 2026-10-25 (modelled on V's `-cc`). `packages/compiler/src/cli/build.ts`
-calls `clang` by name for every compile and link; the only exception is the macOS ASan override to
-`/usr/bin/clang` (conda-clang 21.1.8 deadlock). There is no way to pick another C compiler.
-
-Steps:
-1. **Resolver.** One function decides the C compiler, in this precedence: CLI `--cc=<name|path>` >
-   `stator.config.json` `cc` (if the card adds it; `docs/CONFIG.md` + schema in the same change) >
-   env `CC` > default `clang`. The macOS ASan override still applies only when nothing was chosen
-   explicitly; an explicit choice under ASan prints a one-line warning instead.
-2. **Validation.** Resolve the value on `PATH` (or as a path), run `<cc> --version` once per build,
-   and classify the family (`clang`, `apple-clang`, `gcc`). Missing binary, non-zero exit, or an
-   unknown family is refused with a new named diagnostic (`docs/DIAGNOSTICS.md`), naming the value,
-   its source (`--cc`, `CC`, default) and how to fix it. No stack trace.
-3. **Flags per family.** The flags `build.ts` passes today (`-O`, `-flto`, sanitizers, `--link=`
-   passthrough) map through a per-family table; a flag a family lacks is refused by name, not passed
-   blindly.
-4. **One source of truth.** Every clang call site in `build.ts` (compile, `-c` for C-exposed units,
-   link, parallel jobs) uses the resolved compiler; the chosen compiler and its source show in the
-   `link/clang` trace span attributes (rename the span to `link/cc`).
-
-Tests:
-- Unit tests for precedence: `--cc` beats `CC`, `CC` beats the default, empty `CC` means unset.
-- Unit tests for validation: missing binary, `CC=/usr/bin/false`, unknown `--version` output each
-  give the named diagnostic and its fix text.
-- Goldens pass with the default and with `CC=gcc` on the Linux CI runner (gcc installed there);
-  with `CC=cc` on macOS.
-
-Docs: `docs/TOOLCHAIN.md` gains a "C compiler" section: how it works (precedence, detection),
-enable (`--cc`, `CC`) / disable (unset both, default `clang`), test commands, and limitations
-(supported families, ASan override, no bundled tcc, Windows out of scope). `stator build --help`
-lists `--cc`.
-
-**Check:** `CC=gcc pnpm run test:golden` passes on Linux; `stator build --cc=nope examples/hello`
-exits non-zero with the new diagnostic and no stack trace; `rg -n "'clang'" packages/compiler/src/cli`
-shows only the default in the resolver and the ASan override.
-
-**Blocked on nothing.**
-
----
-
-## Open work cards: self-hosting bootstrap, V-style (T35–T40)
-
-Requested by the creator on 2026-10-25. Today `statorc` is TypeScript run on Node: source ->
-program -> gate -> HIR -> **C** -> `clang` -> executable (`packages/compiler/src/cli/build.ts`).
-Task 6.19 only *explains* the compiler with itself (`packages/compiler` is `not-yet`: STA1214
-×1887, STA1213 ×2, STA1207 ×1 in `packages/tests/selfhost/baseline.json`) and reserves a
-stage-2 check that is not built. These cards take the compiler from "explained by itself" to
-"built by itself", the way V does it: the compiler is written in the language, a generated C
-snapshot (`vlang/vc`'s `v.c`) bootstraps it with any C compiler, and the result rebuilds itself
-(`make`: `cc v.c -> v1`, `v1 -> v2`, `v2 -> v`; `v self`). Design and usage live in
-`docs/SELF-HOSTING.md`. §1's "self-hosting the compiler" non-goal is for v1; these cards are
-post-v1 and are worked in card order.
-
-### T35. Compiler subset: drive `packages/compiler` to `static`/`dynamic` **[D5 · P2]**
-
-Steps:
-1. Group the 1887 STA1214 sites by construct; card the top constructs as gate/lowering work or
-   rewrite the compiler code into the admitted subset (documented choice per construct).
-2. Replace or wrap Node-only dependencies of the compiler (`node:child_process`, `node:fs`,
-   `typescript`/tsgo program APIs) behind an interface that `packages/std` / `packages/node`
-   can satisfy; list what cannot and why.
-3. Run `--update` on the selfhost baseline in every change that shrinks a count.
-
-**Check:** `pnpm run test:selfhost` reports `packages/compiler` as `static` or `dynamic` with
-zero codes; the stage-2 guard from Task 6.19 then fires, which T37 resolves.
-
-### T36. Bootstrap C snapshot (`statorc.c`) **[D3 · P2]**
-
-Steps:
-1. `stator build --emit-c-only` writes the compiler's C plus the runtime sources it needs into
-   one reproducible tree (`bootstrap/` or a separate `pyrlyn/stator-c` repo, like `vlang/vc`;
-   decide and document).
-2. No absolute paths, timestamps or host-specific defines in the output; one header stamps the
-   source commit.
-3. Script `scripts/bootstrap/regen-snapshot.ts` regenerates it; CI fails when the committed
-   snapshot is stale.
-
-**Check:** on a clean macOS arm64 and Linux x64 box, `cc -O2 -o statorc0 <snapshot>/*.c -lm`
-(plus the documented GC link) produces a binary that compiles `examples/hello` to a running
-executable, with no Node installed.
-
-### T37. Stage0/1/2 bootstrap with a fixed-point check **[D3 · P2]**
-
-Steps:
-1. `scripts/bootstrap/stages.ts`: stage0 = Node-hosted `statorc` (or `statorc0` from T36);
-   stage1 = stage0 builds the compiler; stage2 = stage1 builds the compiler.
-2. Fixed point: stage1 and stage2 emit **byte-identical C** for the compiler and for every
-   golden fixture; stage2's C for hello-world equals the Node-hosted compiler's C (Task 6.19's
-   stage-2 check).
-3. `stator self` (like `v self`): rebuilds the running compiler from source via stage1->stage2
-   and atomically replaces the binary only when the fixed point holds.
-
-**Check:** `pnpm run bootstrap:stages` exits 0 and prints matching SHA-256 for stage1/stage2 C;
-a deliberately non-deterministic emitter change makes it exit non-zero.
-
-### T38. C compiler driver detection **[D2 · P2]**
-
-Steps:
-1. Replace the hard-wired `clang` in `build.ts` with a resolver: `--cc` / `STATOR_CC` / `CC`,
-   then `clang`, `cc`, `gcc` on `PATH` (V order: `-cc`, then system cc; a bundled tcc is a
-   later option, not in this card).
-2. Probe once per build (`--version`), map flags per family (clang/gcc; `-flto`, ASan, `-O`),
-   refuse unknown families with a named diagnostic.
-3. Keep the macOS ASan `/usr/bin/clang` override (plan-notes for conda-clang 21.1.8).
-
-**Check:** goldens pass with `STATOR_CC=gcc` on Linux and `STATOR_CC=clang`; `STATOR_CC=/bin/false`
-gives the named diagnostic, not a stack trace.
-
-### T39. CI job `bootstrap` **[D2 · P2]**
-
-Steps:
-1. Job on macOS arm64 + Linux x64: build from the T36 snapshot with system cc, run T37 stages,
-   run the goldens with the stage2 binary.
-2. Skipped (green) until T35 lands, via a flag in `packages/tests/selfhost/targets.json`;
-   required on `main` after.
-
-**Check:** the job is green on a PR that only touches docs and red on a PR that breaks the
-fixed point.
-
-### T40. Docs: `docs/SELF-HOSTING.md` kept true **[D1 · P2]**
-
-Steps: each of T35–T39 updates `docs/SELF-HOSTING.md` (how it works, enable/disable, test,
-limitations) in the same change; `docs/HOW-IT-WORKS.md` and `docs/DEVELOPMENT.md` link to it.
-
-**Check:** every command in `docs/SELF-HOSTING.md` runs as written on `main`.
-
----
-
-
----
-
-## Open work card: the compiler in Zig on stator-ts (T41)
-
-### T41. Rewrite the compiler in Zig on top of stator-ts **[D5 · P1]**
-
-Creator's direction, plan-notes 393: the compiler moves to Zig, with
-[stator-ts](https://github.com/pyrlyn/stator-ts) as its parser and type checker. It supersedes the
-Oxc bridge and the `tsgo --api` client of plan-notes 391 and 392. A gap in stator-ts is fixed there,
-with a fixture checked against real `tsc`, and its `tests/ts7/passing.txt` ratchet must not drop.
-
-`packages/compiler` stays as the oracle, on `typescript` 6.0.3, until parity. Every stage proves
-itself against it:
-
-| Stage | Zig path | Proof |
-| --- | --- | --- |
-| Types | stator-ts `Session` | `pnpm run test:typediff` |
-| Gate, diagnostics | `src/frontend/gate*.zig`, `src/support/` | `explain --json` identical |
-| HIR model | `src/hir/` | every dump round-trips through `src/hir/json.zig` |
-| Verifier, passes | `src/hir/verify.zig`, `src/passes/` | post-pass dump identical |
-| Codegen | `src/codegen/` | `--emit=c` byte-identical |
-| Lowering, type bridge | `src/lower/`, `src/frontend/types.zig`, `generics.zig` | HIR dump identical |
-| CLI, module graph | `src/cli/`, `src/frontend/` | same output, exit codes, file sets |
-
-State and the per-stage counts: `docs/zig-core.md`. Open: the gate and lowering differences, `frontend/export.ts`, `frontend/vendor.ts` and the bundler path, and the 68 jscpd clones the port still adds (plan-notes 393).
-
-Consequences to settle before the switch: `packages/vite-stator` calls the binary instead of
-`statorc/api`; Task 6.19 and T35–T40 lose their meaning for the compiler itself, while `std` and
-`node` stay Stator-compiled; 77 test and support files import compiler internals.
-
-**Check:** `pnpm run test:zigdiff` shows every stage at parity with no `not ported` entry, then
-`test:subset`, `test:golden`, `test:asan` and `test:typediff` pass with the Zig binary and
-`packages/compiler` deleted, and with `typescript` removed from runtime dependencies.
+## Tasks
+
+Tasks live in `plan/<id>/`: `task.md` is the card (front matter, Steps, Check) and `done.md`, when
+present, is its closing report. `plan/README.md` lists them and holds the notes about them. This
+file is the spec. Each phase below keeps a one-line heading per task id, so a `plan.md §N T…`
+reference still lands in the right phase.
+
+The cards that used to open this file are T21, T27–T41 and T61 (the second card numbered T35,
+"Compiler subset", renumbered so ids stay unique). The 2026-10-08 cloud review table is in
+`plan/README.md`.
 
 ---
 
@@ -1629,7 +1191,7 @@ codegen↔runtime contract, and generated code stays C. Boehm GC stays: Zig call
 its C ABI. Zig 0.17.0 is pinned in stator's `mise.toml`; a global 0.14.1 (if present) is
 untouched. This reopens the settled C11-runtime decision (§15.4) on the creator's direction.
 
-### ~~T9.1. Runtime memory core in Zig~~ ✅ — landed; record in `done.md` (§11a).
+### ~~T9.1. Runtime memory core in Zig~~ → [`plan/T9.1`](plan/T9.1/done.md)
 
 ### Language & library boundaries
 
@@ -1789,40 +1351,13 @@ step remains). `pnpm run ci` green.
 
 ---
 
-~~**T10.1. `std` low-level API (sans threads).**~~ ✅ **landed 2026-10-02** — evidence in
-[done.md](done.md) → Phase 10 T10.1 (plan-notes 284, 294, 307).
-`std/env`, `std/path`, `std/process`, sync `std/fs` and `std/time` live in `packages/std`. The
-`std/fs` Promise twins (`readTextAsync`, …) offload through T10.2 (docs/STD.md §2).
+### ~~T10.1. `std` low-level API (sans threads)~~ → [`plan/T10.1`](plan/T10.1/done.md)
 
-~~**T10.2. OS threads + async bridge — [D5].**~~ ✅ **completed 2026-10-25** — evidence in [done.md](done.md) → Phase 10 T10.2 (plan-notes 388).
+### ~~T10.2. OS threads + async bridge~~ → [`plan/T10.2`](plan/T10.2/done.md)
 
-~~**T10.2a. Reuse OS workers for asynchronous filesystem operations — [D3].**~~ ✅ **completed 2026-10-25** — evidence in [done.md](done.md) → Phase 10 T10.2a (plan-notes 389).
+### ~~T10.2a. Reuse OS workers for asynchronous filesystem operations~~ → [`plan/T10.2a`](plan/T10.2a/done.md)
 
-### T10.3. Threaded / parallel host compiler — **[D4]**
-
-Independent of T10.1/T10.2. Host Node only.
-
-Steps:
-
-1. ✅ **Baseline (2026-10-23, plan-notes 374):** wall time of `stator build` on a fixed multi-file
-   fixture at `STATOR_COMPILE_JOBS=1` with spans (frontend / lower / verify / emit / clang / link).
-   `STATOR_COMPILE_TIMING=1` prints the span line.
-2. ✅ **C1 — parallel clang (2026-10-23, plan-notes 374):** `STATOR_COMPILE_JOBS` partitions the
-   emitted C and compiles the units concurrently. **2.11×** on the 556KB fixture (jobs=8 vs 1);
-   `STATOR_COMPILE_JOBS=1` keeps byte-identical C. `STA0021` for a bad value. C2 below was not
-   taken (emit is 10 ms of a 2.4 s build).
-3. C2 — parallel emit if emit shows in the profile. **Not taken** (plan-notes 374: emit 10 ms).
-4. C3 — sharded lower/verify via process pool if typecheck/HIR dominate; document the Program
-   isolation choice. **Not taken** (plan-notes 374: `hir/verify` 3 ms).
-5. ✅ **CI smoke (2026-10-24, plan-notes 381):** one non-required job (`compile jobs smoke`)
-   builds the multi-module `tests/golden/ts/modules` fixture and runs
-   `packages/tests/unit/compile-jobs.test.ts` with `STATOR_COMPILE_JOBS=2` so races fail the
-   build; default CI stays serial for log readability. Required checks keep their names.
-
-**Check:** documented before/after numbers in plan-notes; `STATOR_COMPILE_JOBS=1` preserves
-byte-identical emitted C for the fixture; CI green. **Met 2026-10-23** (plan-notes 374) except
-the step-5 CI smoke, which **landed 2026-10-24** (plan-notes 381) — CI green on the job itself
-is observable after merge.
+### T10.3. Threaded / parallel host compiler → [`plan/T10.3`](plan/T10.3/task.md)
 
 ---
 
@@ -1865,220 +1400,23 @@ Each new package is a pnpm workspace member and a moon project with its own `typ
 `lint` and build tasks, so moon caches it alone (plan-notes 204). `docs/architecture/packages.d2`
 gains each package in the change that creates it.
 
-~~**T11.0. Research: what `--node` means and what it costs.**~~ ✅ **landed 2026-10-02** —
-evidence in [done.md](done.md) → Phase 11 T11.0 (plan-notes 288, decision 289).
+### ~~T11.0. Research: what `--node` means and what it costs~~ → [`plan/T11.0`](plan/T11.0/done.md)
 
-~~**T11.1. `packages/runtime`: typed arrays.**~~ ✅ **landed 2026-10-02** — `ArrayBuffer` +
-`Uint8Array`; evidence in [done.md](done.md) → Phase 11 T11.1. Still open from the card: the rest
-of the `TypedArray` family lands with the card whose corpus first needs it (docs/SUBSET.md lists
-the refused surface, `builtins_coverage.json` counts it as missing).
+### ~~T11.1. `packages/runtime`: typed arrays~~ → [`plan/T11.1`](plan/T11.1/done.md)
 
-~~**T11.2. `packages/std`: the real `std/*` package.**~~ ✅ **landed 2026-10-02** — evidence in
-[done.md](done.md) → Phase 11 T11.2 (plan-notes 294).
+### ~~T11.2. `packages/std`: the real `std/*` package~~ → [`plan/T11.2`](plan/T11.2/done.md)
 
-~~**T11.3. `packages/std`: the N1 modules.**~~ ✅ **landed 2026-10-02** — evidence in
-[done.md](done.md) → Phase 11 T11.3 (plan-notes 309).
+### ~~T11.3. `packages/std`: the N1 modules~~ → [`plan/T11.3`](plan/T11.3/done.md)
 
-~~**T11.3a. `Uint8Array` across the extern boundary.**~~ ✅ **landed 2026-10-02** — evidence in
-[done.md](done.md) → Phase 11 T11.3a (plan-notes 311).
+### ~~T11.3a. `Uint8Array` across the extern boundary~~ → [`plan/T11.3a`](plan/T11.3a/done.md)
 
-### T11.4. `packages/compiler`: js-mode coverage for the `tsc` bundle — **[D5]**
+### T11.4. `packages/compiler`: js-mode coverage for the `tsc` bundle → [`plan/T11.4`](plan/T11.4/task.md)
 
-The largest P0 item (plan-notes 286). Prerequisites run in their own sessions: the `STA4072`
-stack overflow on large inputs and the js-mode false rejections (the TS2630/TS2698 pair landed,
-plan-notes 297; the 45 `STA0012` left on `_tsc.js` are Node globals, the platform's work). Then
-the `STA1214` families on
-`_tsc.js`: method calls on inferred shapes (402), assignment to non-variables (518),
-unsupported globals (111), spreads (~190), Map/Set from iterables (71), `new` on non-class (50),
-index access on non-array (33), `Object.*` (24), destructuring (31), class expressions (~8).
-Each family is its own sub-step with its own fixtures — none of it is Node-specific.
+### ~~T11.5. `packages/compiler`: the `--node` flag and CommonJS~~ → [`plan/T11.5`](plan/T11.5/done.md)
 
-**Status:** in progress — Claude Code / opus-5-5. One PR per family, each with decision tests in
-both modes and goldens, a full `pnpm run ci`, and the self-compilation baseline re-recorded with
-`--update` when its counts move.
+### T11.6. `packages/node`: the N1 wrappers → [`plan/T11.6`](plan/T11.6/task.md)
 
-**Execution plan** (re-measured on 68c8d57, plan-notes 310; counts are `STA1214` messages):
-
-1. **Unsupported globals (78) — landed** (plan-notes 310; 78 → 20: `require`, `Array(n)`,
-   `Array.from`, `encodeURI`, `Error.captureStackTrace` and `arguments` remain, each assigned to a
-   later family). Exempt the property NAME of an object binding pattern, which is
-   not a reference (about 22 of the 78: `{ setTimeout: setTimeout2 } = host`). Lower the global
-   converters and number functions as callees through one table-driven node, the
-   `String.fromCharCode` pattern: `String(x)`, `Number(x)`, `Boolean(x)`, `parseInt`,
-   `parseFloat`, `isNaN`, `isFinite`, plus `Array.isArray`. `typeof` of a global the compiler
-   knows answers its constant. `require`, `arguments` and `Error.captureStackTrace` stay refused
-   (CommonJS is T11.5; the other two are not values Stator models).
-2. **Method calls on inferred shapes (403) — landed** (plan-notes 310; 403 → 19). A call of a
-   function-valued field of an object shape is a `field-call` node, and `n.toString(radix)` /
-   `n.toFixed(digits)` are a `number-op` node; `Number.parseInt`/`parseFloat` and the `Number`
-   constants land with them. Left for step 9: `.call`/`.apply` on a function (13), static calls on
-   a class expression (3) and receivers typed as possibly `undefined` (3).
-3. **Assignment and compound assignment to non-variables (525) — landed** (plan-notes 310; 525 →
-   97). Compound, logical and update forms on dynamic receivers, `xs.length = n`, and
-   destructuring assignment of variables as a statement. The 92 plain writes of a property the
-   object's shape does not declare are layout growth and move to step 7; the 5 on a `Map` or an
-   array go to steps 6 and 7.
-4. **`new` on non-class (50): function constructors — landed** (plan-notes 310; 50 → 28). `new`
-   and `instanceof` on an ordinary function or an Unknown callee, a function's own properties and
-   its `prototype`, and prototype-chain reads on what `new` built (docs/VALUE.md §4.20). The 28 left
-   are builtins, split off as step 4b.
-   4b. **The builtin constructors left by step 4 — landed** (plan-notes 310; 32 → 2). `new
-   Array(n)` (13) and `Array(n)` (4) with array holes in an Unknown-element array (docs/VALUE.md
-   §4.4), `new RegExp(pattern, flags)` (8, §4.21), `WeakMap` (4) and `WeakSet` (2, §4.22). Left:
-   `Array.from` (1), which is a spread over an iterator and moves to step 5, and `new Uint16Array`
-   (1), T11.1's typed-array surface, not this card's.
-5. **Spreads (196) — landed** (plan-notes 310; 196 → 3). Call, method-call and array-method
-   arguments build one list and call through `jsrt_call_spread_at`; an array-literal spread of
-   any iterable drains through the `...` row; `Array.from(iterable)` (from step 4b) is a
-   `global-call` row (docs/VALUE.md §4.23). Left: an object spread of a value with no fixed shape
-   (2), which is step 8's `Object.*` surface, and a spread into `String.fromCharCode` (1), step 9.
-   Map/Set from an iterable (73) is step 6, which can now drain through the same helper.
-6. **Map/Set from iterables (73)**, Map `add`/`remove` misuse included.
-7. **Layout growth — landed** (plan-notes 310; 55 reads + 92 writes + 33 index accesses → 0 + 5
-   + 6). A fixed object grows through an overflow table: `JSRTObject.extras`, a dynamic object
-   allocated by the first write of a name its layout does not declare (docs/VALUE.md §4.24). In
-   js mode, a read, write, compound write, call or `delete` of an undeclared member is a dynamic
-   node, and a string or number key on a fixed object is a by-name index access. Left: the 3
-   named writes on an array (`queue.pollIndex = 0`) and the 2 on a `Map` (`map2.add = …`), which
-   go through the builtins' member gate (the `Map` pair rides step 6; the array writes stay here),
-   and 6 index accesses whose receiver is a string or a union. Both residues stay with this step,
-   queued after step 11.
-8. **`Object.*` (21)** and destructuring (31, for-of, declarations, parameters), split in two:
-   8a. **`Object.*` reflection — in progress, Claude Code / sonnet-5-5** (handed over by the card's
-   owner; it unblocks T12.3's `__toESM`/`__copyProps`). Execution plan: property attributes on a
-   dynamic object (the accessor cell of docs/VALUE.md §4.15 grows a data form and
-   `enumerable`/`writable`/`configurable` flags, and every own-key walk skips a non-enumerable
-   key); `Object.create`, `Object.defineProperty`, `Object.getOwnPropertyDescriptor`,
-   `Object.getOwnPropertyNames` and `Object.getPrototypeOf` in `js` mode, as callees and as
-   values (`var __create = Object.create`); `Object.prototype` and
-   `Object.prototype.hasOwnProperty` as values. The runtime half is one new file,
-   `runtime/src/jsrt_reflect.c`; `ts` mode keeps its verdicts (prototype machinery, plan-notes
-   125). Decision tests in both modes, goldens `js/object_reflection` and T12.3's
-   `pkg_cjs_exports`/`pkg_cjs_replace`.
-   8b. Destructuring (31) — not claimed; stays with the card's owner.
-9. **Class expressions (~10)** and the remaining singletons, split in two:
-   9a. **`Function.prototype.call`/`apply`/`bind` — in progress, Claude Code / sonnet-5-5.**
-   Execution plan: `jsrt_get_prop` answers `call`/`apply`/`bind` on any closure through the
-   `jsrt_bound_method` mechanism the primitives use; `bind` builds the two-slot env docs/VALUE.md
-   §4.16 prescribes; the gate admits the three members on a function-typed receiver in `js` mode
-   and lowers them as the dynamic method call. Golden `js/function_call_apply_bind`.
-   9b. Class expressions, `encodeURI`, `Error.captureStackTrace`, a spread into
-   `String.fromCharCode`, and a `[Symbol.iterator]` method in an object literal (an internal
-   `STA4068` in both modes today, plan-notes 310 step 5) — not claimed.
-10. ~~**A `RegExp` method called straight off a union narrowing** (`unknown` or a union narrowed by `instanceof RegExp`, then `.test()` / `.toString()`) panics at run time with `STA2006` "calling a non-function"; binding it to a `RegExp`-typed local first works (plan-notes 314). Primitive and built-in method dispatch, `jsrt_get_prop` included.~~ Fixed by step 4b (v4.35): `jsrt_get_prop` answers a RegExp's methods and data properties on an Unknown receiver.
-11. **A `Date` method called off a union narrowing** (plan-notes 317). On `t: number | Date`
-   narrowed by `typeof`, `instanceof Date` or `valueOf`, `t.getTime()` compiles but panics at run
-   time with `STA2006` "calling a non-function", and `Number(t)` gives `NaN`; passing the value to a
-   `Date`-typed parameter works. It is step 4b's RegExp gap for `Date`: `jsrt_get_prop` must answer
-   a Date's methods on an Unknown receiver, and ToNumber of a Date must be its time value. Lands
-   with a golden. Queued after step 6.
-
-**Check:** `stator explain _tsc.js --mode=js --json` lists no `STA1214` in `diagnostics` and ends
-with a verdict, not `STA0013`/`STA4072` (PR #44 names the checker's stack overflow `STA0013`).
-Baseline 2026-10-02 on 68c8d57 at `--stack-size=7600` (110 s): 1 560 diagnostics — 1 514
-`STA1214`, 45 `STA0012`, 1 `STA1210` (plan-notes 310; the first baseline, 1 589, is plan-notes
-291). Every landed construct has decision tests in both modes + a golden (Testing rules).
-Also, moved here from T11.5a (plan-notes 302): once the Test262 harness (`assert.js`, `sta.js`)
-compiles, the `test262` `language/module-code` pass count rises above T11.5a's baseline of 152
-passed (426 skipped, 21 failed; measured with T11.5a's runner fix, which compiles a module test
-beside its fixtures). `String` and `JSON` as values are not enough on their own (plan-notes 310):
-the harness also needs method calls on inferred shapes, assignment to a function's properties
-(`assert.sameValue = function …`, `Test262Error.prototype.toString = …`), `new` on a function
-constructor and `instanceof` against one, and `.call` on a builtin method
-(`Object.prototype.toString.call(v)`, `Array.prototype.map.call(xs, String)`; step 9), so this
-clause is met by families 1–4 and step 9 together. After family 4 those two `.call` sites are the
-harness's only refusals (plan-notes 310).
-
-~~**T11.5. `packages/compiler`: the `--node` flag and CommonJS.**~~ ✅ **landed 2026-10-02** —
-evidence in [done.md](done.md) → Phase 11 T11.5 (plan-notes 312, 315, 316). The `vite-stator`
-side of a bundled built-in (`esmExternalRequirePlugin`, which turns the bundle's `__require` of a
-built-in into an import) is T12.2's; the CommonJS goldens through the default adapter are T12.3's.
-
-### T11.6. `packages/node`: the N1 wrappers — **[D4]**
-
-Depends on T11.1, T11.3, T11.5, T11.5a. Create `packages/node` (strict TS over `std`, written from
-scratch). Surface, from the corpus (`docs/NODE.md` **tsc** column): `node:fs` sync subset (the 15
-functions `tsc` calls), `node:path` (posix), `node:os`, `node:perf_hooks.performance`,
-`crypto.createHash`, `process` (`argv`/`env`/`cwd`/`exit`/`exitCode`/`platform`/`pid`/
-`stdout.write`/`memoryUsage`/`nextTick`), `Buffer.from`/`toString`, timers. Without a loop (N2),
-`nextTick` and zero-delay timers drain after `main` like microtasks; a real delay is not-yet.
-Every member lands with a golden and a `node_coverage.json` claim; `docs/NODE.md` regenerates in
-the same change.
-
-**Status:** in progress — Claude Code / opus-5-5. **First slice landed** (plan-notes 313):
-`packages/node` exists (workspace package, moon project, selfhost target with a `node-goldens`
-smoke, `stator.config.json` with `"node": true`), and `node:path` plus `node:path/posix` are
-POSIX-complete: 14 of 16 members each, every one with a golden and a claim. A golden fixture
-named `node_*` builds with `--node`. Not landed: `path.win32` and `node:path/win32` (Windows
-semantics, outside N1) and `path.matchesGlob` (Node's glob matcher; nothing in the corpus uses
-it). **Second slice landed** (plan-notes 317): the `node:fs` sync subset, 12 of the 15
-functions `tsc` calls (`closeSync`, `existsSync`, `mkdirSync`, `openSync`, `readFileSync`,
-`readdirSync`, `realpathSync`, `statSync`, `unlinkSync`, `utimesSync`, `writeFileSync`,
-`writeSync`) plus `rmdirSync`, with Node's `SystemError` shape. `watch`, `watchFile` and
-`unwatchFile` wait on the event loop (N2) and stay `STA1214`. **`process` slice landed
-2026-10-23** (plan-notes 374): `packages/node/src/process.ts` answers `argv`, `env` (startup
-snapshot via new `std/env.names()`), `cwd`, `exit`, `exitCode`, `pid`, `ppid`, `platform`,
-`arch`, `execPath`, `hrtime()` and `memoryUsage()` (rss), with goldens `ts/node_process.ts` and
-`js/node_process.js`, three decision tests, and `docs/NODE.md` at 12/68 for `node:process`.
-**Follow-up slice** (plan-notes 390, #168): `argv0`, `execArgv`, `stdout`/`stderr`
-(`write`, `fd`, `isTTY`, `columns`, `rows`), `nextTick`, and the free `process` global under `--node`
-(rewritten to `import process from "node:process"`); `node:process` 17/68, slice N1 25/37. `hrtime.bigint`
-stays open. The task stays open: N1 is not 100%. **Next**,
-in the order `tsc` needs them: `node:os`, `Buffer.from`/`toString` (then `readFileSync` without an
-encoding answers a `Buffer`), `crypto.createHash`, `perf_hooks.performance`, timers; `path.win32` is
-its own slice (13 of T11.7's `path` tests need it).
-
-**Check:** `tsc --version` and `tsc -p` on a small fixture project, compiled by Stator, print
-byte-for-byte what `node _tsc.js` prints on Node 26.7.0; `docs/NODE.md` slice N1 at 100%.
-
-### T11.7. Node's own test suite, synced and run through vitest — **[D3 · P1]**
-
-Creator's direction (2026-10-02, plan-notes 305). The `node:*` wrappers are proven by Node's own
-tests, synced at the pinned version, not by hand-written copies.
-
-1. **Sync, don't copy.** `packages/tests/node-suite/pin.json` pins the tag matching
-   `.node-version` (v26.7.0). A strict-TS fetch script downloads the selected
-   `test/parallel/test-*.js` files and the `test/fixtures` they read. The corpus is fetched, not
-   vendored (gitignored), the same way Test262 is (Task 6.1). A Node bump re-pins it, and the diff
-   of results is the review.
-2. **Selection.** A checked-in expectations file lists each selected test as `pass`, `fail` or
-   `skip` with a reason. At v26.7.0, `test/parallel` has 4 641 `test-*` files, and 615 of them
-   have a name starting with an N1 module (`fs`, `path`, `os`, `buffer`, `process`,
-   `crypto-hash`, `timers`, `perf-hooks`). Start with `path`, then follow T11.6's order. Tests that
-   need `// Flags: --expose-internals`, child processes or the network are `skip` until N2.
-3. **The harness, in strict TS.** `require('../common')` resolves to
-   `packages/tests/node-suite/common/index.ts` (and `../common/fixtures` to
-   `common/fixtures.ts`), a strict-TS implementation of the `common` helpers the
-   selected tests use (`mustCall`, `mustNotCall`, `expectsError`, `tmpdir`, platform flags). It
-   grows with the selection. `node:assert` (`ok`, `strictEqual`, `deepStrictEqual`, `throws`,
-   `rejects`) lands in `packages/node` as part of this card.
-4. **vitest drives it.** The runner generates one vitest test per selected file. Each test builds
-   the file with `--mode=js --node`, runs the binary, and passes on exit 0. The same file must also
-   pass under the pinned Node, so a test that fails on the host is `skip`, never `fail`.
-5. **Ratchet and coverage.** A `pass` that starts failing fails the run. A `fail` that starts
-   passing must be flipped in the same change, as Test262's ratchet does. `docs/NODE.md` gains a
-   "node tests" column with passes over the selected count per module.
-
-Depends on T11.5 (`--node`, CommonJS through the T12 bundler) and T11.6. The harness and `path`
-can land as soon as `node:path` exists.
-
-**Check:** `pnpm run test:node-suite` runs the selection through vitest against the pinned corpus,
-and its pass count is recorded in plan-notes; `docs/NODE.md` shows the column; a hand-flipped
-expectation fails the run.
-
-**Status:** in progress — Claude Code / opus-5-5. **First slice landed** (plan-notes 314): the
-pin, `fetch.ts`, `expectations.json`, the strict-TS `common/` with its host resolve hook, the
-vitest driver with the ratchet, `node:assert` in `packages/node`, and the "Node tests" column in
-`docs/NODE.md`. The selection is the 17 `test-path*` files: on the pinned Node all 17 pass with
-our `common`; under Stator 0 pass, 15 are `fail` and 2 are `skip` (a child process; a
-Windows-only file). Every `fail` is a CommonJS file, which goes to the T12 bundler.
-**Second slice landed** (plan-notes 318): the Stator build resolves `require('../common')`, since
-`fetch.ts` links the corpus's `test/common` to the strict-TS `common/`. The harness no longer
-imports `node:util` (N2); `common/inspect.ts` prints what its messages compare. Every `fail` now
-stops at `node:process` (the harness's `process.platform`, `exit`, `on` and `cwd`), then
-at Rolldown's `__commonJSMin` (STA4013, T12.3), and 13 of them at `path.win32`. **Next:** flip
-the `path` files as T11.6's `process` and `path.win32` slices and T12.3's interop helpers land,
-then follow T11.6's module order.
+### T11.7. Node's own test suite, synced and run through vitest → [`plan/T11.7`](plan/T11.7/task.md)
 
 **Deferred — N2 (not a card yet).** `std/loop` written in Zig (the creator chose an own loop
 over libuv: kqueue/epoll first, Windows when the runtime builds there), real timers and
@@ -2131,78 +1469,13 @@ compiles from.
 | `packages/compiler` | the bundler API (`statorc/api`), the `BundlerAdapter` interface, `--bundler`, the vendor entry, source-map-driven diagnostics and `#line` | import any bundler — adapters are loaded by name at run time, so the §0.9 budget stays `typescript` only |
 | `packages/vite-stator` (new) | a Vite plugin (`vite build` → native binary) and the default `BundlerAdapter` | contain compiler logic — it calls `statorc/api` and nothing else |
 
-~~**T12.0. Design: the bundler contract.**~~ ✅ **landed 2026-10-02** — evidence in
-[done.md](done.md) → Phase 12 T12.0 (plan-notes 296; `docs/BUNDLER.md`).
+### ~~T12.0. Design: the bundler contract~~ → [`plan/T12.0`](plan/T12.0/done.md)
 
-~~**T12.1. `packages/compiler`: the bundler API.**~~ ✅ **landed 2026-10-02** — evidence in
-[done.md](done.md) → Phase 12 T12.1 (plan-notes 320; `docs/BUNDLER.md`). Still open from the card,
-each `STA1214`: `export * from 'p'` (only the bundler knows the names), `import('p')` and a package
-import with import attributes are not rewritten to the vendor module. T12.3 owns them (plan-notes
-320 Q3); its first slice landed `export *` from one package and the attributes (plan-notes 323).
+### ~~T12.1. `packages/compiler`: the bundler API~~ → [`plan/T12.1`](plan/T12.1/done.md)
 
-~~**T12.2. `packages/vite-stator`: the default integration.**~~ ✅ **landed 2026-10-02** — evidence
-in [done.md](done.md) → Phase 12 T12.2 (plan-notes 321; `docs/BUNDLER.md` §2). Its namespace-import
-golden moved to T12.3's Check: Rolldown's `__exportAll` is T12.3's helper item.
+### ~~T12.2. `packages/vite-stator`: the default integration~~ → [`plan/T12.2`](plan/T12.2/done.md)
 
-### T12.3. `packages/compiler`: Rolldown's output compiles — **[D4]**
-
-Depends on T12.1, and overlaps T11.4's `Object.*` and method-call families. Do those first,
-where they are the same constructs. Each item below is measured in T12.0 (`docs/BUNDLER.md`
-§2, §4, §8), and each lands with decision tests in both modes plus a golden:
-
-- ~~**`var X = class {}` / `let X = class {}`.**~~ Landed (plan-notes 323): a formation nothing in
-  its file writes lowers like `const`.
-- **The CJS interop helpers.** `__commonJSMin`, `__toESM` and `__copyProps` need
-  `Object.create`, `Object.defineProperty` with getter descriptors,
-  `Object.getOwnPropertyDescriptor`, `Object.getOwnPropertyNames`, `Object.getPrototypeOf`,
-  `Object.prototype.hasOwnProperty.call` and `Function.prototype.bind`. `__commonJSMin` landed
-  (plan-notes 323): its comma operator was an internal `STA4013`.
-- **The dynamic-import namespace helpers.** `__esmMin` and `__exportAll` need
-  `Symbol.toStringTag` and a zero-argument `Promise.resolve()`.
-- ~~**`import.meta.url`.**~~ Landed under `--node` by T11.5 (plan-notes 316).
-- ~~**A computed `export default`.**~~ Lowers since T11.5a (`subset_export_default_expression_*`,
-  plan-notes 323).
-- **The package imports T12.1 leaves refused** (plan-notes 320 Q3), each `STA1214` today:
-  ~~`export * from 'p'`~~, whose names come from the bundle's own exports once it is built (landed
-  for one such package per build, plan-notes 323); `import('p')`, which lands on the
-  dynamic-import namespace helpers above (a clean `STA1214` now, not the internal `STA4031`); and
-  ~~a package import with import attributes~~ (landed, plan-notes 323).
-
-`__filename`/`__dirname`: T11.5 injects them in the vendor module under `--node` (plan-notes
-316, proved with a ready bundle in `unit/bundler.test.ts`); a golden here may read them, printing
-no path.
-
-**Status:** in progress — Claude Code / sonnet-5-5.
-
-**Execution plan** (measured on 0afd141 with 12 probe fixtures through the default adapter):
-
-1. **First slice, no overlap with T11.4:** the comma operator types as its right operand
-   (`__commonJSMin`'s `STA4013`); `var`/`let X = class {}` that nothing repoints lowers like
-   `const`; attributed package imports reach the entry; `export * from` one package re-exports
-   the names the built bundle exports for it; `import('p')` becomes a clean `STA1214` instead of
-   the internal `STA4031`. Goldens: nested `require`, CJS cycle, `.cjs` entry,
-   `node_pkg_location`, top-level class, `export *`, attributed JSON import, the comma itself.
-2. **Blocked, needs a decision:** `__toESM`/`__copyProps` (default import of a CJS package,
-   `module.exports` replacement) need T11.4 step 8's `Object.*`. `__exportAll` (namespace import,
-   `import('p')`, a package's inlined `import()`) also needs `Symbol.toStringTag`, which is
-   `STA1212` (Phase 5): the runtime has no symbol values.
-
-**Check:** CommonJS goldens through the default adapter, byte-for-byte vs Node:
-
-- `exports.x` (by name: `js/node_pkg_location`, plan-notes 323; a default import goes through
-  `__toESM`);
-- `module.exports` replacement;
-- a nested `require` (`js/pkg_cjs_nested_require`);
-- a CJS cycle that exposes partial `exports` (`js/pkg_cjs_cycle`);
-- a `.cjs` project entry (`js/node_cjs_entry`);
-- a package with an inlined dynamic `import()`;
-- a package with a top-level class (`js/pkg_class`).
-- a project file with `export * from 'p'` (`js/pkg_export_star`), one with `import('p')`, and one
-  with an attributed package import (`with { type: 'json' }`; `js/pkg_import_json`).
-- a namespace import of a package (`import * as p from 'p'`), which Rolldown answers with
-  `__exportAll`; moved here from T12.2 (plan-notes 321).
-
-`explain` on T12.0's `cjs` spike bundle lists no `STA1214`.
+### T12.3. `packages/compiler`: Rolldown's output compiles → [`plan/T12.3`](plan/T12.3/task.md)
 
 ---
 
@@ -2226,153 +1499,19 @@ modes: the packages are typed code, and nothing below the frontend gate learns a
 | `packages/webapi` (new) | DOM + CSS in **strict TypeScript** (§0.9, §0.10), compiled by Stator like `node:*` (§11c), plus the render API: the `Renderer` interface and the data it exchanges | draw, measure fonts or call C — every pixel, glyph and input event crosses the render API |
 | `packages/renderer-clay` (new) | the default `Renderer`: a strict-TS adapter over FFI (Phase 7) to Zig glue (§0.5) around vendored `clay.h` (C, Zlib) and one drawing backend | hold DOM or CSS semantics — it sees only what the render API hands it |
 
-### T13.0. Design: the render API and the DOM/CSS subset — **[D4]**
+### T13.0. Design: the render API and the DOM/CSS subset → [`plan/T13.0`](plan/T13.0/task.md)
 
-Docs first (§15.6): `docs/WEBAPI-DESIGN.md`, settled with a measured spike. The spike renders one fixture
-(a flex row, text, a border, a scroll container) through `renderer-clay` and dumps Clay's render
-commands. Questions it must answer:
+### T13.1. `packages/webapi`: the DOM → [`plan/T13.1`](plan/T13.1/task.md)
 
-1. **Where layout lives.** Clay is a layout engine: it takes a tree of sized boxes and returns
-   positioned render commands (rectangle, border, text, image, scissor start/end, custom). Either
-   `webapi` hands the renderer a styled box tree and the renderer lays it out, or `webapi` lays out
-   and the renderer only draws. Pick one, and say how `getBoundingClientRect` and hit testing get
-   their geometry back.
-2. **The render API.** The `Renderer` interface (`webapi` owns it; renderers implement it):
-   frame begin/end, the tree or command format, text measurement (Clay asks for it through
-   `Clay_SetMeasureTextFunction`), images and fonts as resources, input events coming back, and
-   damage tracking (Clay commands carry element ids so unchanged ones can be skipped). A renderer
-   is chosen at **build** time (`--renderer=clay|<package>`, default `clay`) and linked statically,
-   because typed code has no run-time plugin loading. A missing renderer package is a `STA0xxx`
-   naming it, allocated in `docs/DIAGNOSTICS.md`.
-3. **The DOM subset.** First: `Node`, `Element`, `Text`, `Document`, tree mutation, attributes,
-   `classList`, `textContent`, `querySelector(All)`, events with capture and bubble, `style`,
-   `getBoundingClientRect`. What is a `not-yet` diagnostic (the T11.5 pattern, so `explain` lists
-   the gap) and what is never planned.
-4. **The CSS subset and its Clay mapping.** Selectors (type, class, id, descendant, child),
-   specificity, cascade, inheritance, computed values. Layout properties map onto Clay's model:
-   `display: flex` direction, `gap` → `childGap`, `padding`, `width`/`height` → fixed / percent /
-   grow (`flex-grow`) / fit (`auto`), alignment, `overflow: scroll` → Clay scroll containers,
-   `position: absolute` → Clay floating elements. Plus colors, borders, `border-radius`, fonts.
-   Write the table of properties Clay cannot express, and what each one does instead.
-5. **How a program reaches it.** Explicit imports (`import { document } from 'webapi'`) or a
-   platform flag that makes `document`/`window` global, parallel to `--node` (§11c). Both modes.
-6. **The drawing backend.** Clay does not draw. Its repository ships renderers for raylib, SDL2,
-   SDL3, sokol, cairo, GLES3, win32 GDI, termbox2, terminal, web and Playdate. Pick the first one
-   for macOS, Linux and Windows (§0.5's cross-platform rule), what it adds to the toolchain, and
-   whether a terminal backend serves as the headless test target.
-7. **The frame loop.** Input events and redraw need a loop. Either wait for N2's own loop
-   (§11c, Zig) or run a frame loop inside the renderer first, and say how it hands events to the
-   promise/microtask machinery (Task 4.6) without becoming a second event loop.
-8. **The oracle.** Node has no DOM. DOM semantics: a web-platform-tests (WPT) slice, pinned the
-   way Test262 is (Task 6.1, `packages/tests/test262/pin.json`), or a DOM implementation run under Node as a **dev-only** oracle
-   (allowed: an oracle is not our source, §0.10). Layout: box geometry compared with a headless
-   browser, with the tolerance written down, because Clay's model is not CSS layout.
-9. **Parsing CSS.** An existing parser is JavaScript and cannot ship in `webapi` (§0.10). Confirm
-   there is no strict-TS one that Stator compiles; otherwise write one per CSS Syntax Level 3 and
-   say why in plan-notes.
+### T13.2. `packages/webapi`: CSS → [`plan/T13.2`](plan/T13.2/task.md)
 
-**Check:** `docs/WEBAPI-DESIGN.md` answers 1–9 with the spike's numbers; plan-notes records the choices;
-T13.1–T13.5 are edited to match; `docs/README.md` lists the new doc.
+### T13.3. The render API and a recording renderer → [`plan/T13.3`](plan/T13.3/task.md)
 
-### T13.1. `packages/webapi`: the DOM — **[D4]**
+### T13.4. `packages/renderer-clay`: the default renderer → [`plan/T13.4`](plan/T13.4/task.md)
 
-Depends on T13.0 and T13.5. New workspace package, strict TS (§0.9, §0.10), compiled by Stator.
-The DOM subset from T13.0 §3, against a recording renderer (T13.3's test double) so no pixels are
-needed. Every member it proves is claimed in `webapi_coverage.json` and `docs/WEBAPI.md` is
-regenerated in the same change (T13.5) — the rule for every later Phase 13 card too.
+### T13.5. `docs/WEBAPI.md`: generated Web API coverage → [`plan/T13.5`](plan/T13.5/task.md)
 
-**Check:** the T13.0 DOM oracle slice passes in both modes, byte-for-byte against the oracle;
-every unsupported member surfaces in `explain` as `not-yet`, not as `STA0012`.
-
-### T13.2. `packages/webapi`: CSS — **[D4]**
-
-Depends on T13.1. Parsing, selector matching, cascade, inheritance and computed style for the
-T13.0 §4 subset; `getComputedStyle`; `<style>` and inline `style`.
-
-**Check:** the T13.0 CSS oracle slice passes (computed values byte-for-byte); a selector-matching
-benchmark over a 10 000-element tree is recorded in `packages/tests/bench/`.
-
-### T13.3. The render API and a recording renderer — **[D3]**
-
-Depends on T13.0; lands before T13.4. The `Renderer` interface in `packages/webapi`, and a
-recording renderer in `packages/tests` that prints what it is handed, one line per command. It
-is the test double for T13.1–T13.2 and the contract test every renderer must pass.
-
-**Check:** golden fixtures dump the recorded stream for each T13.0 §4 property; a second renderer
-can be written against the interface alone (`docs/WEBAPI-DESIGN.md` has the worked example).
-
-### T13.4. `packages/renderer-clay`: the default renderer — **[D5]**
-
-Depends on T13.3. New workspace package:
-
-- `clay.h` vendored under `vendor/` at a pinned tag (v0.14 unless T13.0 finds a reason to pin a
-  later commit), fetched by the runtime's vendor update script (`pnpm run vendor:update`), patched
-  only via plan-notes. It compiles with `-Wall` alone, as all vendored C (plan-notes 101).
-- Zig glue (§0.5): the arena (`Clay_MinMemorySize` → `Clay_CreateArenaWithCapacityAndMemory` →
-  `Clay_Initialize`), the text-measure callback, and the drawing backend from T13.0 §6. Exports a
-  C ABI only, as `runtime/src/*.zig` does.
-- A strict-TS adapter that implements `Renderer` over the Zig glue through Phase 7 FFI.
-- An example under `examples/webapi/` with its README; `docs/TOOLCHAIN.md` gains the backend.
-
-**Check:** the T13.3 contract test passes; T13.0's layout oracle agrees within the documented
-tolerance on every fixture; `examples/webapi` builds a native binary on macOS, Linux and Windows
-that renders and reacts to a click; ASan/UBSan clean.
-
-### T13.5. `docs/WEBAPI.md`: generated Web API coverage — **[D2]**
-
-Depends on T13.0; lands before T13.1 claims its first member. The Web-platform counterpart of
-`docs/NODE.md` (AGENTS.md rule 11): coverage in % per area, interface and member, generated, and
-checked in `ci`.
-
-- **The denominator comes from a pinned source, not a hand list.** Every interface in
-  `lib.dom.d.ts` from the pinned `typescript` (6.0.3 ships it: 1 520 top-level `interface`
-  declarations), with its constructor, static and instance members, read through the TypeScript
-  API. No new dependency, and a `typescript` bump moves the denominator visibly. As with
-  `NODE.md`, forgetting a member cannot raise the percentage.
-- **Grouped by area.** DOM and CSSOM (CSSOM View included) come first, because those are the rows
-  this phase delivers; everything else sits under one "other Web APIs" heading. The interface →
-  area map is checked in next to the claims, and an interface missing from it is a generator
-  error, not a silent "other". If that map cannot be kept honest by hand, T13.0 may pick
-  `@webref/idl` (W3C Webref's per-spec IDL) as the source instead: a new dev dependency with its
-  own plan-notes entry.
-- **The numerator comes from claims.** `packages/tests/golden/webapi_coverage.json` maps interface
-  → member → the fixtures that prove it against T13.0 §8's oracle, or to `{ "not-yet": "T13.x" }`.
-  A claim whose fixture is missing or never mentions the member fails the generator, as
-  `coverage-claims.ts` already does for Node.
-- **One generator, not two.** Table rendering, the staleness check and claim validation are shared
-  with `node-coverage.ts` through one extracted helper (`pnpm run dupes`); only the denominator
-  readers differ.
-- `pnpm run docs:webapi` writes the file; `pnpm run test:webapi-coverage` (in `ci`, and a moon
-  task beside `node-coverage`) fails when it is stale. AGENTS.md gains rule 12 mirroring rule 11;
-  `docs/README.md` lists the file as generated.
-
-**Check:** `pnpm run test:webapi-coverage` passes on a fresh tree and fails after a hand edit of
-`docs/WEBAPI.md`; before T13.1 the doc shows 0% over the full denominator; a claim naming a
-missing fixture fails with the claim's path.
-
-### T13.6. Web-platform-tests for `webapi`, synced and run through vitest — **[D3 · P3]**
-
-Creator's direction (2026-10-02, plan-notes 305). This is T13.0 §8's DOM oracle, made concrete.
-It follows T11.7's design, so the two suites share one fetch, expectation and ratchet mechanism
-(Task 6.16: one helper, not two).
-
-1. **Sync.** `packages/tests/wpt/pin.json` pins a web-platform-tests commit, fetched and not
-   vendored. Scope is `dom/` (937 files: 651 `.html`, 66 `.any.js`/`.window.js`) and `css/cssom/`
-   (352 files: 295 `.html`, 1 `.any.js`), counted at `c5e80ef1dca9`.
-2. **Script tests first.** `.any.js` and `.window.js` need no markup and run first. `.html` tests
-   need their markup turned into a document. T13.0 decides between an HTML parser in `webapi`
-   (which `innerHTML` would also need) and a dev-only pre-pass at fetch time that turns markup into
-   DOM-building calls. Until then `.html` tests are `skip`.
-3. **The harness, in strict TS.** A strict-TS `testharness` subset (`test`, `promise_test`,
-   `async_test`, `assert_*`, `done`) replaces `testharness.js` for the selected tests.
-4. **vitest drives it,** with the same per-file ratchet as T11.7. `docs/WEBAPI.md` (T13.5) gains a
-   "WPT" column.
-
-Depends on T13.1 and T13.5. Lower priority than T11.7 (Phase 11 first).
-
-**Check:** `pnpm run test:wpt` runs the selection through vitest against the pinned commit, and
-its pass count is recorded in plan-notes; `docs/WEBAPI.md` shows the column; a hand-flipped
-expectation fails the run.
+### T13.6. Web-platform-tests for `webapi`, synced and run through vitest → [`plan/T13.6`](plan/T13.6/task.md)
 
 **Low priority — the other Web APIs (not cards yet).** `URL`, `TextEncoder`/`TextDecoder`, timers,
 `fetch`, `WebSocket`, storage, `Canvas`, `structuredClone` and the rest. They land in
@@ -2413,81 +1552,15 @@ a large benchmark of the compiler.
 | `packages/compiler` | the `Interpret` HIR node, scope materialization for direct `eval`, and linking the package on demand | interpret anything at compile time |
 | `packages/runtime` | the C ABI the interpreter calls (property access, calls, allocation, exceptions, promise jobs) — mostly what compiled dynamic code already calls | grow a second dispatch path: the interpreter goes through the same ICs and helpers |
 
-### T14.0. Design: the interpreter — **[D4]**
+### T14.0. Design: the interpreter → [`plan/T14.0`](plan/T14.0/task.md)
 
-Docs first (§15.6): `docs/INTERPRETER.md`, settled with a measured spike. The spike `eval`s one
-expression and one function body from a compiled `js` program through a minimal evaluator, and
-prints what Node prints. Questions it must answer:
+### T14.1. `packages/interpreter`: the parser front → [`plan/T14.1`](plan/T14.1/task.md)
 
-1. **The parser, and §0.3.** §0.3 forbids the *compiler* from writing a parser. The interpreter
-   needs one at run time for `eval` strings. Options:
-   - (a) The `typescript` package's own scanner and parser, compiled into the binary by Stator in
-     `js` mode, tree-shaken to `createSourceFile`. This keeps §0.3 literally, but depends on T11.4
-     (`tsc` compiles) and Phase 12 (tree-shaking).
-   - (b) An existing ECMAScript parser written in TypeScript, vendored, if one builds under the
-     locked `tsconfig` and is maintained.
-   - (c) A parser written here, which needs a plan-notes entry, and §0.3 is edited if this is the
-     choice.
+### T14.2. `packages/interpreter`: the core evaluator → [`plan/T14.2`](plan/T14.2/task.md)
 
-   Measure binary size and parse speed for each option that builds.
-2. **Execution model.** Tree-walking over the AST, or compiling to bytecode first. QuickJS uses
-   bytecode. Measure both on the spike before choosing.
-3. **Direct `eval` and scopes.** A direct `eval` sees its caller's locals. Which compiled functions
-   must keep their scope as an environment record (only those that contain a direct `eval`), what
-   indirect `eval` sees (global only), and how `var` declarations inside `eval` behave in sloppy
-   mode and in strict mode.
-4. **Boundary with compiled code.** Calls in both directions, exceptions crossing it (landing pads,
-   `JSRT_FRAME` pops — AGENTS.md rooting rules), GC roots held by interpreter frames, and
-   `this`/`new.target`/`arguments` inside interpreted functions.
-5. **Async and generators.** Interpreted `async`/`await`, generators and `for await` drive the
-   same promise/microtask machinery as compiled code (Task 4.6), with no second event loop.
-6. **Which `not-yet` codes it takes over.** `STA1206` first. List the other `STA12xx` codes the
-   interpreter can serve (e.g. `with`, sloppy-mode-only forms) and which stay with Phase 8 or stay
-   `not-yet`. Any new diagnostic codes are allocated in `docs/DIAGNOSTICS.md`.
-7. **QuickJS-NG after this.** Keep Phase 8 as an alternative behind `--interpreter=stator|quickjs`,
-   or retire it. The answer comes from Test262 numbers and binary size, not taste.
-8. **Oracle.** Test262 (Task 6.1) run through `eval`, so every test executes in the interpreter,
-   plus differential fuzzing against the pinned Node (Task 6.2).
+### T14.3. Wiring: `eval`, `new Function`, and the `Interpret` node → [`plan/T14.3`](plan/T14.3/task.md)
 
-**Check:** `docs/INTERPRETER.md` answers 1–8 with the spike's numbers; plan-notes records the
-choices; T14.1–T14.4 are edited to match; `docs/README.md` lists the new doc.
-
-### T14.1. `packages/interpreter`: the parser front — **[D4]**
-
-Depends on T14.0 (§1's choice). Turns source text into the tree T14.2 runs. Early errors are
-`SyntaxError`s thrown at run time, the same errors Node throws for the same `eval` string.
-
-**Check:** the Test262 `language/` parse-only tests (negative syntax tests included) pass through
-`eval` at a recorded rate; parse speed and the binary-size delta are recorded in plan-notes.
-
-### T14.2. `packages/interpreter`: the core evaluator — **[D5]**
-
-Depends on T14.1. Expressions, statements, functions, closures, objects, arrays, classes,
-destructuring, exceptions. Values come from the runtime, and property access goes through the same
-ICs and helpers compiled dynamic code uses.
-
-**Check:** the T14.0 §8 Test262 slice runs through `eval` with its pass rate tracked in the
-dashboard (Task 6.3) under its own column; golden fixtures for `eval` match Node byte-for-byte.
-
-### T14.3. Wiring: `eval`, `new Function`, and the `Interpret` node — **[D5]**
-
-Depends on T14.2. The frontend gate stops emitting `STA1206` in `js` mode and marks the construct
-"interpret". Lowering materializes the scopes of functions that contain a direct `eval` (T14.0 §3).
-The emitter links the package only when an `Interpret` node exists. Decision tests flip
-`not-yet` → `dynamic` in the same commit (AGENTS.md).
-
-**Check:** a `js` program that mixes compiled modules, a direct `eval` reading a caller's local,
-an indirect `eval` and a `new Function` runs exactly as under Node. Binaries without an `Interpret`
-node, and every `ts`-mode binary, are byte-identical in size to before. `test:asan` is clean.
-
-### T14.4. Async, generators, and the remaining constructs — **[D4]**
-
-Depends on T14.3. Interpreted `async`/`await`, generators and async iteration on the shared
-promise machinery (T14.0 §5), plus every other `STA12xx` code T14.0 §6 assigned to the interpreter.
-
-**Check:** the Test262 slice for these features passes at a recorded rate. Each code taken over
-flips its decision tests in the same commit, and `explain` no longer lists it for those
-constructs.
+### T14.4. Async, generators, and the remaining constructs → [`plan/T14.4`](plan/T14.4/task.md)
 
 ---
 

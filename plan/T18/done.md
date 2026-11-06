@@ -1,0 +1,7 @@
+# T18. Closing report
+
+**GC rooting hazards: boxed values stay in frame slots across allocating calls**
+
+`jsrt_compare` copied both primitives out of its frame and popped before `jsrt_string_compare` / `jsrt_to_number`. `sort_compare` left the right-hand `ToString` (and both operands of a user comparator) in C locals, and `sort_merge` read array elements around that allocating call. `jsrt_array_sort` kept the scratch array — the block a merge writes into — in an unrooted local. `jsrt_promise_settle` passed the outer and inner promises into `enqueue`, which `jsrt_gc_alloc`s the microtask before storing them. `jsrt_loose_equals` passed the `ToPrimitive` result into the recursive call from a C local. A NaN-boxed word is not a Boehm root (plan-notes 108). Each of those values is now a `JSRT_FRAME` slot for the whole allocating call, the same way `jsrt_op_add` already parks its primitives. `jsrt_gc_stress` collects before every `jsrt_gc_alloc` so a test can hit the window without waiting on heap size.
+
+Check: `just -f packages/runtime/justfile -d packages/runtime runtime-test` — print corpus matches Node, then `packages/runtime/tests/roots.c` prints `roots ok` (compare, loose equality, default sort, user sort, promise adoption whose inner-promise finalizer stays quiet), under `jsrt_gc_stress`. Observed 2026-10-09: that command printed `roots ok` then `runtime: print corpus matches Node`.

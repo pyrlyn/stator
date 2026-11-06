@@ -2,7 +2,62 @@
 
 https://github.com/listepo/stator
 
-Ahead-of-time compiler from TypeScript/JavaScript to native binaries. The compiler's own roadmap and spec stay in `plan.md`; this folder holds the stator-ts tasks.
+Ahead-of-time compiler from TypeScript/JavaScript to native binaries. The spec is `plan.md`; this folder holds every task: the compiler's and stator-ts's.
+
+## Stator compiler
+
+`plan.md`'s phases keep a one-line heading for every task id below. Tasks with a T-id live here: T9.1–T41 and T61. Older phase tasks (`Task N.N`) keep their records in `done.md`. Paths in this section and in those task folders are relative to the repository root.
+
+### Decisions
+
+- The tasks moved here from `plan.md` with their ids. `plan.md` had two cards numbered T35; "Choose the C compiler" kept T35 and "Compiler subset: drive `packages/compiler` to `static`/`dynamic`" became T61, the next free id. The self-hosting series is T61 and T36–T40.
+- A task closed before the move got its `done.md` from the record in `done.md`, or from the struck row of the cloud review table when it never had a card. Where the card text was not kept, its `task.md` says so.
+- `priority`, `complexity` and `readiness` come from the old status table at the top of `plan.md` where it had a row, otherwise from the card heading (`[Dn · Pn]`) and its phase heading. P2 is used where neither gave a priority, and 0% where no readiness was recorded.
+
+### Card groups
+
+**The 2026-10-24 roadmap/ideas sweep (T27–T35).**
+
+`roadmap.md` held no unfiled approved work and `ideas.md` holds no unapproved ideas. What the
+roadmap *pointed at* was open residue still living only as prose inside finished phases. Each
+card is one of those residues promoted to a task with Steps and a Check (`plan.md` §15). Difficulty
+is the `[Dn]` legend in `plan.md` §14. These cards are **not** a new phase: work them in card order
+unless a dependency line says otherwise. Phase 8 (`plan.md` §11) stays gated and is not carded here.
+
+**Self-hosting bootstrap, V-style (T61, T36–T40).**
+
+Requested by the creator on 2026-10-25. Today `statorc` is TypeScript run on Node: source ->
+program -> gate -> HIR -> **C** -> `clang` -> executable (`packages/compiler/src/cli/build.ts`).
+Task 6.19 only *explains* the compiler with itself (`packages/compiler` is `not-yet`: STA1214
+×1887, STA1213 ×2, STA1207 ×1 in `packages/tests/selfhost/baseline.json`) and reserves a
+stage-2 check that is not built. These cards take the compiler from "explained by itself" to
+"built by itself", the way V does it: the compiler is written in the language, a generated C
+snapshot (`vlang/vc`'s `v.c`) bootstraps it with any C compiler, and the result rebuilds itself
+(`make`: `cc v.c -> v1`, `v1 -> v2`, `v2 -> v`; `v self`). Design and usage live in
+`docs/SELF-HOSTING.md`. `plan.md` §1's "self-hosting the compiler" non-goal is for v1; these cards are
+post-v1 and are worked in card order.
+
+**The compiler in Zig on stator-ts (T41).** The Zig compiler replacing `packages/compiler`, on top of stator-ts (`packages/transpiler`).
+
+### Findings: cloud review (2026-10-08)
+
+New bugs, dead code and moves from a read-only Cursor cloud review of `main` at `ccf9818` (agent `bc-00769179-8c19-518a-869c-66b0c6473943`; full report: `cloud/stator.md` in the private `listepo/roadmap` repo). They take ids T20–T26, after T17 (`done.md`); T15, T16, T18 and T19 are left free because the review's source list uses those labels for other stator items. Ordered P0, P1, P2. **confirmed** means seen in the tree or in GitHub Actions logs; **suspected** means plausible but not proven. Line numbers are as of the review. Nothing here is scheduled into a phase yet: to take one, give it Steps and a Check per `plan.md` §15.
+
+| ID | Priority | Kind | Status | Where | Fix |
+| --- | --- | --- | --- | --- | --- |
+| ~~T20~~ | P0 | bug | fixed | plan-notes 353, 364 | `ci.yml` runs on `push` to `main`, so a merge has a test workflow and `revert-on-failure` can fire. |
+| ~~T21~~ | P0 | bug | fixed | plan-notes 370 | T17 was merged with red CI (`pipeline` failed in 0 s, `frontend (windows/arm64)` failed), so required checks were missing or bypassable. `protect-main` now requires `pipeline / gate`, `static analysis`, `frontend (linux/x64)` and both Windows frontend legs; the desktop matrix name bug that made those legs unmatchable is fixed. |
+| ~~T22~~ | P0 | move | fixed | plan-notes 353, 364; #158 | `pipeline.yml` calls `pyrlyn/ci/.github/workflows/ci.yml@main`. A SHA pin of that caller fails `no-pinned-ci`. |
+| ~~T23~~ | P1 | bug | fixed | plan-notes 354 | The official win-arm64 Node is cross-compiled without a startup snapshot, so `util.format` sees seven later globals. The test follows `node_use_node_snapshot` and still fails on any other difference. |
+| ~~T24~~ | P1 | move | fixed | plan-notes 371 | Split the C emitter by HIR family (expressions, statements, classes, closures, runtime calls); it is the merge bottleneck. |
+| ~~T25~~ | P2 | bug | fixed | plan-notes 353, 364 | The repo map names QuickJS-NG only. `docs/TOOLCHAIN.md` says Ryū is not vendored; fetching it stays on §12. |
+| ~~T26~~ | P2 | dead code | fixed | plan-notes 353, 364 | `memfs` is gone from both package manifests. The custom-host comments say "in-memory CompilerHost". |
+
+Already tracked here, not added again: moving number printing to the vendored Ryū C code (the review's move M3) landed as T33 (plan-notes 385).
+
+Not added: exposing `ffi-gen` as a `stator ffi-gen` subcommand is optional, and the review says to keep it in-tree as it is; the identity string methods (`jsrt_string_to_string`, `jsrt_string_value_of`) are used through the method table.
+
+The row labelled T20 is a different item from `plan/T20` (the runtime-audit tests); the two were numbered separately. Every row is fixed; T21–T26 have folders.
 
 ## stator-ts (`packages/transpiler`)
 
@@ -10,7 +65,7 @@ https://github.com/pyrlyn/stator-ts
 
 Standalone TypeScript compiler in Zig 0.17 that emits JavaScript, aims for `tsc` compatibility, scans projects in parallel and runs tests on Node or Bun.
 
-Its tasks are T42–T60: stator-ts's own T1–T19, renumbered by adding 41 so they do not collide with the ids in `plan.md`. Paths in this section and in those task folders are relative to `packages/transpiler/`, except `plan/...`.
+Its tasks are T42–T60: stator-ts's own T1–T19, renumbered by adding 41 so they do not collide with the compiler's ids. Paths in this section and in those task folders are relative to `packages/transpiler/`, except `plan/...`.
 
 ### Decisions
 

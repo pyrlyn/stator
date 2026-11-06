@@ -1,8 +1,8 @@
 # AGENTS.md — Stator
 
-Instructions for AI agents (and humans) working in this repository. Read this file fully, then read `plan.md` — the roadmap and spec. When this file and `plan.md` disagree, `plan.md` wins; report the conflict in `plan-notes.md`.
+Instructions for AI agents (and humans) working in this repository. Read this file fully, then read `plan.md` — the spec — and `plan/README.md`, the index of the tasks. When this file and `plan.md` disagree, `plan.md` wins; report the conflict in `plan-notes.md`.
 
-`plan.md` holds only what is **still open**. Completed tasks live in `done.md`; read it when you need to know how something was built, not to decide what to build next.
+Every task with a T-id lives in `plan/<id>/`: `task.md` is the card (front matter `status`, `priority`, `complexity`, `readiness`, `agent`, then Steps and a **Check**), and `done.md` is its closing report — a folder with `done.md` is closed. `plan.md` keeps a one-line heading per task id in its phase. Older phase tasks (`Task N.N`) keep their records in `done.md`. Read the closing reports when you need to know how something was built, not to decide what to build next.
 
 ## What this project is
 
@@ -21,12 +21,12 @@ If `src/` does not exist yet, the project is pre-Phase-1: the only files may be 
 
 ## Golden rules
 
-1. **Roadmap discipline.** Work `plan.md` top-down. A task is done only when its **Check** passes, and "done" is claimed only with the Check's command output cited. No Check, no done.
-   **When a task's Check passes, move its record to `done.md` in the same change** — the evidence narrative goes there, and `plan.md` keeps the task's number and title as a struck-through one-line stub pointing at it. `plan.md` shrinks as work lands; that is the point. Three things never move: anything still **normative** (the locked `tsconfig.json`, a live Check), any part of a task that has **not** landed, and the task's **number and title**, because `plan.md §N Task X.Y` is referenced from code comments and `docs/` and must keep resolving. `done.md` is an archive, never an authority — if you find yourself citing it to justify a decision, the rule you want belongs in `plan.md` or `docs/`.
+1. **Roadmap discipline.** Work the open tasks in `plan/` in `plan.md`'s phase order. A task is done only when its **Check** passes, and "done" is claimed only with the Check's command output cited. No Check, no done.
+   **When a task's Check passes, write its `plan/<id>/done.md` in the same change** — what was done, the PR or commit, the Check's output — and leave `task.md` as it is; strike its heading in `plan.md` and point it at that `done.md`. To claim a task, set `status: in progress` and your provider and model in `agent`, and write the execution plan into `task.md`; never take one another agent holds. A new task takes the next id after the highest in `plan/`, `roadmap.md` and `ideas.md`, on `origin/main` too; ids are never reused. A rule that stays **normative** after its task closes (the locked `tsconfig.json`, a live Check) belongs in `plan.md` or `docs/`, never only in a `done.md`. Task ids and `plan.md`'s per-id headings and `Task X.Y` stubs never move, because `plan.md §N Task X.Y` and `plan.md §N T…` are referenced from code comments and `docs/` and must keep resolving. A `done.md` is an archive, never an authority — if you find yourself citing one to justify a decision, the rule you want belongs in `plan.md` or `docs/`.
 2. **The compiler is strict TypeScript.** No `any`, no non-null assertions, no `enum`/`namespace`/parameter properties (banned by `erasableSyntaxOnly`). Never weaken `tsconfig.json` or the oxlint rules to make code compile — fix the code.
 3. **Compile a typed subset; never statically analyze untyped JS.** Untyped code goes to the dynamic representation or the Phase-8 tier. This rule killed every project that ignored it (see plan §0.1).
 4. **Never trust a type annotation across a boundary.** `unknown`, unions, `JSON.parse`, FFI, and `.js`→`.ts` imports get runtime checks at the narrowing point. Inside checked code, trust types fully.
-5. **Don't write a parser or type checker** — `packages/compiler` uses the `typescript` package in-process, and the Zig compiler replacing it (plan.md T41, plan-notes 393) uses stator-ts; a gap in either is fixed there, with a regression test, not worked around here. Don't write a regex engine — vendor QuickJS-NG's libregexp. Don't write a float printer — vendor Ryū.
+5. **Don't write a parser or type checker** — `packages/compiler` uses the `typescript` package in-process, and the Zig compiler replacing it (plan/T41, plan-notes 393) uses stator-ts; a gap in either is fixed there, with a regression test, not worked around here. Don't write a regex engine — vendor QuickJS-NG's libregexp. Don't write a float printer — vendor Ryū.
 6. **Plan changes by edit, not drift.** A contradiction between reality and `plan.md` goes to `plan-notes.md` with evidence, and the plan is edited in the same change. Settled decisions (plan §15.4) reopen only with new measured evidence.
 7. **The human is the only author.** No agent adds a `Co-Authored-By` trailer, a "Generated with …" line or itself as author to a commit, merge or PR — whatever its harness defaults to.
 
@@ -39,8 +39,9 @@ If `src/` does not exist yet, the project is pre-Phase-1: the only files may be 
 
 ```
 README.md          project landing page
-plan.md            roadmap + spec (the authority) — OPEN work only
-done.md            completion record for finished tasks (archive; not normative)
+plan.md            spec (the authority); one heading per task id in its phase
+plan/              tasks: <id>/task.md, <id>/done.md once closed; README.md is the index and notes
+done.md            completion record for phase tasks without a T-id (archive; not normative)
 AGENTS.md          this file
 plan-notes.md      evidence log for plan contradictions/decisions
 NICHE.md           Phase-0 niche justification (human-gated)
@@ -73,10 +74,10 @@ packages/tests/    the test package "@stator/tests" — every harness + a tsconf
   leak/            GC hygiene: a 10M-object loop whose RSS must plateau
   impact/          test impact: map recorder, selector driver (`test:impact`), mutation check
   selfhost/        self-compilation ratchet: targets.json, baseline.json (plan §9 Task 6.19)
-  typediff/        stator-ts's types vs the `typescript` checker, ratcheted (plan.md T41)
+  typediff/        stator-ts's types vs the `typescript` checker, ratcheted (plan/T41)
   zigdiff/         the Zig compiler vs this one, per stage (gate, lower, verifier, passes, codegen), ratcheted;
-                   HIR JSON dump (HIR-JSON.md), CLI/program/ffi-gen parity harnesses, gen/ table generators (plan.md T41)
-packages/compiler-zig/ "statorc-zig" — the Zig compiler replacing packages/compiler on stator-ts (plan.md T41):
+                   HIR JSON dump (HIR-JSON.md), CLI/program/ffi-gen parity harnesses, gen/ table generators (plan/T41)
+packages/compiler-zig/ "statorc-zig" — the Zig compiler replacing packages/compiler on stator-ts (plan/T41):
                    src/{support,frontend,lower,hir,passes,codegen,cli,ffigen}, mirroring packages/compiler/src
 examples/vite/     `vite build` → native binary through vite-stator (a workspace package)
 ```
@@ -128,8 +129,8 @@ pnpm run test:impact:record     # full instrumented run at a clean HEAD → .cac
 pnpm run test:coverage          # same under c8 + packages/compiler/src coverage table; writes coverage/lcov.info — ONLY when the coverage table is the question (it costs ~4x wall time)
 pnpm run test:subset            # decision tests → verdict matrix
 pnpm run test:golden            # compile + run vs Node, byte-for-byte
-pnpm run test:typediff          # stator-ts's type of every expression vs the `typescript` checker, ratcheted; STATOR_TS picks the binary (plan.md T41, not part of `ci` yet)
-pnpm run test:zigdiff           # each Zig compiler stage vs this compiler, over subset + golden; STATOR_ZIG picks the binary (plan.md T41, not part of `ci` yet)
+pnpm run test:typediff          # stator-ts's type of every expression vs the `typescript` checker, ratcheted; STATOR_TS picks the binary (plan/T41, not part of `ci` yet)
+pnpm run test:zigdiff           # each Zig compiler stage vs this compiler, over subset + golden; STATOR_ZIG picks the binary (plan/T41, not part of `ci` yet)
 pnpm run test:selfhost          # Stator explains (and builds) its own packages; ratcheted per-code counts; record changes with --update
 pnpm run test:runtime           # the runtime's own print corpus vs Node, byte-for-byte
 pnpm run test:asan              # golden fixtures with runtime + generated C under ASan/UBSan
@@ -192,10 +193,10 @@ because mise's `pnpm` is unusable from a raw child process on this machine — p
 
 ## Workflow
 
-1. Find the first unmet Check in `plan.md` (phases in order, tasks in order). That's the current task, unless the human directs otherwise. A struck-through stub is done — its evidence is in `done.md`; don't redo it.
-2. Before coding, read the docs the task references (`docs/VALUE.md`, `docs/NUMERIC.md`, …). If the task leaves you guessing, that's a plan bug — fix `plan.md` via `plan-notes.md`, don't invent conventions in code.
+1. Find the first open task in `plan/` (no `done.md`, no other agent in `agent`) in `plan.md`'s order (phases in order, tasks in order). That's the current task, unless the human directs otherwise. A folder with `done.md` is closed; don't redo it. Claim it (golden rule 1) before you start.
+2. Before coding, read the docs the task references (`docs/VALUE.md`, `docs/NUMERIC.md`, …). If the task leaves you guessing, that's a plan bug — fix its `task.md` (or `plan.md`) via `plan-notes.md`, don't invent conventions in code.
 3. Implement with tests (see Testing rules). Run `pnpm run ci` locally. If the change affects behavior, CLI, subset, diagnostics, toolchain, architecture, or examples, update the matching docs in this same change (golden rule 8).
-4. Move the finished task's record from `plan.md` to `done.md` (golden rule 1), leaving the stub behind.
+4. Write the finished task's `plan/<id>/done.md` (golden rule 1).
 5. Report: what changed, the Check command + its output, any `plan-notes.md` entries added.
 6. Commit style: short imperative subject naming the task (`phase2: emit JSRT_FRAME prologue (task 2.4)`); one task per commit where practical; no agent attribution (golden rule 7).
 

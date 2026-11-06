@@ -1,6 +1,6 @@
 # Self-hosting the compiler
 
-Status: **planned** (plan.md T35–T40). Nothing here is built yet; this page is the design the
+Status: **planned** (T61 and T36–T40 in `plan/`). Nothing here is built yet; this page is the design the
 cards implement and is updated by each of them.
 
 ## How V does it (the model)
@@ -21,7 +21,7 @@ Sources: <https://github.com/vlang/v> (README "Installing V from source", `GNUma
 
 | V | Stator (planned) | Card |
 | --- | --- | --- |
-| compiler written in V | `packages/compiler` in the admitted TS subset | T35 |
+| compiler written in V | `packages/compiler` in the admitted TS subset | T61 |
 | `vlang/vc` `v.c` | generated C snapshot of `statorc` + runtime | T36 |
 | `cc v.c -> v1 -> v2 -> v` | stage0 -> stage1 -> stage2, byte-identical C | T37 |
 | `v self` | `stator self` | T37 |
@@ -35,7 +35,7 @@ with itself; it is `not-yet` (STA1214 ×1887).
 ## Enable / disable
 
 Not available yet. When built: the Node-hosted compiler stays the default; the bootstrap path is
-opt-in via `pnpm run bootstrap:stages` and `stator self`; the CI job is skipped until T35 lands
+opt-in via `pnpm run bootstrap:stages` and `stator self`; the CI job is skipped until T61 lands
 (flag in `packages/tests/selfhost/targets.json`).
 
 ## Test
@@ -46,7 +46,7 @@ opt-in via `pnpm run bootstrap:stages` and `stator self`; the CI job is skipped 
 
 ## Limitations
 
-- The compiler depends on Node and the TypeScript/tsgo program APIs; T35 must replace or wrap
+- The compiler depends on Node and the TypeScript/tsgo program APIs; T61 must replace or wrap
   them, and some may stay host-only.
 - The runtime links Boehm GC (`libgc`); the snapshot must document or vendor it.
 - No bundled tcc; Windows is out of scope (plan.md §1).
