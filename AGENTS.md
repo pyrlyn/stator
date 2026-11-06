@@ -9,7 +9,7 @@ Every task with a T-id lives in `plan/<id>/`: `task.md` is the card (front matte
 **Stator** is an ahead-of-time compiler that turns TypeScript/JavaScript into native binaries, in two modes:
 
 - **`ts` mode (default):** strict, statically compiled TypeScript. `.ts` files only. `any` is a compile error; dynamic escape hatches (`eval`, `new Function`, `Proxy`, prototype mutation, `var`, `arguments`) are compile errors — `eval` permanently, by design. Typed code compiles to unboxed machine values; that's where the speed comes from.
-- **`js` mode:** JavaScript, or JS + TS mixed, in one module graph. Untyped code is never rejected — it compiles via a dynamic representation (NaN-boxed tagged values, shape tables, inline caches). `eval` is "not yet" until the Phase-8 interpreter tier.
+- **`js` mode:** JavaScript, or JS + TS mixed, in one module graph. Untyped code is never rejected — it compiles via a dynamic representation (NaN-boxed tagged values, shape tables, inline caches). `eval` and `new Function` are "not yet" until the Phase-14 interpreter (`docs/INTERPRETER.md`).
 
 One pipeline; mode is a policy layer (file acceptance + diagnostic table + typing of unresolved code). Nothing below the frontend gate knows the mode existed.
 

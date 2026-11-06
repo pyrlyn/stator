@@ -8,9 +8,11 @@ agent:
 
 # T14.2. `packages/interpreter`: the core evaluator
 
-Depends on T14.1. Expressions, statements, functions, closures, objects, arrays, classes,
-destructuring, exceptions. Values come from the runtime, and property access goes through the same
-ICs and helpers compiled dynamic code uses.
+Depends on T14.1. The bytecode compiler and VM of `docs/INTERPRETER.md` §2, in Zig: expressions,
+statements, functions, closures, objects, arrays, classes, destructuring, exceptions. Values are
+`jsrt_value`; property access goes through the same ICs and helpers compiled dynamic code uses;
+interpreter frames come from the Zig memory core (§4).
 
-**Check:** the T14.0 §8 Test262 slice runs through `eval` with its pass rate tracked in the
-dashboard (Task 6.3) under its own column; golden fixtures for `eval` match Node byte-for-byte.
+**Check:** the §8 Test262 slice runs through the interpreter (the Zig driver of T14.1) with its pass
+rate tracked in the dashboard (Task 6.3) under its own column; the VM's Zig unit tests pass; §7's
+QuickJS-NG comparison is recorded in plan-notes with both numbers.

@@ -14264,3 +14264,47 @@ apart until one caller can take the other's rule.
 
 The creator then chose to leave the 76 as they are. `pnpm run dupes` keeps failing on them until
 the switch, and the baseline is not grown to hide them.
+
+## 394. T14.0: the interpreter is Zig in the runtime, on stator-ts's parser, running bytecode (2026-11-06)
+
+**Decision (the creator's, 2026-11-06).** The two choices T14.0 put to the creator, with the spike's
+numbers in front of them:
+
+1. **Parser:** stator-ts's (`packages/transpiler/src/parser.zig`, plan/T41), option (d) of
+   `docs/INTERPRETER.md` §1. §0.3 needs no edit: no parser is written, and a gap is fixed in
+   stator-ts.
+2. **Evaluator language:** Zig, in the runtime. This replaces plan-notes 300's "separate package in
+   strict TypeScript, compiled by Stator": the compiler itself is moving to Zig (393), and golden
+   rule 9 gives memory-managing runtime code to Zig. The interpreter no longer doubles as a
+   benchmark of Stator's `ts`-mode codegen; the selfhost ratchet (Task 6.19) and the golden suite
+   keep that role.
+
+T14.0 then settled the rest from the spike: bytecode over tree walking, the direct-`eval` scope
+descriptor, the boundary, async and generators on the runtime's own machinery, the `not-yet` codes
+the interpreter takes, QuickJS-NG's retirement rule, and the oracle. `docs/INTERPRETER.md` is the
+record; plan.md §11f and plan/T14.1–T14.4 are edited to match.
+
+**Measured** (Apple M3 Max, clang 21.1.8, Zig 0.17.0, Node 26.7.0, `origin/main` `5decef0`):
+
+| | Value |
+| --- | --- |
+| `fib(25)`, strict-TS tree walker compiled by Stator | 1.20–1.26 s |
+| `fib(25)`, strict-TS bytecode VM compiled by Stator | 0.41–0.43 s |
+| Same evaluator under Node (JIT) | 30–45 ms |
+| Parse 657,780 B: spike TS parser compiled by Stator / under Node | 316–318 ms / 25–31 ms |
+| Parse 657,780 B: stator-ts, `ReleaseFast` / `ReleaseSmall` | 7–8 ms / 11–12 ms |
+| Binary delta: spike parser + tree walker / + bytecode VM (stripped) | +52,016 B / +68,928 B |
+| Binary delta: stator-ts parser alone, `ReleaseSmall` / `ReleaseFast` (stripped) | +66,112 B / +132,240 B |
+| (a) `typescript.js` through `statorc explain --mode=js --node` | `STA0013` after 2.8 s |
+| (b) meriyah 7.4.1 (`a1ccee4`) through `statorc explain` (`ts` mode) | 383 diagnostics |
+
+**Compiler bugs the spike found** (Agent A, who owns the language core, was told):
+
+1. `.length` on an array read through a dynamically lowered receiver — a class instance narrowed
+   from `T | undefined`, one narrowed from `unknown` by `instanceof`, a member of a union of object
+   types — lowered to `jsrt_string_length` and failed its assertion. Fixed in pyrlyn/stator#248: `lengthRead`
+   resolves the name at run time for an `unknown` operand (golden `length_dynamic_receiver`).
+2. A direct call to a method with a defaulted or rest parameter loses `this` and drops the extra
+   arguments: `jsrt_call_at` decides whether `argv[0]` is the receiver from
+   `argc == arity + 1`, and `arity` is the JS `length`, which excludes defaulted and rest
+   parameters. Open.
