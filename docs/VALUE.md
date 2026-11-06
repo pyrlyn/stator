@@ -1233,6 +1233,15 @@ Three things this decision has to pay for, none of them a representation:
   exactly why it is cheap to get right now and a bug to inherit later. **Landed 2026-09-12**
   (plan-notes 230): `closureMeta` subtracts the receiver and `jsrt_call` shifts when it is
   omitted.
+  **CORRECTION (2026-11-06, plan-notes 395):** `jsrt_call` decided that the receiver was
+  omitted from `argc == length + 1`, and `length` excludes defaulted and rest parameters. A
+  receiver call whose count differed lost `this`; a bare call lost a rest parameter's extras; and
+  a callback passing one argument more than `length` (`[7].map(o.tag)` on `tag(a, i)`) bound
+  `this` to its first argument. Nothing guesses now: `jsrt_call` never takes a receiver and
+  always shifts, and every call that has one — method, constructor, `super(…)`, a dynamic method
+  call to a closure that declares one, an accessor, the runtime's getter, setter and
+  `[Symbol.iterator]` calls — goes through `jsrt_call_with_this`. Goldens `class_call_arity` and
+  `method_value_arity`.
 - **A virtual method's value is the receiver's entry, not the statically named one.** Where a
   subclass overrides, `o.m` in value position loads `jsrt_method(recv, slot)` — the same choice
   `method-call` already makes between direct and virtual dispatch, made at the same place. The

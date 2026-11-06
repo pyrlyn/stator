@@ -315,7 +315,7 @@ static jsrt_value accessor_read(jsrt_value slot, jsrt_value recv) {
     return slot;
   }
   const JSRTAccessorCell *cell = (const JSRTAccessorCell *)jsrt_ptr(slot);
-  return cell->get == JSRT_UNDEFINED ? JSRT_UNDEFINED : jsrt_call(cell->get, 1, &recv);
+  return cell->get == JSRT_UNDEFINED ? JSRT_UNDEFINED : jsrt_call_with_this(cell->get, recv, 0, NULL);
 }
 
 /* Answers whether the write was an accessor's, so the caller knows not to store. A setter-less
@@ -333,8 +333,7 @@ static bool accessor_write(jsrt_value slot, const char *key, jsrt_value recv, js
     jsrt_throw_error(&jsrt_class_type_error, msg);
     return true;
   }
-  jsrt_value args[2] = {recv, value};
-  jsrt_call(cell->set, 2, args);
+  jsrt_call_with_this(cell->set, recv, 1, &value);
   return true;
 }
 
@@ -538,7 +537,7 @@ jsrt_value jsrt_get_prop(jsrt_value obj, const char *key, JSRTIC *ic) {
     const JSRTStaticEntry *entry = class_static_find(c, key, false);
     if (entry != NULL) {
       if (entry->kind == JSRT_STATIC_GETTER) {
-        return jsrt_call(*entry->slot, 1, &obj);
+        return jsrt_call_with_this(*entry->slot, obj, 0, NULL);
       }
       return *entry->slot;
     }
@@ -736,7 +735,7 @@ bool jsrt_user_get(jsrt_value obj, const char *key, jsrt_value *out, const char 
     const JSRTStaticEntry *entry = class_static_find(c, key, false);
     if (entry != NULL) {
       found = true;
-      value = entry->kind == JSRT_STATIC_GETTER ? jsrt_call(*entry->slot, 1, &obj) : *entry->slot;
+      value = entry->kind == JSRT_STATIC_GETTER ? jsrt_call_with_this(*entry->slot, obj, 0, NULL) : *entry->slot;
     } else if (c->klass == NULL) {
       found = function_own_get(obj, key, &value);
     }
@@ -939,8 +938,7 @@ static void store_prop(jsrt_value obj, const char *key, jsrt_value value, JSRTIC
     const JSRTStaticEntry *entry = class_static_find(c, key, true);
     if (entry != NULL) {
       if (entry->kind == JSRT_STATIC_SETTER) {
-        jsrt_value args[2] = {obj, value};
-        (void)jsrt_call(*entry->slot, 2, args);
+        (void)jsrt_call_with_this(*entry->slot, obj, 1, &value);
         return;
       }
       *entry->slot = value;

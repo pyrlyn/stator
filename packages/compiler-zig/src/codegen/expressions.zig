@@ -491,7 +491,7 @@ fn finishReceiverCall(e: *Emitter, base: usize, method: []const u8, count: usize
     const receiver = try e.slotAt(base);
     const argv = try argvAt(e, base, count);
     const loc = try e.callLocation(span);
-    const with_receiver = try e.fmt("jsrt_call_at({s}, {d}, &{s}, {s})", .{ method, 1 + count, receiver, loc });
+    const with_receiver = try helpers.receiverCall(e.arena, method, receiver, count);
     const without_receiver = try e.fmt("jsrt_call_at({s}, {d}, {s}, {s})", .{ method, count, argv, loc });
     var none: Parts = .empty;
     const call = try e.fmt("{s} = (jsrt_is({s}, JSRT_TAG_CLOSURE) && jsrt_as_closure({s})->has_receiver) ? {s} : {s}", .{ receiver, method, method, with_receiver, without_receiver });
@@ -1041,7 +1041,7 @@ const UpdateAccess = union(enum) {
             .index => |w| helpers.indexGetCall(e.arena, w.target_type, w.target, w.index),
             .field => |w| e.fmt("jsrt_object_get({s}, {d})", .{ w.target, w.slot }),
             .dyn => |w| e.fmt("jsrt_get_prop({s}, {s}, &{s})", .{ w.target, w.name, w.ic }),
-            .accessor => |w| if (w.get_callee) |callee| e.fmt("jsrt_call({s}, 1, &{s})", .{ callee, w.receiver }) else "JSRT_UNDEFINED",
+            .accessor => |w| if (w.get_callee) |callee| helpers.receiverCall(e.arena, callee, w.receiver, 0) else "JSRT_UNDEFINED",
         };
     }
 
@@ -1052,7 +1052,7 @@ const UpdateAccess = union(enum) {
             .field => |w| e.fmt("jsrt_object_set({s}, {d}, {s})", .{ w.target, w.slot, value }),
             .dyn => |w| e.fmt("jsrt_set_prop({s}, {s}, {s}, &{s})", .{ w.target, w.name, value, w.ic }),
             .accessor => |w| if (w.set_callee) |callee|
-                e.fmt("({s} = {s}, jsrt_call({s}, 2, &{s}))", .{ w.arg, value, callee, w.receiver })
+                e.fmt("({s} = {s}, {s})", .{ w.arg, value, try helpers.receiverCall(e.arena, callee, w.receiver, 1) })
             else
                 e.fmt("({s} = {s})", .{ w.arg, value }),
         };

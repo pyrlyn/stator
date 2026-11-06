@@ -260,7 +260,7 @@ jsrt_value jsrt_get_iterator(jsrt_value value) {
     /* A user iterable: the method the frontend names `__@iterator`, resolved the way any
      * dynamic method call resolves it (fixed method table or shape table alike). It must be
      * a closure -- anything else is the non-iterable below, not a call through a garbage
-     * pointer -- and `jsrt_call` passes the receiver itself, since the method declares one. */
+     * pointer -- and `jsrt_call_with_this` passes the receiver. */
     jsrt_value method = jsrt_get_prop(value, "__@iterator", NULL);
     if (jsrt_pending()) {
       return JSRT_UNDEFINED;
@@ -269,7 +269,7 @@ jsrt_value jsrt_get_iterator(jsrt_value value) {
       jsrt_throw_not_iterable(value);
       return JSRT_UNDEFINED;
     }
-    jsrt_value iterator = jsrt_call(method, 1, &value);
+    jsrt_value iterator = jsrt_call_with_this(method, value, 0, NULL);
     if (jsrt_pending()) {
       return JSRT_UNDEFINED;
     }
