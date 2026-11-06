@@ -48,9 +48,6 @@
     "packages/tests/test262/results-*-of-*.json",
     "packages/tests/test262/.tmp",
     "docs/architecture",
-    // stator-ts checker fixtures and its TS 7 conformance runner are inputs to the type checker,
-    // written to exercise edge cases this policy forbids; .sonarcloud.properties skips them too.
-    "packages/transpiler/tests",
     "pnpm-lock.yaml"
   ]
 }
