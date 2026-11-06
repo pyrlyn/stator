@@ -1109,6 +1109,11 @@ static jsrt_value array_method_call(uint32_t argc, const jsrt_value *argv, JSRTE
   const jsrt_value a0 = jsrt_arg(argc, argv, 0);
   const jsrt_value a1 = jsrt_arg(argc, argv, 1);
   const jsrt_value a2 = jsrt_arg(argc, argv, 2);
+  /* jscpd:ignore-start
+   *
+   * A dispatch table, not logic: one `case` per method, each forwarding the arguments its runtime
+   * entry point takes. Under identifier renaming any run of cases with the same arities reads as a
+   * copy, and a table of function pointers per arity trips the same match (plan-notes 397). */
   switch (op) {
     case ARRAY_M_AT:
       return jsrt_array_at(receiver, a0);
@@ -1195,6 +1200,7 @@ static jsrt_value array_method_call(uint32_t argc, const jsrt_value *argv, JSRTE
     case ARRAY_M_WITH:
       return jsrt_array_with(receiver, a0, a1);
   }
+  /* jscpd:ignore-end */
   jsrt_panic("array method dispatch fell through its own table");
 }
 

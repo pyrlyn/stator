@@ -9,9 +9,17 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { staleLdRetryArgs } from '../../compiler/src/support/toolchain.ts';
 
 export type Fail = (message: string) => never;
+
+const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+/** The compiler CLI every runner builds with, and the runtime it links against. */
+export const CLI = join(PACKAGES, 'compiler', 'src', 'cli', 'main.ts');
+export const RUNTIME_LIB_DIR = join(PACKAGES, 'runtime', 'build');
+export const RUNTIME_ARCHIVE = join(RUNTIME_LIB_DIR, 'libjsrt.a');
 
 /** A `FAIL` that names its runner: `makeFail('ffi sqlite-c-main')` writes
  * `ffi sqlite-c-main: FAIL ...` and exits nonzero. */
@@ -20,6 +28,18 @@ export function makeFail(prefix: string): Fail {
     process.stderr.write(`${prefix}: FAIL ${message}\n`);
     process.exit(1);
   };
+}
+
+/** Fails unless `actual` is `expected` byte for byte; `side` names whose output it is
+ * (`stator`, `node`), or is empty when there is only one. */
+export function expectOutput(side: string, actual: string, expected: string, fail: Fail): void {
+  if (actual === expected) {
+    return;
+  }
+  const who = side === '' ? '' : `${side} `;
+  fail(
+    `${who}output differs\n  actual:   ${JSON.stringify(actual)}\n  expected: ${JSON.stringify(expected)}`,
+  );
 }
 
 export function run(command: string, args: readonly string[], what: string, fail: Fail): string {

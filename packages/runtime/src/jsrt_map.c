@@ -495,19 +495,8 @@ bool jsrt_set_is_subset_of(jsrt_value a, jsrt_value b) {
   return true;
 }
 
-bool jsrt_set_is_superset_of(jsrt_value a, jsrt_value b) {
-  if (set_count(a) < set_count(b)) {
-    return false;
-  }
-  uint32_t at = 0;
-  jsrt_value key;
-  while (next_key(b, &at, &key)) {
-    if (!jsrt_map_has(a, key)) {
-      return false;
-    }
-  }
-  return true;
-}
+/* The spec's steps for `a ⊇ b` are those of `b ⊆ a`, size test and walk alike. */
+bool jsrt_set_is_superset_of(jsrt_value a, jsrt_value b) { return jsrt_set_is_subset_of(b, a); }
 
 bool jsrt_set_is_disjoint_from(jsrt_value a, jsrt_value b) {
   /* Either side answers the same question, so the smaller walk is a true optimization here --
