@@ -26,6 +26,9 @@ static const char *const BUILTIN_NAMES[] = {
 static jsrt_value ctor_cache[BUILTIN_COUNT];
 static jsrt_value proto_cache[BUILTIN_COUNT];
 
+/* The builtin closures here keep their table row in env slot 1 (slot 0 is the bound receiver). */
+static uint32_t closure_row(const JSRTEnv *env) { return (uint32_t)jsrt_to_number(env->slots[1]); }
+
 static int builtin_index(const char *name) {
   for (size_t i = 0; i < BUILTIN_COUNT; i++) {
     if (strcmp(BUILTIN_NAMES[i], name) == 0) {
@@ -36,7 +39,7 @@ static int builtin_index(const char *name) {
 }
 
 static jsrt_value ctor_call(uint32_t argc, const jsrt_value *argv, JSRTEnv *env) {
-  const uint32_t row = (uint32_t)jsrt_to_number(env->slots[1]);
+  const uint32_t row = closure_row(env);
   const char *name = BUILTIN_NAMES[row];
   const jsrt_value argument = jsrt_arg(argc, argv, 0);
   if (strcmp(name, "Boolean") == 0) {
@@ -138,18 +141,19 @@ bool jsrt_builtin_constructor_of(jsrt_value v, jsrt_value *out) {
 }
 
 /* The generated-code entry points: the name arrives as a string literal value. */
-jsrt_value jsrt_builtin_ctor_value(jsrt_value name) {
+static jsrt_value lookup_by_value(jsrt_value name, jsrt_value (*lookup)(const char *)) {
   char *key = jsrt_shape_key_ephemeral(name);
-  const jsrt_value out = jsrt_builtin_ctor(key);
+  const jsrt_value out = lookup(key);
   free(key);
   return out;
 }
 
+jsrt_value jsrt_builtin_ctor_value(jsrt_value name) {
+  return lookup_by_value(name, jsrt_builtin_ctor);
+}
+
 jsrt_value jsrt_builtin_proto_value(jsrt_value name) {
-  char *key = jsrt_shape_key_ephemeral(name);
-  const jsrt_value out = jsrt_builtin_proto(key);
-  free(key);
-  return out;
+  return lookup_by_value(name, jsrt_builtin_proto);
 }
 
 /* `ArrayBuffer.isView(v)` (§25.1.5.1): true for a view on a buffer. Uint8Array is the one view
@@ -176,7 +180,7 @@ enum {
 
 static jsrt_value builtin_method_call(uint32_t argc, const jsrt_value *argv, JSRTEnv *env) {
   const jsrt_value self = env->slots[0];
-  const uint32_t row = (uint32_t)jsrt_to_number(env->slots[1]);
+  const uint32_t row = closure_row(env);
   const jsrt_value a = jsrt_arg(argc, argv, 0);
   const bool is_map = jsrt_is(self, JSRT_TAG_OBJECT) && jsrt_as_object(self)->cls == &jsrt_class_map;
   switch (row) {
@@ -193,11 +197,13 @@ static jsrt_value builtin_method_call(uint32_t argc, const jsrt_value *argv, JSR
     case COLL_CLEAR:
       return jsrt_map_clear(self);
     case COLL_KEYS:
-      return jsrt_iterator_new(self, is_map ? JSRT_ITER_MAP_KEYS : JSRT_ITER_SET_KEYS);
     case COLL_VALUES:
-      return jsrt_iterator_new(self, is_map ? JSRT_ITER_MAP_VALUES : JSRT_ITER_SET_VALUES);
-    case COLL_ENTRIES:
-      return jsrt_iterator_new(self, is_map ? JSRT_ITER_MAP_ENTRIES : JSRT_ITER_SET_ENTRIES);
+    case COLL_ENTRIES: {
+      /* keys, values, entries run in the same order in these rows and in the stable iterator
+       * kinds jsrt_value.h fixes, so the row's offset picks the kind for either collection. */
+      const uint32_t first = is_map ? JSRT_ITER_MAP_KEYS : JSRT_ITER_SET_KEYS;
+      return jsrt_iterator_new(self, (uint8_t)(first + (row - COLL_KEYS)));
+    }
     case COLL_FOR_EACH:
       return is_map ? jsrt_map_for_each(self, a) : jsrt_set_for_each(self, a);
     case DATE_GET_TIME:
@@ -315,7 +321,7 @@ static jsrt_value builtin_has_own(jsrt_value self, jsrt_value key) {
 }
 
 static jsrt_value object_proto_call(uint32_t argc, const jsrt_value *argv, JSRTEnv *env) {
-  const uint32_t row = (uint32_t)jsrt_to_number(env->slots[1]);
+  const uint32_t row = closure_row(env);
   const jsrt_value self = jsrt_arg(argc, argv, 0);
   if (row == 0) {
     if (jsrt_is_nullish(self)) {
@@ -376,8 +382,5 @@ jsrt_value jsrt_object_proto_method(const char *name) {
 }
 
 jsrt_value jsrt_object_proto_method_value(jsrt_value name) {
-  char *key = jsrt_shape_key_ephemeral(name);
-  const jsrt_value out = jsrt_object_proto_method(key);
-  free(key);
-  return out;
+  return lookup_by_value(name, jsrt_object_proto_method);
 }

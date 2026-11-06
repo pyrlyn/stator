@@ -354,6 +354,23 @@ export function callableFieldSlot(type: HType, name: string): number | undefined
   return fieldSlot(type, name);
 }
 
+/** Whether `name` is a field typed null, undefined or Unknown on a non-namespace layout: a
+ * placeholder js mode may later fill with a function, so a call through it reads the field by
+ * name. Shared by the gate and the lowering, so the two admit exactly the same calls. */
+export function hasPlaceholderField(type: HType, name: string): boolean {
+  return (
+    type.kind === 'object' &&
+    type.namespace !== true &&
+    type.fields.some(
+      (field) =>
+        field.name === name &&
+        (field.type.kind === 'null' ||
+          field.type.kind === 'undefined' ||
+          field.type.kind === 'unknown'),
+    )
+  );
+}
+
 export function methodOf(t: HObject, name: string): HField | undefined {
   return t.methods.find((m) => m.name === name);
 }

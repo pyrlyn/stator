@@ -12,7 +12,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  CLI,
+  RUNTIME_ARCHIVE,
+  RUNTIME_LIB_DIR,
   archiveSystemFlags,
+  expectOutput,
   linkConsumer,
   makeFail,
   run,
@@ -21,10 +25,7 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..', '..');
-const CLI = join(ROOT, 'packages', 'compiler', 'src', 'cli', 'main.ts');
-const RUNTIME_LIB_DIR = join(ROOT, 'packages', 'runtime', 'build');
 const RUNTIME_INCLUDE = join(ROOT, 'packages', 'runtime', 'include');
-const RUNTIME_ARCHIVE = join(RUNTIME_LIB_DIR, 'libjsrt.a');
 
 const fail: Fail = makeFail('ffi sqlite-c-main');
 
@@ -89,11 +90,7 @@ function main(): void {
     linkConsumer('clang', linkArgs, fail);
     const output = run(app, [], 'sqlite demo app', fail);
     const expected = readFileSync(join(HERE, 'expected-c.txt'), 'utf8');
-    if (output !== expected) {
-      fail(
-        `output differs\n  actual:   ${JSON.stringify(output)}\n  expected: ${JSON.stringify(expected)}`,
-      );
-    }
+    expectOutput('', output, expected, fail);
     process.stdout.write('ffi sqlite-c-main: ok\n');
   } finally {
     rmSync(work, { recursive: true, force: true });

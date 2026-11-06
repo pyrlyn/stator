@@ -12,7 +12,7 @@ import { GLOBAL_CALLS, NUMBER_OPS } from '../hir/nodes.ts';
 import type { GlobalCallName } from '../hir/nodes.ts';
 import type { HType } from '../hir/types.ts';
 import { accessorName, hTypeName, objectFieldsPrefix } from '../hir/types.ts';
-import { callableFieldSlot } from '../hir/types.ts';
+import { callableFieldSlot, hasPlaceholderField } from '../hir/types.ts';
 import {
   ARRAY_OPS,
   CONSOLE_METHODS,
@@ -450,8 +450,6 @@ function gateConstruct(
       return gateDelete(node as ts.DeleteExpression, typeChecker, mode);
 
     case ts.SyntaxKind.AsExpression:
-      return { kind: 'accept' };
-
     // `e satisfies T` checks `e` against `T` without changing its type: nothing to run, so it
     // erases to its operand exactly like a widening `as`.
     case ts.SyntaxKind.SatisfiesExpression:
@@ -1366,12 +1364,7 @@ function gateIdentifier(
       if (node.text === 'Function') {
         return functionCtorResult(mode);
       }
-      if (
-        ts.isBinaryExpression(node.parent) &&
-        node.parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
-        node.parent.right === node &&
-        INSTANCEOF_BUILTINS.has(node.text)
-      ) {
+      if (isInstanceofRight(node.parent, node) && INSTANCEOF_BUILTINS.has(node.text)) {
         return { kind: 'accept' };
       }
       if (node.text === 'Symbol') {
@@ -1500,6 +1493,15 @@ function isClassAliasNonValueUse(node: ts.Identifier): boolean {
   );
 }
 
+/** Whether `child` is the right side of `x instanceof child`: a constructor named for the test. */
+function isInstanceofRight(parent: ts.Node, child: ts.Node): boolean {
+  return (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+    parent.right === child
+  );
+}
+
 /** The alias uses that erase to the target declaration: construction, static access, and the
  * `instanceof` right operand. (A heritage base erases too, but through `isClassAliasNonValueUse`
  * above plus `baseClassOf` resolving the alias -- not here.) */
@@ -1513,11 +1515,7 @@ function isClassAliasUseInPlace(node: ts.Identifier, checker: ts.TypeChecker): b
   if (ts.isTypeOfExpression(parent) && parent.expression === node) {
     return true;
   }
-  if (
-    ts.isBinaryExpression(parent) &&
-    parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
-    parent.right === node
-  ) {
+  if (isInstanceofRight(parent, node)) {
     return true;
   }
   return (
@@ -1565,11 +1563,7 @@ function namesAClassInPlace(node: ts.Identifier, checker: ts.TypeChecker): boole
       frontendTypes.staticMemberOf(parent, checker, undefined) !== undefined
     );
   }
-  return (
-    ts.isBinaryExpression(parent) &&
-    parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
-    parent.right === node
-  );
+  return isInstanceofRight(parent, node);
 }
 
 /** Whether this identifier is a scope reference — a program actually READING the binding — as
@@ -1599,11 +1593,7 @@ function isGlobalReference(node: ts.Identifier): boolean {
   if (ts.isNewExpression(parent) && parent.expression === node) {
     return false;
   }
-  if (
-    ts.isBinaryExpression(parent) &&
-    parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
-    parent.right === node
-  ) {
+  if (isInstanceofRight(parent, node)) {
     return false;
   }
   if (ts.isPropertyAccessExpression(parent)) {
@@ -3378,18 +3368,7 @@ function gateCall(call: ts.CallExpression, typeChecker: ts.TypeChecker, mode: Mo
       // `flags.unknownFn(arg)` in js mode where the field was declared `null` and later holds a
       // function (a placeholder typed null, undefined or Unknown): read the field by name and
       // call what it holds. A field typed as a non-function primitive stays refused.
-      if (
-        mode === 'js' &&
-        shape.kind === 'object' &&
-        shape.namespace !== true &&
-        shape.fields.some(
-          (field) =>
-            field.name === callee.name.text &&
-            (field.type.kind === 'null' ||
-              field.type.kind === 'undefined' ||
-              field.type.kind === 'unknown'),
-        )
-      ) {
+      if (mode === 'js' && hasPlaceholderField(shape, callee.name.text)) {
         return { kind: 'accept' };
       }
       // `f.call(thisArg, ...args)` / `f.apply(thisArg, list)` on a plain function value
@@ -7011,11 +6990,7 @@ function isPlainValuePosition(node: ts.Expression): boolean {
   ) {
     return false;
   }
-  if (
-    ts.isBinaryExpression(parent) &&
-    parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
-    parent.right === child
-  ) {
+  if (isInstanceofRight(parent, child)) {
     return false;
   }
   if (ts.isTypeOfExpression(parent) || ts.isExpressionWithTypeArguments(parent)) {

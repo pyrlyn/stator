@@ -11,12 +11,16 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeFail, run, type Fail } from '../../../packages/tests/support/c-runner.ts';
+import {
+  CLI,
+  RUNTIME_ARCHIVE,
+  expectOutput,
+  makeFail,
+  run,
+  type Fail,
+} from '../../../packages/tests/support/c-runner.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const CLI = join(HERE, '..', '..', '..', 'packages', 'compiler', 'src', 'cli', 'main.ts');
-const RUNTIME_LIB_DIR = join(HERE, '..', '..', '..', 'packages', 'runtime', 'build');
-const RUNTIME_ARCHIVE = join(RUNTIME_LIB_DIR, 'libjsrt.a');
 
 const fail: Fail = makeFail('ffi libm example');
 
@@ -35,22 +39,14 @@ function main(): void {
     );
     const expected = readFileSync(join(HERE, 'expected.txt'), 'utf8');
     const statorOut = run(app, [], 'example app', fail);
-    if (statorOut !== expected) {
-      fail(
-        `stator output differs\n  actual:   ${JSON.stringify(statorOut)}\n  expected: ${JSON.stringify(expected)}`,
-      );
-    }
+    expectOutput('stator', statorOut, expected, fail);
     const nodeOut = run(
       process.execPath,
       ['--import', join(HERE, 'node_shim.ts'), join(HERE, 'main.ts')],
       'node oracle',
       fail,
     );
-    if (nodeOut !== expected) {
-      fail(
-        `node output differs\n  actual:   ${JSON.stringify(nodeOut)}\n  expected: ${JSON.stringify(expected)}`,
-      );
-    }
+    expectOutput('node', nodeOut, expected, fail);
     process.stdout.write('ffi libm example: ok\n');
   } finally {
     rmSync(work, { recursive: true, force: true });

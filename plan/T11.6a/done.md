@@ -1,6 +1,6 @@
 # T11.6a. Closing report
 
-A class that extends the builtin `Uint8Array` compiles in both modes (plan-notes 397). An
+A class that extends the builtin `Uint8Array` compiles in both modes (plan-notes 398). An
 instance is a view stamped with its own class: the HType stays `uint8array` with a `subclass`
 tag, so indexing, `length`, the landed `%TypedArray%` members, iteration and the extern `bytes`
 ABI take the existing typed paths, and only the class's own methods, statics, `new`,
@@ -31,7 +31,7 @@ ABI take the existing typed paths, and only the class's own methods, statics, `n
 - **Tests**: goldens `ts/uint8array_subclass.ts`, `js/uint8array_subclass.js` and a subclass case
   in `ts/extern_bytes`; decision tests `subset_uint8array_subclass_{ts,js}` (static) and
   `subset_uint8array_subclass_not_yet_{ts,js}` (`STA1214`); a unit test in `types.test.ts`.
-- **Docs**: `docs/VALUE.md` §4.19, `docs/SUBSET.md`, plan-notes 397.
+- **Docs**: `docs/VALUE.md` §4.19, `docs/SUBSET.md`, plan-notes 398.
 
 ## Check
 

@@ -1392,7 +1392,7 @@ buffer as `ArrayBuffer { [Uint8Contents]: <01 02>, [byteLength]: 2 }`, the hex c
 bytes. `String(u)` is the comma join; `JSON.stringify` writes a view as its index-keyed object
 and a buffer as `{}`, which is what Node does because neither has a `toJSON`.
 
-**A class extending `Uint8Array`** (plan/T11.6a, plan-notes 397) builds the same view: its
+**A class extending `Uint8Array`** (plan/T11.6a, plan-notes 398) builds the same view: its
 instances are `JSRTTypedArray`s whose `cls` is the class's own descriptor, and the root class's
 descriptor names `&jsrt_class_uint8array` as its `parent`. So the view test is a parent walk
 (`jsrt_class_is_uint8array`, `jsrt_value.h`), the one `instanceof` already does, and every

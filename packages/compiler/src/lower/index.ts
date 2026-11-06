@@ -185,6 +185,7 @@ import {
   H_STRING,
   H_UNDEFINED,
   hArray,
+  hasPlaceholderField,
   hasTypeParam,
   hFunction,
   type HField,
@@ -837,7 +838,7 @@ function lowerStatement(
 
   if (ts.isThrowStatement(node)) {
     const value = lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
-    if (!value) {
+    if (value === null) {
       return null;
     }
     return {
@@ -5178,6 +5179,28 @@ function lowerOutGet(
   };
 }
 
+/** `o.name` read by NAME through the shape table with a per-site cache (docs/VALUE.md §4.10).
+ * Its result is Unknown: no layout holds the program to what the name holds. */
+function lowerDynamicRead(
+  node: ts.PropertyAccessExpression,
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  bindings: Scope,
+  diagnostics: Diagnostic[],
+): DynFieldAccess | null {
+  const target = lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
+  if (target === null) {
+    return null;
+  }
+  return {
+    kind: 'dyn-field-access',
+    type: hUnknown(false),
+    span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
+    target,
+    field: node.name.text,
+  };
+}
+
 function lowerExpression(
   node: ts.Expression,
   sourceFile: ts.SourceFile,
@@ -5214,17 +5237,7 @@ function lowerExpression(
     isSelfBoundCallApply(node) &&
     typeAt(node.expression, checker, bindings).kind === 'array'
   ) {
-    const target = lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
-    if (target === null) {
-      return null;
-    }
-    return {
-      kind: 'dyn-field-access',
-      type: hUnknown(false),
-      span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
-      target,
-      field: node.name.text,
-    };
+    return lowerDynamicRead(node, sourceFile, checker, bindings, diagnostics);
   }
   const builtin = builtinValueOf(node, checker);
   if (builtin !== undefined) {
@@ -5596,17 +5609,7 @@ function lowerExpression(
       frontendTypes.isFunctionValueMember(node.expression, node.name.text, checker) ||
       frontendTypes.isUndeclaredMemberRead(node, checker))
   ) {
-    const target = lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
-    if (target === null) {
-      return null;
-    }
-    return {
-      kind: 'dyn-field-access',
-      type: hUnknown(false),
-      span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
-      target,
-      field: node.name.text,
-    };
+    return lowerDynamicRead(node, sourceFile, checker, bindings, diagnostics);
   }
 
   // `super.m` as a value: the base's method as an unbound closure -- the value twin of the
@@ -7939,17 +7942,7 @@ function lowerDynMethodCall(
     (expr.name.text === 'call' || expr.name.text === 'apply') && isPlainFunctionValue(obj, checker);
   // A declared field that is not callable by its type (`unknownFn: null`, later a function):
   // the gate admitted the call in js mode, and the dynamic read finds the field by name.
-  const fieldValue =
-    slot === undefined &&
-    receiver.kind === 'object' &&
-    receiver.namespace !== true &&
-    receiver.fields.some(
-      (field) =>
-        field.name === expr.name.text &&
-        (field.type.kind === 'null' ||
-          field.type.kind === 'undefined' ||
-          field.type.kind === 'unknown'),
-    );
+  const fieldValue = slot === undefined && hasPlaceholderField(receiver, expr.name.text);
   if (
     receiver.kind !== 'unknown' &&
     slot === undefined &&
