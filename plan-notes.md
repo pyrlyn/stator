@@ -14411,8 +14411,9 @@ The creator chose to keep 26.7.0 (the "keep node at 26.7.0" commit of #233, land
   `test:zigdiff` can compare every stage byte for byte, and clones between the two compilers are
   the point of the port, not drift. Duplication in `compiler-zig` is checked again when T41
   retires `packages/compiler`.
-- **selfhost lists `packages/transpiler` in `notTargets`.** zig builds it; Stator never compiles
-  it.
+- **selfhost lists `packages/transpiler` and `packages/jstext` in `notTargets`.** zig builds
+  both (`jstext` is the text code #251 shares between stator-ts and the Zig compiler); Stator
+  never compiles them.
 - **`check-js-sources` exempts `packages/transpiler/tests/fixtures/`**, which holds checker
   inputs, on the same terms as the golden and subset corpora. It also exempts three files by name.
   `src/harness.mjs` stays JavaScript for good: stator-ts `@embedFile`s it and writes it out at run
@@ -14421,5 +14422,7 @@ The creator chose to keep 26.7.0 (the "keep node at 26.7.0" commit of #233, land
   creator asked for. That port removes their two names from the set.
 
 **Not scoped out.** The eight clones in `packages/compiler` and `packages/runtime` that are not
-in the baseline were already on main before #246. They are removed by refactoring (T30), not by
-an exclusion.
+in the baseline were already on main before #246, and #250 added a ninth in
+`packages/node/src/internal/os.ts`. They are removed by refactoring (T30), not by an exclusion.
+The `packages/transpiler/tests/**` jscpd ignore #251 added is dropped: the package-wide ignore
+covers it.
