@@ -1,9 +1,8 @@
 // @mode: ts
-// @verdict: not-yet
-// @code: STA1214
-// SUBSET.md: Classes -- a class alias erases only in place (`new K`, `K.static`,
-// `o instanceof K`). Any other use reads the alias as a value, which is the class object
-// (plan.md §8 step 12e), and stays not-yet under the same message as the class itself.
+// @verdict: static
+// SUBSET.md: Classes -- a class alias read as a value is the class object it names
+// (docs/VALUE.md §4.26, T27): `console.log(K)` prints the class. In-place uses (`new K`,
+// `K.static`, `o instanceof K`) still erase to the target declaration.
 
 class C {
   x: number = 1;

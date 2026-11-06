@@ -78,6 +78,10 @@ export function gateProgram(program: ts.Program, mode: Mode, onNode = false): Di
   const diagnostics: Diagnostic[] = [];
   const typeChecker = program.getTypeChecker();
   const classNameCounts = countClassNames(program, mode);
+  frontendTypes.noteSubclassedClasses(
+    program.getSourceFiles().filter((file) => !file.isDeclarationFile),
+    typeChecker,
+  );
 
   // Check each source file
   for (const sourceFile of program.getSourceFiles()) {
@@ -1100,24 +1104,6 @@ function aliasedDeclaration(
  * alias resolution that also asks this question lives. */
 export { isSingleConstDeclarator } from './types.ts';
 
-/** Whether every constituent of `type` is a class CONSTRUCTOR type (`typeof K`): exactly one
- * construct signature, whose result is a named class's instance. A built-in constructor
- * interface (`typeof TypeError`) is not one -- its value has no class object in this subset (the
- * error constructors are runtime entries, not descriptors) -- and neither is a plain function,
- * which constructs nothing the checker can name (TS7009 asks for `new` on one). */
-function classConstructorTypeOf(type: ts.Type): boolean {
-  const kinds = type.isUnion() ? type.types : [type];
-  return kinds.every((constituent) => {
-    const signatures = constituent.getConstructSignatures();
-    const signature = signatures.length === 1 ? signatures[0] : undefined;
-    if (signature === undefined) {
-      return false;
-    }
-    const like = frontendTypes.classLikeOf(signature.getReturnType());
-    return like !== undefined && classDisplayName(like) !== undefined;
-  });
-}
-
 function isModuleClauseName(node: ts.Identifier): boolean {
   const parent = node.parent;
   return (
@@ -1163,7 +1149,7 @@ function gateIdentifier(
     !namesAClassInPlace(node, typeChecker) &&
     !isClassAliasFormation(node)
   ) {
-    return notYet('using a class as a value is not yet supported', 5);
+    return classValueVerdict(decl, node, typeChecker);
   }
   // `const K = C` binds no value (see `aliasedClassDeclaration` in `./types.ts`): every use
   // that reads the alias as a value is the same class-as-value construct the arm above refuses
@@ -1173,12 +1159,15 @@ function gateIdentifier(
   // that is never evaluated) -- and the formation's own right-hand side and the three in-place
   // spellings erase to the target declaration (`const J = K`, `new K`, `K.static`,
   // `o instanceof K`).
-  if (frontendTypes.isClassAliasUse(node, typeChecker)) {
+  const aliasTarget = frontendTypes.isClassAliasUse(node, typeChecker)
+    ? frontendTypes.aliasedClassDeclaration(node, typeChecker)
+    : undefined;
+  if (aliasTarget !== undefined) {
     return isClassAliasNonValueUse(node) ||
       isClassAliasFormation(node) ||
       isClassAliasUseInPlace(node, typeChecker)
       ? { kind: 'accept' }
-      : notYet('using a class as a value is not yet supported', 5);
+      : classValueVerdict(aliasTarget, node, typeChecker);
   }
   // The inner name of a class expression declares, exactly like a declaration's own name
   // above: `D` in `const C = class D { … }` binds the class body, not a value.
@@ -1191,15 +1180,15 @@ function gateIdentifier(
   // same in-place spellings pass here as for declarations and aliases, and anything else
   // reads the class object and stays STA1214 under the same message. An import/export
   // specifier is a boundary spelling that is never evaluated, exactly as for aliases.
-  if (
-    (frontendTypes.classExpressionTarget(node, typeChecker) ??
-      frontendTypes.innerClassExpression(node, typeChecker)) !== undefined
-  ) {
+  const expression =
+    frontendTypes.classExpressionTarget(node, typeChecker) ??
+    frontendTypes.innerClassExpression(node, typeChecker);
+  if (expression !== undefined) {
     return ts.isImportSpecifier(node.parent) ||
       ts.isExportSpecifier(node.parent) ||
       namesAClassInPlace(node, typeChecker)
       ? { kind: 'accept' }
-      : notYet('using a class as a value is not yet supported', 5);
+      : classValueVerdict(expression, node, typeChecker);
   }
   // The constructor has no VALUE (docs/FFI.md §2): aliasing it (`const f = outSlot`)
   // would smuggle calls past the shape the call arm proves, and the lowering has no closure
@@ -1478,6 +1467,60 @@ function isClassAliasFormation(node: ts.Identifier): boolean {
     parent.initializer === node &&
     frontendTypes.isSingleConstDeclarator(parent)
   );
+}
+
+/** Whether a class has exactly ONE class object for the whole program (docs/VALUE.md §4.26),
+ * which `_jsrt_class_object_N` can be as a file-scope constant: a module-level statement runs
+ * once. A class inside a function or a loop is a fresh object per evaluation, a generic class
+ * has one descriptor per tuple, and an ambient one has no descriptor at all. */
+function hasOneClassObject(owner: ts.ClassDeclaration | ts.ClassExpression): boolean {
+  if (
+    (owner.typeParameters !== undefined && owner.typeParameters.length > 0) ||
+    owner.getSourceFile().isDeclarationFile ||
+    ts.getCombinedModifierFlags(owner) & ts.ModifierFlags.Ambient
+  ) {
+    return false;
+  }
+  if (ts.isClassDeclaration(owner)) {
+    return ts.isSourceFile(owner.parent);
+  }
+  const declaration = owner.parent;
+  return (
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer === owner &&
+    ts.isVariableStatement(declaration.parent.parent) &&
+    ts.isSourceFile(declaration.parent.parent.parent)
+  );
+}
+
+/** The verdict for a class spelling read as a VALUE (`f(C)`, `console.log(K)`, `C === D`): the
+ * class object when the class has one constant (above), otherwise the refusal it always had.
+ *
+ * TypeScript checks `typeof C` structurally, so `let K = C; K = E` type-checks for an unrelated
+ * `E` of the same shape -- but `new K()` then builds E's layout where every later read assumes
+ * C's. A class value may only flow where the expected constructor builds itself or a base. */
+function classValueVerdict(
+  owner: ts.ClassDeclaration | ts.ClassExpression,
+  use: ts.Node,
+  checker: ts.TypeChecker,
+): GateResult {
+  if (!hasOneClassObject(owner)) {
+    return notYet('using a class as a value whose evaluation can repeat is not yet supported', 5);
+  }
+  const expected = ts.isExpression(use) ? checker.getContextualType(use) : undefined;
+  if (expected === undefined || !frontendTypes.classConstructorTypeOf(expected)) {
+    return { kind: 'accept' };
+  }
+  const chain = frontendTypes.ancestry(owner, checker);
+  const targets = expected.isUnion() ? expected.types : [expected];
+  const fits = targets.some((target) => {
+    const built = target.getConstructSignatures()[0]?.getReturnType();
+    const like = built === undefined ? undefined : frontendTypes.classLikeOf(built);
+    return like !== undefined && chain.includes(like);
+  });
+  return fits
+    ? { kind: 'accept' }
+    : notYet('a class where an unrelated class is expected is not yet supported', 5);
 }
 
 /** An alias where no value is read, mirroring the class arm's own exemptions: a type
@@ -2143,6 +2186,17 @@ function isAssignableTarget(node: ts.Expression, checker: ts.TypeChecker, mode: 
     return true;
   }
   if (!ts.isPropertyAccessExpression(node)) {
+    return false;
+  }
+  // A static written through a class OBJECT, or an inherited static field written through a
+  // subclass's name: `k.count = 1` on `k` holding a subclass, like `D.count = 1`, makes an own
+  // property of the subclass, which one shared binding per static cannot hold. A static written
+  // through the class that declares it erases to its binding and stays a place.
+  if (
+    frontendTypes.classConstructorTypeOf(checker.getTypeAtLocation(node.expression)) &&
+    (frontendTypes.staticMemberOf(node, checker, undefined) === undefined ||
+      frontendTypes.isInheritedStaticFieldWrite(node, checker))
+  ) {
     return false;
   }
   // A class or constraint layout field.
@@ -5613,7 +5667,9 @@ function gateNew(node: ts.NewExpression, checker: ts.TypeChecker, mode: Mode): G
       return notYet('explicit type arguments on a constructor call are not yet supported', 5);
     }
   }
-  if (!ts.isIdentifier(node.expression)) {
+  // `new this()` in a static method builds the class `this` holds (plan.md T27 step 4); the
+  // `this` itself is vetted where it is visited.
+  if (!ts.isIdentifier(node.expression) && node.expression.kind !== ts.SyntaxKind.ThisKeyword) {
     return notYet('new on anything but a named class is not yet supported', 5);
   }
   if (classDeclarationOf(checker.getTypeAtLocation(node)) === undefined) {
@@ -5668,10 +5724,24 @@ function gateThis(node: ts.Node, checker: ts.TypeChecker): GateResult {
         return { kind: 'accept' };
       }
       // A static FIELD initializer runs with `this` bound to the class being defined, so
-      // erasure is exact. A static METHOD's `this` is whoever the method was reached through.
-      const defining = ts.isPropertyDeclaration(n);
-      return defining && isStaticThisMemberUse(node, checker)
-        ? { kind: 'accept' }
+      // erasure is exact. A static METHOD's `this` is whoever the method was reached through:
+      // the defining class while no subclass exists, which erases the same way (a bare `this`
+      // is then that class's one object), else the class the call passes (plan.md T27 step 4).
+      if (ts.isPropertyDeclaration(n)) {
+        return isStaticThisMemberUse(node, checker)
+          ? { kind: 'accept' }
+          : notYet('this in a static class member is not yet supported', 5);
+      }
+      if (frontendTypes.staticThisTakesReceiver(node, checker)) {
+        return ts.isMethodDeclaration(n)
+          ? { kind: 'accept' }
+          : notYet('this in a static accessor a subclass can reach is not yet supported', 5);
+      }
+      if (isStaticThisMemberUse(node, checker)) {
+        return { kind: 'accept' };
+      }
+      return ts.isClassDeclaration(n.parent) || ts.isClassExpression(n.parent)
+        ? classValueVerdict(n.parent, node, checker)
         : notYet('this in a static class member is not yet supported', 5);
     }
     if (ts.isClassStaticBlockDeclaration(n)) {
@@ -6207,18 +6277,51 @@ function gateMemberAccess(
   // declaration is what separates them.
   const asStatic = frontendTypes.staticMemberOf(access, checker, undefined);
   if (asStatic !== undefined) {
+    // A static method that reads `this`, taken as a value, loses its receiver: Node's detached
+    // `f()` sees `this` undefined, while the erased body would still read the class's statics.
+    const callee = ts.isCallExpression(access.parent) && access.parent.expression === access;
+    if (
+      !callee &&
+      ts.isMethodDeclaration(asStatic.member) &&
+      frontendTypes.readsOwnThis(asStatic.member)
+    ) {
+      return notYet('a static method that reads this, taken as a value, is not yet supported', 5);
+    }
     return { kind: 'accept' };
   }
   // `v.count` where the receiver is a class OBJECT (docs/VALUE.md §4.26): a static read through
   // a materialized class value routes to `JSRTClass.statics`, and `C.name` folds to the display
   // name. The remainder of the surface -- `C.prototype` (Phase 8) and every other member -- stays
   // refused here until the value path widens.
-  if (classConstructorTypeOf(checker.getTypeAtLocation(access.expression))) {
+  if (frontendTypes.classConstructorTypeOf(checker.getTypeAtLocation(access.expression))) {
     if (access.name.text === 'prototype') {
       return notYet('the prototype surface is not yet supported', 8);
     }
-    if (access.name.text === 'name') {
+    if (access.name.text === 'name' || access.name.text === 'length') {
       return { kind: 'accept' };
+    }
+    // `k.#x` brands: a subclass reached through `k` lacks the base's private static, which
+    // is Node's TypeError, and the descriptor's statics table holds no private names.
+    if (ts.isPrivateIdentifier(access.name)) {
+      return notYet('a private static read through a class object is not yet supported', 5);
+    }
+    // A static the class declares or inherits, read through whatever class the value holds. A
+    // static METHOD is a callee only: as a value it would need the class bound as its receiver.
+    const member = checker.getSymbolAtLocation(access.name)?.valueDeclaration;
+    if (member !== undefined && ts.isClassElement(member) && frontendTypes.isStaticMember(member)) {
+      const callee = ts.isCallExpression(access.parent) && access.parent.expression === access;
+      if (callee || !ts.isMethodDeclaration(member)) {
+        // The read comes back `unknown` and is checked where it narrows (golden rule 4); only a
+        // primitive has an O(1) check, so an array, a map or an object read this way would be
+        // trusted unchecked by every typed operation after it.
+        const result = frontendTypes.tsTypeToHType(
+          checker.getTypeAtLocation(callee ? access.parent : access),
+          checker,
+        );
+        return isCheckable(result) || result.kind === 'undefined' || result.kind === 'unknown'
+          ? { kind: 'accept' }
+          : notYet('a static of this type read through a class object is not yet supported', 5);
+      }
     }
     return notYet('a member read through a class object is not yet supported', 5);
   }

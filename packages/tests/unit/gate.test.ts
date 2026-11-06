@@ -445,7 +445,7 @@ test('statics are accepted; what has no class object to read is not', () => {
     codesFor(
       'class C {\n  static n = 1;\n  static m(): number {\n    return this.n;\n  }\n}\nconsole.log(C.m());',
     ),
-    ['STA1214'],
+    [],
   );
   // `C.name` folds to the display name (docs/VALUE.md §4.26); `C.prototype` is the named
   // Phase-8 residue T27 leaves behind.
@@ -455,10 +455,10 @@ test('statics are accepted; what has no class object to read is not', () => {
   ]);
 });
 
-test('a class alias erases in place and stays not-yet as a value', () => {
+test('a class alias erases in place and reads the class object as a value', () => {
   // `const K = C` binds no value: every in-place use erases to the target declaration, so the
   // three spellings below compile exactly as the direct ones (plan.md §8 step 12e). Anything
-  // else reads the alias as a value, which is the class object -- the same STA1214.
+  // else reads the alias as a value, which is the class object (docs/VALUE.md §4.26).
   const cls =
     'class C {\n  x: number = 1;\n  static s: number = 5;\n  static sm(): number {\n    return C.s;\n  }\n}\nconst K = C;\n';
   assert.deepEqual(codesFor(`${cls}console.log(new K().x);`), []);
@@ -466,15 +466,26 @@ test('a class alias erases in place and stays not-yet as a value', () => {
   assert.deepEqual(codesFor(`${cls}console.log(K.s);\nconsole.log(K.sm());`), []);
   assert.deepEqual(codesFor(`${cls}K.s = 2;\nconsole.log(K.s);`), []);
   assert.deepEqual(codesFor(`${cls}const J = K;\nconsole.log(new J() instanceof K);`), []);
-  assert.deepEqual(codesFor(`${cls}console.log(K);`), ['STA1214']);
-  assert.deepEqual(codesFor(`${cls}function f(v: unknown): void { console.log(v); }\nf(K);`), [
-    'STA1214',
-  ]);
-  // A `let` can be reassigned, so erasing it would compile a different program.
+  assert.deepEqual(codesFor(`${cls}console.log(K);`), []);
+  assert.deepEqual(codesFor(`${cls}function f(v: unknown): unknown { return v; }\nf(K);`), []);
+  // A `let` can be reassigned, so it never erases: it holds the class object, and `new K()`
+  // constructs through it. Only a class that builds the expected one or a subclass may flow in,
+  // since TypeScript would also accept an unrelated class of the same shape.
   assert.deepEqual(
     codesFor('class C {\n  x: number = 1;\n}\nlet K = C;\nconsole.log(new K().x);'),
+    [],
+  );
+  const unrelated = gateProgram(
+    createProgram(
+      'class C {\n  x: number = 1;\n}\nclass E {\n  x: number = 2;\n}\nlet K = C;\nK = E;\nconsole.log(new K().x);',
+    ).program,
+    'ts',
+  );
+  assert.deepEqual(
+    unrelated.map((d) => d.code),
     ['STA1214'],
   );
+  assert.match(unrelated[0]?.message ?? '', /a class where an unrelated class is expected/);
   // A heritage base naming an alias grounds to the target's layout (plan.md §8 step 43): a
   // `const` chain erases, while a `let` stays refused at the heritage rule.
   assert.deepEqual(codesFor(`${cls}class D extends K {\n}\nconsole.log(new D().x);`), []);
@@ -482,11 +493,11 @@ test('a class alias erases in place and stays not-yet as a value', () => {
     codesFor(`${cls}const J = K;\nclass E extends J {\n}\nconsole.log(new E().x);`),
     [],
   );
-  // A `let` alias erases nowhere: the formation itself reads the class as a value, and the
-  // heritage base stays refused -- two diagnostics under the one code.
+  // A `let` alias erases nowhere: the formation reads the class object, which is accepted, but
+  // the heritage base names no layout and stays refused.
   assert.deepEqual(
     codesFor('class C {\n  x: number = 1;\n}\nlet K = C;\nclass D extends K {\n}\nconsole.log(1);'),
-    ['STA1214', 'STA1214'],
+    ['STA1214'],
   );
   // A computed base is a value, not a declaration: no layout exists to ground the subclass in,
   // so a true mixin stays not-yet under the same heritage message, in both modes.
@@ -513,10 +524,11 @@ test('a class alias erases in place and stays not-yet as a value', () => {
     );
     assert.match(diags[0]?.message ?? '', /ModuleDeclaration/);
   }
-  // The message is the class's own, in both modes.
+  // An alias of a class with no single class object (one per call here) keeps the class's own
+  // message, in both modes.
   for (const mode of ['ts', 'js'] as const) {
     const { program } = createProgram(
-      mode === 'js' ? 'class C { }\nconst K = C;\nconsole.log(K);' : `${cls}console.log(K);`,
+      'function f() {\n  class C { }\n  const K = C;\n  console.log(K);\n}\nf();',
       mode === 'js' ? '/test.js' : '/test.ts',
     );
     const diags = gateProgram(program, mode);
@@ -526,7 +538,7 @@ test('a class alias erases in place and stays not-yet as a value', () => {
     );
     assert.match(
       diags[0]?.message ?? '',
-      /using a class as a value is not yet supported; planned for Phase 5/,
+      /using a class as a value whose evaluation can repeat is not yet supported; planned for Phase 5/,
     );
   }
 });
@@ -593,14 +605,7 @@ test('a bound class expression is vetted like a declaration and compiles', () =>
     'ts',
   );
   assert.match(generic[0]?.message ?? '', /a generic class expression is not yet supported/);
-  assert.deepEqual(codesFor('const C = class { m() { return 7; } }\nconsole.log(C);\n'), [
-    'STA1214',
-  ]);
-  const opaque = gateProgram(
-    createProgram('const C = class { m() { return 7; } }\nconsole.log(C);\n').program,
-    'ts',
-  );
-  assert.match(opaque[0]?.message ?? '', /using a class as a value is not yet supported/);
+  assert.deepEqual(codesFor('const C = class { m() { return 7; } }\nconsole.log(C);\n'), []);
   // Shared vetting, not a duplicated one: a computed member in an expression reports the member.
   assert.deepEqual(
     codesFor(

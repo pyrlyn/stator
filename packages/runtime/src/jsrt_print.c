@@ -1273,7 +1273,9 @@ static void write_grouped(const char *text, size_t len, FILE *stream) {
  * no such exception -- it inspects whatever it is given, which is the whole difference between
  * the two entry points. */
 static void print_one(JSRTBuf *out, jsrt_value v, bool bare) {
-  if (has_own_props(v)) {
+  if (jsrt_is(v, JSRT_TAG_CLOSURE) && jsrt_as_closure(v)->klass != NULL) {
+    inspect_class(out, v, 0, 0);
+  } else if (has_own_props(v)) {
     inspect_function(out, v, 0, 0);
   } else if (!inspect_heap(out, v, 0, 0)) {
     inspect_scalar(out, v, !bare);
