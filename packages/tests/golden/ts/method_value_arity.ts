@@ -18,7 +18,9 @@ class Tags {
 }
 
 const t = new Tags();
-console.log([7, 8].map(t.tag).join(','));
+// The bare method value IS the case under test: `map` passes it three arguments, one more than
+// its `length`.
+console.log([7, 8].map(t.tag).join(',')); // NOSONAR typescript:S7727
 const count = t.count;
 console.log(count(1, 2, 3));
 console.log(count());
