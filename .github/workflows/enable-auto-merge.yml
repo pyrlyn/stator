@@ -1,0 +1,45 @@
+# Enable GitHub auto-merge on non-draft pull requests targeting main.
+#
+# Relies on repository `allow_auto_merge` and ruleset `protect-main` required
+# checks (`pipeline / gate`, `static analysis`, frontend linux/windows). Auto-merge
+# only completes after those checks pass; this workflow does not merge itself.
+#
+# Scope:
+# - same-repository pull requests only (no forks)
+# - skips drafts until ready_for_review
+# - skips dependabot[bot] (handled by .github/workflows/dependabot.yml)
+# - only reacts to future opened/reopened/ready_for_review events (does not
+#   scan or mutate already-open pull requests)
+name: Enable auto-merge
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: enable-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  enable:
+    name: Enable auto-merge
+    if: >-
+      github.event.pull_request.draft == false
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+      && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+    steps:
+      - name: Enable squash auto-merge
+        run: gh pr merge "$PR_URL" --auto --squash
