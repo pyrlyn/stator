@@ -12,11 +12,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CLI, RUNTIME_ARCHIVE, expectOutput } from '../../../packages/tests/support/c-runner.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const CLI = join(HERE, '..', '..', '..', 'packages', 'compiler', 'src', 'cli', 'main.ts');
-const RUNTIME_LIB_DIR = join(HERE, '..', '..', '..', 'packages', 'runtime', 'build');
-const RUNTIME_ARCHIVE = join(RUNTIME_LIB_DIR, 'libjsrt.a');
 
 /* Fixed mtime both sides must agree on (whole seconds: the shim returns
  * `(double)st.st_mtime`, the mirror floors `mtimeMs / 1000`). */
@@ -71,22 +69,14 @@ function main(): void {
     writeFileSync(data, 'stator01');
     utimesSync(data, MTIME, MTIME);
     const statorOut = run(app, [], 'example app', work);
-    if (statorOut !== expected) {
-      fail(
-        `stator output differs\n  actual:   ${JSON.stringify(statorOut)}\n  expected: ${JSON.stringify(expected)}`,
-      );
-    }
+    expectOutput('stator', statorOut, expected, fail);
     const nodeOut = run(
       process.execPath,
       ['--import', join(HERE, 'node_shim.ts'), join(HERE, 'main.ts')],
       'node oracle',
       work,
     );
-    if (nodeOut !== expected) {
-      fail(
-        `node output differs\n  actual:   ${JSON.stringify(nodeOut)}\n  expected: ${JSON.stringify(expected)}`,
-      );
-    }
+    expectOutput('node', nodeOut, expected, fail);
     process.stdout.write('ffi stat example: ok\n');
   } finally {
     rmSync(work, { recursive: true, force: true });

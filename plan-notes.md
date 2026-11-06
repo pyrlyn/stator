@@ -14345,3 +14345,95 @@ parameter collides with the receiver". The first is now the method itself (`exit
 second is now only not landed. `docs/MODES.md` §6, `docs/SUBSET.md` and `packages/node/src/process.ts`
 are edited to match. Goldens `ts/class_call_arity` (fewer arguments) and `js/class_call_arity` (fewer and
 more) cover methods, constructors and `super`, and `ts/node_process` calls `process.exit()`.
+
+## 396. T14.0: the interpreter is Zig in the runtime, on stator-ts's parser, running bytecode (2026-11-06)
+
+**Decision (the creator's, 2026-11-06).** The two choices T14.0 put to the creator, with the spike's
+numbers in front of them:
+
+1. **Parser:** stator-ts's (`packages/transpiler/src/parser.zig`, plan/T41), option (d) of
+   `docs/INTERPRETER.md` §1. §0.3 needs no edit: no parser is written, and a gap is fixed in
+   stator-ts.
+2. **Evaluator language:** Zig, in the runtime. This replaces plan-notes 300's "separate package in
+   strict TypeScript, compiled by Stator": the compiler itself is moving to Zig (393), and golden
+   rule 9 gives memory-managing runtime code to Zig. The interpreter no longer doubles as a
+   benchmark of Stator's `ts`-mode codegen; the selfhost ratchet (Task 6.19) and the golden suite
+   keep that role.
+
+T14.0 then settled the rest from the spike: bytecode over tree walking, the direct-`eval` scope
+descriptor, the boundary, async and generators on the runtime's own machinery, the `not-yet` codes
+the interpreter takes, QuickJS-NG's retirement rule, and the oracle. `docs/INTERPRETER.md` is the
+record; plan.md §11f and plan/T14.1–T14.4 are edited to match.
+
+**Measured** (Apple M3 Max, clang 21.1.8, Zig 0.17.0, Node 26.7.0, `origin/main` `5decef0`):
+
+| | Value |
+| --- | --- |
+| `fib(25)`, strict-TS tree walker compiled by Stator | 1.20–1.26 s |
+| `fib(25)`, strict-TS bytecode VM compiled by Stator | 0.41–0.43 s |
+| Same evaluator under Node (JIT) | 30–45 ms |
+| Parse 657,780 B: spike TS parser compiled by Stator / under Node | 316–318 ms / 25–31 ms |
+| Parse 657,780 B: stator-ts, `ReleaseFast` / `ReleaseSmall` | 7–8 ms / 11–12 ms |
+| Binary delta: spike parser + tree walker / + bytecode VM (stripped) | +52,016 B / +68,928 B |
+| Binary delta: stator-ts parser alone, `ReleaseSmall` / `ReleaseFast` (stripped) | +66,112 B / +132,240 B |
+| (a) `typescript.js` through `statorc explain --mode=js --node` | `STA0013` after 2.8 s |
+| (b) meriyah 7.4.1 (`a1ccee4`) through `statorc explain` (`ts` mode) | 383 diagnostics |
+
+**Compiler bugs the spike found** (Agent A, who owns the language core, was told):
+
+1. `.length` on an array read through a dynamically lowered receiver — a class instance narrowed
+   from `T | undefined`, one narrowed from `unknown` by `instanceof`, a member of a union of object
+   types — lowered to `jsrt_string_length` and failed its assertion. Fixed in pyrlyn/stator#248: `lengthRead`
+   resolves the name at run time for an `unknown` operand (golden `length_dynamic_receiver`).
+2. A direct call to a method with a defaulted or rest parameter loses `this` and drops the extra
+   arguments: `jsrt_call_at` decides whether `argv[0]` is the receiver from
+   `argc == arity + 1`, and `arity` is the JS `length`, which excludes defaulted and rest
+   parameters. Direct method, constructor and `super(…)` calls are fixed by 395; a bare call of a
+   method value still guesses (`[7].map(o.tag)` on `tag(a, i)` binds `this` to `7`).
+
+## 397. `pnpm run ci` covers the packages Stator owns: stator-ts and the Zig port are scoped out (2026-11-06)
+
+**Why.** After #246 imported stator-ts as `packages/transpiler`, `pnpm run ci` on main failed at
+five stages, none of them caused by compiler code. Separately, `mise.toml` pinned node 26.12.0
+(Renovate #226) while `.node-version` stays 26.7.0, the Node every golden is recorded against.
+The creator chose to keep 26.7.0 (the "keep node at 26.7.0" commit of #233, landed on its own).
+
+**What is scoped out, and why.**
+
+- **oxlint and oxfmt skip `packages/transpiler`.** It is a Zig program. Its TypeScript files are
+  checker fixtures that exercise invalid and unusual code on purpose (unbound methods, `export =`
+  inside a namespace), so neither linting nor reformatting them is right: a fixture's bytes are
+  its test. Its correctness gates are its own (`zig build test`, `tests/differential.sh` against
+  `tsc`, the TS7 ratchet; `packages/transpiler/AGENTS.md`).
+- **jscpd skips `packages/transpiler` and `packages/compiler-zig`.** Together they brought 431
+  clones that are not in the baseline. The baseline is not grown to absorb them (golden rule 10).
+  `compiler-zig` is the T41 port: it mirrors `packages/compiler` function for function so that
+  `test:zigdiff` can compare every stage byte for byte, and clones between the two compilers are
+  the point of the port, not drift. Duplication in `compiler-zig` is checked again when T41
+  retires `packages/compiler`.
+- **selfhost lists `packages/transpiler` and `packages/jstext` in `notTargets`.** zig builds
+  both (`jstext` is the text code #251 shares between stator-ts and the Zig compiler); Stator
+  never compiles them.
+- **`check-js-sources` exempts `packages/transpiler/tests/fixtures/`**, which holds checker
+  inputs, on the same terms as the golden and subset corpora. It also exempts three files by name.
+  `src/harness.mjs` stays JavaScript for good: stator-ts `@embedFile`s it and writes it out at run
+  time as the harness Node or Bun runs the tests in. `scripts/benchmark.mjs` and
+  `tests/ts7/run.mjs` are exempt **only until they are ported to TypeScript**, the follow-up the
+  creator asked for. That port removes their two names from the set.
+
+**Not scoped out.** The eight clones in `packages/compiler` and `packages/runtime` that are not
+in the baseline were already on main before #246, and #250 added a ninth in
+`packages/node/src/internal/os.ts`. They are removed by refactoring (T30), not by an exclusion.
+The `packages/transpiler/tests/**` jscpd ignore #251 added is dropped: the package-wide ignore
+covers it.
+
+**cpd 5.4.2 (#253) moved the floor.** The bump reported three older clones the baseline did not
+hold: the output check and path constants in the `examples/ffi` runners, `is_subset_of` and
+`is_superset_of` in `jsrt_map.c`, and runs of cases in the array-method dispatch switch in
+`jsrt_array_ops.c`. The first two are refactored away (`expectOutput`, `CLI` and
+`RUNTIME_ARCHIVE` in `packages/tests/support/c-runner.ts`; `a ⊇ b` as `b ⊆ a`). The switch is a
+dispatch table, one forwarding `case` per method, and the alternative tried (one function-pointer
+table per arity) produced five clones instead of one, because the tables match each other under
+identifier renaming. So the switch gets `jscpd:ignore` markers that say why in the file, as
+`hir/nodes.ts` does (plan-notes 71). `.jscpd-baseline.json` only shrinks: 19 fingerprints that
+match nothing under 5.4.2 are removed, none added.
