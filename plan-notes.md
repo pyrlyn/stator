@@ -14390,3 +14390,36 @@ record; plan.md §11f and plan/T14.1–T14.4 are edited to match.
    `argc == arity + 1`, and `arity` is the JS `length`, which excludes defaulted and rest
    parameters. Direct method, constructor and `super(…)` calls are fixed by 395; a bare call of a
    method value still guesses (`[7].map(o.tag)` on `tag(a, i)` binds `this` to `7`).
+
+## 397. `pnpm run ci` covers the packages Stator owns: stator-ts and the Zig port are scoped out (2026-11-06)
+
+**Why.** After #246 imported stator-ts as `packages/transpiler`, `pnpm run ci` on main failed at
+five stages, none of them caused by compiler code. Separately, `mise.toml` pinned node 26.12.0
+(Renovate #226) while `.node-version` stays 26.7.0, the Node every golden is recorded against.
+The creator chose to keep 26.7.0 (the "keep node at 26.7.0" commit of #233, landed on its own).
+
+**What is scoped out, and why.**
+
+- **oxlint and oxfmt skip `packages/transpiler`.** It is a Zig program. Its TypeScript files are
+  checker fixtures that exercise invalid and unusual code on purpose (unbound methods, `export =`
+  inside a namespace), so neither linting nor reformatting them is right: a fixture's bytes are
+  its test. Its correctness gates are its own (`zig build test`, `tests/differential.sh` against
+  `tsc`, the TS7 ratchet; `packages/transpiler/AGENTS.md`).
+- **jscpd skips `packages/transpiler` and `packages/compiler-zig`.** Together they brought 431
+  clones that are not in the baseline. The baseline is not grown to absorb them (golden rule 10).
+  `compiler-zig` is the T41 port: it mirrors `packages/compiler` function for function so that
+  `test:zigdiff` can compare every stage byte for byte, and clones between the two compilers are
+  the point of the port, not drift. Duplication in `compiler-zig` is checked again when T41
+  retires `packages/compiler`.
+- **selfhost lists `packages/transpiler` in `notTargets`.** zig builds it; Stator never compiles
+  it.
+- **`check-js-sources` exempts `packages/transpiler/tests/fixtures/`**, which holds checker
+  inputs, on the same terms as the golden and subset corpora. It also exempts three files by name.
+  `src/harness.mjs` stays JavaScript for good: stator-ts `@embedFile`s it and writes it out at run
+  time as the harness Node or Bun runs the tests in. `scripts/benchmark.mjs` and
+  `tests/ts7/run.mjs` are exempt **only until they are ported to TypeScript**, the follow-up the
+  creator asked for. That port removes their two names from the set.
+
+**Not scoped out.** The eight clones in `packages/compiler` and `packages/runtime` that are not
+in the baseline were already on main before #246. They are removed by refactoring (T30), not by
+an exclusion.

@@ -34,6 +34,8 @@
     "packages/tests/subset/cycle_partner_*",
     "packages/tests/golden/ts",
     "packages/tests/golden/js",
+    // stator-ts keeps its fixtures byte-exact: they are inputs to its checker (plan-notes 397).
+    "packages/transpiler",
     "packages/compiler-zig/zig-pkg",
     "packages/compiler-zig/.zig-cache",
     "packages/compiler-zig/zig-out",
