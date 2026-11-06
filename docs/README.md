@@ -1,6 +1,6 @@
 # Docs
 
-How stator is specified. [`plan.md`](../plan.md) is the authority for what is still open; these files operationalize it.
+How stator is specified. [`plan.md`](../plan.md) is the spec and the authority, and [`plan/`](../plan/README.md) holds the tasks still open; these files operationalize them.
 
 **Getting started:** [project README](../README.md) → [`HOW-IT-WORKS.md`](HOW-IT-WORKS.md). **Contributing:** [`CONTRIBUTING.md`](../CONTRIBUTING.md), [`DEVELOPMENT.md`](DEVELOPMENT.md).
 

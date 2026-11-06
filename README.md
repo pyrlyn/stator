@@ -63,7 +63,8 @@ Pinned toolchain, every test harness and the runtime builds: [docs/DEVELOPMENT.m
 | [docs/CONFIG.md](docs/CONFIG.md) | `stator.config.json` keys and precedence |
 | [docs/BUNDLER.md](docs/BUNDLER.md) | `vite-stator` and `node_modules` in `js` mode |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | toolchain, test harnesses, runtime builds |
-| [plan.md](plan.md) | roadmap (open work only) |
+| [plan.md](plan.md) | spec |
+| [plan/](plan/README.md) | tasks, one folder per id |
 | [AGENTS.md](AGENTS.md) | conventions for humans and agents working in this repo |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | short contributor checklist |
 

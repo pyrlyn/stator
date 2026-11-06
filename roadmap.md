@@ -1,8 +1,8 @@
 # Roadmap
 
-Approved work that is not in `plan.md` or `plan/` yet.
+Approved work that is not in `plan/` yet.
 
-**Nothing is waiting here for `plan.md` (swept 2026-10-24).** Everything the previous roadmap pointed at has
+**Nothing is waiting here for the compiler (swept 2026-10-24).** Everything the previous roadmap pointed at has
 either landed or been promoted to a task card:
 
 - Phase 5 step 12 (c)–(f) residue → **T27** (class object / static-`this`), **T28** (generics
@@ -15,12 +15,11 @@ either landed or been promoted to a task card:
 - §12 Ryū → **T33** (vendor Ryū; number printing).
 - Phase 7 FFI is complete (spec stays in `plan.md` §10).
 - Phase 8 stays **gated** on a named user — not carded; "do not build speculatively."
-- Phases 9–14 stay open where their task headings are not struck through (T10.2, T11.4,
-  T11.6, T11.7, T12.3, T13.x, T14.x). Phase 9's T9.1 and T10.1/T10.3's C1 have landed.
-- The cloud-review table rows are struck (T21–T26); T15–T20 are in `done.md`.
+- Phases 9–14 stay open where their tasks have no `done.md` (T10.3, T11.4, T11.6, T11.7,
+  T12.3, T13.x, T14.x). T9.1, T10.1, T10.2 and T10.2a have landed.
+- The cloud-review rows are fixed (T21–T26), and T15–T20 are closed.
 
-`todo.md` lists open cloud-review rows only. Struck-through tasks stay in `plan.md` as
-one-line stubs; their evidence is in `done.md`.
+Every task lives in `plan/<id>/`; a closed one carries `done.md`.
 
 ## stator-ts (`packages/transpiler`)
 
