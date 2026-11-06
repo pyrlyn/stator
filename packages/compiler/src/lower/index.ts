@@ -1760,6 +1760,18 @@ function lengthRead(operand: Expression, span: Span): Expression {
     const length: FunctionLength = { kind: 'function-length', type: H_NUMBER, span, operand };
     return length;
   }
+  // A dynamic read (`a.xs` where `a` narrowed from `T | undefined`, or a union member) lost the
+  // operand's static type; guessing "string" asserted on arrays, so the name resolves at run time.
+  if (operand.type.kind === 'unknown') {
+    const length: DynFieldAccess = {
+      kind: 'dyn-field-access',
+      type: hUnknown(false),
+      span,
+      target: operand,
+      field: 'length',
+    };
+    return length;
+  }
   const length: StringLength = { kind: 'string-length', type: H_NUMBER, span, operand };
   return length;
 }
