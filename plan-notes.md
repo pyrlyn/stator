@@ -14426,3 +14426,14 @@ in the baseline were already on main before #246, and #250 added a ninth in
 `packages/node/src/internal/os.ts`. They are removed by refactoring (T30), not by an exclusion.
 The `packages/transpiler/tests/**` jscpd ignore #251 added is dropped: the package-wide ignore
 covers it.
+
+**cpd 5.4.2 (#253) moved the floor.** The bump reported three older clones the baseline did not
+hold: the output check and path constants in the `examples/ffi` runners, `is_subset_of` and
+`is_superset_of` in `jsrt_map.c`, and runs of cases in the array-method dispatch switch in
+`jsrt_array_ops.c`. The first two are refactored away (`expectOutput`, `CLI` and
+`RUNTIME_ARCHIVE` in `packages/tests/support/c-runner.ts`; `a ⊇ b` as `b ⊆ a`). The switch is a
+dispatch table, one forwarding `case` per method, and the alternative tried (one function-pointer
+table per arity) produced five clones instead of one, because the tables match each other under
+identifier renaming. So the switch gets `jscpd:ignore` markers that say why in the file, as
+`hir/nodes.ts` does (plan-notes 71). `.jscpd-baseline.json` only shrinks: 19 fingerprints that
+match nothing under 5.4.2 are removed, none added.
