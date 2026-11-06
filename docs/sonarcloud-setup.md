@@ -33,6 +33,10 @@ being enabled.
 
 In the SonarCloud project: **Administration → Analysis Method → Automatic Analysis → off**.
 
+While it is still on (the `pyrlyn_stator` project runs it as "SonarCloud Code Analysis"), it
+reads `.sonarcloud.properties`, not `sonar-project.properties`. That file excludes
+`packages/transpiler/tests/**`: stator-ts's checker fixtures, whose odd code is deliberate.
+
 ## 3. Create a token
 
 1. Open <https://sonarcloud.io/account/security>

@@ -2,6 +2,7 @@
     .name = .stator_ts,
     .version = "0.1.0",
     .dependencies = .{
+        .jstext = .{ .path = "../jstext" },
         .coroutines = .{
             .url = "git+https://github.com/pyrlyn/coroutines#65b74e7bf9617c7d4966542f923055c27f95565b",
             .hash = "coroutines-0.1.0-heaAMI63AACqHDq26S62doxTYdm31hiA4EzM2dnnRsTu",

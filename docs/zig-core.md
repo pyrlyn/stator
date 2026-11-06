@@ -1,7 +1,7 @@
 # Zig compiler (T41)
 
 `packages/compiler-zig/` is the Stator compiler rewritten in Zig 0.17 on top of
-[stator-ts](https://github.com/pyrlyn/stator-ts), which supplies the parser, the binder and the
+stator-ts (`packages/transpiler`), which supplies the parser, the binder and the
 type checker. It replaces `packages/compiler` (TypeScript, on the `typescript` 6.0.3 API) once every
 stage is at parity. Until then `stator build` still runs the TypeScript compiler, which also serves
 as the oracle every Zig stage is measured against. Direction and evidence: `plan.md` T41,
@@ -25,10 +25,13 @@ as the oracle every Zig stage is measured against. Direction and evidence: `plan
 
 ### Shared helpers
 
-Look here before writing a helper, since `pnpm run dupes` fails on a second copy:
+Look here before writing a helper, since `pnpm run dupes` fails on a second copy. Before writing one
+over the AST, look in stator-ts too (`stator_ts.syntax`, `stator_ts.binder`): `gate_api.isTypeNode`
+and `skipParens` are its versions.
 
 | Helper | What it does |
 | --- | --- |
+| `jstext` (`packages/jstext`, shared with stator-ts) | JavaScript text over WTF-8: `numberToString`, `isSpace`/`trim`, `utf16Length`, `compare`/`less`, `writeJsonString`, `CodePoints`, `Units` |
 | `support/ast_walk.zig` | walks a stator-ts AST: `contains` and `collect` with a step function |
 | `support/node_field.zig` | reads the field several AST node kinds share under one meaning |
 | `support/names.zig` | name lists and C names: `contains`, `lessThan`, `isWord`, `isCIdentifier` |
@@ -56,15 +59,15 @@ zig build test                     # unit tests of every stage
 ./zig-out/bin/statorc-zig --help   # same CLI as `stator`
 ```
 
-stator-ts is a path dependency in `build.zig.zon`, pointing at its T20 worktree, until T20 is
-merged and the dependency becomes a pinned URL and hash. The `lib.*.d.ts` files still come from
-`packages/compiler/node_modules/typescript/lib`.
+stator-ts is the in-repo `packages/transpiler`, a path dependency in `build.zig.zon` (plan/T62), so
+a fix to it lands in the same change as the compiler code that needs it. The `lib.*.d.ts` files
+still come from `packages/compiler/node_modules/typescript/lib`.
 
 From the repository root, with the pinned Node:
 
 ```sh
 STATOR_ZIG=$PWD/packages/compiler-zig/zig-out/bin/statorc-zig pnpm run test:zigdiff
-STATOR_TS=<stator-ts binary> pnpm run test:typediff
+STATOR_TS=$PWD/packages/transpiler/zig-out/bin/stator-ts pnpm run test:typediff
 ```
 
 Both ratchet against a `baseline.json` next to them and fail when a count gets worse. `zigdiff`

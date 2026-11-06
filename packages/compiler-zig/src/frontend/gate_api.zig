@@ -499,11 +499,7 @@ pub fn isIterationStatement(n: *const Node) bool {
 
 /// `ts.isTypeNode`, which counts `ExpressionWithTypeArguments` as one.
 pub fn isTypeNode(n: *const Node) bool {
-    return switch (n.data) {
-        .kw_type, .this_type, .type_ref, .type_query, .type_literal, .array_type, .tuple_type, .named_tuple_member, .optional_type, .rest_type, .union_type, .intersection_type, .conditional_type, .infer_type, .paren_type, .type_operator, .indexed_access, .mapped_type, .literal_type, .template_literal_type, .template_type_span, .import_type, .type_predicate, .expr_with_type_args => true,
-        .func => |x| x.kind == .function_type or x.kind == .constructor_type,
-        else => false,
-    };
+    return stator_ts.syntax.isTypeNode(n) or n.data == .expr_with_type_args;
 }
 
 /// `ts.isExpression`, by kind.
@@ -546,11 +542,7 @@ fn isNameOnly(p: *const Node) bool {
     return support.node_field.isAny(p, .{ .labeled, .break_stmt, .continue_stmt, .meta_property, .named_tuple_member, .jsx_attr });
 }
 
-pub fn skipParens(n0: *Node) *Node {
-    var n = n0;
-    while (n.data == .paren) n = n.data.paren.expr;
-    return n;
-}
+pub const skipParens = binder.skipParens;
 
 /// The outermost parentheses around `n`, or `n` itself: the node its real parent holds.
 pub fn outermostParen(n0: *Node) *Node {

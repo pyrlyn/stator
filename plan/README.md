@@ -65,11 +65,11 @@ https://github.com/pyrlyn/stator-ts
 
 Standalone TypeScript compiler in Zig 0.17 that emits JavaScript, aims for `tsc` compatibility, scans projects in parallel and runs tests on Node or Bun.
 
-Its tasks are T42–T60: stator-ts's own T1–T19, renumbered by adding 41 so they do not collide with the compiler's ids. Paths in this section and in those task folders are relative to `packages/transpiler/`, except `plan/...`.
+Its tasks are T42–T60: stator-ts's own T1–T19, renumbered by adding 41 so they do not collide with the compiler's ids. Its T20 and T21 came in with T62's sync to upstream `bc7de36` and are T63 and T64, since T61 was already taken. Paths in this section and in those task folders are relative to `packages/transpiler/`, except `plan/...`.
 
 ### Decisions
 
-- Standalone project. It shares no code with `apps/stator`, whose frontend is the TypeScript compiler API.
+- Its source of truth is `packages/transpiler`; since T62 it is upstream `main` at `bc7de36`. Stator's Zig compiler (`packages/compiler-zig`, T41) uses it as a library (`stator_ts` module, `Session`) through a path dependency, and Zig code both need lives once under `packages/`. Stator's old compiler keeps the TypeScript compiler API until T41 lands.
 - Output is JavaScript. Target is ES2022 or newer, modules are ESM; downleveling and CommonJS are on the roadmap.
 - `lib.*.d.ts` files are found at run time (`--lib-dir`, `STATOR_TS_LIB`, then `node_modules/typescript/lib`), so they always match the project's TypeScript version.
 - The emitter applies edits to source text, so comments and formatting survive.
@@ -226,4 +226,8 @@ The move buys no speed, and none was expected. Scheduling is not where stator-ts
 TS7 suite (`microsoft/TypeScript` at 6161772c1370bdd4a82f808e6823bd755eb1870d, `tsc/testdata`): 13,737 tests, 8,136 pass (59.2%), 18,753 expected diagnostics missed, 9,949 extra. The largest gaps are unimplemented features: JS checking, JSX, node16 resolution modes, unused-symbol reports. A failing test often differs in one diagnostic, so the percentage understates the checker on ordinary code and says nothing about emit.
 
 Facts from upstream at that commit: TS7's tests moved from the archived `microsoft/typescript-go` to `tsc/` in `microsoft/TypeScript`; `v7.0.2` has the older layout, which is why the pin is a commit. TS7 defaults differ from 5.9 (`strict`, `types: []`) and its messages put missing-property text on TS2345 and TS2344.
+
+#### T64
+
+Upstream's T21 findings, kept with its numbering of iterations: at upstream `bc7de36` the TS7 suite at the same commit passes 10,209 of 13,737 (74.3%), up from 8,233 when the task started, with no crashes. The per-iteration record (JS checking rules, module resolution conditions, `this`, JSX attributes, modifiers, overloads, private names, heritage, `importHelpers`) is in upstream's `plan/README.md` at https://github.com/pyrlyn/stator-ts/blob/bc7de36a6/plan/README.md (checked 2026-11-06). Largest gaps left: missed TS2322 (mapped types, `noUncheckedIndexedAccess`, generic JSX components), parser recovery (TS1005, extra TS1127/TS1109), node16 import checks (TS1479, TS2834, TS2835), JSDoc types in JavaScript, `contentMappers`, JS expandos, decorators in JavaScript, tagged templates with type arguments, late-bound and JSDoc overloads, definite assignment (TS2564), and extra TS2339 and TS2304.
 

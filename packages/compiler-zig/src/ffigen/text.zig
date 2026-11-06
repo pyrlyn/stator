@@ -4,7 +4,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const unicode = std.unicode;
 const upper_table = @import("upper_table.zig");
-const isJsSpace = @import("../support/js_text.zig").isSpace;
+const jstext = @import("jstext");
 const names = @import("../support/names.zig");
 
 pub fn oom() noreturn {
@@ -22,55 +22,12 @@ pub fn lossyUtf8(a: Allocator, bytes: []const u8) []const u8 {
     return std.fmt.allocPrint(a, "{f}", .{unicode.fmtUtf8(bytes)}) catch oom();
 }
 
-fn codepointAt(s: []const u8, i: usize) ?struct { cp: u21, len: u3 } {
-    const len = unicode.utf8ByteSequenceLength(s[i]) catch return null;
-    if (i + len > s.len) return null;
-    const cp = unicode.utf8Decode(s[i .. i + len]) catch return null;
-    return .{ .cp = cp, .len = len };
-}
-
-/// The bytes of the `\s` starting at `i`, or 0.
-pub fn spaceAt(s: []const u8, i: usize) usize {
-    if (i >= s.len) return 0;
-    const at = codepointAt(s, i) orelse return 0;
-    return if (isJsSpace(at.cp)) at.len else 0;
-}
-
-/// The bytes of the `\s` ending at `end`, or 0.
-fn spaceBefore(s: []const u8, end: usize) usize {
-    if (end == 0) return 0;
-    var start = end - 1;
-    while (start > 0 and end - start < 4 and s[start] & 0xc0 == 0x80) start -= 1;
-    const at = codepointAt(s, start) orelse return 0;
-    return if (start + at.len == end and isJsSpace(at.cp)) at.len else 0;
-}
-
-pub fn skipSpaces(s: []const u8, from: usize) usize {
-    var i = from;
-    while (true) {
-        const len = spaceAt(s, i);
-        if (len == 0) return i;
-        i += len;
-    }
-}
-
-pub fn trimStart(s: []const u8) []const u8 {
-    return s[skipSpaces(s, 0)..];
-}
-
-pub fn skipSpacesBack(s: []const u8, from: usize) usize {
-    var end = from;
-    while (true) {
-        const len = spaceBefore(s, end);
-        if (len == 0) return end;
-        end -= len;
-    }
-}
-
-pub fn trim(s: []const u8) []const u8 {
-    const head = trimStart(s);
-    return head[0..skipSpacesBack(head, head.len)];
-}
+const codepointAt = jstext.codePointAt;
+pub const spaceAt = jstext.spaceAt;
+pub const skipSpaces = jstext.skipSpaces;
+pub const trimStart = jstext.trimStart;
+pub const skipSpacesBack = jstext.skipSpacesBack;
+pub const trim = jstext.trim;
 
 /// `text.trim().replace(/\s+/g, ' ')`.
 pub fn collapseSpaces(a: Allocator, text: []const u8) []const u8 {
@@ -135,33 +92,16 @@ pub fn blankWord(a: Allocator, s: []const u8, word: []const u8) []const u8 {
     return out.items;
 }
 
-fn firstUnit(cp: u21) u21 {
-    return if (cp >= 0x10000) 0xd800 + ((cp - 0x10000) >> 10) else cp;
-}
-
 /// JavaScript's `<` on strings, which compares UTF-16 units and so orders an astral letter before
 /// U+E000.
-pub fn lessUtf16(x: []const u8, y: []const u8) bool {
-    const at = std.mem.indexOfDiff(u8, x, y) orelse return false;
-    if (at == x.len) return true;
-    if (at == y.len) return false;
-    var start = at;
-    while (start > 0 and x[start] & 0xc0 == 0x80) start -= 1;
-    const left = codepointAt(x, start) orelse return x[at] < y[at];
-    const right = codepointAt(y, start) orelse return x[at] < y[at];
-    const lu = firstUnit(left.cp);
-    const ru = firstUnit(right.cp);
-    return if (lu != ru) lu < ru else left.cp < right.cp;
-}
+pub const lessUtf16 = jstext.less;
 
 pub fn lessString(_: void, x: []const u8, y: []const u8) bool {
     return lessUtf16(x, y);
 }
 
 /// `.length`.
-pub fn utf16Length(s: []const u8) usize {
-    return unicode.calcUtf16LeLen(s) catch s.len;
-}
+pub const utf16Length = jstext.utf16Length;
 
 fn upperOf(a: Allocator, cp: u21) ?[]const u8 {
     if (cp > 0xffff) return null;

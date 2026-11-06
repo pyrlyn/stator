@@ -9,7 +9,18 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    mod.addImport("coroutines", b.dependency("coroutines", .{ .target = target, .optimize = optimize }).module("coroutines"));
+    const coroutines = b.dependency("coroutines", .{ .target = target, .optimize = optimize }).module("coroutines");
+    const jstext = b.dependency("jstext", .{ .target = target, .optimize = optimize }).module("jstext");
+    mod.addImport("coroutines", coroutines);
+    mod.addImport("jstext", jstext);
+
+    const lib = b.addModule("stator_ts", .{
+        .root_source_file = b.path("src/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    lib.addImport("coroutines", coroutines);
+    lib.addImport("jstext", jstext);
 
     const exe = b.addExecutable(.{ .name = "stator-ts", .root_module = mod });
     b.installArtifact(exe);
