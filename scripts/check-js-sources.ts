@@ -32,6 +32,9 @@ function isExempt(path: string): boolean {
   if (path.startsWith('packages/tests/subset/')) return true;
   if (path.startsWith('packages/tests/differential/')) return true;
   if (path === 'packages/tests/leak/keys.js') return true;
+  // stator-ts checker inputs: its JS/checkJs cases need real .js files. Its runner (tests/ts7) is
+  // our own code and stays in scope.
+  if (path.startsWith('packages/transpiler/tests/fixtures/')) return true;
   if (path.startsWith('examples/')) return true;
   return false;
 }
