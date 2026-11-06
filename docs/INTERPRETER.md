@@ -65,11 +65,28 @@ Options measured (the creator chose (d), 2026-11-06):
   parser is written, and a gap is fixed in stator-ts with a regression test (AGENTS.md golden
   rule 5). 7–12 ms for 640 KB, and 66 KB in `ReleaseSmall`.
 
-The interpreter imports `parser.zig` as a Zig module. It parses `eval` code as a script and
-`new Function` bodies as a function body, the way ECMA-262 §19.2.1 and §20.2.1.1.1 require. Early
-errors become a `SyntaxError` thrown at run time. The check is the error's TYPE (Test262 negative
-tests ask exactly that); its message follows Node's text where stator-ts has the same diagnostic,
-and golden fixtures print `e.name`, never the message, until T14.1 settles message parity.
+The interpreter imports `parser.zig` as a Zig module of its own, because stator-ts's `lib.zig`
+does not export it (`packages/interpreter/src/parse.zig`, T14.1). `parse` reads `eval` code with
+the Script goal (ECMA-262 §19.2.1), or a module. `parseFunction` builds CreateDynamicFunction's
+source text (§20.2.1.1.1), `<prefix> anonymous(<params>\n) {\n<body>\n}`, and parses it once. It
+keeps the tree only when it is that one function with its parameters and its body where the text
+put them: a piece that closes its own bracket early (`a) {}; f(b`) moves one of them, which is
+what parsing the two pieces separately catches.
+
+Early errors become a `SyntaxError` thrown at run time through `jsrt_throw_error`
+(`jsrt_interp_parse_script` in `src/capi.zig`). The check is the error's TYPE, which is exactly
+what Test262 negative tests ask. The message is stator-ts's diagnostic text, which is tsc's
+wording. Module syntax under the Script goal is the exception and uses Node's text. Golden
+fixtures print `e.name`, never the message, because message parity with Node is not settled.
+
+**Parse rate** (plan-notes 397). `pnpm run test262:interp-parse` runs Test262's `test/language/`
+through `parse` in every mode a test's flags ask for. At the pin it passes 19,162 of 23,726 tests
+(80.76%), at about 190 MiB/s. The counts are ratcheted per directory in
+`packages/interpreter/test262-parse.json`. The rest is stator-ts's to close:
+
+- 3,444 tests parse but must not. These are early errors stator-ts reports in its binder or
+  checker, or not at all.
+- 1,120 tests are rejected though valid. These are syntax it does not read.
 
 ## 2. Execution model: bytecode, in Zig
 
@@ -197,7 +214,7 @@ goes to plan-notes with both numbers.
 
 | Package | Holds | Must not |
 | --- | --- | --- |
-| `packages/interpreter` (new, Zig) | the bytecode compiler, the VM, the entry points the runtime calls (`eval`, the `Function` constructor, the trampoline); built into `libjsrt_interp.a`; imports stator-ts's `parser.zig` | hold its own value model, object model or GC |
+| `packages/interpreter` (Zig) | the parser front (`src/parse.zig`, T14.1); the bytecode compiler and the VM; the entry points the runtime calls (`src/capi.zig`: `eval`, the `Function` constructor, the trampoline); the Test262 parse driver (`test262/parse.zig`). It is built into `libjsrt_interp.a` and imports stator-ts's `parser.zig` | hold its own value model, object model or GC |
 | `packages/transpiler` (stator-ts) | the parser | know the interpreter exists |
 | `packages/compiler` (and plan/T41's Zig port) | the `Interpret` HIR node, the eval-visible cells and scope descriptors of §3, and linking `libjsrt_interp.a` only when an `Interpret` node exists | interpret anything at compile time |
 | `packages/runtime` | the C ABI the VM calls | grow a second dispatch path |

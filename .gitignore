@@ -50,3 +50,6 @@ packages/compiler-zig/zig-out/
 packages/compiler-zig/zig-pkg/
 packages/jstext/.zig-cache/
 packages/jstext/zig-out/
+packages/interpreter/.zig-cache/
+packages/interpreter/zig-out/
+packages/interpreter/zig-pkg/

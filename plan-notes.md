@@ -14390,3 +14390,62 @@ record; plan.md §11f and plan/T14.1–T14.4 are edited to match.
    `argc == arity + 1`, and `arity` is the JS `length`, which excludes defaulted and rest
    parameters. Direct method, constructor and `super(…)` calls are fixed by 395; a bare call of a
    method value still guesses (`[7].map(o.tag)` on `tag(a, i)` binds `this` to `7`).
+
+## 397. T14.1: the interpreter's parse entry on Test262 `language/`; parse speed and `libjsrt_interp.a` (2026-11-07)
+
+**What landed.** `packages/interpreter/` (Zig 0.17.0). `src/parse.zig` is the parse entry from
+docs/INTERPRETER.md §1. `src/capi.zig` is `jsrt_interp_parse_script`, which throws `SyntaxError`
+through `jsrt_throw_error`. `test262/parse.zig` is the Test262 driver. stator-ts's `lib.zig` does
+not export `parser.zig`, so the package roots a module of its own at that file, and the tree types
+are named through `parser.parse`'s signature. `packages/transpiler` is unchanged.
+
+**Rate.** Test262 is at the pin (`packages/tests/test262/pin.json`, `771005236e88`). The driver
+reads every `test/language/**/*.js` that is not a `_FIXTURE`, in each mode Test262's
+INTERPRETING.md asks for. A `negative: phase: parse` test must answer a `SyntaxError`, and every
+other test must parse.
+
+| | Value |
+| --- | --- |
+| Tests | 23,726 (40,694 parses: both modes unless a flag picks one) |
+| Pass | 19,162 (80.76%), ratcheted per directory in `packages/interpreter/test262-parse.json` |
+| Parse speed, `ReleaseFast`, Apple M3 Max | 188–194 MiB/s over 73.41 MiB (3 runs; parse calls only, arena reset per test) |
+| `libjsrt_interp.a`, `ReleaseFast` | 3,152,688 B; 562,888 B after `strip -S` (`__TEXT` 423,458 B) |
+| `libjsrt_interp.a`, `ReleaseSmall` / `ReleaseSafe` | 323,280 B / 3,553,464 B |
+
+**What fails is stator-ts's.** It is coordinated with that package's owners and is not fixed in
+this change.
+
+1. **3,444 early errors not reported** (2,951 sloppy, 320 strict, 173 module). The largest groups,
+   by directory unless the line says otherwise:
+   - `class` (1,092): strict-mode `yield`, escaped keywords, rest-parameter trailing comma, private
+     names.
+   - Destructuring (516 tests carry the `destructuring-binding` tag, overlapping the groups here):
+     rest not last, rest with an initializer.
+   - Invalid assignment targets (`expressions/assignmenttargettype`, 198).
+   - RegExp pattern early errors (`literals/regexp`, 173): modifiers, group names.
+   - Redeclarations (`block-scope/syntax`, 102).
+   - `"use strict"` with non-simple parameters.
+
+   tsc reports many of these from its binder (`checkStrictModeIdentifier`, redeclarations) or its
+   checker. stator-ts's binder would answer part of them, but the interpreter reaches it only once
+   `lib.zig` exports the parser along with the binder it already exports.
+2. **779 identifiers rejected** (`Invalid character.`). The cause is a Unicode escape or a non-ASCII
+   character at an identifier's start: in private names (`#\u{6F}`, `#℘`, ZWNJ/ZWJ inside one),
+   and in `identifiers/start-unicode-*-class-escaped`.
+3. **232 proposal tests rejected**: `import defer` (142) and source-phase `import source` (90).
+   `import.defer(…)` and `import.source(…)` also set `is_module` the way `import.meta` does, so the
+   Script goal rejects them with the `import.meta` message.
+4. **75 top-level `await` tests rejected** under the module goal (`module-code/top-level-await`).
+   The parser has no goal flag, so a module that neither imports nor exports reads `await` as an
+   identifier.
+5. **34 other rejects**:
+   - an escaped identifier part (15)
+   - class bodies (8)
+   - U+2028 / U+2029 between tokens or in a comment (4)
+   - hashbang comments (3)
+   - `using` / `await using` (2)
+   - import attributes (1)
+   - a no-break space (1)
+
+TypeScript-only syntax in JavaScript source (a type annotation, `as`, `enum`) still parses: neither
+stator-ts nor the interpreter rejects it, and Test262 does not test it.
