@@ -106,6 +106,14 @@ pub fn typedConstructorOf(g: *Gate, node: *Node) ?N.TypedReceiver {
     return if (isGlobalNamed(g, node, "ArrayBuffer")) .arraybuffer else null;
 }
 
+/// Whether `access` names a member some user class declares (a method of a `Uint8Array` subclass,
+/// say) rather than one the lib declares: such a member is the class's, not the typed family's.
+pub fn isUserClassMember(g: *Gate, access: *Node) bool {
+    const declaration = api.valueDeclaration(g.symbolAt(access.data.prop_access.name)) orelse return false;
+    const parent = declaration.parent orelse return false;
+    return !g.inDeclarationFile(declaration) and api.isClassLike(parent);
+}
+
 pub fn typedReceiverKind(g: *Gate, expression: *Node) ?N.TypedReceiver {
     return switch (types.tsTypeToHType(g, g.typeAt(expression)).*) {
         .uint8array => .uint8array,

@@ -19,6 +19,16 @@ const view = new Uint8Array(buf.buffer, 2, 3);
 bytesFill(view, 255);
 console.log(buf);
 
+// A subclass instance is a view (plan/T11.6a), so it crosses as its bytes like any other.
+class Bytes extends Uint8Array {
+  total(): number {
+    return bytesSum(this);
+  }
+}
+const own = new Bytes([1, 2, 3]);
+bytesReverse(own);
+console.log(own, own.total(), bytesSum(own.subarray(1)));
+
 const big = new Uint8Array(1 << 20);
 const before = bytesCalls();
 console.log(bytesFill(big, 1));

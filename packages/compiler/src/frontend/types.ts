@@ -345,6 +345,10 @@ function classTypeToHType(type: ts.Type, checker: ts.TypeChecker, depth: number)
   // each, and it must take the BASE's slot -- one slot, at the base's index -- which falls out of
   // "first claim wins" and does not fall out of any ranking of the merged list.
   const chain = ancestry(declaration, checker); // root ancestor first, this class last
+  // A `Uint8Array` subclass has no slots: its storage is the view's, and the lib members the
+  // checker lists for it are the view's own, so only the members user classes declare are kept
+  // (plan/T11.6a). The static side maps here too, as it does for every class.
+  const view = extendsUint8Array(declaration, checker);
   // A generic base's members arrive with its parameters unbound (`value: T | undefined` for
   // `Box`), so the layout grounds each ancestor's properties in THIS declaration's context
   // (`value: number | undefined` for `class Sub extends Box<number>`). Ordinary chains ground
@@ -375,7 +379,7 @@ function classTypeToHType(type: ts.Type, checker: ts.TypeChecker, depth: number)
         ? privateOwnerName(property, at, chain, ancestor)
         : undefined;
       const name = owner === undefined ? rawName : privateSlotName(owner, rawName);
-      if (at === undefined || claimed.has(name)) {
+      if (at === undefined || claimed.has(name) || (view && at.getSourceFile().isDeclarationFile)) {
         continue;
       }
       claimed.add(name);
@@ -435,20 +439,55 @@ function classTypeToHType(type: ts.Type, checker: ts.TypeChecker, depth: number)
       }
     }
   }
-  // Nearest ancestor first, which is the order `hTypeAssignable` and `instanceof` read it in.
-  // A generic ancestor names its tuple (`Box<number>`), not the declaration: the descriptor
-  // that owns the inherited members IS the specialization, and every receiver check reads
-  // these names. An incomplete tuple (a refused program's) keeps the source name, exactly as
-  // before, so this stays total where the gate still refuses.
-  const bases = chain
-    .slice(0, -1)
-    .reverse()
-    // Bases stay declarations, except through `extends C` on a bound expression (plan.md §8
-    // step 12(d)), which names its descriptor by binding. An unbound base has no descriptor
-    // and answers `''`, filtered below like an incomplete tuple.
-    .map((c) => baseDescriptorName(c, declaration, checker))
-    .filter((n) => n !== '');
-  return hObject(className, fields, methods, bases);
+  const bases = chainBaseNames(chain, declaration, checker);
+  // The gate admits no instance field on a view class, so `fields` is empty here.
+  return view
+    ? { kind: 'uint8array', subclass: { name: className, bases, methods } }
+    : hObject(className, fields, methods, bases);
+}
+
+/** The descriptor names of `chain`'s ancestors (root first, `declaration` last), nearest first,
+ * which is the order `hTypeAssignable` and `instanceof` read them in. A generic ancestor names its
+ * tuple (`Box<number>`), not the declaration: the descriptor that owns the inherited members IS
+ * the specialization, and every receiver check reads these names. An incomplete tuple (a refused
+ * program's) keeps the source name, so this stays total where the gate still refuses. */
+function chainBaseNames(
+  chain: readonly (ts.ClassDeclaration | ts.ClassExpression)[],
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  checker: ts.TypeChecker,
+): string[] {
+  return (
+    chain
+      .slice(0, -1)
+      .reverse()
+      // Bases stay declarations, except through `extends C` on a bound expression (plan.md §8
+      // step 12(d)), which names its descriptor by binding. An unbound base has no descriptor
+      // and answers `''`, filtered below like an incomplete tuple.
+      .map((c) => baseDescriptorName(c, declaration, checker))
+      .filter((n) => n !== '')
+  );
+}
+
+/** Whether the root of `declaration`'s chain extends the global `Uint8Array` (plan/T11.6a): such
+ * a class's instances are views, laid out by the runtime rather than by a slot list. */
+export function extendsUint8Array(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  checker: ts.TypeChecker,
+): boolean {
+  const root = ancestry(declaration, checker)[0];
+  const clause = root?.heritageClauses?.find((h) => h.token === ts.SyntaxKind.ExtendsKeyword);
+  const expression = clause?.types[0]?.expression;
+  return expression !== undefined && isGlobalNamed(expression, checker, 'Uint8Array');
+}
+
+/** Whether `node` is the bare identifier `name` bound only by declaration files: the global, not a
+ * user binding that shadows it. */
+export function isGlobalNamed(node: ts.Expression, checker: ts.TypeChecker, name: string): boolean {
+  if (!ts.isIdentifier(node) || node.text !== name) {
+    return false;
+  }
+  const declarations = checker.getSymbolAtLocation(node)?.declarations ?? [];
+  return declarations.length > 0 && declarations.every((d) => d.getSourceFile().isDeclarationFile);
 }
 
 /** `null` means "not an object literal's shape" — the caller falls through to Unknown.
