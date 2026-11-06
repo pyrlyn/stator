@@ -182,7 +182,46 @@ pub const SymbolTable = struct {
     }
 
     pub const Slot = struct { symbol: **Symbol, found_existing: bool };
+
+    /// The entries as tsc's table would list them, which is the order a type shows its members
+    /// in: by file, then as bound, and a block binds its function declarations first. A member
+    /// named by a symbol comes after the rest, because tsc binds those only once it can type them.
+    pub fn ordered(t: *const SymbolTable, a: Allocator) []*Symbol {
+        const out = a.alloc(*Symbol, t.map.count()) catch oom();
+        var it = t.map.keyIterator();
+        var i: usize = 0;
+        while (it.next()) |e| : (i += 1) out[i] = e.*;
+        std.mem.sort(*Symbol, out, {}, boundBefore);
+        return out;
+    }
 };
+
+fn boundBefore(_: void, l: *Symbol, r: *Symbol) bool {
+    const ll = std.mem.startsWith(u8, l.name, "__@");
+    const rl = std.mem.startsWith(u8, r.name, "__@");
+    if (ll != rl) return rl;
+    const lf = fileOrder(l);
+    const rf = fileOrder(r);
+    if (lf != rf) return lf < rf;
+    const lh = !isHoisted(l);
+    const rh = !isHoisted(r);
+    if (lh != rh) return rh;
+    return declaredAt(l) < declaredAt(r);
+}
+
+fn fileOrder(s: *const Symbol) u32 {
+    return if (s.file) |f| f.order else std.math.maxInt(u32);
+}
+
+fn declaredAt(s: *const Symbol) u32 {
+    return if (s.decls.len > 0) s.decls[0].start else std.math.maxInt(u32);
+}
+
+fn isHoisted(s: *const Symbol) bool {
+    if (s.decls.len == 0) return false;
+    const d = s.decls[0];
+    return d.data == .func and d.data.func.kind == .decl;
+}
 
 const SymbolContext = struct {
     pub fn hash(_: SymbolContext, s: *Symbol) u64 {
@@ -214,7 +253,7 @@ const HashedContext = struct {
     }
 };
 
-pub const FlowKind = enum { start, unreachable_end, assign, true_cond, false_cond, branch, loop, switch_clause, call, reduce };
+pub const FlowKind = enum { start, unreachable_end, assign, true_cond, false_cond, branch, loop, switch_clause, call, reduce, array_mutation };
 
 pub const FlowNode = struct {
     kind: FlowKind,
@@ -247,6 +286,8 @@ pub const Body = struct {
     end_flow: ?*FlowNode,
     /// The function's scope with the block's declarations in it.
     locals: ?*SymbolTable,
+    /// Executable statements no path reaches.
+    dead: []*Node = &.{},
 };
 
 pub const Binder = struct {
@@ -269,6 +310,8 @@ pub const Binder = struct {
     ret: ?*Label = null,
     labels: ?*NamedLabel = null,
     diags: std.ArrayList(lexer.Diag) = .empty,
+    /// tsc's `NodeFlagsUnreachable`, kept aside: few statements are unreachable.
+    dead: std.ArrayList(*Node) = .empty,
     /// Target of the next `:` label applied to a loop, so `continue label` finds it.
     pending_label: ?*NamedLabel = null,
     in_ambient: bool = false,
@@ -325,7 +368,7 @@ pub const Binder = struct {
     fn addDecl(b: *Binder, s: *Symbol, n: *Node, flags: u32) void {
         s.flags |= flags;
         s.decls = append(b.a, s.decls, n);
-        if (flags & F.value != 0 and (s.value_decl == null or (s.value_decl.?.data != .class and n.data == .class))) s.value_decl = n;
+        if (flags & F.value != 0 and (s.value_decl == null or (s.value_decl.?.data != .class and n.data == .class) or (isThisAssignment(s.value_decl.?) and !isThisAssignment(n)))) s.value_decl = n;
         if (n.symbol() == null) n.setSymbol(b.a, s);
     }
 
@@ -336,6 +379,14 @@ pub const Binder = struct {
             if (s.flags & excludes == 0 or (flags & F.variable != 0 and s.flags & F.assignment != 0)) {
                 b.addDecl(s, n, flags);
                 return s;
+            }
+            // `this.m = 1` gives way to a method declared after it, and says nothing about it.
+            if (s.flags & F.assignment != 0 and isThisAssignment(s.value_decl orelse n)) {
+                const replaced = b.mkSym(name, 0);
+                replaced.parent = parent;
+                entry.symbol.* = replaced;
+                b.addDecl(replaced, n, flags);
+                return replaced;
             }
             b.reportDuplicate(s, flags, name, err_node orelse n);
             // Keep the declaration reachable so the code that follows it still checks.
@@ -456,11 +507,11 @@ pub const Binder = struct {
     fn condFlow(b: *Binder, kind: FlowKind, ante: *FlowNode, e: *Node) *FlowNode {
         if (ante.kind == .unreachable_end) return ante;
         const wanted = kind == .true_cond;
-        const lit = stripParens(e);
+        // tsc folds only a bare `true` or `false`: `(true)` and `!false` keep both branches live.
         // `a ?? true` is a default, not a constant: `a` can still be `false`.
         const defaulted = if (e.parent) |p| p.data == .binary and p.data.binary.op == .qq else false;
-        if (!defaulted and ((lit.data == .true_lit and !wanted) or (lit.data == .false_lit and wanted))) return b.unreachable_flow;
-        if (lit.data == .true_lit or lit.data == .false_lit) return ante;
+        if (!defaulted and ((e.data == .true_lit and !wanted) or (e.data == .false_lit and wanted))) return b.unreachable_flow;
+        if (e.data == .true_lit or e.data == .false_lit) return ante;
         if (!isNarrowing(e)) return ante;
         return b.createFlow(kind, e, ante);
     }
@@ -471,9 +522,13 @@ pub const Binder = struct {
             b.addAnte(t, b.flow);
             return;
         };
-        switch (node.data) {
+        // tsc's `isLogicalExpression`: parens and `!` split only around `&&`, `||` and `??`.
+        if (isLogicalExpr(node)) switch (node.data) {
             .paren => |p| return b.bindCond(p.expr, t, f),
-            .prefix => |p| if (p.op == .bang) return b.bindCond(p.expr, f, t),
+            .prefix => |p| return b.bindCond(p.expr, f, t),
+            else => {},
+        };
+        switch (node.data) {
             .binary => |x| switch (x.op) {
                 .amp2 => {
                     const mid = b.newLabel(.branch);
@@ -529,8 +584,20 @@ pub const Binder = struct {
     fn bindElem(b: *Binder, el: *Node, kind: ast.VarKind, mods: ast.Mods) void {
         const be = el.data.binding_elem;
         if (be.prop_name) |pn| b.bindComputed(pn);
-        if (be.init) |i| b.bind(i);
+        if (be.init) |i| b.bindInitializer(i);
         b.bindPatternDecls(be.name, kind, mods);
+    }
+
+    /// tsc's `bindInitializer`: a default runs only when the value is `undefined`, so what follows
+    /// is reached with or without it.
+    fn bindInitializer(b: *Binder, i: *Node) void {
+        const entry = b.flow;
+        b.bind(i);
+        if (entry.kind == .unreachable_end or entry == b.flow) return;
+        const exit = b.newLabel(.branch);
+        b.addAnte(exit, entry);
+        b.addAnte(exit, b.flow);
+        b.flow = b.finish(exit);
     }
 
     fn bindComputed(b: *Binder, name: *Node) void {
@@ -732,7 +799,7 @@ pub const Binder = struct {
         const d = p.data.param;
         for (d.decorators) |x| b.bind(x);
         if (d.type) |t| b.bind(t);
-        if (d.init) |i| b.bind(i);
+        if (d.init) |i| b.bindInitializer(i);
         switch (d.name.data) {
             .identifier => |name| {
                 if (name.len > 0 and !std.mem.eql(u8, name, "this")) {
@@ -763,7 +830,7 @@ pub const Binder = struct {
             if (el.data != .binding_elem) continue;
             const be = el.data.binding_elem;
             if (be.prop_name) |pn| b.bindComputed(pn);
-            if (be.init) |i| b.bind(i);
+            if (be.init) |i| b.bindInitializer(i);
             if (be.name.data == .identifier) {
                 if (be.name.data.identifier.len > 0) _ = b.declare(b.localsOf(func), null, el, be.name.data.identifier, F.func_var | F.param, F.param_ex, be.name);
             } else b.bindParamPattern(func, be.name);
@@ -822,6 +889,7 @@ pub const Binder = struct {
                 b.block = m;
                 b.flow = b.createFlow(.start, null, null);
                 if (d.body.data == .block) b.bindList(d.body.data.block.stmts);
+                m.data.static_block.end_flow = if (b.flow.kind == .unreachable_end) null else b.flow;
                 b.container = save[0];
                 b.block = save[1];
                 b.flow = save[2];
@@ -1041,6 +1109,10 @@ pub const Binder = struct {
         _ = b.declare(t, b.moduleScope(), n, name, flags, F.none, null);
     }
 
+    fn isRequireCall(call: anytype) bool {
+        return call.callee.data == .identifier and std.mem.eql(u8, call.callee.data.identifier, "require") and call.args.len == 1;
+    }
+
     fn moduleSpec(b: *Binder, n: *Node) void {
         if (n.data == .string_lit and b.frozen == null) b.file.module_specs = append(b.a, b.file.module_specs, n);
     }
@@ -1117,8 +1189,11 @@ pub const Binder = struct {
     }
 
     pub fn bind(b: *Binder, n: *Node) void {
+        if (b.flow.kind == .unreachable_end) {
+            if (isPotentiallyExecutable(n)) b.dead.append(b.a, n) catch oom();
+        } else if (isStatement(n)) n.setFlow(b.a, b.flow);
         switch (n.data) {
-            .identifier, .this_expr, .super_expr => n.setFlow(b.a, b.flow),
+            .identifier, .this_expr, .super_expr, .meta_property => n.setFlow(b.a, b.flow),
             // `typeof a.b` is a read like any other and sees what `a.b` was narrowed to.
             .qualified_name => {
                 n.setFlow(b.a, b.flow);
@@ -1369,8 +1444,14 @@ pub const Binder = struct {
                 b.bind(d.expr);
                 b.mutate(stripParens(d.expr));
             },
+            .delete_expr => |d| {
+                b.bind(d.expr);
+                if (d.expr.data == .prop_access) b.mutate(d.expr);
+            },
             .call => |d| {
                 if (d.callee.data == .import_kw and d.args.len > 0) b.moduleSpec(d.args[0]);
+                // tsc reads a JavaScript file's `require` as an import when collecting its modules.
+                if (isRequireCall(d) and ast.isJsFile(b.file.path)) b.moduleSpec(d.args[0]);
                 const saved = b.enterChain(n);
                 const inlined = stripParens(d.callee).data == .func and !d.optional;
                 if (!inlined) {
@@ -1384,9 +1465,13 @@ pub const Binder = struct {
                 if (inlined) b.bind(d.callee);
                 n.setFlow(b.a, b.flow);
                 b.leaveChain(n, saved);
-                if (n.parent) |p| if (p.data == .expr_stmt and isDotted(d.callee)) {
+                // `this` is usable only past `super()`, wherever in an expression the call sits.
+                if (d.callee.data == .super_expr) {
+                    b.flowEffect(.call, n);
+                } else if (n.parent) |p| if (p.data == .expr_stmt and isDotted(d.callee)) {
                     b.flowEffect(.call, n);
                 };
+                if (isArrayGrowth(d.callee)) b.flowEffect(.array_mutation, n);
             },
             .new_expr => {
                 b.bindChildren(n);
@@ -1555,6 +1640,32 @@ pub const Binder = struct {
         b.flow = if (normal.list.items.len > 0) b.reduceFlow(join, normal.list.items) else b.unreachable_flow;
     }
 
+    /// `this.x = 1` in a JavaScript class declares `x` on it, on the class itself in a static
+    /// member. Private names must be declared, even there.
+    fn bindThisProperty(b: *Binder, left: *Node, right: *Node) void {
+        if (!ast.isJsFile(b.file.path) or !isThisAccess(left)) return;
+        const name = switch (left.data) {
+            .prop_access => |x| if (x.name.data == .identifier) x.name.data.identifier else return,
+            .elem_access => |x| switch (x.index.data) {
+                .string_lit, .numeric_lit, .no_subst_template => b.propName(x.index).?,
+                else => return,
+            },
+            else => return,
+        };
+        if (chainedValue(right).data == .void_expr) return;
+        const member = thisContainer(left) orelse return;
+        const cls = member.parent orelse return;
+        if (cls.data != .class) return;
+        const owner = cls.symbol() orelse return;
+        if (member.mods.static) {
+            if (owner.exports == null) owner.exports = b.table();
+            _ = b.declare(owner.exports.?, owner, left, name, F.property | F.assignment, F.none, null);
+        } else {
+            if (owner.members == null) owner.members = b.table();
+            _ = b.declare(owner.members.?, owner, left, name, F.property | F.assignment, F.none, null);
+        }
+    }
+
     /// `f.x = 1` beside `f`'s own declaration adds a member to the function.
     fn bindExpando(b: *Binder, left: *Node, right: *Node) void {
         const target, const name = switch (left.data) {
@@ -1566,9 +1677,7 @@ pub const Binder = struct {
             else => return,
         };
         if (right.data == .object_lit and std.mem.eql(u8, name, "prototype")) return;
-        var value = right;
-        while (value.data == .binary and value.data.binary.op == .assign) value = value.data.binary.right;
-        if (value.data == .void_expr) return;
+        if (chainedValue(right).data == .void_expr) return;
         const s = b.expandoOwner(target) orelse return;
         if (s.exports == null) s.exports = b.table();
         _ = b.declare(s.exports.?, s, left, name, F.property | F.assignment, F.none, null);
@@ -1587,7 +1696,7 @@ pub const Binder = struct {
 
     fn expandoOwner(b: *Binder, target: *Node) ?*Symbol {
         const s = b.accessSymbol(target, b.block) orelse b.accessSymbol(target, b.container) orelse return null;
-        return if (holdsExpandos(s)) s else null;
+        return if (holdsExpandos(s, ast.isJsFile(b.file.path))) s else null;
     }
 
     /// The symbol `x` of `x` or `x.y` as seen from `scope`, before any name resolution exists.
@@ -1630,7 +1739,13 @@ pub const Binder = struct {
                 b.bind(right);
                 if (op.isAssignment()) {
                     if (op == .assign) b.bindTarget(left) else b.mutate(stripParens(left));
-                    if (op == .assign) b.bindExpando(left, right);
+                    if (op == .assign and left.data == .elem_access and isNarrowableOperand(left.data.elem_access.expr)) {
+                        b.flowEffect(.array_mutation, left.parent.?);
+                    }
+                    if (op == .assign) {
+                        b.bindThisProperty(left, right);
+                        b.bindExpando(left, right);
+                    }
                 }
             },
         }
@@ -1664,19 +1779,59 @@ pub fn specName(n: *Node) []const u8 {
     };
 }
 
+fn isThisAccess(n: *const Node) bool {
+    return switch (n.data) {
+        .prop_access => |x| x.expr.data == .this_expr,
+        .elem_access => |x| x.expr.data == .this_expr,
+        else => false,
+    };
+}
+
+/// A declaration that is only an assignment to `this`, which any real declaration outranks.
+pub fn isThisAssignment(n: *const Node) bool {
+    return isThisAccess(n) and n.parent != null and n.parent.?.data == .binary;
+}
+
+/// What `this` means at `n`: the nearest function that is not an arrow, or a class field.
+pub fn thisContainer(n: *Node) ?*Node {
+    var cur = n.parent;
+    while (cur) |x| : (cur = x.parent) switch (x.data) {
+        .func => |f| if (f.kind != .arrow) return x,
+        .property_decl => return x,
+        else => {},
+    };
+    return null;
+}
+
 /// `let` and `var` can be reassigned, so only a function or a `const` holding one takes members.
-pub fn holdsExpandos(s: *Symbol) bool {
+/// JavaScript has no such caution, and takes them on `{}` as well.
+pub fn holdsExpandos(s: *Symbol, js: bool) bool {
     const n = s.value_decl orelse return false;
     switch (n.data) {
         .func => return s.flags & F.function != 0,
         .var_decl => |v| {
             const value = v.init orelse return false;
+            if (js) {
+                const end = chainedValue(value);
+                return end.data == .func or isEmptyObject(end);
+            }
             if (value.data != .func) return false;
             const list = n.parent orelse return false;
             return list.data == .var_list and list.data.var_list.kind != .let and list.data.var_list.kind != .@"var";
         },
         else => return false,
     }
+}
+
+/// What `a = b = value` assigns to all of them.
+pub fn chainedValue(n: *Node) *Node {
+    var value = n;
+    while (value.data == .binary and value.data.binary.op == .assign) value = value.data.binary.right;
+    return value;
+}
+
+pub fn isEmptyObject(n: *Node) bool {
+    return n.data == .object_lit and n.data.object_lit.props.len == 0;
 }
 
 /// The variable whose expandos belong to the function expression it was initialized with.
@@ -1722,7 +1877,7 @@ pub fn stripParens(n: *Node) *Node {
 
 fn isDotted(n: *Node) bool {
     return switch (n.data) {
-        .identifier, .this_expr, .super_expr => true,
+        .identifier, .this_expr, .super_expr, .meta_property => true,
         .prop_access => |x| isDotted(x.expr),
         .paren => |x| isDotted(x.expr),
         .non_null => |x| isDotted(x.expr),
@@ -1732,7 +1887,7 @@ fn isDotted(n: *Node) bool {
 
 pub fn isReference(n: *Node) bool {
     return switch (n.data) {
-        .identifier, .this_expr, .super_expr => true,
+        .identifier, .this_expr, .super_expr, .meta_property => true,
         .prop_access => |x| isReference(x.expr),
         .elem_access => |x| isReference(x.expr),
         .paren => |x| isReference(x.expr),
@@ -1741,6 +1896,37 @@ pub fn isReference(n: *Node) bool {
     };
 }
 
+fn isLogicalExpr(n: *Node) bool {
+    return switch (n.data) {
+        .paren => |x| isLogicalExpr(x.expr),
+        .prefix => |x| x.op == .bang and isLogicalExpr(x.expr),
+        .binary => |x| x.op == .amp2 or x.op == .pipe2 or x.op == .qq,
+        else => false,
+    };
+}
+
+/// `x.push` and `x.unshift` tell an array being built what it holds.
+fn isArrayGrowth(callee: *Node) bool {
+    if (callee.data != .prop_access) return false;
+    const x = callee.data.prop_access;
+    if (x.name.data != .identifier or !isNarrowableOperand(x.expr)) return false;
+    const name = x.name.data.identifier;
+    return std.mem.eql(u8, name, "push") or std.mem.eql(u8, name, "unshift");
+}
+
+/// tsc's isNarrowableOperand: `(x = []).push(1)` and `(f(), x).push(1)` still grow `x`,
+/// because the value the call sees is the assignment target or the comma's right side.
+fn isNarrowableOperand(n: *Node) bool {
+    return switch (n.data) {
+        .paren => |x| isNarrowableOperand(x.expr),
+        .binary => |x| switch (x.op) {
+            .assign => isNarrowableOperand(x.left),
+            .comma => isNarrowableOperand(x.right),
+            else => isReference(n),
+        },
+        else => isReference(n),
+    };
+}
 fn isNarrowing(n: *Node) bool {
     return switch (n.data) {
         .identifier, .this_expr, .super_expr, .prop_access, .elem_access, .call, .typeof_expr, .delete_expr, .await_expr, .as_expr, .satisfies_expr, .type_assertion => true,
@@ -1780,6 +1966,59 @@ pub fn nameNode(n: *Node) ?*Node {
 }
 
 /// Binds one file. Touches only that file, so files bind in parallel.
+/// Whether a JavaScript file is a CommonJS module, which tsc settles from the code. It has to be
+/// known before binding, since that is what decides where the top-level names go. A body parsed
+/// lazily has not been read and counts for nothing here.
+pub fn isCommonJs(f: *const ast.File) bool {
+    var seen = false;
+    scanCommonJs(&seen, f.root);
+    return seen;
+}
+
+fn scanCommonJs(seen: *bool, n: *Node) void {
+    if (seen.*) return;
+    switch (n.data) {
+        .call => |x| seen.* = (isNamed(x.callee, "require") and x.args.len == 1) or isDefineExports(x),
+        .binary => |x| seen.* = x.op == .assign and isExportsTarget(stripParens(x.left)),
+        else => {},
+    }
+    ast.forEachChild(n, seen, scanCommonJs);
+}
+
+/// `Object.defineProperty(exports, ...)` exports as surely as an assignment does.
+fn isDefineExports(x: anytype) bool {
+    if (x.args.len == 0 or x.callee.data != .prop_access) return false;
+    const callee = x.callee.data.prop_access;
+    const target = stripParens(x.args[0]);
+    return isNamed(callee.expr, "Object") and isNamed(callee.name, "defineProperty") and (isNamed(target, "exports") or isModuleExports(target));
+}
+
+fn isNamed(n: *const Node, name: []const u8) bool {
+    return n.data == .identifier and std.mem.eql(u8, n.data.identifier, name);
+}
+
+fn isModuleExports(n: *const Node) bool {
+    if (n.data != .prop_access) return false;
+    const x = n.data.prop_access;
+    return isNamed(x.expr, "module") and isNamed(x.name, "exports");
+}
+
+/// `exports.x`, `module.exports` or `module.exports.x`, and no deeper: tsc 7 leaves `exports.a.b`
+/// to be the expression it reads as.
+fn isExportsTarget(n: *const Node) bool {
+    if (isModuleExports(n)) return true;
+    const obj = switch (n.data) {
+        .prop_access => |x| x.expr,
+        // tsc's `isBindableStaticElementAccessExpression`: `exports["x"]` binds like `exports.x`.
+        .elem_access => |x| switch (x.index.data) {
+            .string_lit, .numeric_lit, .no_subst_template => x.expr,
+            else => return false,
+        },
+        else => return false,
+    };
+    return isNamed(obj, "exports") or isModuleExports(obj);
+}
+
 pub fn bindFile(a: Allocator, f: *ast.File) void {
     var temps = std.heap.ArenaAllocator.init(a);
     defer temps.deinit();
@@ -1802,6 +2041,27 @@ pub fn bindFile(a: Allocator, f: *ast.File) void {
     b.export_context = f.is_dts and !Binder.hasExportStatements(f.root.data.source_file.stmts);
     b.bindList(f.root.data.source_file.stmts);
     f.bind_diags = b.diags.items;
+    f.dead = b.dead.items;
+}
+
+/// tsc's `isPotentiallyExecutableNode`. Blocks, empty statements and functions are not.
+/// tsc's `FirstStatement`..`LastStatement`: the nodes whose entry flow the checker can ask about.
+pub fn isStatement(n: *Node) bool {
+    return switch (n.data) {
+        .var_stmt, .expr_stmt, .if_stmt, .do_stmt, .while_stmt, .for_stmt, .for_in, .for_of, .continue_stmt, .break_stmt, .return_stmt, .with_stmt, .switch_stmt, .labeled, .throw_stmt, .try_stmt, .debugger_stmt => true,
+        else => false,
+    };
+}
+
+fn isPotentiallyExecutable(n: *Node) bool {
+    return switch (n.data) {
+        .expr_stmt, .if_stmt, .do_stmt, .while_stmt, .for_stmt, .for_in, .for_of, .continue_stmt, .break_stmt, .return_stmt, .with_stmt, .switch_stmt, .labeled, .throw_stmt, .try_stmt, .debugger_stmt, .enum_decl, .module_decl => true,
+        .class => |k| !k.is_expr,
+        .var_stmt => |x| x.list.data.var_list.kind != .@"var" or for (x.list.data.var_list.decls) |v| {
+            if (v.data.var_decl.init != null) break true;
+        } else false,
+        else => false,
+    };
 }
 
 /// Binds a block `parser.parseBody` read, for one checker: everything it creates lives in `a`,
@@ -1823,7 +2083,7 @@ pub fn bindBody(a: Allocator, f: *ast.File, n: *Node, block: *Node) struct { bod
     };
     b.bindList(block.data.block.stmts);
     return .{
-        .body = .{ .block = block, .end_flow = if (b.flow.kind == .unreachable_end) null else b.flow, .locals = b.scopeOf(n) },
+        .body = .{ .block = block, .end_flow = if (b.flow.kind == .unreachable_end) null else b.flow, .locals = b.scopeOf(n), .dead = b.dead.items },
         .diags = b.diags.items,
     };
 }
@@ -1916,6 +2176,18 @@ test "a body redeclaring a parameter leaves the shared symbol alone" {
     try std.testing.expect(own.decls[0] == shared.decls[0]);
     try std.testing.expect(n.locals().?.get("g") == null);
     try std.testing.expect(bound.body.locals.?.get("g") != null);
+}
+
+test "only a JavaScript file's require names a module" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const js = parser.parse(a, "t.cjs", "const x = require('./a');");
+    bindFile(a, js);
+    try std.testing.expectEqual(@as(usize, 1), js.module_specs.len);
+    const ts = parser.parse(a, "t.ts", "const x = require('./a');");
+    bindFile(a, ts);
+    try std.testing.expectEqual(@as(usize, 0), ts.module_specs.len);
 }
 
 test "a body cannot reach a file's module lists" {

@@ -312,6 +312,10 @@ fn genericTarget(t: *Type) bool {
 fn structured(c: *Checker, s: *Type, t: *Type, rel: Relation) bool {
     if (s.data == .obj and s.data.obj.lit) {
         if (excessProp(c, s, t) != null) return false;
+        // Only assignability lets a fresh literal write more than `{}` or `Object` names.
+        if ((rel == .subtype or rel == .strict_subtype) and t.data == .obj and (isEmptyObject(c, t) or isObjectGlobal(c, t))) {
+            if (!s.data.obj.open and !s.data.obj.spread and d.membersOf(c, s).props.count() != 0) return false;
+        }
     }
     // A fresh `{}` is closed under subtyping, so a real type wins over it as a common supertype.
     if ((rel == .subtype or rel == .strict_subtype) and s.data == .obj and t.data == .obj and t.data.obj.lit and isEmptyObject(c, t) and !isEmptyObject(c, s)) return false;
@@ -357,6 +361,12 @@ fn structured(c: *Checker, s: *Type, t: *Type, rel: Relation) bool {
     }
     if (s.data == .inter) {
         for (s.data.inter) |m| if (related(c, m, t, rel)) return true;
+        // `object` asks what the members may be, not the wrapper interfaces primitives read through:
+        // `T & 0` is a number.
+        if (t.data == .nonprim) {
+            const k = d.baseConstraint(c, s);
+            return k != s and !k.vars and related(c, k, t, rel);
+        }
         // A generic member's constraint may be what supplies the target's shape.
         const ap = d.getApparent(c, s);
         if (ap != s and (ap.data != .never or !hasFreeMember(c, s)) and related(c, ap, t, rel)) return true;
@@ -382,7 +392,9 @@ fn structured(c: *Checker, s: *Type, t: *Type, rel: Relation) bool {
     if (t.data == .tmpl) {
         return switch (s.data) {
             .str_lit => |v| matchesTemplate(c, v, t),
-            .string => false,
+            .enum_lit => |x| x.value == .str and matchesTemplate(c, x.value.str, t),
+            .param => related(c, d.baseConstraint(c, s), t, rel),
+            .string, .number, .num_lit, .bigint, .big_lit, .bool_lit, .symbol, .unique, .null, .undefined, .void, .obj => false,
             else => true,
         };
     }
@@ -522,7 +534,7 @@ fn restRelated(c: *Checker, s: *Type, t: *Type, skip: []const *Prop, rel: Relati
             if (tp.optional) continue;
             return false;
         };
-        if (!related(c, d.propType(c, sp), d.propType(c, tp), rel)) return false;
+        if (!related(c, d.nonMissingPropType(c, sp), d.nonMissingPropType(c, tp), rel)) return false;
     }
     return true;
 }
@@ -749,7 +761,12 @@ pub fn hasCommonProp(c: *Checker, s: *Type, t: *Type) bool {
     }
     const props = d.propsOf(c, s);
     if (props.len == 0) return true;
-    for (props) |p| if (d.ownProp(c, t, p.name) != null) return true;
+    const jsx = isJsxAttributes(s);
+    for (props) |p| {
+        if (d.ownProp(c, t, p.name) != null) return true;
+        // Hyphenated attributes are known to every element, so they count as shared.
+        if (jsx and std.mem.indexOfScalar(u8, p.name, '-') != null) return true;
+    }
     return false;
 }
 
@@ -784,8 +801,9 @@ fn tuplesRelated(c: *Checker, s: *Type, t: *Type, rel: Relation) bool {
         const tf = to.tuple.eflags[j];
         if (tf == .variadic) return true;
         if (tf == .required and f != .required) return false;
-        const sv = if (f == .optional) d.addOptional(c, x) else x;
-        const tv = if (tf == .optional) d.addOptional(c, to.tuple.elems[j]) else to.tuple.elems[j];
+        // An element that may be left out on both sides has its element types to compare.
+        const sv = if (f == .optional and !(c.exact_optional and tf == .optional)) d.addOptional(c, x) else x;
+        const tv = if (tf == .optional and !c.exact_optional) d.addOptional(c, to.tuple.elems[j]) else to.tuple.elems[j];
         if (!related(c, sv, tv, rel)) return false;
     }
     return true;
@@ -809,6 +827,12 @@ fn propsRelated(c: *Checker, s: *Type, t: *Type, rel: Relation) bool {
             return false;
         };
         if (sp == tp) continue;
+        if (tp.name.len > 0 and tp.name[0] == '#' and sp.decl != tp.decl) {
+            // tsc keys a private name by its class: a source has this one only by inheriting it,
+            // and a subclass's own `#x` merely hides it in the member table.
+            if (validOverride(c, sp, tp)) continue;
+            return false;
+        }
         if (tp.private or tp.protected or sp.private or sp.protected) {
             if (tp.private or sp.private) {
                 if (tp.decl != sp.decl) return false;
@@ -817,10 +841,10 @@ fn propsRelated(c: *Checker, s: *Type, t: *Type, rel: Relation) bool {
             } else if (sp.protected) return false;
         }
         if (sp.optional and !tp.optional and rel != .comparable) return false;
-        const want = d.propType(c, tp);
+        const want = d.nonMissingPropType(c, tp);
         // Anything fits, so the source is not read: it may well be a getter still being worked out.
         if (rel != .identity and (T.isAny(want) or want.data == .unknown)) continue;
-        if (!related(c, d.propType(c, sp), want, rel)) return false;
+        if (!related(c, d.nonMissingPropType(c, sp), want, rel)) return false;
     }
     return true;
 }
@@ -969,22 +993,29 @@ pub fn typeAt(c: *Checker, s: *Sig, i: usize) ?*Type {
     if (i < fixed) return d.paramTypeAt(c, s, i);
     const r = restType(c, s) orelse return null;
     if (c.isArrayType(r)) return r.data.obj.args.?[0];
-    if (T.isTupleType(r)) {
-        const o = r.data.obj;
-        const j = i - fixed;
-        if (openAt(o)) |k| if (j >= k) {
-            // From the rest on, a position may hold the rest element or any element written after it.
-            for (o.tuple.eflags[k..]) |f| if (f == .variadic) return c.t_err;
-            return if (o.tuple.elems.len - k == 1) o.tuple.elems[k] else c.getUnion(o.tuple.elems[k..]);
-        };
-        if (j < o.tuple.elems.len) {
-            return if (o.tuple.eflags[j] == .optional) d.addOptional(c, o.tuple.elems[j]) else o.tuple.elems[j];
+    if (T.isTupleType(r)) return tupleAt(c, r.data.obj, i - fixed);
+    // `next(...[value]: [] | [T])`: a position exists if any of the forms has it.
+    if (r.data == .union_) {
+        var parts = c.newList(*Type);
+        for (r.data.union_) |m| {
+            if (!T.isTupleType(m)) return c.t_err;
+            if (tupleAt(c, m.data.obj, i - fixed)) |x| parts.append(c.a, x) catch oom();
         }
-        return null;
+        return if (parts.items.len > 0) c.getUnion(parts.items) else null;
     }
     if (T.isAny(r)) return r;
     if (r.data == .param or r.data == .access) return d.getIndexedAccess(c, r, c.numLit(@floatFromInt(i - fixed)));
     return c.t_err;
+}
+
+fn tupleAt(c: *Checker, o: *T.Obj, j: usize) ?*Type {
+    if (openAt(o)) |k| if (j >= k) {
+        // From the rest on, a position may hold the rest element or any element written after it.
+        for (o.tuple.eflags[k..]) |f| if (f == .variadic) return c.t_err;
+        return if (o.tuple.elems.len - k == 1) o.tuple.elems[k] else c.getUnion(o.tuple.elems[k..]);
+    };
+    if (j >= o.tuple.elems.len) return null;
+    return if (o.tuple.eflags[j] == .optional) d.addMissing(c, o.tuple.elems[j]) else o.tuple.elems[j];
 }
 
 pub fn isMethodLike(s: *Sig) bool {
@@ -1010,7 +1041,7 @@ fn hasAllCandidates(ctx: *InferCtx) bool {
 }
 
 /// The signature of a plain function type, the only shape treated as a callback.
-fn singleCall(c: *Checker, t0: *Type) ?*Sig {
+pub fn singleCall(c: *Checker, t0: *Type) ?*Sig {
     const t = expr.nonNull(c, t0);
     if (t.data != .obj) return null;
     const sigs = d.callSigs(c, t);
@@ -1026,6 +1057,22 @@ fn sigRel(c: *Checker, s0: *Sig, t: *Sig, rel: Relation, mode: SigMode) bool {
     if (s0 == t) return true;
     var s = s0;
     if (s.tparams.len > 0 and s.tparams.ptr != t.tparams.ptr) s = sigInContext(c, s, t);
+    if (!paramsRel(c, s, t, rel, mode)) return false;
+    return returnsRel(c, s, t, rel, mode);
+}
+
+/// tsc's `isImplementationCompatibleWithOverload`: the return types relate either way, then the
+/// parameters do, all with type parameters erased.
+pub fn implementationFits(c: *Checker, impl: *Sig, overload: *Sig) bool {
+    const s = erased(c, impl);
+    const t = erased(c, overload);
+    const sr = if (s.ret_resolving) c.t_any else d.returnOf(c, s);
+    const tr = if (t.ret_resolving) c.t_any else d.returnOf(c, t);
+    if (tr.data != .void and !isAssignable(c, tr, sr) and !isAssignable(c, sr, tr)) return false;
+    return paramsRel(c, s, t, .assignable, .normal);
+}
+
+fn paramsRel(c: *Checker, s: *Sig, t: *Sig, rel: Relation, mode: SigMode) bool {
     const sa = arityOf(c, s);
     const ta = arityOf(c, t);
     if (sa.min > (ta.max orelse std.math.maxInt(u32))) return false;
@@ -1047,6 +1094,10 @@ fn sigRel(c: *Checker, s0: *Sig, t: *Sig, rel: Relation, mode: SigMode) bool {
         if (mode == .normal and !strict and related(c, x, y, rel)) continue;
         return false;
     }
+    return true;
+}
+
+fn returnsRel(c: *Checker, s: *Sig, t: *Sig, rel: Relation, mode: SigMode) bool {
     const tr = if (t.ret_resolving) c.t_any else d.returnOf(c, t);
     if (tr.data == .void or T.isAny(tr)) return true;
     const sr = if (s.ret_resolving) c.t_any else d.returnOf(c, s);
@@ -1290,10 +1341,22 @@ fn isObjectGlobal(c: *Checker, t: *Type) bool {
 pub fn excessProp(c: *Checker, s: *Type, t: *Type) ?*Prop {
     if (s.data != .obj or !s.data.obj.lit or s.data.obj.open or s.data.obj.spread) return null;
     if (!excessTarget(c, t)) return null;
+    const jsx = isJsxAttributes(s);
     for (d.membersOf(c, s).props.values()) |p| {
+        // tsc's `isKnownProperty`: `data-*` and other hyphenated attributes are always allowed.
+        if (jsx and std.mem.indexOfScalar(u8, p.name, '-') != null) continue;
+        // tsc's `shouldCheckAsExcessProperty`: only what was written on this element, not what a
+        // spread brought in.
+        if (jsx and (p.decl == null or p.decl.?.parent != s.data.obj.literal)) continue;
         if (!isKnown(c, t, p.name)) return p;
     }
     return null;
+}
+
+pub fn isJsxAttributes(s: *Type) bool {
+    if (s.data != .obj) return false;
+    const n = s.data.obj.literal orelse return false;
+    return n.data == .jsx_opening or n.data == .jsx_self_closing;
 }
 
 pub fn missingProps(c: *Checker, s: *Type, t: *Type) []const []const u8 {
@@ -1553,7 +1616,7 @@ pub fn getInferred(c: *Checker, ctx: *InferCtx, i: usize) *Type {
         info.inferred = c.t_unknown;
         inferred = d.instantiate(c, x, nonFixing(c, ctx));
     } else {
-        inferred = c.t_unknown;
+        inferred = if (ctx.any_default) c.t_any else c.t_unknown;
         inferred_any = false;
     }
     info.inferred = inferred;
@@ -1588,6 +1651,11 @@ const no_inference: i64 = std.math.maxInt(i64);
 const circularity: i64 = -1;
 
 const max_infer_depth = 49;
+
+fn sliceTuple(c: *Checker, o: *T.Obj, from: usize, to: usize) *Type {
+    const names = o.tuple.names;
+    return c.makeTuple(o.tuple.elems[from..to], o.tuple.eflags[from..to], false, if (names.len >= to) names[from..to] else &.{});
+}
 
 const Infer = struct {
     c: *Checker,
@@ -1986,7 +2054,7 @@ const Infer = struct {
         if (definitelyUnrelated(c, s, t)) return;
         for (d.propsOf(c, t)) |tp| {
             const sp = d.getProp(c, s, tp.name) orelse continue;
-            st.go(d.propType(c, sp), d.propType(c, tp));
+            st.go(d.nonMissingPropType(c, sp), d.nonMissingPropType(c, tp));
         }
         st.signatures(d.callSigs(c, s), d.callSigs(c, t));
         st.signatures(d.ctorSigs(c, s), d.ctorSigs(c, t));
@@ -2034,11 +2102,21 @@ const Infer = struct {
         const k = var_at.?;
         const tail = n - k - 1;
         if (so.tuple.elems.len < k + tail) return;
+        if (k + 1 < n and to.tuple.eflags[k] == .variadic and to.tuple.eflags[k + 1] == .variadic) {
+            for (0..k) |i| st.go(so.tuple.elems[i], to.tuple.elems[i]);
+            const arity = (st.infoOf(to.tuple.elems[k]) orelse return).implied_arity orelse return;
+            const end = so.tuple.elems.len - (tail - 1);
+            const split = k + arity;
+            if (split > end) return;
+            st.go(sliceTuple(c, so, k, split), to.tuple.elems[k]);
+            st.go(sliceTuple(c, so, split, end), to.tuple.elems[k + 1]);
+            return;
+        }
         for (0..k) |i| st.go(so.tuple.elems[i], to.tuple.elems[i]);
         const mid_end = so.tuple.elems.len - tail;
         const mid = so.tuple.elems[k..mid_end];
         if (to.tuple.eflags[k] == .variadic) {
-            st.go(c.makeTuple(mid, so.tuple.eflags[k..mid_end], false, &.{}), to.tuple.elems[k]);
+            st.go(sliceTuple(c, so, k, mid_end), to.tuple.elems[k]);
         } else if (mid.len > 0) {
             st.go(c.getUnion(mid), to.tuple.elems[k]);
         }
@@ -2169,6 +2247,11 @@ const Infer = struct {
             if (r.vars) {
                 if (r.data == .param or (r.data == .access)) {
                     st.flip(restFrom(c, s, fixed_t), r);
+                } else if (T.isTupleType(r) and openAt(r.data.obj) != null) {
+                    const o = r.data.obj;
+                    const start = openAt(o).?;
+                    for (0..start) |i| st.flip(typeAt(c, s, fixed_t + i) orelse break, o.tuple.elems[i]);
+                    st.flip(restFrom(c, s, fixed_t + start), sliceTuple(c, o, start, o.tuple.elems.len));
                 } else {
                     var i: usize = fixed_t;
                     while (i < n) : (i += 1) {
@@ -2205,16 +2288,26 @@ fn restFrom(c: *Checker, s: *Sig, pos: usize) *Type {
     }
     var elems = c.newList(*Type);
     var flags = c.newList(T.ElemFlag);
+    var names = c.newList(?[]const u8);
     const min = arityOf(c, s).min;
     for (@min(pos, fixed)..fixed) |i| {
         elems.append(c.a, d.paramTypeAt(c, s, i)) catch oom();
         flags.append(c.a, if (i >= min) .optional else .required) catch oom();
+        names.append(c.a, s.params[i].name) catch oom();
     }
     if (rest) |r| {
         elems.append(c.a, r) catch oom();
         flags.append(c.a, .variadic) catch oom();
+        names.append(c.a, s.params[fixed].name) catch oom();
     }
-    return c.makeTuple(elems.items, flags.items, false, &.{});
+    return c.makeTuple(elems.items, flags.items, false, names.items);
+}
+
+/// `t`'s parameters from `s`'s, position by position and with no regard for variance.
+pub fn inferFromParams(c: *Checker, ctx: *InferCtx, s: *Sig, t: *Sig) void {
+    const fixed = if (t.has_rest) t.params.len - 1 else t.params.len;
+    for (0..fixed) |i| inferTypes(c, ctx, typeAt(c, s, i) orelse break, d.paramTypeAt(c, t, i), 0);
+    if (restType(c, t)) |r| if (r.vars) inferTypes(c, ctx, restFrom(c, s, fixed), r, 0);
 }
 
 pub fn inferTypes(c: *Checker, ctx: *InferCtx, s: *Type, t: *Type, priority: u32) void {

@@ -5,6 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const stator_ts = b.dependency("stator_ts", .{ .target = target, .optimize = optimize }).module("stator_ts");
+    const jstext = b.dependency("jstext", .{ .target = target, .optimize = optimize }).module("jstext");
 
     const core = b.addModule("stator_core", .{
         .root_source_file = b.path("src/root.zig"),
@@ -13,7 +14,10 @@ pub fn build(b: *std.Build) void {
         // Constant folding computes `**` with libc's `pow`, the one that agrees with V8 on every
         // input measured.
         .link_libc = true,
-        .imports = &.{.{ .name = "stator_ts", .module = stator_ts }},
+        .imports = &.{
+            .{ .name = "stator_ts", .module = stator_ts },
+            .{ .name = "jstext", .module = jstext },
+        },
     });
 
     const exe = b.addExecutable(.{

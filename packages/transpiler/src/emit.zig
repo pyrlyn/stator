@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ast = @import("ast.zig");
 const binder = @import("binder.zig");
+const jstext = @import("jstext");
 const Node = ast.Node;
 const Symbol = binder.Symbol;
 const F = binder.F;
@@ -428,10 +429,7 @@ const Emitter = struct {
     }
 
     fn numText(e: *Emitter, v: f64) []const u8 {
-        if (std.math.isNan(v)) return "NaN";
-        if (std.math.isInf(v)) return if (v > 0) "Infinity" else "-Infinity";
-        if (v == @trunc(v) and @abs(v) < 1e15) return e.fmt("{d}", .{@as(i64, @intFromFloat(v))});
-        return e.fmt("{d}", .{v});
+        return numberText(e.a, v);
     }
 
     /// `var X;` is skipped when another declaration in this file already introduces the name.
@@ -1032,7 +1030,18 @@ fn toI32(v: f64) i32 {
     return @bitCast(@as(u32, @intFromFloat(m)));
 }
 
+/// ECMAScript's Number::toString.
+pub fn numberText(a: std.mem.Allocator, v: f64) []const u8 {
+    return jstext.numberToString(a, v) catch oom();
+}
+
 pub fn parseNumber(raw: []const u8) ?f64 {
+    if (raw.len > 2 and raw[0] == '0') switch (raw[1]) {
+        'x', 'X' => return parseRadix(raw[2..], 16),
+        'o', 'O' => return parseRadix(raw[2..], 8),
+        'b', 'B' => return parseRadix(raw[2..], 2),
+        else => {},
+    };
     var buf: [64]u8 = undefined;
     var n: usize = 0;
     for (raw) |c| {
@@ -1041,17 +1050,16 @@ pub fn parseNumber(raw: []const u8) ?f64 {
         buf[n] = c;
         n += 1;
     }
-    const s = buf[0..n];
-    if (s.len > 2 and s[0] == '0') {
-        const base: u8 = switch (s[1]) {
-            'x', 'X' => 16,
-            'o', 'O' => 8,
-            'b', 'B' => 2,
-            else => 0,
-        };
-        if (base != 0) return if (std.fmt.parseInt(u64, s[2..], base)) |v| @floatFromInt(v) else |_| null;
-    }
-    return std.fmt.parseFloat(f64, s) catch null;
+    return std.fmt.parseFloat(f64, buf[0..n]) catch null;
+}
+
+/// Past 64 bits tsgo reads the digits as a big integer and rounds once to the nearest double.
+fn parseRadix(digits: []const u8, base: u8) ?f64 {
+    if (std.fmt.parseInt(u64, digits, base)) |v| return @floatFromInt(v) else |e| if (e == error.InvalidCharacter) return null;
+    var m = std.math.big.int.Managed.init(std.heap.page_allocator) catch return null;
+    defer m.deinit();
+    m.setString(base, digits) catch return null;
+    return m.toFloat(f64, .nearest_even)[0];
 }
 
 fn enumKey(n: *Node) ?[]const u8 {

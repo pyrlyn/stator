@@ -5,6 +5,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const failure = @import("failure.zig");
+const jstext = @import("jstext");
 const oom = failure.oom;
 
 /// Unset `STATOR_COMPILE_JOBS` splits only at or above both of these.
@@ -75,21 +76,12 @@ pub fn countTopLevelFunctions(a: Allocator, c: []const u8) error{Unclosed}!usize
     return (try walk(a, c)).functions.len;
 }
 
-/// `c.length`: the thresholds were tuned on UTF-16 units.
-fn utf16Length(s: []const u8) usize {
-    var n: usize = 0;
-    for (s) |b| {
-        if (b & 0xC0 != 0x80) n += if (b >= 0xF0) 2 else 1;
-    }
-    return n;
-}
-
 pub fn shouldSplit(a: Allocator, c: []const u8, jobs: usize, explicit: bool) error{Unclosed}!bool {
     if (jobs < 2) return false;
     const functions = try countTopLevelFunctions(a, c);
     if (functions < 2) return false;
     if (explicit) return true;
-    return functions >= parallel_min_functions and utf16Length(c) >= parallel_min_chars;
+    return functions >= parallel_min_functions and jstext.utf16Length(c) >= parallel_min_chars;
 }
 
 const header_name = "stator_units.h";

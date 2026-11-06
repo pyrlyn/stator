@@ -48,3 +48,5 @@ site/.astro/
 packages/compiler-zig/.zig-cache/
 packages/compiler-zig/zig-out/
 packages/compiler-zig/zig-pkg/
+packages/jstext/.zig-cache/
+packages/jstext/zig-out/

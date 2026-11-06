@@ -9,7 +9,7 @@ const failure = @import("failure.zig");
 const Reporter = failure.Reporter;
 const Error = failure.Error;
 const oom = failure.oom;
-const js_text = @import("../support/js_text.zig");
+const js_text = @import("jstext");
 
 pub const file_name = "stator.config.json";
 

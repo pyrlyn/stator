@@ -79,6 +79,10 @@ packages/tests/    the test package "@stator/tests" — every harness + a tsconf
                    HIR JSON dump (HIR-JSON.md), CLI/program/ffi-gen parity harnesses, gen/ table generators (plan/T41)
 packages/compiler-zig/ "statorc-zig" — the Zig compiler replacing packages/compiler on stator-ts (plan/T41):
                    src/{support,frontend,lower,hir,passes,codegen,cli,ffigen}, mirroring packages/compiler/src
+packages/transpiler/ stator-ts: TypeScript parser, binder, checker and JS emitter in Zig; compiler-zig's
+                   `stator_ts` module by path dependency (plan/T62); its own AGENTS.md
+packages/jstext/   Zig: JavaScript text semantics over WTF-8 (Number::toString, `\s`, UTF-16 length and
+                   order, JSON.stringify of a string), shared by transpiler and compiler-zig (plan/T62)
 examples/vite/     `vite build` → native binary through vite-stator (a workspace package)
 ```
 
