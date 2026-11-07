@@ -8,7 +8,7 @@
   commit; the justfile fetches it into the git-ignored `packages/runtime/zig-pkg/` and compiles
   it into `libjsrt.a` with Stator's host module (`src/jsrt_gc_host.zig`). Row in `toolchain.md`
   (new "Zig packages" table).
-- **Collector** (`src/jsrt_gc.zig`), as plan-notes 400 "As built" records: coalesced deferred
+- **Collector** (`src/jsrt_gc.zig`), as plan-notes 401 "As built" records: coalesced deferred
   reference counting (Levanoni–Petrank). `jsrt_gc_write(obj)` logs an object before its first
   mutation since the last collection; young objects are traced only if they survive; a zero-count
   table holds objects no heap reference names; suspects go to pyrlyn/gc's trial deletion. Roots
@@ -26,7 +26,7 @@
   private collector too.
 - **Docs:** `docs/VALUE.md` §4.1 and §4.12, `HOW-IT-WORKS.md`, `DEVELOPMENT.md`, `THREADS.md`,
   `FFI.md`, `SELF-HOSTING.md`, `TOOLCHAIN.md`, `pipeline.d2` (+ SVG), `plan.md` (v4.90),
-  plan-notes 400.
+  plan-notes 401.
 - **Clones:** the change removes more than it adds; `.jscpd-baseline.json` shrinks from 93 to 88
   fingerprints (one existing `jsrt_numeric.c`/`jsrt_value.c` include-list clone re-fingerprinted
   after unused includes were dropped).
@@ -78,5 +78,5 @@ $ git grep -nE 'JSRT_HAVE_BOEHM|[<"/]gc\.h|bdw-gc|GC_[a-z_]+\(' -- packages docs
 (empty, exit 1)
 ```
 
-Not measured: the collector's throughput against Boehm (plan-notes 400, "Not measured separately
+Not measured: the collector's throughput against Boehm (plan-notes 401, "Not measured separately
 yet"); the `intl_*` fixtures (ICU build, not part of `ci`).

@@ -86,6 +86,7 @@ interface NodeGlobal {
 
 /** Sorted by module, then by name: the order the imports are written in. */
 const NODE_GLOBALS: readonly NodeGlobal[] = [
+  { name: 'Buffer', module: 'node:buffer', isDefault: false },
   { name: 'performance', module: 'node:perf_hooks', isDefault: false },
   { name: 'process', module: 'node:process', isDefault: true },
   { name: 'clearImmediate', module: 'node:timers', isDefault: false },

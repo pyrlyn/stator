@@ -876,7 +876,7 @@ C checks `jsrt_pending()` after the op (Phase 5 step 11).
 
 Everything above assumes the collector can find what is live. `runtime/src/jsrt_gc.zig` drives
 [pyrlyn/gc](https://github.com/pyrlyn/gc) (a Zig package pinned in `runtime/build.zig.zon`) as
-coalesced deferred reference counting. Its module comment is the full design; plan-notes 400 says
+coalesced deferred reference counting. Its module comment is the full design; plan-notes 401 says
 why Stator does not count exactly the way pyrlyn/gc's own compiler does.
 
 **One allocation seam, one layout.** `jsrt_gc_alloc(bytes, kind)` (`runtime/include/jsrt.h`) is

@@ -241,8 +241,9 @@ pub fn lowerClassMemberRead(l: *Lower, target: Expression, field: []const u8, re
     if (members.namespaceObjectField(l, target, field, b)) |member| return l.ident(member.type, span, member.name);
     const t = target.getType();
     if (members.declaringClassName(l, receiver, field, b)) |method_owner| {
-        if (t.* != .object) return l.internal(node, "STA4049", "receiver is not an object");
-        return methodValue(l, node, target, t, field, method_owner, members.isOverridden(l, t.object.name, field), b);
+        // A `Uint8Array` subclass instance has a class layout too (plan/T11.6a).
+        const layout = H.classLayoutOf(t) orelse return l.internal(node, "STA4049", "receiver is not an object");
+        return methodValue(l, node, target, t, field, method_owner, members.isOverridden(l, layout.name, field), b);
     }
     if (members.accessorOwner(l, receiver, field, b)) |owner| {
         return members.accessorCall(l, .get, owner, target, field, &.{}, typeAt(l, node, b), span, node);
@@ -606,7 +607,9 @@ fn lowerMemberCall(l: *Lower, node: *Node, e: *Node, b: *Scope) E!?Expression {
         const shape = N.DATE_OPS.get(op);
         return l.ex(.date_op, .{ .type = if (shape.result == .number) H_NUMBER else H_STRING, .span = p.span, .op = op, .target = p.target, .args = padToArity(l, p.args, shape.arity, p.span) });
     };
-    if (receiver_type.* == .uint8array or receiver_type.* == .arraybuffer) {
+    // A method a `Uint8Array` subclass declares is the class's (Node's `Buffer.slice` shares memory
+    // where the row copies), the gate's rule (plan/T11.6a).
+    if ((receiver_type.* == .uint8array or receiver_type.* == .arraybuffer) and !gate_globals.isUserClassMember(g, e)) {
         const typed: N.TypedReceiver = if (receiver_type.* == .uint8array) .uint8array else .arraybuffer;
         if (N.typedMember(typed, name)) |op| if (N.TYPED_OPS.get(op).form == .call) {
             const p = try lowerReceiverCall(l, obj, node, b);
