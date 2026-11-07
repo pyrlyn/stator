@@ -1,7 +1,9 @@
 // @mode: js
-// @verdict: not-yet
-// @code: STA1214
+// @verdict: dynamic
 // SUBSET.md: Static methods and static class members
+// `this` in a static METHOD is whoever the method was reached through — `T.m()` reads
+// `T.v`, `S.m()` reads `S.v` (plan.md T27 step 4). `S` has a subclass, so the call passes
+// the class as the receiver and `this.v` reads through it dynamically.
 
 class S {
   static v = 5;

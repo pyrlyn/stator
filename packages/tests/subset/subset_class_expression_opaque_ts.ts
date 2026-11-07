@@ -1,9 +1,8 @@
 // @mode: ts
-// @verdict: not-yet
-// @code: STA1214
-// SUBSET.md: Classes -- an opaque class-expression use reads the class object, which does
-// not exist (plan.md §8 step 12e). In-place uses (`new C`, `C.static`, `o instanceof C`,
-// `extends C`) erase to the expression and compile (subset_class_expression_ts).
+// @verdict: dynamic
+// SUBSET.md: Classes -- a bound class expression read as a value is its one class object
+// (docs/VALUE.md §4.26, T27); the `unknown` parameter is what makes the verdict dynamic.
+// In-place uses (`new C`, `C.static`, `o instanceof C`, `extends C`) still erase.
 
 const C = class {
   m(): number {
