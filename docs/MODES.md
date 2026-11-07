@@ -520,7 +520,7 @@ members `tsc` reads plus their neighbours: `argv`, `argv0`, `execArgv`, `execPat
 (`import path from 'node:path'`), which the bundle's `import * as m` plus `m.default` also needs.
 `path.win32`, `node:path/win32` and `path.matchesGlob` have not landed. `node:crypto` (T11.6):
 `createHash` and its `Hash` (`update`, `copy`, `digest`) plus the one-shot `hash`, over
-`std/hash`, for SHA-256, SHA-1 and MD5 under OpenSSL's common spellings (plan-notes 401). Any
+`std/hash`, for SHA-256, SHA-1 and MD5 under OpenSSL's common spellings (plan-notes 402). Any
 other algorithm throws Node's "Digest method not supported"; the rest of the module has not
 landed.
 

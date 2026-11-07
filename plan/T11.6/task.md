@@ -44,7 +44,7 @@ callee, and receiver calls guessed `this` from the argument count. The task stay
 100%. **`Buffer` slice** (plan-notes 400, after T11.6a): `node:buffer` 12/130 — `Buffer` as a
 strict TypeScript class over `Uint8Array`, the global `Buffer` under `--node`, and `readFileSync`
 without an encoding answering a `Buffer`; four compiler bugs fixed on the way. **`crypto` slice**
-(plan-notes 401): `node:crypto` 6/148 — `createHash`, `Hash` (`update`, `copy`, `digest`) and `hash`
+(plan-notes 402): `node:crypto` 6/148 — `createHash`, `Hash` (`update`, `copy`, `digest`) and `hash`
 over `std/hash` (SHA-256, SHA-1, MD5), and `require('crypto')` as `tsc` loads it; slice N1 33/37.
 **Next**, in the order `tsc` needs them: `hrtime.bigint`; `path.win32` is its own slice (13 of
 T11.7's `path` tests need it).
