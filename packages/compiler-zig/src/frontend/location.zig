@@ -51,6 +51,7 @@ const Global = struct { name: []const u8, module: []const u8, default: bool = fa
 
 /// Sorted by module, then by name: the order the imports are written in.
 const node_globals = [_]Global{
+    .{ .name = "Buffer", .module = "node:buffer" },
     .{ .name = "performance", .module = "node:perf_hooks" },
     .{ .name = "process", .module = "node:process", .default = true },
     .{ .name = "clearImmediate", .module = "node:timers" },

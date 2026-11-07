@@ -24,3 +24,8 @@ const long = new Pair(2, 3, 4, 5);
 console.log(long.left, long.right, long.sum(), long.sum(10), long.sum(10, 20, 30));
 const shifted = new Shifted(5);
 console.log(shifted.left, shifted.right, shifted.sum(1, 2));
+
+// An untyped receiver takes the dynamic call, which names its receiver the same way (plan-notes 400).
+let loose;
+loose = long;
+console.log(loose.sum(), loose.sum(1), loose.sum(1, 2, 3));

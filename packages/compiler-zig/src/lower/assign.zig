@@ -101,7 +101,9 @@ fn bumped(l: *Lower, current: Expression, operator: N.BinaryOperator, span: Span
 
 pub fn identifierAssignment(l: *Lower, target_node: *Node, maker: anytype, b: *Scope) E!Assign {
     const target = placeName(l, target_node) orelse return l.internal(target_node, "STA4033", "assignment target must be an identifier");
-    const binding = b.get(target) orelse return l.internal(target_node, "STA4034", l.fmt("identifier '{s}' assigned before declaration", .{target}));
+    const static_owner = if (target_node.data == .prop_access) if (gt.staticMemberOf(l.g, target_node, false)) |found| found.owner else null else null;
+    const found_type = if (static_owner) |owner| members.staticBindingType(l, target, owner, b) else b.get(target);
+    const binding = found_type orelse return l.internal(target_node, "STA4034", l.fmt("identifier '{s}' assigned before declaration", .{target}));
     const current = l.ident(binding, l.span(target_node), b.hirName(target));
     const raw = try maker.make(current);
     const value = if (target_node.data == .identifier) withDisplayName(l, raw, target_node.data.identifier) else raw;
@@ -230,7 +232,7 @@ pub const Write = union(enum) {
     field: struct { target: Expression, field: []const u8, slot: i32 },
     index: struct { target: Expression, index: Expression },
     dyn: struct { target: Expression, field: []const u8 },
-    static_accessor: struct { owner: []const u8, property: []const u8, node: *Node, b: *Scope },
+    static_accessor: struct { owner: *Node, property: []const u8, node: *Node, b: *Scope },
     accessor: members.AccessorWrite,
 
     fn apply(w: Write, l: *Lower, value: Expression, span: Span) Statement {
@@ -305,7 +307,7 @@ fn memberAssignment(l: *Lower, e: *Node, at: *Node, b: *Scope) E!?Statement {
 
     const static_found = if (is_prop) gt.staticMemberOf(l.g, target_node, null) else null;
     if (static_found != null and gt.classDisplayName(static_found.?.owner) != null and members.isAccessorMember(static_found.?.member)) {
-        const owner = members.hirClassName(l, static_found.?.owner);
+        const owner = static_found.?.owner;
         const property = members.propertyText(target_node);
         const halves = members.staticAccessorHalves(l, static_found.?.owner, property);
         const place_type = typeAt(l, target_node, b);

@@ -35,6 +35,16 @@ pub fn staticName(l: *Lower, class_name: []const u8, member: []const u8) []const
     return l.concat(&.{ class_name, ".", member });
 }
 
+/// The type of the static binding `name` (a `staticName`) that class `owner` declares. A static
+/// is bound in its class's module scope, so a module that imports the class finds it there: the
+/// HIR name is the same in every module (a static is `set`, never renamed), and only the lookup
+/// needs the declaring module.
+pub fn staticBindingType(l: *Lower, name: []const u8, owner: *Node, b: *const Scope) ?*const HType {
+    if (b.get(name)) |t| return t;
+    const home = l.module_scopes.get(l.fileOfNode(owner)) orelse return null;
+    return home.get(name);
+}
+
 pub fn hirClassName(l: *Lower, declaration: *Node) []const u8 {
     return l.hirNameOf(declaration) orelse gt.classDisplayName(declaration) orelse "";
 }
@@ -300,9 +310,9 @@ pub fn lowerPrivateRead(l: *Lower, priv: PrivateUse, node: *Node, target: Expres
     return l.ex(.field_access, .{ .type = expressions.typeAt(l, node, b), .span = span, .target = target, .field = priv.property, .slot = slot });
 }
 
-pub fn staticAccessorCall(l: *Lower, half: H.AccessorKind, owner: []const u8, property: []const u8, args: []const Expression, t: *const HType, span: Span, at: *const Node, b: *Scope) E!Expression {
-    const name = staticName(l, owner, l.accessorName(half, property));
-    const fn_type = b.get(name) orelse return l.internal(at, "STA4066", l.fmt("static '{s}' has no function the class emitted", .{name}));
+pub fn staticAccessorCall(l: *Lower, half: H.AccessorKind, owner: *Node, property: []const u8, args: []const Expression, t: *const HType, span: Span, at: *const Node, b: *Scope) E!Expression {
+    const name = staticName(l, hirClassName(l, owner), l.accessorName(half, property));
+    const fn_type = staticBindingType(l, name, owner, b) orelse return l.internal(at, "STA4066", l.fmt("static '{s}' has no function the class emitted", .{name}));
     return l.ex(.call, .{ .type = t, .span = span, .callee = l.ident(fn_type, span, name), .args = args });
 }
 
