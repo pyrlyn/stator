@@ -14467,3 +14467,50 @@ byte for byte: methods, statics, an override of `toString` (direct and through T
 untyped receiver), `instanceof` both ways, species `subarray` / `slice`, a two-level chain, and
 Node's `Name(n) [Uint8Array] [ … ]` print, `[Name [Uint8Array]]` past the depth cap. Decision tests
 `subset_uint8array_subclass{,_not_yet}_{ts,js}`. Docs: `docs/VALUE.md` §4.19, `docs/SUBSET.md`.
+
+## 399. T11.6: `Buffer` is a strict TypeScript class over `Uint8Array`, and four compiler bugs it found (2026-11-07)
+
+**What landed.** `packages/node/src/internal/buffer.ts` declares `class Buffer extends Uint8Array`
+(plan/T11.6a, note 398) with `from`, `alloc`, `isBuffer`, `isEncoding`, `byteLength`, `concat`,
+`copyBytesFrom` and the instance's `toString`, `equals`, `slice` and `subarray`, each checked
+against Node v26.7.0 `lib/buffer.js` (argument clamping order, `ERR_UNKNOWN_ENCODING`,
+`ERR_OUT_OF_RANGE` with Node's numeric separators). `node:buffer` exports it by name, and under
+`--node` a free `Buffer` is that import (`NODE_GLOBALS`). `fs.readFileSync` without an encoding
+answers a `Buffer`, so `tsc`'s `readFile` (byte-order-mark sniffing over `buffer[i]`, then
+`buffer.toString("utf16le", 2)`) runs unchanged. `docs/NODE.md`: `node:buffer` 12/130.
+
+**No namespace.** A class is not a value in the subset, and a namespace object skips classes
+(`moduleNamespaceToHType`), so `node:buffer` has no default export and `require('buffer')` does
+not land. The named import and the global are the class itself.
+
+**Static side.** TypeScript holds a subclass's static `from` to `Uint8Array.from` (TS2417). Generic
+overloads are `STA1214`, so `from` has three non-generic overloads; the third exists only to keep
+the static side compatible and is a gap, as are the `ArrayBuffer` and object forms.
+
+**Compiler bugs fixed on the way** (each in `packages/compiler` and `packages/compiler-zig`):
+
+1. *A static of a class imported from another module was invisible* (`STA4066`): the lowering
+   looked the static's binding up in the reading module's scope. `staticBindingType` reads the
+   declaring module's scope as well, since a static's HIR name is the same in every module. Golden
+   `ts/module_statics` (field, `+=`, `++`, a private static accessor, an inherited static, a view
+   class's static).
+2. *A method a `Uint8Array` subclass declares lost to the `TYPED_OPS` row* for calls: `b.slice(…)`
+   ran `Uint8Array`'s copy, not `Buffer`'s shared view. The call path now skips the row when the
+   member is the user class's (`isUserClassMember`, the gate's own rule).
+3. *A method value read off a view class* (`const f = b.equals`) was `STA4049`: the read tested
+   `kind === 'object'`, not `classLayoutOf`.
+4. *A dynamic method call with fewer arguments than parameters lost `this`*, for every class:
+   `o.m(a)` on an untyped `o` still chose the call shape from `argc == arity + 1`, the guess note
+   395 removed from typed calls. The `dyn-method-call` and `field-call` paths now name their
+   receiver (`receiverCall`). `js/class_call_arity` gains the untyped case.
+
+**zigdiff.** `golden/ts/node_buffer.ts` is `different` in the lower stage, at its baseline of 11:
+in `Buffer.concat([new Uint8Array(…), Buffer.from('de')])` the TypeScript frontend maps the
+literal's element union (`Uint8Array<ArrayBuffer> | Buffer`, which `tsc` does not reduce) to
+`unknown`, while the Zig port, on `packages/transpiler`'s checker, reduces it to `Buffer`. Both
+lower and run the same; the checker difference belongs to the transpiler, like note 398's `this[i]`.
+
+**Follow-up, not fixed.** A receiver typed as base `Uint8Array` that holds a `Buffer` dispatches
+statically to `Uint8Array`'s member, where Node dispatches to the override (`slice` copies instead
+of sharing). Fixing it means a class check at every `TYPED_OPS` call whose receiver may be a
+subclass; it waits for a program that needs it. Listed in `docs/SUBSET.md`.

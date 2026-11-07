@@ -109,6 +109,10 @@ function landed(id: string): unknown {
   switch (id) {
     case 'assert':
       return assert;
+    case 'buffer':
+      // A class is not a value, so no object can hold `Buffer` (plan-notes 399): the named import
+      // and the global are its spellings, and `require` answers the not-yet error below.
+      return undefined;
     case 'fs':
       return fs;
     case 'module':
