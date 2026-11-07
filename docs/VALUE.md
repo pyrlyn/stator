@@ -1627,38 +1627,69 @@ two fields that make it a class:
 
 **Identity.** `C === D` is a pointer comparison on the two closures — one constant per class, so
 two spellings of one declaration are one object. A class whose evaluation can repeat (inside a
-function or a loop) has no one constant and stays refused at the gate rather than lowered here.
+function or a loop), a generic class (one descriptor per type tuple) and an ambient class have no
+one constant and stay `not-yet(STA1214)`, "using a class as a value whose evaluation can repeat".
 
 **Statics hang off the descriptor.** A static stays an ordinary binding wherever the compiler can
 name it (`C.count` reads the declaring class's unspellable binding directly, §4.5 / SUBSET.md).
-`JSRTClass.statics` is the parallel table a *runtime* class value answers through — an untyped
-`v.count`, or `this.count` inside a static method whose receiver may be absent. One row per own
-static (`JSRTStaticEntry`: name, slot pointer, kind field/method/getter/setter); inherited statics
-are the `parent` walk, sound because the gate refuses a static override. A write through the table
-and a write through the binding are the same write: the row's `slot` points at the binding's
-storage. Accessor half-rows CALL the slot's closure with the class object as receiver.
+`JSRTClass.statics` is the parallel table a *runtime* class value answers through — `k.count` on
+a value `k: typeof C`, an untyped `v.count`, or `this.count` inside a static method that takes a
+receiver (below). One row per own static (`JSRTStaticEntry`: name, slot pointer, kind
+field/method/getter/setter); the lookup walks `parent`, and a subclass's own static shadows its
+base's. A write through the table and a write through the binding are the same write: the row's
+`slot` points at the binding's storage. Accessor half-rows CALL the slot's closure with the class
+object as receiver.
 
-**What v0 admits as reads (T27 slices).**
+**Writes that would grow a class object stay refused.** In ES, `Sub.count = 5` on an inherited
+static FIELD creates Sub's own property and leaves `Base.count` alone; the shared binding cannot
+hold that. The gate refuses such a write through a named subclass and every static write through a
+class value (`not-yet(STA1214)`); the dynamic path of `js` mode panics
+`STA2004: a class object cannot grow a new static` at the write. An inherited static SETTER is a
+call, not a new property, and runs.
 
-| Read | Answer | How |
+**`this` in a static method.** `this` is whatever the method was reached through, so the answer
+depends on the program's class graph, which `noteSubclassedClasses` records once per checker:
+
+- **No class extends the method's class:** `this` can only be the class itself, so `this.x`
+  erases to the static binding and a bare `this` is the class object — no parameter is added.
+- **Some class extends it:** the method takes the hidden receiver parameter (typed `unknown`), and
+  every call site passes the class object it reached the method through (`D.m()` passes D's,
+  `super.m()` and `this.m()` forward the caller's receiver). `this.x` then reads the statics
+  table, so a subclass's own static shadows as in Node; `new this()` constructs the receiver.
+  Such a method is a `has_receiver` closure, so the call is a `CallExpr` with `withReceiver` set:
+  `args[0]` is the class object and the emitter passes it apart from the arguments through
+  `jsrt_call_with_this` (plan-notes 395), so an omitted optional or defaulted parameter still
+  leaves the receiver in place.
+- A static method that reads `this`, taken as a VALUE (`const f = C.m`), and a static ACCESSOR
+  that reads `this` and a subclass can reach, stay `not-yet(STA1214)`: neither has a call site to
+  pass the receiver.
+
+**What v0 admits.**
+
+| Use | Answer | How |
 |---|---|---|
-| `C.name`, `K.name` (`const K = C`, chained aliases, class expressions) | Node's display name | Folds to a string-literal at the lowering — no class object is built. |
-| `typeof C`, `typeof K` | `"function"` | Folds to a string-literal at the lowering, beside `C.name` — no class object is built. A class object is a closure, so the runtime's `jsrt_typeof` would answer the same once one is materialized. |
-| `C.static`, `K.static` | The static's value | Alias erasure to the declaring class's binding (already landed). A static read through a *materialized* class value routes to `JSRTClass.statics` (the runtime path above). |
-| `C.prototype`, `K.prototype` | — | `not-yet(STA1214)`, "the prototype surface", Phase 8. |
-| `C.length`, any other member | — | `not-yet(STA1214)`, "a member read through a class object". |
-| `f(C)`, `console.log(K)`, returning the class | — | `not-yet(STA1214)`: the opaque class-value surface (step 12(e)). Printing needs `inspect_class` (already in the runtime) behind a materialized value. |
+| `C.name`, `K.name` (named classes, aliases, class expressions) | Node's display name | Folds to a string-literal at the lowering. Through a class VALUE (`k.name`) it is a statics-table read with a boundary check. |
+| `typeof C`, `typeof K` | `"function"` | Folds to a string-literal at the lowering; `jsrt_typeof` answers the same for a materialized value. |
+| `k.length` | The constructor's arity (0 for an implicit constructor, as in Node) | Statics-table read of the closure's `arity`. |
+| `C.static`, `k.static` | The static's value | Erasure to the declaring class's binding for a named class; the statics table for a value. A static METHOD through a value is admitted only as a callee (`k.m()`). |
+| `f(C)`, `const k: typeof C = D`, `console.log(K)`, returning the class, `C === D` | The class object | `ClassValue` loads `_jsrt_class_object_N`. Printing goes through `inspect_class` (`[class D extends C]`, as in Node). |
+| `new k(…)`, `x instanceof k` | A new instance / the instance test | `NewValue` → `jsrt_construct`, `InstanceOfValue` → `jsrt_instanceof_ctor`, so a value holding a subclass builds and tests the subclass. |
+| A class where an UNRELATED class is expected (`let K = C; K = E` with E not a subclass of C) | — | `not-yet(STA1214)`. TypeScript checks `typeof C` structurally, but `new K()` would build E's layout where later reads assume C's. |
+| `C.prototype`, `k.prototype` | — | `not-yet(STA1214)`, "the prototype surface", Phase 8. |
+| `k.#secret`, any member that is not a static, `name` or `length` | — | `not-yet(STA1214)`. |
 
 **HIR.** `ClassValue` names one file-scope class object by its HIR name (`className` is the key
 `ClassDeclaration` registers under). `NewValue` / `InstanceOfValue` are the value-spelling twins
 of `new` and `instanceof` (they dispatch through `jsrt_construct` / `jsrt_instanceof_ctor`).
-`ClassDeclaration.staticProps` carries the statics table rows. All four landed as declared,
-verified, rewritten and emitted (plan-notes 283); the gate admits the narrow slice above, and the
-remainder of the surface stays `STA1214` until the value path is widened.
+`ClassDeclaration.staticProps` carries the statics table rows, and `ClassMethod.implicit` marks a
+synthesized constructor so the class object's `length` is 0.
 
-**Known divergences (narrow slice).** `C.name` is a compile-time fold, so a program that mutates
-`C.name` (Node allows it on a function) cannot be expressed here. `C === D` across two distinct
-declarations is not yet observable — the opaque identity surface (`f(C)`, printing) is refused.
+**Known divergences.** `C.name` is a compile-time fold, so a program that mutates `C.name` (Node
+allows it on a function) cannot be expressed here. A read through a class value is typed
+`unknown` before the boundary check at the narrowing point (golden rule 4), so a static whose
+type the checker cannot carry to the value read lands as `unknown`.
+
+Proved by `tests/golden/{ts,js}/class_object_value` and `tests/golden/{ts,js}/static_this_method`.
 
 ## 4.27 Builtin constructors and prototypes as values (feat/realworld-gate-pass)
 

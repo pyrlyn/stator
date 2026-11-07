@@ -495,6 +495,21 @@ export function hTypeAssignable(value: HType, target: HType): boolean {
   if (value.kind === 'array' && target.kind === 'array') {
     return hTypeAssignable(value.element, target.element);
   }
+  // A subclass's constructor stands in for its base's (`k = Square` on `k: typeof Shape`): the
+  // instance it returns is a pointer either way, so only an OBJECT return may widen. Parameters
+  // and any other return must match exactly, since a boxed and an unboxed slot are not
+  // interchangeable inside a call.
+  if (value.kind === 'fn' && target.kind === 'fn' && value.ret.kind === 'object') {
+    return (
+      target.ret.kind === 'object' &&
+      hTypeAssignable(value.ret, target.ret) &&
+      value.params.length === target.params.length &&
+      value.params.every((param, i) => {
+        const other = target.params[i];
+        return other !== undefined && hTypeEquals(param, other);
+      })
+    );
+  }
   return hTypeEquals(value, target);
 }
 

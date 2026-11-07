@@ -387,7 +387,9 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
       const call =
         expr.spread === true
           ? `jsrt_call_spread_at(${emitter.slotAt(base)}, NULL, ${emitter.slotAt(base + 1)}, ${loc})`
-          : `jsrt_call_at(${emitter.slotAt(base)}, ${expr.args.length}, ${argv}, ${loc})`;
+          : expr.withReceiver === true
+            ? receiverCall(emitter.slotAt(base), emitter.slotAt(base + 1), expr.args.length - 1)
+            : `jsrt_call_at(${emitter.slotAt(base)}, ${expr.args.length}, ${argv}, ${loc})`;
       return emitter.finishStatement(
         parts,
         `${emitter.slotAt(base)} = ${call}`,
