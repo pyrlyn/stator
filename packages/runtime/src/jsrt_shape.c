@@ -315,7 +315,7 @@ static jsrt_value accessor_read(jsrt_value slot, jsrt_value recv) {
     return slot;
   }
   const JSRTAccessorCell *cell = (const JSRTAccessorCell *)jsrt_ptr(slot);
-  return cell->get == JSRT_UNDEFINED ? JSRT_UNDEFINED : jsrt_call(cell->get, 1, &recv);
+  return cell->get == JSRT_UNDEFINED ? JSRT_UNDEFINED : jsrt_call_with_this(cell->get, recv, 0, NULL);
 }
 
 /* Answers whether the write was an accessor's, so the caller knows not to store. A setter-less
@@ -333,8 +333,7 @@ static bool accessor_write(jsrt_value slot, const char *key, jsrt_value recv, js
     jsrt_throw_error(&jsrt_class_type_error, msg);
     return true;
   }
-  jsrt_value args[2] = {recv, value};
-  jsrt_call(cell->set, 2, args);
+  jsrt_call_with_this(cell->set, recv, 1, &value);
   return true;
 }
 
