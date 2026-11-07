@@ -12,7 +12,7 @@
 
 stator-ts is imported as it stands: its `lib.zig` does not export the parser, so the package roots
 a module of its own at `parser.zig`. `packages/transpiler` is unchanged. The gaps the driver found
-are stator-ts's, and plan-notes 400 lists them for its owners: 3,444 early errors not reported, and
+are stator-ts's, and plan-notes 401 lists them for its owners: 3,444 early errors not reported, and
 1,120 valid tests rejected (779 escaped or non-ASCII identifiers, 232 proposal syntax, 75
 top-level `await` without a goal flag, 34 others). They are not fixed in this change.
 
@@ -22,6 +22,6 @@ top-level `await` without a goal flag, 34 others). They are not fixed in this ch
 - Parse speed: 188–194 MiB/s `ReleaseFast` on an Apple M3 Max.
 - `libjsrt_interp.a`: 3,152,688 B `ReleaseFast` (562,888 B stripped), 323,280 B `ReleaseSmall`.
 
-All of these are recorded in plan-notes 400. The ratchet fails on a lowered count: with `asi` set
+All of these are recorded in plan-notes 401. The ratchet fails on a lowered count: with `asi` set
 one above its real pass count it answers `asi: 101 pass, the baseline has 102` and exits 1.
 `zig build test` passes and `zig fmt --check` is clean.

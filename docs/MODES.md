@@ -509,8 +509,8 @@ without the flag (docs/BUNDLER.md §1).
 subset `tsc` calls: `closeSync`, `existsSync`, `mkdirSync`, `openSync`, `readFileSync`,
 `readdirSync`, `realpathSync`, `rmdirSync`, `statSync`, `unlinkSync`, `utimesSync`,
 `writeFileSync` and `writeSync`, failing with Node's system errors (`code`, `errno`, `syscall`,
-`path` and the same message). Its gaps: paths are strings only (no `Buffer` or `URL`);
-`readFileSync` without an encoding answers a `Uint8Array` until `Buffer` lands; `readdirSync` lists
+`path` and the same message); `readFileSync` without an encoding answers a `Buffer` (plan-notes
+400). Its gaps: paths are strings only (no `Buffer` or `URL`); `readdirSync` lists
 in byte order; a `Dirent` follows symbolic links; a `Stats` carries `size`, `mtimeMs`, `mtime`,
 `isFile`, `isDirectory` and `isSymbolicLink` only; a system error is not an `Error` instance;
 `watch`, `watchFile` and `unwatchFile` wait on the event loop (N2). `node:process` (T11.6), the
@@ -606,9 +606,10 @@ is the non-Node spelling. What the binary answers:
 - **`browser` and `recordreplay`** are not properties. `tsc` reads both. In `js` mode a missing
   property of the process object reads as `undefined`, which is what those checks test.
 
-**The globals `performance`, `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`,
+**The globals `Buffer`, `performance`, `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`,
 `setImmediate` and `clearImmediate`** (T11.6) come the same way: a free read of one is a named
-import from `node:perf_hooks` or `node:timers` (`NODE_GLOBALS` in `frontend/location.ts`), and a
+import from `node:buffer`, `node:perf_hooks` or `node:timers` (`NODE_GLOBALS` in
+`frontend/location.ts`), and a
 file that binds the name keeps its own. There is no event loop yet (N2). Each timer or immediate
 callback is a macrotask posted with `std/thread.runOnMain`, which the runtime runs only when the
 microtask queue is empty, so promise jobs and `nextTick` callbacks drain between any two of them,

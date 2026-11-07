@@ -41,6 +41,7 @@ import {
   globalFunctionOf,
   globalTypeofOf,
   isGlobalArray,
+  isUserClassMember,
 } from '../frontend/gate.ts';
 import { numberConstant } from '../frontend/gate.ts';
 import type { GlobalFunction } from '../frontend/gate.ts';
@@ -3162,6 +3163,14 @@ function staticName(className: string, member: string): string {
   return `${className}.${member}`;
 }
 
+/** The type of the static binding `name` (a `staticName`) that class `owner` declares. A static
+ * is bound in its class's module scope, so a module that imports the class finds it there: the
+ * HIR name is the same in every module (a static is `set`, never renamed), and only the lookup
+ * needs the declaring module. */
+function staticBindingType(name: string, owner: ts.Node, bindings: Scope): HType | undefined {
+  return bindings.get(name) ?? moduleScopes.get(owner.getSourceFile())?.get(name);
+}
+
 /** Whether `access` reads a member through a class OBJECT rather than a class name: the
  * receiver's type is a class's static side, and no spelling resolves it to one declaration
  * (`k.count` on `k: typeof C`, `this.v` in a static method). A name, an alias and a bound class
@@ -3529,7 +3538,13 @@ function identifierAssignment(
     );
     return null;
   }
-  const binding = bindings.get(target);
+  const staticOwner = ts.isPropertyAccessExpression(targetNode)
+    ? frontendTypes.staticMemberOf(targetNode, checker, false)?.owner
+    : undefined;
+  const binding =
+    staticOwner === undefined
+      ? bindings.get(target)
+      : staticBindingType(target, staticOwner, bindings);
   if (!binding) {
     diagnostics.push(
       lowerDiagnostic(
@@ -3719,7 +3734,7 @@ function memberAssignment(
     (ts.isGetAccessorDeclaration(staticFound.member) ||
       ts.isSetAccessorDeclaration(staticFound.member))
       ? {
-          owner: hirClassName(staticFound.owner),
+          owner: staticFound.owner,
           property: targetNode.name.text,
           halves: staticAccessorHalves(staticFound.owner, targetNode.name.text, checker),
         }
@@ -5154,14 +5169,16 @@ function lowerClassMemberRead(
   // An accessor is not a slot: reading `o.x` RUNS the getter, which is what the property means.
   const methodOwner = declaringClassName(receiver, field, checker, bindings, sourceFile);
   if (methodOwner !== null) {
-    if (target.type.kind !== 'object') {
+    // A `Uint8Array` subclass instance has a class layout too (plan/T11.6a).
+    const layout = classLayoutOf(target.type);
+    if (layout === undefined) {
       diagnostics.push(
         lowerDiagnostic(node, sourceFile, 'STA4049', 'internal', 'receiver is not an object'),
       );
       return null;
     }
-    return methodValue(node, target, target.type, field, methodOwner, {
-      virtual: isOverridden(target.type.name, field, checker),
+    return methodValue(node, target, layout, field, methodOwner, {
+      virtual: isOverridden(layout.name, field, checker),
       sourceFile,
       checker,
       bindings,
@@ -5530,7 +5547,7 @@ function lowerExpression(
         // which binding the class never emitted.
         return staticAccessorCall(
           'get',
-          hirClassName(found.owner),
+          found.owner,
           node.name.text,
           [],
           typeAt(node, checker, bindings),
@@ -5542,7 +5559,7 @@ function lowerExpression(
         );
       }
       const name = staticName(hirClassName(found.owner), node.name.text);
-      const type = bindings.get(name);
+      const type = staticBindingType(name, found.owner, bindings);
       if (type === undefined) {
         diagnostics.push(
           lowerDiagnostic(
@@ -7540,9 +7557,12 @@ function lowerExpression(
 
       // The landed Uint8Array / ArrayBuffer METHODS (plan.md T11.1), padded to the row's arity --
       // every one reads an omitted bound as `undefined`, the spec's own default. Unknown
-      // receivers take the dynamic path (the 2454 rule above).
+      // receivers take the dynamic path (the 2454 rule above). A method a `Uint8Array` subclass
+      // declares is the class's (Node's `Buffer.slice` shares memory where the row copies), the
+      // gate's rule (plan/T11.6a).
       const typedOp =
-        receiverType.kind === 'uint8array' || receiverType.kind === 'arraybuffer'
+        (receiverType.kind === 'uint8array' || receiverType.kind === 'arraybuffer') &&
+        !isUserClassMember(expr, checker)
           ? typedMember(receiverType.kind, propName)
           : undefined;
       if (typedOp !== undefined && TYPED_OPS[typedOp].form === 'call') {
@@ -9541,7 +9561,7 @@ function lowerPrivateRead(
  * stays refused at the gate. */
 function staticAccessorCall(
   kind: 'get' | 'set',
-  owner: string,
+  owner: ts.ClassDeclaration | ts.ClassExpression,
   property: string,
   args: readonly Expression[],
   type: HType,
@@ -9551,8 +9571,8 @@ function staticAccessorCall(
   bindings: Scope,
   diagnostics: Diagnostic[],
 ): CallExpr | null {
-  const name = staticName(owner, accessorName(kind, property));
-  const fnType = bindings.get(name);
+  const name = staticName(hirClassName(owner), accessorName(kind, property));
+  const fnType = staticBindingType(name, owner, bindings);
   if (fnType === undefined) {
     diagnostics.push(
       lowerDiagnostic(

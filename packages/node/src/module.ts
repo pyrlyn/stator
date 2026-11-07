@@ -109,6 +109,10 @@ function landed(id: string): unknown {
   switch (id) {
     case 'assert':
       return assert;
+    case 'buffer':
+      // A static called through a class object is not yet supported (plan-notes 399, 400), so the
+      // named import and the global are `Buffer`'s spellings; `require` answers the not-yet error.
+      return undefined;
     case 'fs':
       return fs;
     case 'module':

@@ -79,7 +79,7 @@ what Test262 negative tests ask. The message is stator-ts's diagnostic text, whi
 wording. Module syntax under the Script goal is the exception and uses Node's text. Golden
 fixtures print `e.name`, never the message, because message parity with Node is not settled.
 
-**Parse rate** (plan-notes 400). `pnpm run test262:interp-parse` runs Test262's `test/language/`
+**Parse rate** (plan-notes 401). `pnpm run test262:interp-parse` runs Test262's `test/language/`
 through `parse` in every mode a test's flags ask for. At the pin it passes 19,162 of 23,726 tests
 (80.76%), at about 190 MiB/s. The counts are ratcheted per directory in
 `packages/interpreter/test262-parse.json`. The rest is stator-ts's to close:
