@@ -1,7 +1,7 @@
 /* module emission for the C emitter (T24 split). */
 
 import type { Emitter } from './emitter.ts';
-import type { Module, Span } from '../hir/nodes.ts';
+import type { Module, Span, StaticProp } from '../hir/nodes.ts';
 import type { LibraryEmit } from './types.ts';
 import { cNameLiteral, closureMeta, descriptorName } from './helpers.ts';
 import type { ExportedFunction } from '../frontend/export.ts';
@@ -144,10 +144,15 @@ export function emit(emitter: Emitter, module: Module, library?: LibraryEmit): s
     if (keyOrder !== undefined) {
       out.push(`static const uint32_t _jsrt_keys_${id}[] = {${keyOrder.map(String).join(', ')}};`);
     }
+    const statics = staticsTable(emitter, cls.staticProps);
+    if (statics !== undefined) {
+      out.push(`static const JSRTStaticEntry _jsrt_statics_${id}[] = {${statics}};`);
+    }
     out.push(
       `static const JSRTClass _jsrt_class_${id} = {${cNameLiteral(descriptorName(cls.name))}, ` +
         `${cls.fields.length}, _jsrt_fields_${id}, ${emitter.baseDescriptor(cls, id)}, ${table}, ` +
-        `${keyOrder === undefined ? 'NULL' : `_jsrt_keys_${id}`}, NULL};`,
+        `${keyOrder === undefined ? 'NULL' : `_jsrt_keys_${id}`}, ` +
+        `${statics === undefined ? 'NULL' : `_jsrt_statics_${id}`}};`,
     );
     // The class OBJECT (docs/VALUE.md §4.17): the closure-shaped value a class evaluates
     // to. Its `fn` is the constructor (NULL when the class declares none), reachable only
@@ -157,7 +162,7 @@ export function emit(emitter: Emitter, module: Module, library?: LibraryEmit): s
     // whose evaluation can repeat, which is exactly the surface that could capture here.
     out.push(
       `static const JSRTClosure _jsrt_class_object_${id} = {${cls.ctor === undefined ? 'NULL' : `_jsrt_fn_${String(emitter.functionId(cls.ctor.fn))}`}, ` +
-        `${cls.ctor === undefined ? 0 : String(closureMeta(cls.ctor.fn).arity)}, ${cNameLiteral(descriptorName(cls.name))}, NULL, false, &_jsrt_class_${id}};`,
+        `${cls.ctor === undefined || cls.ctor.implicit === true ? 0 : String(closureMeta(cls.ctor.fn).arity)}, ${cNameLiteral(descriptorName(cls.name))}, NULL, false, &_jsrt_class_${id}};`,
     );
   }
   if (emitter.classes.length > 0) {
@@ -200,6 +205,31 @@ export function emit(emitter: Emitter, module: Module, library?: LibraryEmit): s
  * never popped -- the module environment has to outlive main's locals for the same reason
  * the globals array does. Shared by `main` and the library init: the body they both run
  * reads the same bindings (plan.md §10 Task 7.2 step 3 reuses this path, never a second). */
+
+const STATIC_KINDS: Readonly<Record<StaticProp['kind'], string>> = {
+  field: 'JSRT_STATIC_FIELD',
+  method: 'JSRT_STATIC_METHOD',
+  get: 'JSRT_STATIC_GETTER',
+  set: 'JSRT_STATIC_SETTER',
+};
+
+/** The initializer of a class object's `JSRTStaticEntry` table (docs/VALUE.md §4.26), each row
+ * pointing at its binding's module global so a write through the table IS a write of the
+ * binding. `undefined` when there are no rows, or when a binding has no module global: only a
+ * module-level class has one class object, and a table pointing anywhere else would dangle. */
+function staticsTable(emitter: Emitter, rows: readonly StaticProp[]): string | undefined {
+  const entries: string[] = [];
+  for (const row of rows) {
+    const slot = emitter.globalMap.get(row.binding);
+    if (slot === undefined) {
+      return undefined;
+    }
+    entries.push(
+      `{${cNameLiteral(row.name)}, &JSRT_GLOBAL(${String(slot)}), ${STATIC_KINDS[row.kind]}}`,
+    );
+  }
+  return entries.length === 0 ? undefined : `${entries.join(', ')}, {NULL, NULL, 0}`;
+}
 
 export function emitModuleEnv(emitter: Emitter, module: Module): void {
   if (module.envVars.length > 0) {

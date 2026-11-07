@@ -110,8 +110,8 @@ function landed(id: string): unknown {
     case 'assert':
       return assert;
     case 'buffer':
-      // A class is not a value, so no object can hold `Buffer` (plan-notes 399): the named import
-      // and the global are its spellings, and `require` answers the not-yet error below.
+      // A static called through a class object is not yet supported (plan-notes 399, 400), so the
+      // named import and the global are `Buffer`'s spellings; `require` answers the not-yet error.
       return undefined;
     case 'fs':
       return fs;

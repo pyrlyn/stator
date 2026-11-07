@@ -14468,7 +14468,45 @@ untyped receiver), `instanceof` both ways, species `subarray` / `slice`, a two-l
 Node's `Name(n) [Uint8Array] [ … ]` print, `[Name [Uint8Array]]` past the depth cap. Decision tests
 `subset_uint8array_subclass{,_not_yet}_{ts,js}`. Docs: `docs/VALUE.md` §4.19, `docs/SUBSET.md`.
 
-## 399. T11.6: `Buffer` is a strict TypeScript class over `Uint8Array`, and four compiler bugs it found (2026-11-07)
+## 399. T27: class objects as values, `this` in a static method, and two static-write bugs (2026-11-06)
+
+**What landed.** A class with one evaluation is one file-scope class object, so it can be passed,
+stored, returned, compared and printed; `new k()` and `x instanceof k` go through the value, so a
+`typeof C` holding a subclass builds and tests the subclass. Reads through a value (`k.name`,
+`k.length`, primitive statics) use the statics table with a boundary check. `this` in a static
+method erases when no class extends the method's class, and otherwise becomes the hidden receiver
+that each call site fills with the class it reached the method through (docs/VALUE.md §4.26).
+That receiver goes through `jsrt_call_with_this`, apart from the arguments (`CallExpr.withReceiver`):
+after plan-notes 395 the runtime no longer guesses a receiver from argument 0, and a call that
+omits an optional parameter would otherwise shift the arguments into the receiver's place.
+
+**Two pre-existing bugs found on the way.**
+
+1. `subset_static_own_on_write_*` was labeled `static`, but its program printed `5 5` where Node
+   prints `0 5`. In ES, `Sub.count = 5` on an inherited static field creates Sub's own property;
+   the compiler wrote the base's shared binding. The gate now refuses that write (`not-yet
+   STA1214`), and the js dynamic path panics `STA2004` instead of writing the base's slot.
+2. The runtime's comment on `class_static_find` said the gate refuses every static override, so
+   the parent walk was safe. A subclass may declare its own static of the same name; the lookup
+   finds the nearest one, which is what Node does, and the comment now says so.
+
+**Two refusals the value path needs.** TypeScript checks `typeof C` structurally, so
+`let K = C; K = E` type-checks for an unrelated `E` of the same shape, and lowering then hit
+`STA4004` (an internal error). The gate refuses a class value where an unrelated class is expected.
+A read through a value is `unknown` until it narrows, and only primitives have an O(1) check
+there; `k.xs.length` on an array static lowered to a string length and failed an assertion at run
+time. Non-primitive statics through a value stay `not-yet`.
+
+**Remainder.** `C.prototype` stays `not-yet(STA1214)`, Phase 8. A class that can be evaluated more
+than once, a generic class, a static method taken as a value, a static accessor that reads `this`
+and a subclass can reach, and non-primitive statics through a value stay refused with their own
+messages.
+
+**For T41.** These are TypeScript compiler changes (gate, types, lowering, codegen). The Zig port
+in `packages/compiler-zig` has to follow them, or `test:zigdiff` will report the T27 fixtures as
+different.
+
+## 400. T11.6: `Buffer` is a strict TypeScript class over `Uint8Array`, and four compiler bugs it found (2026-11-07)
 
 **What landed.** `packages/node/src/internal/buffer.ts` declares `class Buffer extends Uint8Array`
 (plan/T11.6a, note 398) with `from`, `alloc`, `isBuffer`, `isEncoding`, `byteLength`, `concat`,
@@ -14479,9 +14517,13 @@ against Node v26.7.0 `lib/buffer.js` (argument clamping order, `ERR_UNKNOWN_ENCO
 answers a `Buffer`, so `tsc`'s `readFile` (byte-order-mark sniffing over `buffer[i]`, then
 `buffer.toString("utf16le", 2)`) runs unchanged. `docs/NODE.md`: `node:buffer` 12/130.
 
-**No namespace.** A class is not a value in the subset, and a namespace object skips classes
-(`moduleNamespaceToHType`), so `node:buffer` has no default export and `require('buffer')` does
-not land. The named import and the global are the class itself.
+**No namespace.** Every use of `Buffer` calls a static, and a static called through a class object
+is `STA1214` (note 399), so `node:buffer` has no default export and `require('buffer')` does not
+land. The named import and the global are the class itself, which compile to the erased statics.
+Since note 399 a namespace can hold a class, and that exposes a gate gap where the two notes meet:
+reading a static *method* of a `Uint8Array` subclass through a class object (`const W = m.V;
+W.make()`) is not refused and lowering fails with `STA4067`, where an ordinary class gets the
+`STA1214` refusal. It reproduces on `origin/main` without `Buffer`; the gate fix is a follow-up.
 
 **Static side.** TypeScript holds a subclass's static `from` to `Uint8Array.from` (TS2417). Generic
 overloads are `STA1214`, so `from` has three non-generic overloads; the third exists only to keep

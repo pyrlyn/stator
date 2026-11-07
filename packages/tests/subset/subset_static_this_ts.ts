@@ -1,11 +1,9 @@
 // @mode: ts
-// @verdict: not-yet
-// @code: STA1214
+// @verdict: dynamic
 // SUBSET.md: Static methods and static class members
 // `this` in a static METHOD is whoever the method was reached through — `T.m()` reads
-// `T.v`, `S.m()` reads `S.v` — which needs the class object. The narrow erasure is
-// exact only in a static FIELD initializer or BLOCK, where `this` is the class being
-// defined (subset_static_block_this_*).
+// `T.v`, `S.m()` reads `S.v` (plan.md T27 step 4). `S` has a subclass, so the call passes
+// the class as the receiver and `this.v` reads through it dynamically.
 
 class S {
   static v = 5;

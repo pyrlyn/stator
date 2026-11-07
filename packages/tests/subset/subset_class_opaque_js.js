@@ -1,9 +1,8 @@
 // @mode: js
-// @verdict: not-yet
-// @code: STA1214
-// SUBSET.md: Classes -- an opaque class-declaration use (`f(C)`) reads the class object,
-// which does not exist (plan.md §8 step 12e). In-place uses (`new C`, `C.static`,
-// `o instanceof C`, `extends C`) erase to the declaration and compile.
+// @verdict: dynamic
+// SUBSET.md: Classes -- a class declaration used as a value (`f(C)`) is its one class object
+// (docs/VALUE.md §4.26, T27). In-place uses (`new C`, `C.static`, `o instanceof C`,
+// `extends C`) still erase to the declaration.
 
 class C {
   constructor() {

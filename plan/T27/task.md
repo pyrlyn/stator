@@ -1,9 +1,9 @@
 ---
-status: todo
+status: in progress
 priority: P1
 complexity: 5
 readiness: 100%
-agent:
+agent: Claude Code / claude-opus-5-5
 ---
 
 # T27. The class object — opaque class values and `this` in a static method
@@ -48,3 +48,17 @@ through a *materialized* value (`ClassValue` + `staticProps` / `JSRTClass.static
 `this` in a static method (step 4), and `C.prototype` itself. HIR `ClassValue`/`NewValue`/
 `InstanceOfValue` and the runtime class-object entries stay declared but unreachable for those
 surfaces (plan-notes 283).
+
+## Execution plan (Claude Code / claude-opus-5-5)
+
+1. Gate (`packages/compiler/src/frontend/gate.ts`): admit a class with one evaluation as a value;
+   refuse an unrelated class where `typeof C` is expected, a static method taken as a value, a
+   reachable static accessor that reads `this`, and non-primitive statics read through a value.
+2. Lowering (`lower/index.ts`) and codegen: `ClassValue` loads the file-scope class object; reads
+   through a value go to the statics table with a boundary check; `new k()` / `instanceof k` use
+   the value.
+3. `this` in a static method: erase when nothing extends the class, otherwise a hidden receiver
+   passed through `jsrt_call_with_this` (`CallExpr.withReceiver`, plan-notes 395).
+4. Docs: `docs/VALUE.md` §4.26, `docs/SUBSET.md`, plan-notes 399.
+5. Verify: decision tests in both modes, goldens `class_object_value` / `static_this_method`
+   byte-for-byte vs the pinned Node, then `pnpm run ci`.

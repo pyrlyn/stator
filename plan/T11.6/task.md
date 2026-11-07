@@ -41,7 +41,7 @@ stays open. **`os`, `perf_hooks` and timers slice** (plan-notes 394, 395): `node
 `performance` 16/69, `node:timers` 6/7, and the globals `performance` and the six timer functions
 under `--node`; slice N1 30/37. Two compiler bugs fixed on the way: the inliner shared nodes with its
 callee, and receiver calls guessed `this` from the argument count. The task stays open: N1 is not
-100%. **`Buffer` slice** (plan-notes 399, after T11.6a): `node:buffer` 12/130 — `Buffer` as a
+100%. **`Buffer` slice** (plan-notes 400, after T11.6a): `node:buffer` 12/130 — `Buffer` as a
 strict TypeScript class over `Uint8Array`, the global `Buffer` under `--node`, and `readFileSync`
 without an encoding answering a `Buffer`; four compiler bugs fixed on the way. **Next**, in the
 order `tsc` needs them: `crypto.createHash`, `hrtime.bigint`; `path.win32` is its own slice (13 of

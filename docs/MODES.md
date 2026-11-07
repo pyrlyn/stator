@@ -510,7 +510,7 @@ subset `tsc` calls: `closeSync`, `existsSync`, `mkdirSync`, `openSync`, `readFil
 `readdirSync`, `realpathSync`, `rmdirSync`, `statSync`, `unlinkSync`, `utimesSync`,
 `writeFileSync` and `writeSync`, failing with Node's system errors (`code`, `errno`, `syscall`,
 `path` and the same message); `readFileSync` without an encoding answers a `Buffer` (plan-notes
-399). Its gaps: paths are strings only (no `Buffer` or `URL`); `readdirSync` lists
+400). Its gaps: paths are strings only (no `Buffer` or `URL`); `readdirSync` lists
 in byte order; a `Dirent` follows symbolic links; a `Stats` carries `size`, `mtimeMs`, `mtime`,
 `isFile`, `isDirectory` and `isSymbolicLink` only; a system error is not an `Error` instance;
 `watch`, `watchFile` and `unwatchFile` wait on the event loop (N2). `node:process` (T11.6), the

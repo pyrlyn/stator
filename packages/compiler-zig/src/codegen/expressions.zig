@@ -496,7 +496,7 @@ fn finishReceiverCall(e: *Emitter, base: usize, method: []const u8, count: usize
     const argv = try argvAt(e, base, count);
     const loc = try e.callLocation(span);
     // Named, never guessed from argc: a call that omits an optional parameter would otherwise
-    // shift `this` into the arguments (plan-notes 395, 399).
+    // shift `this` into the arguments (plan-notes 395, 400).
     const with_receiver = try helpers.receiverCall(e.arena, method, receiver, count);
     const without_receiver = try e.fmt("jsrt_call_at({s}, {d}, {s}, {s})", .{ method, count, argv, loc });
     var none: Parts = .empty;

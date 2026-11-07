@@ -387,7 +387,9 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
       const call =
         expr.spread === true
           ? `jsrt_call_spread_at(${emitter.slotAt(base)}, NULL, ${emitter.slotAt(base + 1)}, ${loc})`
-          : `jsrt_call_at(${emitter.slotAt(base)}, ${expr.args.length}, ${argv}, ${loc})`;
+          : expr.withReceiver === true
+            ? receiverCall(emitter.slotAt(base), emitter.slotAt(base + 1), expr.args.length - 1)
+            : `jsrt_call_at(${emitter.slotAt(base)}, ${expr.args.length}, ${argv}, ${loc})`;
       return emitter.finishStatement(
         parts,
         `${emitter.slotAt(base)} = ${call}`,
@@ -634,7 +636,7 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
         );
       }
       // Named, never guessed from argc: a call that omits an optional parameter would otherwise
-      // shift `this` into the arguments (plan-notes 395, 399).
+      // shift `this` into the arguments (plan-notes 395, 400).
       const withReceiver = receiverCall(method, emitter.slotAt(base), expr.args.length);
       const withoutReceiver = `jsrt_call_at(${method}, ${String(expr.args.length)}, ${argv}, ${loc})`;
       return emitter.finishStatement(
