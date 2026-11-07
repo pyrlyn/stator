@@ -1188,7 +1188,7 @@ T9.1 proceeds independently. §15.1's top-down rule does not apply here.
 
 The Zig modules export the same C ABI and link into `libjsrt.a`. `jsrt_value.h` stays the
 codegen↔runtime contract, and generated code stays C. Boehm GC stays: Zig calls bdw-gc through
-its C ABI. Zig 0.17.0 is pinned in stator's `mise.toml`; a global 0.14.1 (if present) is
+its C ABI. Zig 0.17.1 is pinned in stator's `mise.toml`; a global 0.14.1 (if present) is
 untouched. This reopens the settled C11-runtime decision (§15.4) on the creator's direction.
 
 ### ~~T9.1. Runtime memory core in Zig~~ → [`plan/T9.1`](plan/T9.1/done.md)
@@ -1230,7 +1230,7 @@ Existing C builtins, math and regexp stay C until a card ports them; codegen nev
 §15.4 with measured evidence; add a second RegExp engine beside libregexp; spread Zig beyond
 the memory core without a new card.
 
-CI installs Zig 0.17.0 via `mlugg/setup-zig@v2` in `.github/actions/setup`
+CI installs Zig 0.17.1 via `mlugg/setup-zig@v2` in `.github/actions/setup`
 (skipped on Windows, which never builds the runtime); the version matches the mise pin.
 
 ---
