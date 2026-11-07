@@ -14642,3 +14642,35 @@ throws Node's own "Digest method not supported", where Node would hash with Open
 its own; `DataView` input and the `options` of `createHash` and `copy` are not landed;
 `x instanceof crypto.Hash` through the namespace is `STA1214` in `ts` mode ("instanceof against
 anything but a class name"), while the named `Hash` works.
+
+## 403. T11.7: untyped reads and writes run class accessors; two `path` tests pass (2026-11-07)
+
+**The bug.** A class instance reached through an untyped binding (`let k; k = new K()`, a
+`require` result, a CommonJS `module.exports`) has no layout at the use site, so `k.x` and
+`k.x = v` are the dynamic read and write. Before this change neither looked at the class's
+accessor halves: `jsrt_get_prop` found the plain method `x` or nothing and answered `undefined`
+for `get x`, and `jsrt_set_prop` added an own field `x` beside the setter, which never ran. The
+lowering made the write worse: a checker that narrows `k` to `K` by control flow sent the write
+down the fixed-slot path, which has no slot for an accessor.
+
+**The fix.** `packages/runtime/src/jsrt_shape.c`: the fixed-object method lookup is now
+`fixed_member_get(obj, half, key)`, which finds `x`, `get x` or `set x` in the class method table
+and in the hidden `#method:` field slots of capturing methods, walking the parent chain as before.
+A read that misses fields, methods and the RegExp members calls the `get x` half with the object
+as `this`; a write that misses the fields calls `set x`, and a getter with no setter throws
+strict code's `TypeError` ("Cannot set property x of #<K> which has only a getter"), since a
+compiled module is strict. `src/lower/index.ts` (mirrored in `compiler-zig/src/lower/assign.zig`)
+sends a write whose receiver the checker types as an object owning an accessor named `x` to the
+dynamic write, as it already did for a private accessor. Typed sites are unchanged: they call the
+halves directly. Golden `tests/golden/js/class_accessor_untyped`.
+
+**Node tests.** `test-path-posix-exists.js` and `test-path-posix-relative-on-windows.js` pass and
+are flipped (`pnpm run test:node-suite`: 17 selected at v26.7.0, 2 passed, 13 expected-fail,
+2 skipped; `docs/NODE.md`: "Node tests: 2 / 17 selected files pass"). The 13 `fail` reasons were
+stale (`node:process` and `__commonJSMin` have landed) and now name where each file stops first:
+`path.win32` (basename, isabsolute, normalize, zero-length-strings, win32-exists); the bundled
+CommonJS helpers `__toESM`/`__copyProps`, which need `Object.defineProperty` and
+`Object.getOwnPropertyDescriptor` on a dynamic object (T12.3 over T11.4), then `path.win32`
+(dirname, makelong, parse-format, test-path); `JSON.stringify` of a maybe-undefined value
+(Phase 5, extname) or as a value (join, relative); and `for-of` destructuring (Phase 6), then
+`path.matchesGlob` (glob). `path.win32` is the blocker most files share.

@@ -345,7 +345,9 @@ fn memberAssignment(l: *Lower, e: *Node, at: *Node, b: *Scope) E!?Statement {
     const name = members.propertyText(target_node);
     const is_private = name_node.data == .private_name;
     if (is_private and members.privateUse(l, name_node) == null) return l.internal(target_node, "STA4060", l.fmt("no private '{s}' the gate accepted", .{name}));
-    if (members.privateWriteIsAccessor(l, target_node) or members.accessorOwner(l, receiver, name, b) != null) {
+    // An untyped receiver the checker narrows to a class by control flow (`let k; k = new K()`)
+    // has no layout to call the setter through; its write is the dynamic one, which runs it.
+    if (members.privateWriteIsAccessor(l, target_node) or (target.getType().* == .object and members.accessorOwner(l, receiver, name, b) != null)) {
         const write_priv = if (is_private) members.privateUse(l, name_node) else null;
         var lexical_owner: ?[]const u8 = null;
         if (write_priv) |p| {
