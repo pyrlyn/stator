@@ -35,4 +35,4 @@
 
 **Not done here:** the `packages/compiler-zig` mirror (T41). `test:zigdiff` is not part of `ci`.
 
-PR: PR_PLACEHOLDER
+PR: https://github.com/pyrlyn/stator/pull/261
