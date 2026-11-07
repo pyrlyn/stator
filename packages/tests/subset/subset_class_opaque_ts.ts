@@ -1,14 +1,13 @@
 // @mode: ts
-// @verdict: not-yet
-// @code: STA1214
-// SUBSET.md: Classes -- an opaque class-declaration use (`f(C)`) reads the class object,
-// which does not exist (plan.md §8 step 12e). In-place uses (`new C`, `C.static`,
-// `o instanceof C`, `extends C`) erase to the declaration and compile.
+// @verdict: dynamic
+// SUBSET.md: Classes -- a class declaration used as a value (`f(C)`) is its one class object
+// (docs/VALUE.md §4.26, T27); the `unknown` parameter is what makes the verdict dynamic.
+// In-place uses (`new C`, `C.static`, `o instanceof C`, `extends C`) still erase.
 
 class C {
   x: number = 1;
 }
-function take(v: unknown): void {
-  console.log(v);
+function take(v: unknown): unknown {
+  return v;
 }
-take(C);
+console.log(take(C) === C);

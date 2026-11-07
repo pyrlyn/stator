@@ -135,6 +135,33 @@ export interface HDate {
  * element type when the corpus needs one (the card's own scoping), not a parameter of this one. */
 export interface HUint8Array {
   readonly kind: 'uint8array';
+  /** Set when the value is an instance of a class extending `Uint8Array` (plan/T11.6a). Every
+   * element read, `length` and extern `bytes` pass is still the view's, which is why the kind
+   * stays `uint8array`; only the class's own methods, statics and `instanceof` need the name.
+   * `bases` lists the user ancestors nearest first, as `HObject.bases` does, so assignability
+   * reads the chain without the declarations. */
+  readonly subclass?: ViewClass;
+}
+
+export interface ViewClass {
+  readonly name: string;
+  readonly bases: readonly string[];
+  /** The methods user classes in the chain declare, in `HObject.methods`' order. */
+  readonly methods: readonly HField[];
+}
+
+/** The class layout a value's methods resolve against: the object itself, or, for an instance of
+ * a `Uint8Array` subclass, a layout with no slots (the storage is the view's) and the class's
+ * methods (plan/T11.6a). Every member-call path asks this rather than testing for `object`. */
+export function classLayoutOf(type: HType): HObject | undefined {
+  if (type.kind === 'object') {
+    return type;
+  }
+  if (type.kind === 'uint8array' && type.subclass !== undefined) {
+    const { name, methods, bases } = type.subclass;
+    return { kind: 'object', name, fields: [], methods, bases };
+  }
+  return undefined;
 }
 
 /** An `ArrayBuffer`: the bytes a view reads and writes. A leaf like `date` -- a buffer holds no
@@ -406,6 +433,9 @@ export function hTypeEquals(a: HType, b: HType): boolean {
   if (a.kind === 'object' && b.kind === 'object') {
     return a.name === b.name;
   }
+  if (a.kind === 'uint8array' && b.kind === 'uint8array') {
+    return a.subclass?.name === b.subclass?.name;
+  }
   // By name, for the same reason a class is: two `T`s are the same type only inside one function's
   // body, and the substitution that replaces them is per specialization.
   if (a.kind === 'type-param' && b.kind === 'type-param') {
@@ -450,12 +480,35 @@ export function hTypeAssignable(value: HType, target: HType): boolean {
   if (value.kind === 'object' && target.kind === 'object') {
     return value.name === target.name || value.bases.includes(target.name);
   }
+  if (value.kind === 'uint8array' && target.kind === 'uint8array') {
+    const want = target.subclass?.name;
+    return (
+      want === undefined ||
+      value.subclass?.name === want ||
+      (value.subclass?.bases.includes(want) ?? false)
+    );
+  }
   // Arrays (and the same fact for maps/sets) recurse: `unknown[]` is not kind `unknown`, so the
   // clause above would not fire, and `hTypeEquals` then rejects two `unknown[]` whose elements
   // differ only in `fromImplicitAny` — which is exactly `var xs = []` after the hoist splits the
   // binding from the initializer (plan-notes 146).
   if (value.kind === 'array' && target.kind === 'array') {
     return hTypeAssignable(value.element, target.element);
+  }
+  // A subclass's constructor stands in for its base's (`k = Square` on `k: typeof Shape`): the
+  // instance it returns is a pointer either way, so only an OBJECT return may widen. Parameters
+  // and any other return must match exactly, since a boxed and an unboxed slot are not
+  // interchangeable inside a call.
+  if (value.kind === 'fn' && target.kind === 'fn' && value.ret.kind === 'object') {
+    return (
+      target.ret.kind === 'object' &&
+      hTypeAssignable(value.ret, target.ret) &&
+      value.params.length === target.params.length &&
+      value.params.every((param, i) => {
+        const other = target.params[i];
+        return other !== undefined && hTypeEquals(param, other);
+      })
+    );
   }
   return hTypeEquals(value, target);
 }
@@ -489,6 +542,9 @@ export function hTypeConversionRunsUserCode(t: HType): boolean {
       return true;
     case 'array':
       return hTypeConversionRunsUserCode(t.element);
+    // A subclass may declare its own `toString` (Node's `Buffer` does).
+    case 'uint8array':
+      return t.subclass !== undefined;
     case 'number':
     case 'string':
     case 'boolean':
@@ -500,7 +556,6 @@ export function hTypeConversionRunsUserCode(t: HType): boolean {
     case 'iterator':
     case 'regexp':
     case 'date':
-    case 'uint8array':
     case 'arraybuffer':
     case 'promise':
       return false;
@@ -592,7 +647,7 @@ export function hTypeName(t: HType): string {
     case 'date':
       return 'Date';
     case 'uint8array':
-      return 'Uint8Array';
+      return t.subclass?.name ?? 'Uint8Array';
     case 'arraybuffer':
       return 'ArrayBuffer';
     default:

@@ -851,7 +851,15 @@ pub const ReferenceErrorRead = struct { type: *const HType, span: Span, name: []
 pub const TypeErrorThrow = struct { type: *const HType, span: Span, message: []const u8 };
 pub const DateNew = struct { type: *const HType, span: Span, arg: Expression };
 pub const DateComponents = struct { type: *const HType, span: Span, args: []const Expression };
-pub const TypedOp = struct { type: *const HType, span: Span, op: TypedOperation, args: []const Expression };
+pub const TypedOp = struct {
+    type: *const HType,
+    span: Span,
+    op: TypedOperation,
+    args: []const Expression,
+    /// `new Sub(...)` for a class extending `Uint8Array` (plan/T11.6a): the class the view is
+    /// stamped with. Only on `new Uint8Array`, and then `type` is that class's view type.
+    view_class: ?[]const u8 = null,
+};
 
 pub const NumberOpInfo = struct { @"fn": []const u8 };
 
@@ -1202,6 +1210,10 @@ pub const ClassDeclaration = struct {
     span: Span,
     name: []const u8,
     base: ?[]const u8 = null,
+    /// The chain's root extends `Uint8Array` (plan/T11.6a): instances are views the typed `new`
+    /// builds, so the class has no fields and no constructor, and the root's descriptor names
+    /// `jsrt_class_uint8array` as its parent. Only ever `true` or absent.
+    view: ?bool = null,
     fields: []const Parameter,
     ctor: ?ClassMethod = null,
     methods: []const ClassMethod,

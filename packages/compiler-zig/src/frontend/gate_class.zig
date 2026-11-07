@@ -373,12 +373,32 @@ fn gateHeritage(g: *Gate, declaration: *Node) Result {
         const h = clause.data.heritage_clause;
         if (h.tok == .kw_implements) continue;
         if (h.types.len != 1) return g.notYet("extending other than exactly one class is not yet supported", 5);
+        if (types.extendsUint8Array(g, declaration)) return gateViewClass(g, declaration);
         const base = types.baseClassOf(g, declaration) orelse {
             return g.notYet("extending anything but a class declaration is not yet supported", 5);
         };
         if (isGeneric(base) and !genericBaseArgumentsAreConcrete(g, declaration, base)) {
             return g.notYet("extending a generic class is not yet supported", 5);
         }
+    }
+    return accept;
+}
+
+/// A class whose chain extends `Uint8Array` (plan/T11.6a). Its instances are views the runtime lays
+/// out, so it may add methods and statics but no per-instance state: no instance field, no
+/// accessor, no `#private` member. It declares no constructor either, which is what makes species
+/// construction (`subarray` and `slice` answer the subclass) exactly "a view with the receiver's
+/// class": with a constructor, Node runs it on every species construction.
+fn gateViewClass(g: *Gate, declaration: *Node) Result {
+    const subject = "in a class extending Uint8Array";
+    if (isGeneric(declaration)) return g.notYet("a generic class extending Uint8Array is not yet supported", 11);
+    if (!isClassAtModuleScope(declaration)) return g.notYet("a nested class extending Uint8Array is not yet supported", 11);
+    for (classOf(declaration).members) |m| {
+        if (api.isConstructor(m)) return g.notYet("a constructor " ++ subject ++ " is not yet supported", 11);
+        if (types.isStaticMember(m) or m.data == .semicolon_member) continue;
+        if (isPrivate(memberName(m))) return g.notYet("a #private member " ++ subject ++ " is not yet supported", 11);
+        if (m.data == .property_decl) return g.notYet("an instance field " ++ subject ++ " is not yet supported", 11);
+        if (isAccessor(m)) return g.notYet("an accessor " ++ subject ++ " is not yet supported", 11);
     }
     return accept;
 }

@@ -115,9 +115,10 @@ pub fn targetIsDynamic(l: *Lower, target: *Node, b: *Scope) bool {
         gt.isDynamicShape(l.g, l.g.typeAt(target)) or expressions.typeAt(l, target, b).* == .unknown;
 }
 
+/// Resolved against `classLayoutOf`, so a `Uint8Array` subclass's view answers its class's slots.
 pub fn methodSlot(t: *const HType, name: []const u8) i32 {
-    if (t.* != .object) return -1;
-    for (t.object.methods, 0..) |m, i| if (c.eql(m.name, name)) return @intCast(i);
+    const layout = H.classLayoutOf(t) orelse return -1;
+    for (layout.methods, 0..) |m, i| if (c.eql(m.name, name)) return @intCast(i);
     return -1;
 }
 
@@ -140,7 +141,7 @@ pub fn receiverIdentifier(l: *Lower, node: *const Node, b: *Scope) E!Expression 
 
 pub fn isClassInstance(l: *Lower, node: *Node, b: *Scope) bool {
     if (node.data == .identifier and classObjectOwner(l, node) != null) return false;
-    return expressions.typeAt(l, node, b).* == .object;
+    return H.classLayoutOf(expressions.typeAt(l, node, b)) != null;
 }
 
 // ---- which class a generic receiver names

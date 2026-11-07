@@ -49,8 +49,12 @@ fn asBuffer(v: Value) ?*Buffer {
     return asClass(Buffer, v, &jsrt_class_arraybuffer);
 }
 
+/// A view of `Uint8Array` or of a class extending it (plan/T11.6a), whose descriptor's parent
+/// chain ends at the builtin's.
 fn asView(v: Value) ?*View {
-    return asClass(View, v, &jsrt_class_uint8array);
+    const cls = classOf(v) orelse return null;
+    if (!c.jsrt_class_is_uint8array(cls)) return null;
+    return @ptrCast(@alignCast(c.jsrt_ptr(v)));
 }
 
 fn box(p: anytype) Value {
@@ -164,7 +168,7 @@ fn receiverText(v: Value, buf: []u8) []const u8 {
     if (c.jsrt_is(v, c.JSRT_TAG_ARRAY)) return "[object Array]";
     if (c.jsrt_is(v, c.JSRT_TAG_CLOSURE)) return "function";
     if (classOf(v)) |cls| {
-        if (cls == &jsrt_class_uint8array) return "[object Uint8Array]";
+        if (c.jsrt_class_is_uint8array(cls)) return "[object Uint8Array]";
         const name = std.mem.span(cls.name);
         return std.fmt.bufPrint(buf, "#<{s}>", .{if (name.len == 0) "Object" else name}) catch "#<Object>";
     }
@@ -181,19 +185,10 @@ fn throwReceiver(comptime method: []const u8, v: Value) void {
     throwFmt(&c.jsrt_class_type_error, "Method " ++ method ++ " called on incompatible receiver {s}", .{receiverText(v, &text)});
 }
 
-fn require(comptime T: type, v: Value, cls: *const c.JSRTClass, comptime method: []const u8) ?*T {
-    return asClass(T, v, cls) orelse {
-        throwReceiver(method, v);
-        return null;
-    };
-}
-
-fn requireView(v: Value, comptime method: []const u8) ?*View {
-    return require(View, v, &jsrt_class_uint8array, method);
-}
-
-fn requireBuffer(v: Value, comptime method: []const u8) ?*Buffer {
-    return require(Buffer, v, &jsrt_class_arraybuffer, method);
+fn require(comptime T: type, v: Value, comptime method: []const u8) ?*T {
+    const p = if (T == View) asView(v) else asBuffer(v);
+    if (p == null) throwReceiver(method, v);
+    return p;
 }
 
 // ------------------------------------------------------------------------- allocation
@@ -211,16 +206,17 @@ fn newBuffer(len: usize) ?*Buffer {
     return b;
 }
 
-fn newView(buffer: *Buffer, byte_offset: usize, length: usize) Value {
+/// `cls` is `jsrt_class_uint8array` or a class extending it (plan/T11.6a).
+fn newView(cls: [*c]const c.JSRTClass, buffer: *Buffer, byte_offset: usize, length: usize) Value {
     const v: *View = @ptrCast(@alignCast(gc.alloc(@sizeOf(View), "Uint8Array")));
-    v.* = .{ .cls = &jsrt_class_uint8array, .buffer = buffer, .byte_offset = byte_offset, .length = length };
+    v.* = .{ .cls = cls, .buffer = buffer, .byte_offset = byte_offset, .length = length };
     return box(v);
 }
 
 /// A view over a fresh zeroed buffer of `len` bytes, or null with the exception pending.
 fn freshView(len: usize) ?*View {
     const buffer = newBuffer(len) orelse return null;
-    return @ptrCast(@alignCast(c.jsrt_ptr(newView(buffer, 0, len))));
+    return @ptrCast(@alignCast(c.jsrt_ptr(newView(&jsrt_class_uint8array, buffer, 0, len))));
 }
 
 const Frame = mem.Frame;
@@ -238,12 +234,12 @@ export fn jsrt_arraybuffer_new(length: Value) Value {
 }
 
 export fn jsrt_arraybuffer_byte_length(buffer: Value) Value {
-    const b = requireBuffer(buffer, "get ArrayBuffer.prototype.byteLength") orelse return undefined_value;
+    const b = require(Buffer, buffer, "get ArrayBuffer.prototype.byteLength") orelse return undefined_value;
     return c.jsrt_number(@floatFromInt(b.byte_length));
 }
 
 export fn jsrt_arraybuffer_slice(buffer: Value, start: Value, end: Value) Value {
-    const b = requireBuffer(buffer, "ArrayBuffer.prototype.slice") orelse return undefined_value;
+    const b = require(Buffer, buffer, "ArrayBuffer.prototype.slice") orelse return undefined_value;
     const w = window(start, end, b.byte_length) orelse return undefined_value;
     const copy = newBuffer(w.len) orelse return undefined_value;
     @memcpy(copy.data[0..w.len], b.data[w.first..][0..w.len]);
@@ -380,7 +376,7 @@ fn overBuffer(buffer: *Buffer, offset: Value, length: Value) Value {
             throwOffset(off.integer);
             return undefined_value;
         }
-        return newView(buffer, start, buffer.byte_length - start);
+        return newView(&jsrt_class_uint8array, buffer, start, buffer.byte_length - start);
     }
     const len = toIndex(length) orelse return undefined_value;
     if (!len.ok) {
@@ -391,7 +387,7 @@ fn overBuffer(buffer: *Buffer, offset: Value, length: Value) Value {
         throwLength(len.integer);
         return undefined_value;
     }
-    return newView(buffer, start, len.size());
+    return newView(&jsrt_class_uint8array, buffer, start, len.size());
 }
 
 export fn jsrt_uint8array_new(source: Value, offset: Value, length: Value) Value {
@@ -425,7 +421,7 @@ export fn jsrt_uint8array_new(source: Value, offset: Value, length: Value) Value
 /// A numeric data property of a view; `field` names the View member that answers it (one byte
 /// per element, so `byteLength` and `length` read the same field).
 fn viewNumber(array: Value, comptime name: []const u8, comptime field: []const u8) Value {
-    const v = requireView(array, "get TypedArray.prototype." ++ name) orelse return undefined_value;
+    const v = require(View, array, "get TypedArray.prototype." ++ name) orelse return undefined_value;
     return c.jsrt_number(@floatFromInt(@field(v, field)));
 }
 
@@ -442,7 +438,7 @@ export fn jsrt_uint8array_byte_offset(array: Value) Value {
 }
 
 export fn jsrt_uint8array_buffer(array: Value) Value {
-    const v = requireView(array, "get TypedArray.prototype.buffer") orelse return undefined_value;
+    const v = require(View, array, "get TypedArray.prototype.buffer") orelse return undefined_value;
     return box(v.buffer);
 }
 
@@ -491,17 +487,30 @@ export fn jsrt_uint8array_put(array: Value, index: Value, value: Value) void {
     bytesOf(view)[i] = byte;
 }
 
+/// `new Sub(source, offset, length)` for a class extending `Uint8Array` (plan/T11.6a): the
+/// builtin constructor, then the class stamped on the fresh view. The class has no constructor of
+/// its own (the frontend's rule), so nothing else runs.
+export fn jsrt_uint8array_new_class(cls: *const c.JSRTClass, source: Value, offset: Value, length: Value) Value {
+    const out = jsrt_uint8array_new(source, offset, length);
+    if (asView(out)) |view| view.cls = cls;
+    return out;
+}
+
+// `subarray` and `slice` construct through the receiver's species (§23.2.4.1). A subclass has no
+// constructor, so its species constructor IS the builtin's with its class stamped -- copying the
+// descriptor is the whole of it.
 export fn jsrt_uint8array_subarray(array: Value, begin: Value, end: Value) Value {
-    const v = requireView(array, "%TypedArray%.prototype.subarray") orelse return undefined_value;
+    const v = require(View, array, "%TypedArray%.prototype.subarray") orelse return undefined_value;
     const w = window(begin, end, v.length) orelse return undefined_value;
-    return newView(v.buffer, v.byte_offset + w.first, w.len);
+    return newView(v.cls, v.buffer, v.byte_offset + w.first, w.len);
 }
 
 export fn jsrt_uint8array_slice(array: Value, start: Value, end: Value) Value {
-    const v = requireView(array, "%TypedArray%.prototype.slice") orelse return undefined_value;
+    const v = require(View, array, "%TypedArray%.prototype.slice") orelse return undefined_value;
     const w = window(start, end, v.length) orelse return undefined_value;
     const out = freshView(w.len) orelse return undefined_value;
     @memcpy(bytesOf(out), bytesOf(v)[w.first..][0..w.len]);
+    out.cls = v.cls;
     return box(out);
 }
 

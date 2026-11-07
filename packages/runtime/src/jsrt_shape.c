@@ -127,7 +127,7 @@ bool jsrt_is_fixed_object(jsrt_value v) {
   return cls != &jsrt_class_promise && cls != &jsrt_class_date && cls != &jsrt_class_map &&
          cls != &jsrt_class_set && cls != &jsrt_class_weakmap && cls != &jsrt_class_weakset &&
          cls != &jsrt_class_regexp && cls != &jsrt_class_iterator &&
-         cls != &jsrt_class_generator && cls != &jsrt_class_uint8array &&
+         cls != &jsrt_class_generator && !jsrt_class_is_uint8array(cls) &&
          cls != &jsrt_class_arraybuffer && cls != &jsrt_class_accessor;
 }
 
@@ -348,7 +348,7 @@ uint32_t jsrt_closure_arity(jsrt_value v) {
 /* The statics entry for `key` on a class object (docs/VALUE.md §4.17), or NULL.
  *
  * The lookup walks the class's own descriptor and then its `parent`s -- statics are inherited in
- * JavaScript, and the gate refuses a static override, so one name is one binding per chain. Own
+ * JavaScript, and a subclass's own static (`static override v`) shadows its base's. Own
  * statics shadow the Function fallbacks exactly like own properties shadow a prototype (a
  * `static name = 5` hides the class's own name in JavaScript), which is why the table is asked
  * first. A name's getter wins a read and its setter wins a write; a same-named FIELD/METHOD is
@@ -377,6 +377,16 @@ static const JSRTStaticEntry *class_static_find(const JSRTClosure *c, const char
     }
   }
   return plain;
+}
+
+/* True when `entry` is in the class's OWN statics table rather than an ancestor's. */
+static bool class_static_is_own(const JSRTClosure *c, const JSRTStaticEntry *entry) {
+  for (const JSRTStaticEntry *e = c->klass->statics; e != NULL && e->name != NULL; e++) {
+    if (e == entry) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /* True when some accessor half declares `key` with no matching half for this direction -- a
@@ -562,10 +572,15 @@ jsrt_value jsrt_get_prop(jsrt_value obj, const char *key, JSRTIC *ic) {
     return JSRT_UNDEFINED;
   }
   /* ArrayBuffer and Uint8Array have no shape: their data properties, index keys and methods are
-   * answered by the layout itself (jsrt_typed.zig), and a key neither class has reads undefined. */
+   * answered by the layout itself (jsrt_typed.zig), and a key neither class has reads undefined.
+   * A subclass's methods (plan/T11.6a) come first, as its prototype sits before the builtin's;
+   * the builtin descriptors list no methods, so for them the lookup always misses. */
   if (jsrt_is_uint8array(obj) || jsrt_is_arraybuffer(obj)) {
-    jsrt_value out = JSRT_UNDEFINED;
-    (void)jsrt_typed_get_prop(obj, key, &out);
+    bool found = false;
+    jsrt_value out = fixed_method_get(obj, key, &found);
+    if (!found) {
+      (void)jsrt_typed_get_prop(obj, key, &out);
+    }
     return out;
   }
   if (!has_prop_table(obj)) {
@@ -735,12 +750,17 @@ bool jsrt_user_get(jsrt_value obj, const char *key, jsrt_value *out, const char 
     const JSRTStaticEntry *entry = class_static_find(c, key, false);
     if (entry != NULL) {
       found = true;
-      value = entry->kind == JSRT_STATIC_GETTER ? jsrt_call_with_this(*entry->slot, obj, 0, NULL) : *entry->slot;
+      value = entry->kind == JSRT_STATIC_GETTER ? jsrt_call_with_this(*entry->slot, obj, 0, NULL)
+                                                  : *entry->slot;
     } else if (c->klass == NULL) {
       found = function_own_get(obj, key, &value);
     }
-  } else if (jsrt_is_uint8array(obj) || jsrt_is_arraybuffer(obj)) {
+  } else if (jsrt_is_arraybuffer(obj)) {
     found = false; /* no shape: every key is the layout's own, and none is a user method */
+  } else if (jsrt_is_uint8array(obj)) {
+    /* Only a subclass's methods (plan/T11.6a) are user members. A view declares no fields and is
+     * not a fixed object, so fixed_user_get reads nothing but the method table. */
+    found = fixed_user_get(obj, key, &value, &where, &sure);
   } else if (!has_prop_table(obj)) {
     found = jsrt_is(obj, JSRT_TAG_OBJECT) && fixed_user_get(obj, key, &value, &where, &sure);
   } else {
@@ -938,8 +958,15 @@ static void store_prop(jsrt_value obj, const char *key, jsrt_value value, JSRTIC
     const JSRTStaticEntry *entry = class_static_find(c, key, true);
     if (entry != NULL) {
       if (entry->kind == JSRT_STATIC_SETTER) {
+        /* A static accessor takes no receiver today, so `jsrt_call_with_this` drops `obj`
+         * rather than letting it land in the setter's value parameter. */
         (void)jsrt_call_with_this(*entry->slot, obj, 1, &value);
         return;
+      }
+      /* A field an ANCESTOR declares, written through a subclass, becomes the subclass's own
+       * property in JavaScript and leaves the ancestor's alone: that is growth too. */
+      if (!class_static_is_own(c, entry)) {
+        jsrt_panic("STA2004: a class object cannot grow a new static; planned for Phase 8");
       }
       *entry->slot = value;
       return;

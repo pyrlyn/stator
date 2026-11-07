@@ -14437,3 +14437,71 @@ table per arity) produced five clones instead of one, because the tables match e
 identifier renaming. So the switch gets `jscpd:ignore` markers that say why in the file, as
 `hir/nodes.ts` does (plan-notes 71). `.jscpd-baseline.json` only shrinks: 19 fingerprints that
 match nothing under 5.4.2 are removed, none added.
+
+## 398. T11.6a: a class that extends `Uint8Array` is a view stamped with its own class (2026-11-07)
+
+**Why.** `node:buffer`'s `Buffer` is a subclass of `Uint8Array` in Node, and the creator directed
+(2026-11-06) that Stator's `Buffer` be one too, as a separate prerequisite card before the T11.6
+Buffer slice. Before this card `class B extends Uint8Array {}` was `STA1214`: the heritage rule
+accepts only a class declaration as a base.
+
+**Decision.** An instance is not a class object with a view inside it; it IS a `JSRTTypedArray`
+whose `cls` word holds the class's descriptor, and the root descriptor's `parent` is
+`&jsrt_class_uint8array`. `cls` sits at offset 0 in both layouts, so the existing parent walk
+(`instanceof`, method lookup) works on views, and the view test becomes that walk
+(`jsrt_class_is_uint8array`). In the type model the instance keeps HType `uint8array`, tagged
+`subclass: {name, bases, methods}`; `classLayoutOf` derives the class layout the method-call,
+`instanceof` and verifier paths read. Nothing that takes a `Uint8Array` -- indexing, `TYPED_OPS`,
+iteration, the extern `bytes` ABI -- needed a change.
+
+**Scope.** The gate admits such a class only with no constructor, no instance field, no instance
+accessor, no `#private` member, not generic, at module scope (every class in the chain). With no
+constructor, `new Sub(...)` is the builtin constructor plus the stamp (`jsrt_uint8array_new_class`),
+and the species construction of `subarray` and `slice` is a copy of the receiver's descriptor --
+the spec's `new Sub(buffer, offset, length)` and `new Sub(count)` run nothing else. A constructor
+would need `super(...)` to build the view and species to call it; that stays `STA1214` until a
+card needs it. `Buffer` itself needs none of the refused forms.
+
+**Evidence.** Goldens `ts/uint8array_subclass` and `js/uint8array_subclass` match the pinned Node
+byte for byte: methods, statics, an override of `toString` (direct and through ToString on an
+untyped receiver), `instanceof` both ways, species `subarray` / `slice`, a two-level chain, and
+Node's `Name(n) [Uint8Array] [ … ]` print, `[Name [Uint8Array]]` past the depth cap. Decision tests
+`subset_uint8array_subclass{,_not_yet}_{ts,js}`. Docs: `docs/VALUE.md` §4.19, `docs/SUBSET.md`.
+
+## 399. T27: class objects as values, `this` in a static method, and two static-write bugs (2026-11-06)
+
+**What landed.** A class with one evaluation is one file-scope class object, so it can be passed,
+stored, returned, compared and printed; `new k()` and `x instanceof k` go through the value, so a
+`typeof C` holding a subclass builds and tests the subclass. Reads through a value (`k.name`,
+`k.length`, primitive statics) use the statics table with a boundary check. `this` in a static
+method erases when no class extends the method's class, and otherwise becomes the hidden receiver
+that each call site fills with the class it reached the method through (docs/VALUE.md §4.26).
+That receiver goes through `jsrt_call_with_this`, apart from the arguments (`CallExpr.withReceiver`):
+after plan-notes 395 the runtime no longer guesses a receiver from argument 0, and a call that
+omits an optional parameter would otherwise shift the arguments into the receiver's place.
+
+**Two pre-existing bugs found on the way.**
+
+1. `subset_static_own_on_write_*` was labeled `static`, but its program printed `5 5` where Node
+   prints `0 5`. In ES, `Sub.count = 5` on an inherited static field creates Sub's own property;
+   the compiler wrote the base's shared binding. The gate now refuses that write (`not-yet
+   STA1214`), and the js dynamic path panics `STA2004` instead of writing the base's slot.
+2. The runtime's comment on `class_static_find` said the gate refuses every static override, so
+   the parent walk was safe. A subclass may declare its own static of the same name; the lookup
+   finds the nearest one, which is what Node does, and the comment now says so.
+
+**Two refusals the value path needs.** TypeScript checks `typeof C` structurally, so
+`let K = C; K = E` type-checks for an unrelated `E` of the same shape, and lowering then hit
+`STA4004` (an internal error). The gate refuses a class value where an unrelated class is expected.
+A read through a value is `unknown` until it narrows, and only primitives have an O(1) check
+there; `k.xs.length` on an array static lowered to a string length and failed an assertion at run
+time. Non-primitive statics through a value stay `not-yet`.
+
+**Remainder.** `C.prototype` stays `not-yet(STA1214)`, Phase 8. A class that can be evaluated more
+than once, a generic class, a static method taken as a value, a static accessor that reads `this`
+and a subclass can reach, and non-primitive statics through a value stay refused with their own
+messages.
+
+**For T41.** These are TypeScript compiler changes (gate, types, lowering, codegen). The Zig port
+in `packages/compiler-zig` has to follow them, or `test:zigdiff` will report the T27 fixtures as
+different.

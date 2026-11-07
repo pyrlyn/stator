@@ -292,10 +292,14 @@ fn lowerClassAs(l: *Lower, node: *Node, b: *Scope, spec: ?Spec) E!Statement {
     const span = l.span(node);
     const display = gt.classDisplayName(node);
     const self: ?*c.Type = if (display != null) selfType(l, node) else null;
-    const t: ?*const HType = if (self) |x| gt.tsTypeToHType(l.g, x) else null;
-    if (display == null or t == null or t.?.* != .object) return l.internal(node, "STA4062", "not a class instance the type model describes");
+    const instance: ?*const HType = if (self) |x| gt.tsTypeToHType(l.g, x) else null;
+    // A `Uint8Array` subclass lays out no slots: its instances are views (plan/T11.6a), and the
+    // layout below is only what its methods and descriptor are built against.
+    const is_view = instance != null and instance.?.* == .uint8array;
+    const class_layout: ?H.HObject = if (instance) |x| H.classLayoutOf(x) else null;
+    if (display == null or class_layout == null) return l.internal(node, "STA4062", "not a class instance the type model describes");
     const display_name = display.?;
-    const declared = t.?;
+    const declared: *const HType = if (is_view) l.create(HType{ .object = class_layout.? }) else instance.?;
     const statics_only = spec != null and spec.?.statics_only;
     if (spec == null) {
         const binding = if (api.isClassDeclaration(node)) module_names.declaredBindingName(node) orelse display_name else display_name;
@@ -311,6 +315,9 @@ fn lowerClassAs(l: *Lower, node: *Node, b: *Scope, spec: ?Spec) E!Statement {
         for (o.bases, bases) |name, *slot| slot.* = renameBase(l, node, name);
         layout = l.hObject(self_name, o.fields, o.methods, bases, o.namespace);
     }
+    // What `this` is inside a member: the layout, or for a view class the view typed by its class,
+    // so `this[i]` and `this.length` take the typed paths.
+    const receiver_type: *const HType = if (is_view) H.hViewClass(l.a, layout.object) catch c.oom() else layout;
     var fields: std.ArrayList(N.Parameter) = .empty;
     if (!statics_only) for (layout.object.fields) |field| {
         var at: *const Node = node;
@@ -336,7 +343,7 @@ fn lowerClassAs(l: *Lower, node: *Node, b: *Scope, spec: ?Spec) E!Statement {
     try lowerStatics(l, &parts, self_name, b, &statics);
     var methods: std.ArrayList(N.ClassMethod) = .empty;
     for (parts.methods.items) |method| {
-        const lowered = try functions.lowerFunctionWith(l, method, b, layout);
+        const lowered = try functions.lowerFunctionWith(l, method, b, receiver_type);
         l.push(&methods, N.ClassMethod{ .name = members.memberFunctionName(l, method, display_name), .@"fn" = lowered });
     }
     for (parts.abstract_stubs.items) |member| {
@@ -344,7 +351,9 @@ fn lowerClassAs(l: *Lower, node: *Node, b: *Scope, spec: ?Spec) E!Statement {
     }
     const base = try baseName(l, node, spec);
     var ctor: ?N.ClassMethod = null;
-    if ((parts.ctor != null or parts.initializers.items.len > 0 or base != null) and !statics_only) {
+    // Nor does a view class build one: the gate admits no constructor in its chain, so constructing
+    // one is building the view (`new` lowers to the typed op).
+    if ((parts.ctor != null or parts.initializers.items.len > 0 or base != null) and !statics_only and !is_view) {
         ctor = try constructorOf(l, node, &parts, layout, base, display_name, b);
     }
     const class_decl = l.st(.class_declaration, .{
@@ -352,6 +361,7 @@ fn lowerClassAs(l: *Lower, node: *Node, b: *Scope, spec: ?Spec) E!Statement {
         .span = span,
         .name = self_name,
         .base = base,
+        .view = if (is_view) true else null,
         .fields = fields.items,
         .ctor = ctor,
         .methods = methods.items,
