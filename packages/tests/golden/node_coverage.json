@@ -31,6 +31,14 @@
     "Buffer.prototype.subarray": ["ts/node_buffer.ts"],
     "Buffer.prototype.toString": ["ts/node_buffer.ts", "js/node_buffer.js"]
   },
+  "crypto": {
+    "Hash": ["ts/node_crypto.ts"],
+    "Hash.prototype.copy": ["ts/node_crypto.ts"],
+    "Hash.prototype.digest": ["ts/node_crypto.ts"],
+    "Hash.prototype.update": ["ts/node_crypto.ts"],
+    "createHash": ["ts/node_crypto.ts", "js/node_crypto.js"],
+    "hash": ["ts/node_crypto.ts", "js/node_crypto.js"]
+  },
   "fs": {
     "Dirent.prototype.isDirectory": ["ts/node_fs.ts"],
     "Dirent.prototype.isFile": ["ts/node_fs.ts"],

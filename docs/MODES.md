@@ -518,7 +518,11 @@ members `tsc` reads plus their neighbours: `argv`, `argv0`, `execArgv`, `execPat
 `exit`, `exitCode`, `platform`, `arch`, `pid`, `ppid`, `memoryUsage`, `nextTick`, `stdout` and
 `stderr` (below). Each module's default export is the module object
 (`import path from 'node:path'`), which the bundle's `import * as m` plus `m.default` also needs.
-`path.win32`, `node:path/win32` and `path.matchesGlob` have not landed.
+`path.win32`, `node:path/win32` and `path.matchesGlob` have not landed. `node:crypto` (T11.6):
+`createHash` and its `Hash` (`update`, `copy`, `digest`) plus the one-shot `hash`, over
+`std/hash`, for SHA-256, SHA-1 and MD5 under OpenSSL's common spellings (plan-notes 401). Any
+other algorithm throws Node's "Digest method not supported"; the rest of the module has not
+landed.
 
 **Platform gaps are diagnostics.** Under `--node` a built-in `packages/node` has not landed, or a
 member its module does not export yet while the pinned Node's module does, is `STA1214` naming
