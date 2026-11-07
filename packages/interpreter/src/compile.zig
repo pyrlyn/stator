@@ -37,6 +37,7 @@ const this_name = "%this";
 const nt_name = "%nt";
 const home_name = "%home";
 const fn_name = "%fn";
+const specials = [_][]const u8{ this_name, nt_name, home_name, fn_name };
 
 pub const Error = error{ Unsupported, OutOfMemory };
 
@@ -117,14 +118,17 @@ const Compiler = struct {
     early: ?[:0]const u8 = null,
 
     fn syntaxError(comp: *Compiler, n: *const Node, message: [:0]const u8) Error {
-        comp.bad_offset = n.start;
         comp.early = message;
-        return error.Unsupported;
+        return comp.stopAt(n);
     }
 
     fn unsupported(comp: *Compiler, n: *const Node, what: []const u8) Error {
-        comp.bad_offset = n.start;
         comp.bad_what = what;
+        return comp.stopAt(n);
+    }
+
+    fn stopAt(comp: *Compiler, n: *const Node) Error {
+        comp.bad_offset = n.start;
         return error.Unsupported;
     }
 
@@ -210,16 +214,9 @@ const Fn = struct {
         try fs.code.append(fs.alloc(), b);
     }
 
-    fn u16v(fs: *Fn, v: u16) Error!void {
-        var buf: [2]u8 = undefined;
-        std.mem.writeInt(u16, &buf, v, .little);
-        try fs.code.appendSlice(fs.alloc(), &buf);
-    }
-
-    fn u32v(fs: *Fn, v: u32) Error!void {
-        var buf: [4]u8 = undefined;
-        std.mem.writeInt(u32, &buf, v, .little);
-        try fs.code.appendSlice(fs.alloc(), &buf);
+    /// A little-endian operand.
+    fn operand(fs: *Fn, comptime T: type, v: T) Error!void {
+        try fs.code.appendSlice(fs.alloc(), std.mem.asBytes(&std.mem.nativeToLittle(T, v)));
     }
 
     fn adjust(fs: *Fn, delta: i32) void {
@@ -247,7 +244,7 @@ const Fn = struct {
 
     fn op16(fs: *Fn, o: Op, v: u16) Error!void {
         try fs.byte(@backingInt(o));
-        try fs.u16v(v);
+        try fs.operand(u16, v);
         fs.adjust(switch (o) {
             .num, .str, .load, .load_global, .typeof_global, .delete_global, .arg, .rest => 1,
             .store, .store_global => -1,
@@ -266,14 +263,14 @@ const Fn = struct {
 
     fn int(fs: *Fn, v: i32) Error!void {
         try fs.byte(@backingInt(Op.int));
-        try fs.u32v(@bitCast(v));
+        try fs.operand(u32, @bitCast(v));
         fs.adjust(1);
     }
 
     fn jump(fs: *Fn, o: Op) Error!u32 {
         try fs.byte(@backingInt(o));
         const at = fs.pc();
-        try fs.u32v(0);
+        try fs.operand(u32, 0);
         fs.adjust(switch (o) {
             .jump, .iter_next => 0,
             .jump_if_false, .jump_if_true, .jump_if_nullish, .jump_if_not_undef => -1,
@@ -297,17 +294,17 @@ const Fn = struct {
 
     fn jumpIfInt(fs: *Fn, v: i32) Error!u32 {
         try fs.byte(@backingInt(Op.jump_if_int));
-        try fs.u32v(@bitCast(v));
+        try fs.operand(u32, @bitCast(v));
         const at = fs.pc();
-        try fs.u32v(0);
+        try fs.operand(u32, 0);
         fs.adjust(-1);
         return at;
     }
 
     fn propOp(fs: *Fn, o: Op, key: []const u8) Error!void {
         try fs.byte(@backingInt(o));
-        try fs.u16v(try fs.keyIndex(key));
-        try fs.u16v(fs.nics);
+        try fs.operand(u16, try fs.keyIndex(key));
+        try fs.operand(u16, fs.nics);
         fs.nics += 1;
         fs.adjust(if (o == .set_prop) -1 else 0);
     }
@@ -315,8 +312,8 @@ const Fn = struct {
     fn envOp(fs: *Fn, o: Op, hops: u8, slot: u16, name: ?[]const u8) Error!void {
         try fs.byte(@backingInt(o));
         try fs.byte(hops);
-        try fs.u16v(slot);
-        if (name) |n| try fs.u16v(try fs.keyIndex(n));
+        try fs.operand(u16, slot);
+        if (name) |n| try fs.operand(u16, try fs.keyIndex(n));
         fs.adjust(switch (o) {
             .load_env, .load_env_checked => 1,
             .store_env, .store_env_checked => -1,
@@ -326,8 +323,8 @@ const Fn = struct {
 
     fn localOp(fs: *Fn, o: Op, slot: u16, name: []const u8) Error!void {
         try fs.byte(@backingInt(o));
-        try fs.u16v(slot);
-        try fs.u16v(try fs.keyIndex(name));
+        try fs.operand(u16, slot);
+        try fs.operand(u16, try fs.keyIndex(name));
         fs.adjust(if (o == .load_checked) 1 else -1);
     }
 
@@ -356,8 +353,18 @@ const Fn = struct {
 
     fn number(fs: *Fn, d: f64) Error!void {
         if (d == @trunc(d) and @abs(d) < 2147483648 and !(d == 0 and std.math.signbit(d))) return fs.int(@intFromFloat(d));
-        try fs.numbers.append(fs.alloc(), d);
-        try fs.op16(.num, @intCast(fs.numbers.items.len - 1));
+        try fs.op16(.num, try fs.add(&fs.numbers, d));
+    }
+
+    /// `v` appended to one of the template's tables, as its index there.
+    fn add(fs: *Fn, list: anytype, v: @TypeOf(list.items[0])) Error!u16 {
+        try list.append(fs.alloc(), v);
+        return @intCast(list.items.len - 1);
+    }
+
+    /// A closure over the nested template `t`.
+    fn pushFunc(fs: *Fn, t: *Template) Error!void {
+        try fs.op16(.closure, try fs.add(&fs.funcs, t));
     }
 
     fn newLocal(fs: *Fn) u16 {
@@ -451,7 +458,7 @@ const Fn = struct {
             .env => |slot| try fs.envOp(.store_env, hops, slot, null),
             .global => |g| {
                 try fs.byte(@backingInt(Op.store_global));
-                try fs.u16v(try fs.keyIndex(g));
+                try fs.operand(u16, try fs.keyIndex(g));
                 try fs.byte(0);
                 fs.adjust(-1);
             },
@@ -467,7 +474,7 @@ const Fn = struct {
 
     fn storeGlobal(fs: *Fn, name: []const u8) Error!void {
         try fs.byte(@backingInt(Op.store_global));
-        try fs.u16v(try fs.keyIndex(name));
+        try fs.operand(u16, try fs.keyIndex(name));
         try fs.byte(@intFromBool(fs.strict));
         fs.adjust(-1);
     }
@@ -506,22 +513,16 @@ const Fn = struct {
     // ------------------------------------------------------------------ declarations
 
     fn declareSpecials(fs: *Fn, scope: *Scope) Error!void {
-        try fs.declare(scope, this_name, .special);
-        try fs.declare(scope, nt_name, .special);
-        try fs.declare(scope, home_name, .special);
-        try fs.declare(scope, fn_name, .special);
+        for (specials) |name| try fs.declare(scope, name, .special);
     }
 
     fn initSpecials(fs: *Fn, scope: *Scope) Error!void {
         _ = scope;
-        if (fs.kind == .derived_ctor) try fs.op(.uninit) else if (fs.strict or fs.kind == .script) try fs.op(.this_raw) else try fs.op(.this_sloppy);
-        try fs.initName(this_name);
-        try fs.op(.new_target);
-        try fs.initName(nt_name);
-        try fs.op(.home);
-        try fs.initName(home_name);
-        try fs.op(.callee);
-        try fs.initName(fn_name);
+        const this: Op = if (fs.kind == .derived_ctor) .uninit else if (fs.strict or fs.kind == .script) .this_raw else .this_sloppy;
+        for ([_]Op{ this, .new_target, .home, .callee }, specials) |o, name| {
+            try fs.op(o);
+            try fs.initName(name);
+        }
     }
 
     /// The global object's properties for a script's `var`s and functions (§16.1.7
@@ -554,11 +555,7 @@ const Fn = struct {
                 if (f.init) |i| if (i.data == .var_list) try fs.hoistVarList(scope, i);
                 try fs.hoistVarsIn(scope, f.body, false);
             },
-            .for_in => |f| {
-                if (f.init.data == .var_list) try fs.hoistVarList(scope, f.init);
-                try fs.hoistVarsIn(scope, f.body, false);
-            },
-            .for_of => |f| {
+            inline .for_in, .for_of => |f| {
                 if (f.init.data == .var_list) try fs.hoistVarList(scope, f.init);
                 try fs.hoistVarsIn(scope, f.body, false);
             },
@@ -601,17 +598,12 @@ const Fn = struct {
                     for (l.decls) |d| try fs.declarePattern(scope, d.data.var_decl.name, k);
                 },
                 .class => |cl| if (cl.name) |name| try fs.declare(scope, name.data.identifier, .class_),
-                .func => |f| if (f.kind == .decl and !scope.script and scope.parent != null and !isFunctionScope(fs, scope)) {
+                .func => |f| if (f.kind == .decl and !scope.script and scope.parent != null and !scope.names.contains(this_name)) {
                     if (f.name) |name| try fs.declare(scope, name.data.identifier, .func);
                 },
                 else => {},
             }
         }
-    }
-
-    fn isFunctionScope(fs: *Fn, scope: *Scope) bool {
-        _ = fs;
-        return scope.names.contains(this_name);
     }
 
     fn declarePattern(fs: *Fn, scope: *Scope, pat: *Node, kind: BKind) Error!void {
@@ -646,8 +638,7 @@ const Fn = struct {
         if (n.mods.async) return fs.comp.unsupported(n, "async functions (T14.4)");
         const kind: Kind = if (f.kind == .arrow) .arrow else kind_in;
         const t = try compileFunction(fs.comp, fs.scope, n, f, kind, name, fs.strict, null);
-        try fs.funcs.append(fs.alloc(), t);
-        try fs.op16(.closure, @intCast(fs.funcs.items.len - 1));
+        try fs.pushFunc(t);
     }
 
     // ------------------------------------------------------------------ statements
@@ -696,14 +687,13 @@ const Fn = struct {
                 try fs.expr(w.cond);
                 const exit = try fs.jump(.jump_if_false);
                 try fs.stmt(w.body);
-                fs.patchAll(&fs.ctx.items[ci].continues, top);
-                try fs.jumpTo(.jump, top);
+                try fs.loopBack(ci, top);
                 fs.patch(exit);
                 fs.popCtx();
             },
             .do_stmt => |d| {
-                const ci = try fs.pushCtx(.loop);
                 const top = fs.pc();
+                const ci = try fs.pushCtx(.loop);
                 try fs.stmt(d.body);
                 fs.patchAll(&fs.ctx.items[ci].continues, fs.pc());
                 try fs.expr(d.cond);
@@ -839,26 +829,10 @@ const Fn = struct {
                         try fs.bindPattern(b.name, mode);
                         continue;
                     }
-                    const pn = b.prop_name orelse b.name;
-                    try fs.op(.dup);
-                    try fs.getByName(pn);
-                    try taken.append(fs.alloc(), pn);
-                    if (b.init) |init| try fs.defaultValue(init, patternName(b.name));
-                    try fs.bindPattern(b.name, mode);
+                    try fs.takeProp(&taken, b.prop_name orelse b.name, b.init, b.name, mode);
                 },
-                .shorthand_assign => |s| {
-                    try fs.op(.dup);
-                    try fs.propOp(.get_prop, s.name.data.identifier);
-                    try taken.append(fs.alloc(), s.name);
-                    if (s.init) |init| try fs.defaultValue(init, s.name.data.identifier);
-                    try fs.bindPattern(s.name, mode);
-                },
-                .property_assign => |p| {
-                    try fs.op(.dup);
-                    try fs.getByName(p.name);
-                    try taken.append(fs.alloc(), p.name);
-                    try fs.bindPattern(p.value, mode);
-                },
+                .shorthand_assign => |s| try fs.takeProp(&taken, s.name, s.init, s.name, mode),
+                .property_assign => |p| try fs.takeProp(&taken, p.name, null, p.value, mode),
                 .spread_assign => |s| {
                     try fs.restObject(taken.items);
                     try fs.bindPattern(s.expr, mode);
@@ -867,6 +841,21 @@ const Fn = struct {
             }
         }
         try fs.op(.pop);
+    }
+
+    /// The property `pn` of the source on top (left in place) bound to `pat`, and noted as taken
+    /// for a rest element.
+    fn takeProp(fs: *Fn, taken: *std.ArrayList(*Node), pn: *Node, init: ?*Node, pat: *Node, mode: BindMode) Error!void {
+        try fs.op(.dup);
+        try fs.getByName(pn);
+        try taken.append(fs.alloc(), pn);
+        try fs.bindDefault(init, pat, mode);
+    }
+
+    /// Binds the value on top to `pat`, `init`'s value instead when it is undefined.
+    fn bindDefault(fs: *Fn, init: ?*Node, pat: *Node, mode: BindMode) Error!void {
+        if (init) |i| try fs.defaultValue(i, patternName(pat));
+        try fs.bindPattern(pat, mode);
     }
 
     /// `{...rest}`: a copy of the source on top (left in place) without the keys already taken.
@@ -931,20 +920,13 @@ const Fn = struct {
                 },
                 .binding_elem => |b| {
                     if (b.dotdotdot) {
-                        try fs.op(.dup);
-                        try fs.op(.iter_rest);
-                        try fs.bindPattern(b.name, mode);
+                        try fs.iterRest(b.name, mode);
                         continue;
                     }
                     try fs.op(.iter_value);
-                    if (b.init) |init| try fs.defaultValue(init, patternName(b.name));
-                    try fs.bindPattern(b.name, mode);
+                    try fs.bindDefault(b.init, b.name, mode);
                 },
-                .spread_elem => |s| {
-                    try fs.op(.dup);
-                    try fs.op(.iter_rest);
-                    try fs.bindPattern(s.expr, mode);
-                },
+                .spread_elem => |s| try fs.iterRest(s.expr, mode),
                 else => {
                     try fs.op(.iter_value);
                     try fs.bindPattern(e, mode);
@@ -952,6 +934,12 @@ const Fn = struct {
             }
         }
         try fs.op(.iter_close);
+    }
+
+    fn iterRest(fs: *Fn, pat: *Node, mode: BindMode) Error!void {
+        try fs.op(.dup);
+        try fs.op(.iter_rest);
+        try fs.bindPattern(pat, mode);
     }
 
     fn pushCtx(fs: *Fn, kind: CtxKind) Error!usize {
@@ -994,36 +982,47 @@ const Fn = struct {
         return fs.comp.unsupported(n, "a jump with no target");
     }
 
-    fn jumpToCtx(fs: *Fn, t: usize, is_continue: bool) Error!void {
+    /// Closes the iterator of every `for-of` left, innermost first, on the way out to the
+    /// context `stop`; stops at the first `finally`, which takes over, and returns its index.
+    fn leaveTo(fs: *Fn, stop: usize) Error!?usize {
         var i = fs.ctx.items.len;
-        while (i > t + 1) {
+        while (i > stop) {
             i -= 1;
             const ctx = &fs.ctx.items[i];
             switch (ctx.kind) {
-                .forof => {
-                    try fs.op16(.load, ctx.iter_local);
-                    try fs.op(.iter_close);
-                },
-                .finally_ => {
-                    try fs.popEnvs(ctx.env_level);
-                    const id: i32 = @intCast(ctx.jumps.items.len);
-                    try ctx.jumps.append(fs.alloc(), .{ .target = t, .is_continue = is_continue });
-                    try fs.int(3 + id);
-                    try fs.op16(.store, ctx.kind_local);
-                    try fs.ctx.items[i].fin_patches.append(fs.alloc(), try fs.jump(.jump));
-                    return;
-                },
+                .forof => try fs.closeIter(ctx),
+                .finally_ => return i,
                 else => {},
             }
         }
-        const target = &fs.ctx.items[t];
-        if (target.kind == .forof and !is_continue) {
-            try fs.op16(.load, target.iter_local);
-            try fs.op(.iter_close);
+        return null;
+    }
+
+    fn jumpToCtx(fs: *Fn, t: usize, is_continue: bool) Error!void {
+        if (try fs.leaveTo(t + 1)) |i| {
+            const ctx = &fs.ctx.items[i];
+            try fs.popEnvs(ctx.env_level);
+            const id: i32 = @intCast(ctx.jumps.items.len);
+            try ctx.jumps.append(fs.alloc(), .{ .target = t, .is_continue = is_continue });
+            return fs.intoFinally(i, 3 + id);
         }
+        const target = &fs.ctx.items[t];
+        if (target.kind == .forof and !is_continue) try fs.closeIter(target);
         try fs.popEnvs(target.env_level);
         const at = try fs.jump(.jump);
         if (is_continue) try target.continues.append(fs.alloc(), at) else try target.breaks.append(fs.alloc(), at);
+    }
+
+    /// Jumps into the `finally` of context `i`, telling it (by `completion`) where to go after.
+    fn intoFinally(fs: *Fn, i: usize, completion: i32) Error!void {
+        try fs.int(completion);
+        try fs.op16(.store, fs.ctx.items[i].kind_local);
+        try fs.ctx.items[i].fin_patches.append(fs.alloc(), try fs.jump(.jump));
+    }
+
+    fn closeIter(fs: *Fn, ctx: *const Ctx) Error!void {
+        try fs.op16(.load, ctx.iter_local);
+        try fs.op(.iter_close);
     }
 
     fn popEnvs(fs: *Fn, level: u32) Error!void {
@@ -1035,28 +1034,15 @@ const Fn = struct {
 
     /// Returns the value on top, through every enclosing `finally` and `for-of`.
     fn emitReturn(fs: *Fn) Error!void {
-        var i = fs.ctx.items.len;
-        while (i > 0) {
-            i -= 1;
+        if (try fs.leaveTo(0)) |i| {
             const ctx = &fs.ctx.items[i];
-            switch (ctx.kind) {
-                .forof => {
-                    try fs.op16(.load, ctx.iter_local);
-                    try fs.op(.iter_close);
-                },
-                .finally_ => {
-                    try fs.op16(.store, ctx.val_local);
-                    try fs.popEnvs(ctx.env_level);
-                    try fs.int(2);
-                    try fs.op16(.store, ctx.kind_local);
-                    try fs.ctx.items[i].fin_patches.append(fs.alloc(), try fs.jump(.jump));
-                    fs.adjust(1);
-                    // The value went to the finally; the stack the caller sees is as if returned.
-                    fs.adjust(-1);
-                    return;
-                },
-                else => {},
-            }
+            try fs.op16(.store, ctx.val_local);
+            try fs.popEnvs(ctx.env_level);
+            try fs.intoFinally(i, 2);
+            fs.adjust(1);
+            // The value went to the finally; the stack the caller sees is as if returned.
+            fs.adjust(-1);
+            return;
         }
         if (fs.kind.constructible()) {
             try fs.loadRaw(this_name);
@@ -1119,12 +1105,31 @@ const Fn = struct {
         try fs.bindPattern(init, .assign);
     }
 
+    /// The iterable (or object) of a `for-of` (`for-in`), with the head's names in their TDZ.
+    fn headExpr(fs: *Fn, head: ?*Scope, e: *Node) Error!void {
+        if (head) |h| try fs.enterScope(h);
+        try fs.expr(e);
+        if (head) |h| try fs.leaveScope(h);
+    }
+
+    /// One iteration with its value on top: bound to the head, the body run, back to `top`.
+    fn iteration(fs: *Fn, head: ?*Scope, init: *Node, body: *Node, ci: usize, top: u32) Error!void {
+        if (head) |h| try fs.enterScope(h);
+        try fs.bindHead(init);
+        try fs.stmt(body);
+        if (head) |h| try fs.leaveScope(h);
+        try fs.loopBack(ci, top);
+    }
+
+    /// The end of a loop body: its `continue`s and the back edge both go to `top`.
+    fn loopBack(fs: *Fn, ci: usize, top: u32) Error!void {
+        fs.patchAll(&fs.ctx.items[ci].continues, top);
+        try fs.jumpTo(.jump, top);
+    }
+
     fn forOf(fs: *Fn, init: *Node, iterable: *Node, body: *Node) Error!void {
         const head = try fs.loopHead(init);
-        // The iterable is evaluated with the head's names in their TDZ.
-        if (head) |h| try fs.enterScope(h);
-        try fs.expr(iterable);
-        if (head) |h| try fs.leaveScope(h);
+        try fs.headExpr(head, iterable);
         try fs.op(.get_iterator);
         const iter = fs.newLocal();
         try fs.op16(.store, iter);
@@ -1136,12 +1141,7 @@ const Fn = struct {
         try fs.op16(.load, iter);
         const done = try fs.jump(.iter_next);
         const body_start = fs.pc();
-        if (head) |h| try fs.enterScope(h);
-        try fs.bindHead(init);
-        try fs.stmt(body);
-        if (head) |h| try fs.leaveScope(h);
-        fs.patchAll(&fs.ctx.items[ci].continues, top);
-        try fs.jumpTo(.jump, top);
+        try fs.iteration(head, init, body, ci, top);
         // A throw out of the body closes the iterator, then goes on.
         try fs.handlers.append(fs.alloc(), .{ .start = body_start, .end = fs.pc(), .target = fs.pc(), .env_local = env_local });
         fs.adjust(1);
@@ -1154,7 +1154,6 @@ const Fn = struct {
     }
 
     fn forIn(fs: *Fn, init: *Node, obj: *Node, body: *Node) Error!void {
-        const head = try fs.loopHead(init);
         if (init.data == .var_list) {
             const d = init.data.var_list.decls[0].data.var_decl;
             // `for (var x = init in o)`, the Annex B form.
@@ -1163,9 +1162,8 @@ const Fn = struct {
                 try fs.bindPattern(d.name, .init);
             }
         }
-        if (head) |h| try fs.enterScope(h);
-        try fs.expr(obj);
-        if (head) |h| try fs.leaveScope(h);
+        const head = try fs.loopHead(init);
+        try fs.headExpr(head, obj);
         try fs.op(.for_in_keys);
         const keys = fs.newLocal();
         const index = fs.newLocal();
@@ -1175,17 +1173,12 @@ const Fn = struct {
         const ci = try fs.pushCtx(.loop);
         const top = fs.pc();
         try fs.byte(@backingInt(Op.for_in_next));
-        try fs.u16v(keys);
-        try fs.u16v(index);
+        try fs.operand(u16, keys);
+        try fs.operand(u16, index);
         const done = fs.pc();
-        try fs.u32v(0);
+        try fs.operand(u32, 0);
         fs.adjust(1);
-        if (head) |h| try fs.enterScope(h);
-        try fs.bindHead(init);
-        try fs.stmt(body);
-        if (head) |h| try fs.leaveScope(h);
-        fs.patchAll(&fs.ctx.items[ci].continues, top);
-        try fs.jumpTo(.jump, top);
+        try fs.iteration(head, init, body, ci, top);
         fs.patch(done);
         fs.popCtx();
     }
@@ -1333,8 +1326,8 @@ const Fn = struct {
             .regex_lit => |raw| {
                 const slash = std.mem.lastIndexOfScalar(u8, raw, '/') orelse 0;
                 try fs.byte(@backingInt(Op.regexp));
-                try fs.u16v(try fs.strIndex(raw[1..slash]));
-                try fs.u16v(try fs.strIndex(raw[slash + 1 ..]));
+                try fs.operand(u16, try fs.strIndex(raw[1..slash]));
+                try fs.operand(u16, try fs.strIndex(raw[slash + 1 ..]));
                 fs.adjust(1);
             },
             .array_lit => |a| try fs.arrayLiteral(a.elems),
@@ -1464,7 +1457,7 @@ const Fn = struct {
             .getter, .setter => {
                 if (k) |key_text| {
                     try fs.byte(@backingInt(Op.define_accessor));
-                    try fs.u16v(try fs.keyIndex(key_text));
+                    try fs.operand(u16, try fs.keyIndex(key_text));
                     try fs.byte(@intFromBool(kind == .setter));
                     fs.adjust(-1);
                 } else {
@@ -1519,33 +1512,39 @@ const Fn = struct {
     /// One link of a chain: the object part continues the chain, everything else starts anew.
     fn link(fs: *Fn, n: *Node, ch: *Chain) Error!void {
         switch (n.data) {
-            .prop_access => |pa| {
-                if (pa.expr.data == .super_expr) {
-                    try fs.loadName(home_name);
-                    try fs.loadName(this_name);
-                    try fs.op16(.super_get, try fs.keyIndex(memberName(pa.name)));
-                    return;
-                }
-                try fs.chainPart(pa.expr, ch);
-                if (pa.optional) try fs.nullishExit(ch);
-                try fs.propOp(.get_prop, memberName(pa.name));
-            },
-            .elem_access => |ea| {
-                if (ea.expr.data == .super_expr) {
-                    try fs.loadName(home_name);
-                    try fs.loadName(this_name);
-                    try fs.expr(ea.index);
-                    try fs.op(.to_key);
-                    try fs.op(.super_get_elem);
-                    return;
-                }
-                try fs.chainPart(ea.expr, ch);
-                if (ea.optional) try fs.nullishExit(ch);
-                try fs.expr(ea.index);
-                try fs.op(.get_elem);
-            },
+            .prop_access, .elem_access => try fs.member(n, ch, false),
             .call => |call| try fs.callExpr(n, call, ch),
             else => try fs.expr(n),
+        }
+    }
+
+    /// A property or element read in a chain; for a method call (`this_too`) it leaves the
+    /// object, as `this`, on top of the method.
+    fn member(fs: *Fn, n: *Node, ch: *Chain, this_too: bool) Error!void {
+        switch (n.data) {
+            inline .prop_access, .elem_access => |a, tag| {
+                const prop = tag == .prop_access;
+                if (a.expr.data == .super_expr) {
+                    try fs.loadName(home_name);
+                    try fs.loadName(this_name);
+                    if (prop) try fs.op16(.super_get, try fs.keyIndex(memberName(a.name))) else {
+                        try fs.expr(a.index);
+                        try fs.op(.to_key);
+                        try fs.op(.super_get_elem);
+                    }
+                    if (this_too) try fs.loadName(this_name);
+                    return;
+                }
+                try fs.chainPart(a.expr, ch);
+                if (a.optional) try fs.nullishExit(ch);
+                if (this_too) try fs.op(.dup);
+                if (prop) try fs.propOp(.get_prop, memberName(a.name)) else {
+                    try fs.expr(a.index);
+                    try fs.op(.get_elem);
+                }
+                if (this_too) try fs.op(.swap);
+            },
+            else => unreachable,
         }
     }
 
@@ -1562,37 +1561,7 @@ const Fn = struct {
         if (callee.data == .import_kw) return fs.comp.unsupported(n, "import()");
         // The callee and `this`: a member call's object, undefined for any other.
         switch (callee.data) {
-            .prop_access => |pa| {
-                if (pa.expr.data == .super_expr) {
-                    try fs.loadName(home_name);
-                    try fs.loadName(this_name);
-                    try fs.op16(.super_get, try fs.keyIndex(memberName(pa.name)));
-                    try fs.loadName(this_name);
-                } else {
-                    try fs.chainPart(pa.expr, ch);
-                    if (pa.optional) try fs.nullishExit(ch);
-                    try fs.op(.dup);
-                    try fs.propOp(.get_prop, memberName(pa.name));
-                    try fs.op(.swap);
-                }
-            },
-            .elem_access => |ea| {
-                if (ea.expr.data == .super_expr) {
-                    try fs.loadName(home_name);
-                    try fs.loadName(this_name);
-                    try fs.expr(ea.index);
-                    try fs.op(.to_key);
-                    try fs.op(.super_get_elem);
-                    try fs.loadName(this_name);
-                } else {
-                    try fs.chainPart(ea.expr, ch);
-                    if (ea.optional) try fs.nullishExit(ch);
-                    try fs.op(.dup);
-                    try fs.expr(ea.index);
-                    try fs.op(.get_elem);
-                    try fs.op(.swap);
-                }
-            },
+            .prop_access, .elem_access => try fs.member(callee, ch, true),
             .paren => |p| {
                 // `(a.b)()` keeps `a` as `this`; `(0, a.b)()` does not.
                 if (p.expr.data == .prop_access or p.expr.data == .elem_access) {
@@ -1673,10 +1642,8 @@ const Fn = struct {
                 try fs.expr(pa.expr);
                 try fs.op16(.delete_prop, try fs.keyIndex(memberName(pa.name)));
             },
-            .elem_access => |ea| {
-                try fs.expr(ea.expr);
-                try fs.expr(ea.index);
-                try fs.op(.to_key);
+            .elem_access => {
+                try fs.memberTarget(target);
                 try fs.op(.delete_elem);
             },
             .identifier => |id| {
@@ -1688,6 +1655,29 @@ const Fn = struct {
                 try fs.op(.pop);
                 try fs.op(.true);
             },
+        }
+    }
+
+    /// A member target with its value on top, the target kept for `memberSet`.
+    fn memberGet(fs: *Fn, n: *Node) Error!void {
+        try fs.memberTarget(n);
+        switch (n.data) {
+            .prop_access => |pa| {
+                try fs.op(.dup);
+                try fs.propOp(.get_prop, memberName(pa.name));
+            },
+            else => {
+                try fs.op(.dup2);
+                try fs.op(.get_elem);
+            },
+        }
+    }
+
+    /// Writes the value on top through the member target under it.
+    fn memberSet(fs: *Fn, n: *Node) Error!void {
+        switch (n.data) {
+            .prop_access => |pa| try fs.propOp(.set_prop, memberName(pa.name)),
+            else => try fs.op(.set_elem),
         }
     }
 
@@ -1718,32 +1708,16 @@ const Fn = struct {
                 if (!postfix) try fs.op(.dup);
                 try fs.assignName(id);
             },
-            .prop_access => |pa| {
-                try fs.expr(pa.expr);
-                try fs.op(.dup);
-                try fs.propOp(.get_prop, memberName(pa.name));
+            .prop_access, .elem_access => {
+                try fs.memberGet(target);
                 try fs.op(.plus);
                 if (postfix) {
                     try fs.op(.dup);
-                    try fs.op(.insert3);
+                    // Under the reference: one value for `o.x`, two for `o[k]`.
+                    try fs.op(if (target.data == .prop_access) .insert3 else .insert4);
                 }
                 try fs.op(step);
-                try fs.propOp(.set_prop, memberName(pa.name));
-                if (postfix) try fs.op(.pop);
-            },
-            .elem_access => |ea| {
-                try fs.expr(ea.expr);
-                try fs.expr(ea.index);
-                try fs.op(.to_key);
-                try fs.op(.dup2);
-                try fs.op(.get_elem);
-                try fs.op(.plus);
-                if (postfix) {
-                    try fs.op(.dup);
-                    try fs.op(.insert4);
-                }
-                try fs.op(step);
-                try fs.op(.set_elem);
+                try fs.memberSet(target);
                 if (postfix) try fs.op(.pop);
             },
             .paren => |p| try fs.update(p.expr, inc, postfix),
@@ -1781,7 +1755,7 @@ const Fn = struct {
 
     fn binary(fs: *Fn, n: *Node, left: *Node, o: Tok, right: *Node) Error!void {
         switch (o) {
-            .assign => return fs.assign(left, right),
+            .assign => return fs.assign(left, null, right),
             .comma => {
                 try fs.expr(left);
                 try fs.op(.pop);
@@ -1799,7 +1773,7 @@ const Fn = struct {
         }
         if (o == .plus_assign or o == .minus_assign or o == .star_assign or o == .slash_assign or o == .percent_assign or
             o == .star2_assign or o == .amp_assign or o == .pipe_assign or o == .caret_assign or o == .shl_assign or
-            o == .shr_assign or o == .ushr_assign) return fs.compoundAssign(left, binaryOp(o).?, right);
+            o == .shr_assign or o == .ushr_assign) return fs.assign(left, binaryOp(o).?, right);
         const bop = binaryOp(o) orelse return fs.comp.unsupported(n, "this binary operator");
         if (bop == .in and left.data == .private_name) return fs.comp.unsupported(n, "#x in o");
         try fs.expr(left);
@@ -1825,65 +1799,38 @@ const Fn = struct {
         return at;
     }
 
-    fn assign(fs: *Fn, left: *Node, right: *Node) Error!void {
+    /// `left = right`, or `left bop= right`.
+    fn assign(fs: *Fn, left: *Node, bop: ?Op, right: *Node) Error!void {
         switch (left.data) {
             .identifier => |id| {
-                try fs.exprNamed(right, id);
+                if (bop) |b| {
+                    try fs.loadName(id);
+                    try fs.expr(right);
+                    try fs.op(b);
+                } else try fs.exprNamed(right, id);
                 try fs.op(.dup);
                 try fs.assignName(id);
             },
-            .prop_access => |pa| {
-                if (pa.expr.data == .super_expr) return fs.comp.unsupported(left, "assignment to super.x");
-                try fs.expr(pa.expr);
-                try fs.expr(right);
-                try fs.propOp(.set_prop, memberName(pa.name));
+            .prop_access, .elem_access => {
+                if (bop) |b| {
+                    try fs.memberGet(left);
+                    try fs.expr(right);
+                    try fs.op(b);
+                } else {
+                    if (memberObject(left).data == .super_expr)
+                        return fs.comp.unsupported(left, if (left.data == .prop_access) "assignment to super.x" else "assignment to super[x]");
+                    try fs.memberTarget(left);
+                    try fs.expr(right);
+                }
+                try fs.memberSet(left);
             },
-            .elem_access => |ea| {
-                if (ea.expr.data == .super_expr) return fs.comp.unsupported(left, "assignment to super[x]");
-                try fs.expr(ea.expr);
-                try fs.expr(ea.index);
-                try fs.op(.to_key);
-                try fs.expr(right);
-                try fs.op(.set_elem);
-            },
-            .paren => |p| try fs.assign(p.expr, right),
+            .paren => |p| try fs.assign(p.expr, bop, right),
             .array_lit, .object_lit => {
+                if (bop != null) return fs.comp.unsupported(left, "this assignment target");
                 try fs.expr(right);
                 try fs.op(.dup);
                 try fs.bindPattern(left, .assign);
             },
-            else => return fs.comp.unsupported(left, "this assignment target"),
-        }
-    }
-
-    fn compoundAssign(fs: *Fn, left: *Node, bop: Op, right: *Node) Error!void {
-        switch (left.data) {
-            .identifier => |id| {
-                try fs.loadName(id);
-                try fs.expr(right);
-                try fs.op(bop);
-                try fs.op(.dup);
-                try fs.assignName(id);
-            },
-            .prop_access => |pa| {
-                try fs.expr(pa.expr);
-                try fs.op(.dup);
-                try fs.propOp(.get_prop, memberName(pa.name));
-                try fs.expr(right);
-                try fs.op(bop);
-                try fs.propOp(.set_prop, memberName(pa.name));
-            },
-            .elem_access => |ea| {
-                try fs.expr(ea.expr);
-                try fs.expr(ea.index);
-                try fs.op(.to_key);
-                try fs.op(.dup2);
-                try fs.op(.get_elem);
-                try fs.expr(right);
-                try fs.op(bop);
-                try fs.op(.set_elem);
-            },
-            .paren => |p| try fs.compoundAssign(p.expr, bop, right),
             else => return fs.comp.unsupported(left, "this assignment target"),
         }
     }
@@ -1903,25 +1850,12 @@ const Fn = struct {
                 try fs.assignName(id);
                 fs.patch(at);
             },
-            .prop_access => |pa| {
-                try fs.expr(pa.expr);
-                try fs.op(.dup);
-                try fs.propOp(.get_prop, memberName(pa.name));
+            .prop_access => {
+                try fs.memberGet(left);
                 // obj value: keep obj under while deciding.
-                try fs.op(.dup);
-                const decided = switch (sc) {
-                    .amp2 => try fs.jump(.jump_if_false),
-                    .pipe2 => try fs.jump(.jump_if_true),
-                    else => blk: {
-                        const nullish = try fs.jump(.jump_if_nullish);
-                        const keep = try fs.jump(.jump);
-                        fs.patch(nullish);
-                        break :blk keep;
-                    },
-                };
-                try fs.op(.pop);
+                const decided = try fs.shortCircuit(sc);
                 try fs.expr(right);
-                try fs.propOp(.set_prop, memberName(pa.name));
+                try fs.memberSet(left);
                 const end = try fs.jump(.jump);
                 fs.patch(decided);
                 // obj value -> value
@@ -1964,8 +1898,7 @@ const Fn = struct {
             try compileFunction(fs.comp, fs.scope, cn, cn.data.func, ckind, name, true, null)
         else
             try defaultCtor(fs.comp, fs.scope, ckind, name, n.start);
-        try fs.funcs.append(fs.alloc(), ct);
-        try fs.op16(.closure, @intCast(fs.funcs.items.len - 1));
+        try fs.pushFunc(ct);
         try fs.byte(@backingInt(Op.class_setup));
         try fs.byte(@intFromBool(heritage != null));
         // [ctor, proto]
@@ -1991,9 +1924,8 @@ const Fn = struct {
         };
         if (fields.items.len > 0) {
             const fi = try fieldInit(fs.comp, fs.scope, fields.items, n.start);
-            try fs.funcs.append(fs.alloc(), fi);
             // [ctor, proto] -> the initializer's home is the prototype.
-            try fs.op16(.closure, @intCast(fs.funcs.items.len - 1));
+            try fs.pushFunc(fi);
             try fs.setHome(1);
             try fs.op(.swap);
             try fs.op(.insert3);
@@ -2008,10 +1940,9 @@ const Fn = struct {
         }
         if (statics.items.len > 0) {
             const si = try fieldInit(fs.comp, fs.scope, statics.items, n.start);
-            try fs.funcs.append(fs.alloc(), si);
             // [ctor] -> ctor.si() with the class as `this` and as the home object.
             try fs.op(.dup);
-            try fs.op16(.closure, @intCast(fs.funcs.items.len - 1));
+            try fs.pushFunc(si);
             try fs.setHome(1);
             try fs.op(.swap);
             try fs.op16(.call, 0);
@@ -2094,13 +2025,18 @@ fn compileFunction(comp: *Compiler, outer: ?*Scope, n: *Node, f: *Func, kind: Ki
     return fs.finish(name, arity, n.start);
 }
 
-/// `constructor(...args) { super(...args); }`, or the empty one of a base class.
-fn defaultCtor(comp: *Compiler, outer: ?*Scope, kind: Kind, name: []const u8, start: u32) Error!*Template {
-    var fs: Fn = .{ .comp = comp, .kind = kind, .strict = true, .env_mode = false };
+/// The scope of a function with nothing to hoist but its specials, entered.
+fn enterBare(fs: *Fn, outer: ?*Scope) Error!void {
     const scope = try fs.newScope(outer, true);
     try fs.declareSpecials(scope);
     try fs.enterScope(scope);
     try fs.initSpecials(scope);
+}
+
+/// `constructor(...args) { super(...args); }`, or the empty one of a base class.
+fn defaultCtor(comp: *Compiler, outer: ?*Scope, kind: Kind, name: []const u8, start: u32) Error!*Template {
+    var fs: Fn = .{ .comp = comp, .kind = kind, .strict = true, .env_mode = false };
+    try enterBare(&fs, outer);
     if (kind == .derived_ctor) {
         try fs.loadName(fn_name);
         try fs.loadName(nt_name);
@@ -2124,10 +2060,7 @@ fn fieldInit(comp: *Compiler, outer: ?*Scope, members: []*Node, start: u32) Erro
         any_fn = true;
     };
     var fs: Fn = .{ .comp = comp, .kind = .field_init, .strict = true, .env_mode = any_fn };
-    const scope = try fs.newScope(outer, true);
-    try fs.declareSpecials(scope);
-    try fs.enterScope(scope);
-    try fs.initSpecials(scope);
+    try enterBare(&fs, outer);
     for (members) |m| switch (m.data) {
         .property_decl => |pd| {
             try fs.loadName(this_name);
@@ -2233,6 +2166,15 @@ fn memberName(n: *Node) []const u8 {
     return switch (n.data) {
         .identifier, .private_name => |v| v,
         else => "",
+    };
+}
+
+/// The object of a property or element access.
+fn memberObject(n: *Node) *Node {
+    return switch (n.data) {
+        .prop_access => |pa| pa.expr,
+        .elem_access => |ea| ea.expr,
+        else => unreachable,
     };
 }
 

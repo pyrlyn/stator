@@ -34,20 +34,35 @@ pub fn is(v: Value, tag: c_int) bool {
     return c.jsrt_is(v, @intCast(tag));
 }
 
-pub fn throwType(message: [*:0]const u8) void {
-    c.jsrt_throw_error(&c.jsrt_class_type_error, message);
+/// A function that throws `class` with a message; the runtime copies the message.
+fn thrower(comptime class: *const c.JSRTClass) fn ([*:0]const u8) void {
+    return struct {
+        fn throw(message: [*:0]const u8) void {
+            c.jsrt_throw_error(class, message);
+        }
+    }.throw;
 }
 
-pub fn throwRange(message: [*:0]const u8) void {
-    c.jsrt_throw_error(&c.jsrt_class_range_error, message);
+pub const throwType = thrower(&c.jsrt_class_type_error);
+pub const throwRange = thrower(&c.jsrt_class_range_error);
+pub const throwSyntax = thrower(&c.jsrt_class_syntax_error);
+pub const throwReference = thrower(&c.jsrt_class_reference_error);
+
+/// RequireObjectCoercible (§7.2.1): false, with the TypeError pending, for null and undefined.
+pub fn coercible(v: Value) bool {
+    if (!c.jsrt_is_nullish(v)) return true;
+    throwType("Cannot convert undefined or null to object");
+    return false;
 }
 
-pub fn throwSyntax(message: [*:0]const u8) void {
-    c.jsrt_throw_error(&c.jsrt_class_syntax_error, message);
-}
-
-pub fn throwReference(message: [*:0]const u8) void {
-    c.jsrt_throw_error(&c.jsrt_class_reference_error, message);
+/// A string value's text, copied into `buf` (cut to fit).
+pub fn copyText(s: Value, buf: []u8) []const u8 {
+    const p = c.jsrt_shape_key_ephemeral(s);
+    defer @import("std").c.free(p);
+    const text = @import("std").mem.span(p);
+    const n = @min(text.len, buf.len);
+    @memcpy(buf[0..n], text[0..n]);
+    return buf[0..n];
 }
 
 pub fn pending() bool {

@@ -45,12 +45,7 @@ fn text(v: rt.Value, buf: []u8) []const u8 {
         _ = c.jsrt_take_exception();
         return "<unprintable>";
     }
-    const p = c.jsrt_shape_key_ephemeral(s);
-    defer std.c.free(p);
-    const span = std.mem.span(p);
-    const n = @min(span.len, buf.len);
-    @memcpy(buf[0..n], span[0..n]);
-    return buf[0..n];
+    return rt.copyText(s, buf);
 }
 
 fn say(comptime fmt: []const u8, args: anytype) void {

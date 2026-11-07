@@ -140,20 +140,20 @@ fn populate(g: Value) void {
 
     const object = wrapper(g, "Object", native("Object", 1, &objectCall));
     method(object, "create", 2, &objectCreate);
-    method(object, "getPrototypeOf", 1, &objectGetPrototypeOf);
-    method(object, "setPrototypeOf", 2, &objectSetPrototypeOf);
-    method(object, "defineProperty", 3, &objectDefineProperty);
+    method(object, "getPrototypeOf", 1, fixed(getPrototypeOf));
+    method(object, "setPrototypeOf", 2, fixed(setPrototypeOf));
+    method(object, "defineProperty", 3, fixed(defineProperty));
     method(object, "getOwnPropertyDescriptor", 2, &objectGetOwnPropertyDescriptor);
-    method(object, "keys", 1, &objectKeys);
-    method(object, "values", 1, &objectValues);
-    method(object, "entries", 1, &objectEntries);
-    method(object, "getOwnPropertyNames", 1, &objectGetOwnPropertyNames);
-    method(object, "getOwnPropertySymbols", 1, &objectGetOwnPropertySymbols);
+    method(object, "keys", 1, reflected(c.jsrt_object_keys, false));
+    method(object, "values", 1, reflected(c.jsrt_object_values, null));
+    method(object, "entries", 1, reflected(c.jsrt_object_entries, null));
+    method(object, "getOwnPropertyNames", 1, reflected(c.jsrt_object_get_own_property_names, false));
+    method(object, "getOwnPropertySymbols", 1, reflected(c.jsrt_object_get_own_property_names, true));
     method(object, "assign", 2, &objectAssign);
-    method(object, "freeze", 1, &objectFreeze);
-    method(object, "isFrozen", 1, &objectIsFrozen);
-    method(object, "hasOwn", 2, &objectHasOwn);
-    method(object, "is", 2, &objectIs);
+    method(object, "freeze", 1, fixed(c.jsrt_object_freeze));
+    method(object, "isFrozen", 1, fixed(c.jsrt_object_is_frozen));
+    method(object, "hasOwn", 2, fixed(hasOwn));
+    method(object, "is", 2, fixed(c.jsrt_same_value));
     const proto = roots[slot_object_proto];
     method(proto, "hasOwnProperty", 1, &protoHasOwnProperty);
     put(proto, "toString", c.jsrt_object_proto_method("toString"));
@@ -161,7 +161,7 @@ fn populate(g: Value) void {
     method(proto, "valueOf", 0, &protoValueOf);
 
     const array = wrapper(g, "Array", native("Array", 1, &arrayCall));
-    method(array, "isArray", 1, &arrayIsArray);
+    method(array, "isArray", 1, fixed(isArray));
     method(array, "of", 0, &arrayOf);
     method(array, "from", 1, &arrayFrom);
     forwarders(c.jsrt_builtin_proto("Array"), .array, &array_methods);
@@ -177,8 +177,8 @@ fn populate(g: Value) void {
     put(number, "NaN", rt.number(std.math.nan(f64)));
     put(number, "POSITIVE_INFINITY", rt.number(std.math.inf(f64)));
     put(number, "NEGATIVE_INFINITY", rt.number(-std.math.inf(f64)));
-    method(number, "isNaN", 1, &numberIsNaN);
-    method(number, "isInteger", 1, &numberIsInteger);
+    method(number, "isNaN", 1, fixed(isNaNNumber));
+    method(number, "isInteger", 1, fixed(isIntegerNumber));
     _ = wrapper(g, "Boolean", native("Boolean", 1, &booleanCall));
     method(g, "eval", 1, &evalNative);
 
@@ -187,19 +187,19 @@ fn populate(g: Value) void {
     inline for (.{ "iterator", "asyncIterator", "hasInstance", "toPrimitive", "toStringTag", "species", "unscopables", "isConcatSpreadable", "match", "matchAll", "replace", "search", "split" }) |name| {
         put(symbol, name, rt.string("__@" ++ name));
     }
-    method(symbol, "for", 1, &symbolFor);
+    method(symbol, "for", 1, fixed(symbolFor));
 
     const math = c.jsrt_dynobj_new();
     put(g, "Math", math);
     inline for (.{ "abs", "clz32", "fround", "ceil", "floor", "round", "sign", "sqrt", "trunc", "acos", "acosh", "asin", "asinh", "atan", "atanh", "cbrt", "cos", "cosh", "exp", "expm1", "log", "log10", "log1p", "log2", "sin", "sinh", "tan", "tanh" }) |name| {
-        method(math, name, 1, unaryMath(@field(c, "jsrt_math_" ++ name)));
+        method(math, name, 1, fixed(@field(c, "jsrt_math_" ++ name)));
     }
     inline for (.{ "imul", "pow", "atan2" }) |name| {
-        method(math, name, 2, binaryMath(@field(c, "jsrt_math_" ++ name)));
+        method(math, name, 2, fixed(@field(c, "jsrt_math_" ++ name)));
     }
-    method(math, "max", 2, &mathMax);
-    method(math, "min", 2, &mathMin);
-    method(math, "random", 0, &mathRandom);
+    method(math, "max", 2, fold(c.jsrt_math_max, -std.math.inf(f64)));
+    method(math, "min", 2, fold(c.jsrt_math_min, std.math.inf(f64)));
+    method(math, "random", 0, fixed(c.jsrt_math_random));
     put(math, "PI", rt.number(std.math.pi));
     put(math, "E", rt.number(std.math.e));
     put(math, "LN2", rt.number(std.math.ln2));
@@ -211,13 +211,13 @@ fn populate(g: Value) void {
 
     const json = c.jsrt_dynobj_new();
     put(g, "JSON", json);
-    method(json, "stringify", 1, unaryMath(c.jsrt_json_stringify));
-    method(json, "parse", 1, unaryMath(c.jsrt_json_parse));
+    method(json, "stringify", 1, fixed(c.jsrt_json_stringify));
+    method(json, "parse", 1, fixed(c.jsrt_json_parse));
 
-    method(g, "isNaN", 1, unaryMath(c.jsrt_global_is_nan));
-    method(g, "isFinite", 1, unaryMath(c.jsrt_global_is_finite));
-    method(g, "parseInt", 2, binaryMath(c.jsrt_global_parse_int));
-    method(g, "parseFloat", 1, unaryMath(c.jsrt_global_parse_float));
+    method(g, "isNaN", 1, fixed(c.jsrt_global_is_nan));
+    method(g, "isFinite", 1, fixed(c.jsrt_global_is_finite));
+    method(g, "parseInt", 2, fixed(c.jsrt_global_parse_int));
+    method(g, "parseFloat", 1, fixed(c.jsrt_global_parse_float));
     method(g, "print", 1, &printNative);
 
     const host = c.jsrt_dynobj_new();
@@ -296,10 +296,14 @@ fn functionCall(_: u32, _: [*c]const Value, _: [*c]Env) callconv(.c) Value {
     return rt.undefined_value;
 }
 
+/// `ok`, with a TypeError of `what` pending when it is false.
+fn require(ok: bool, what: [*:0]const u8) bool {
+    if (!ok) rt.throwType(what);
+    return ok;
+}
+
 fn requireCallable(f: Value, what: [*:0]const u8) bool {
-    if (rt.is(f, c.JSRT_TAG_CLOSURE)) return true;
-    rt.throwType(what);
-    return false;
+    return require(rt.is(f, c.JSRT_TAG_CLOSURE), what);
 }
 
 fn fnCall(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
@@ -386,13 +390,7 @@ fn fnBind(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
 
 /// A string value's bytes, copied into `buf`; "" for anything else.
 fn keyText(v: Value, buf: []u8) []const u8 {
-    if (!rt.is(v, c.JSRT_TAG_STRING)) return "";
-    const p = c.jsrt_shape_key_ephemeral(v);
-    defer std.c.free(p);
-    const s = std.mem.span(p);
-    const n = @min(s.len, buf.len);
-    @memcpy(buf[0..n], s[0..n]);
-    return buf[0..n];
+    return if (rt.is(v, c.JSRT_TAG_STRING)) rt.copyText(v, buf) else "";
 }
 
 fn fnToString(_: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
@@ -407,8 +405,11 @@ fn fnToString(_: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
 /// otherwise. A direct eval's access to the caller's scope is T14.3's.
 fn evalNative(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
     const x = arg(argc, argv, 0);
-    if (!rt.is(x, c.JSRT_TAG_STRING)) return x;
-    const p = c.jsrt_shape_key_ephemeral(x);
+    return if (rt.is(x, c.JSRT_TAG_STRING)) evalString(x) else x;
+}
+
+fn evalString(s: Value) Value {
+    const p = c.jsrt_shape_key_ephemeral(s);
     defer std.c.free(p);
     return @import("interp.zig").evalScript(std.mem.span(p), false);
 }
@@ -423,9 +424,8 @@ fn objectCall(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
 fn requireObject(v: Value, what: []const u8) bool {
     if (rt.isObjectLike(v)) return true;
     var buf: [128]u8 = undefined;
-    const msg = std.fmt.bufPrintSentinel(&buf, "{s} called on non-object", .{what}, 0) catch "called on non-object";
-    rt.throwType(msg.ptr);
-    return false;
+    const msg: [:0]const u8 = std.fmt.bufPrintSentinel(&buf, "{s} called on non-object", .{what}, 0) catch "called on non-object";
+    return require(false, msg.ptr);
 }
 
 fn objectCreate(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
@@ -460,14 +460,14 @@ pub fn Frame(comptime n: usize) type {
         slots: [n]Value = @splat(rt.undefined_value),
         frame: c.JSRTFrame = undefined,
 
+        pub fn pop(self: *@This()) void {
+            c.jsrt_frame_top = self.frame.prev;
+        }
+
         pub fn open(self: *@This(), values: [n]Value) void {
             self.slots = values;
             self.frame = .{ .prev = c.jsrt_frame_top, .count = n, .slots = &self.slots, .env = null };
             c.jsrt_frame_top = &self.frame;
-        }
-
-        pub fn pop(self: *@This()) void {
-            c.jsrt_frame_top = self.frame.prev;
         }
     };
 }
@@ -487,26 +487,18 @@ fn defineFromDescriptor(o: Value, key: [*:0]const u8, desc: Value) void {
     vm.defineOwn(o, key, c.jsrt_get_prop(desc, "value", null));
 }
 
-fn objectGetPrototypeOf(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    const o = arg(argc, argv, 0);
-    if (c.jsrt_is_nullish(o)) {
-        rt.throwType("Cannot convert undefined or null to object");
-        return rt.undefined_value;
-    }
-    return vm.prototypeOf(o);
+fn getPrototypeOf(o: Value) Value {
+    return if (rt.coercible(o)) vm.prototypeOf(o) else rt.undefined_value;
 }
 
-fn objectSetPrototypeOf(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    const o = arg(argc, argv, 0);
-    vm.setProto(o, arg(argc, argv, 1));
+fn setPrototypeOf(o: Value, proto: Value) Value {
+    vm.setProto(o, proto);
     return o;
 }
 
-fn objectDefineProperty(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    const o = arg(argc, argv, 0);
+fn defineProperty(o: Value, key: Value, desc: Value) Value {
     if (!requireObject(o, "Object.defineProperty")) return rt.undefined_value;
-    const k = c.jsrt_shape_key(c.jsrt_to_string(arg(argc, argv, 1)));
-    defineFromDescriptor(o, k, arg(argc, argv, 2));
+    defineFromDescriptor(o, c.jsrt_shape_key(c.jsrt_to_string(key)), desc);
     return o;
 }
 
@@ -532,22 +524,6 @@ fn objectGetOwnPropertyDescriptor(argc: u32, argv: [*c]const Value, _: [*c]Env) 
     return desc;
 }
 
-fn objectKeys(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    return keysWhere(c.jsrt_object_keys(reflectTarget(arg(argc, argv, 0))), false);
-}
-
-fn objectValues(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    return c.jsrt_object_values(reflectTarget(arg(argc, argv, 0)));
-}
-
-fn objectEntries(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    return c.jsrt_object_entries(reflectTarget(arg(argc, argv, 0)));
-}
-
-fn objectGetOwnPropertyNames(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    return keysWhere(c.jsrt_object_get_own_property_names(reflectTarget(arg(argc, argv, 0))), false);
-}
-
 /// What the runtime's key walks can read for `v`: they take objects, arrays and strings (and
 /// throw on nullish); a function's own properties live in a table of their own, and any other
 /// primitive's ToObject has no enumerable own keys.
@@ -567,25 +543,10 @@ fn objectAssign(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value
     return target;
 }
 
-fn objectFreeze(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    return c.jsrt_object_freeze(arg(argc, argv, 0));
-}
-
-fn objectIsFrozen(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    return c.jsrt_object_is_frozen(arg(argc, argv, 0));
-}
-
-fn objectHasOwn(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    return hasOwn(arg(argc, argv, 0), arg(argc, argv, 1));
-}
-
 /// HasOwnProperty(ToObject(v), ToPropertyKey(key)) (§7.3.12) over every kind of value; the
 /// runtime's `jsrt_object_has_own` takes only fixed and dynamic objects.
 pub fn hasOwn(v: Value, key: Value) Value {
-    if (c.jsrt_is_nullish(v)) {
-        rt.throwType("Cannot convert undefined or null to object");
-        return rt.undefined_value;
-    }
+    if (!rt.coercible(v)) return rt.undefined_value;
     var frame: Frame(2) = .{};
     frame.open(.{ v, c.jsrt_to_string(key) });
     defer frame.pop();
@@ -609,10 +570,6 @@ pub fn hasOwn(v: Value, key: Value) Value {
         return rt.boolean(std.mem.eql(u8, name, "prototype") and vm.isConstructor(v));
     }
     return rt.false_value;
-}
-
-fn objectIs(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    return rt.boolean(c.jsrt_same_value(arg(argc, argv, 0), arg(argc, argv, 1)));
 }
 
 fn protoPropertyIsEnumerable(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
@@ -645,10 +602,6 @@ fn arrayCall(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
         return arr;
     }
     return c.jsrt_array_new(@intCast(a.len), a.ptr);
-}
-
-fn arrayIsArray(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    return rt.boolean(rt.is(arg(argc, argv, 0), c.JSRT_TAG_ARRAY));
 }
 
 fn arrayOf(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
@@ -704,16 +657,18 @@ fn booleanCall(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value 
     return rt.boolean(argc >= 2 and c.jsrt_truthy(argv[1]));
 }
 
-fn numberIsNaN(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    const v = arg(argc, argv, 0);
-    return rt.boolean(c.jsrt_is_number(v) and std.math.isNan(c.jsrt_to_number(v)));
+fn isNaNNumber(v: Value) bool {
+    return c.jsrt_is_number(v) and std.math.isNan(c.jsrt_to_number(v));
 }
 
-fn numberIsInteger(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    const v = arg(argc, argv, 0);
-    if (!c.jsrt_is_number(v)) return rt.false_value;
+fn isIntegerNumber(v: Value) bool {
+    if (!c.jsrt_is_number(v)) return false;
     const d = c.jsrt_to_number(v);
-    return rt.boolean(std.math.isFinite(d) and d == @trunc(d));
+    return std.math.isFinite(d) and d == @trunc(d);
+}
+
+fn isArray(v: Value) bool {
+    return rt.is(v, c.JSRT_TAG_ARRAY);
 }
 
 fn symbolCall(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
@@ -732,40 +687,43 @@ fn symbolCall(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
     return rt.string(s);
 }
 
-fn symbolFor(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    return c.jsrt_op_add(rt.string("__@for:"), c.jsrt_to_string(arg(argc, argv, 0)));
+fn symbolFor(key: Value) Value {
+    return c.jsrt_op_add(rt.string("__@for:"), c.jsrt_to_string(key));
 }
 
-fn unaryMath(comptime f: anytype) Native {
+/// A native over `f`, which takes a fixed number of arguments (missing ones are undefined);
+/// a bool result is a JS boolean.
+fn fixed(comptime f: anytype) Native {
     return &struct {
         fn call(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-            return f(arg(argc, argv, 0));
+            var a: std.meta.ArgsTuple(@TypeOf(f)) = undefined;
+            inline for (0..a.len) |i| a[i] = arg(argc, argv, i);
+            const r = @call(.auto, f, a);
+            return if (@TypeOf(r) == bool) rt.boolean(r) else r;
         }
     }.call;
 }
 
-fn binaryMath(comptime f: anytype) Native {
+/// `Math.max` and `Math.min`: `f` folded over every argument from `start`.
+fn fold(comptime f: anytype, comptime start: f64) Native {
     return &struct {
         fn call(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-            return f(arg(argc, argv, 0), arg(argc, argv, 1));
+            var r = rt.number(start);
+            for (args(argc, argv)) |v| r = f(r, v);
+            return r;
         }
     }.call;
 }
 
-fn mathMax(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    var r = rt.number(-std.math.inf(f64));
-    for (args(argc, argv)) |v| r = c.jsrt_math_max(r, v);
-    return r;
-}
-
-fn mathMin(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    var r = rt.number(std.math.inf(f64));
-    for (args(argc, argv)) |v| r = c.jsrt_math_min(r, v);
-    return r;
-}
-
-fn mathRandom(_: u32, _: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    return c.jsrt_math_random();
+/// `Object.keys` and its kin: `f` over what the runtime's key walks read for the argument
+/// (`reflectTarget`), then, for a key list, only the string keys or only the symbols.
+fn reflected(comptime f: anytype, comptime symbols: ?bool) Native {
+    return fixed(struct {
+        fn call(v: Value) Value {
+            const r = f(reflectTarget(v));
+            return if (symbols) |want| keysWhere(r, want) else r;
+        }
+    }.call);
 }
 
 // ---------------------------------------------------------------------- host
@@ -783,10 +741,7 @@ fn printNative(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value 
 
 fn evalScriptNative(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
     const s = c.jsrt_to_string(arg(argc, argv, 0));
-    if (rt.pending()) return rt.undefined_value;
-    const p = c.jsrt_shape_key_ephemeral(s);
-    defer std.c.free(p);
-    return @import("interp.zig").evalScript(std.mem.span(p), false);
+    return if (rt.pending()) rt.undefined_value else evalString(s);
 }
 
 fn noop(_: u32, _: [*c]const Value, _: [*c]Env) callconv(.c) Value {
@@ -990,8 +945,4 @@ fn keysWhere(keys: Value, symbols: bool) Value {
         if (isSymbolKey(k) == symbols) _ = c.jsrt_array_push(frame.slots[1], k);
     }
     return frame.slots[1];
-}
-
-fn objectGetOwnPropertySymbols(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    return keysWhere(c.jsrt_object_get_own_property_names(reflectTarget(arg(argc, argv, 0))), true);
 }

@@ -69,15 +69,16 @@ fn throwFmt(class: *const c.JSRTClass, comptime fmt: []const u8, args: anytype) 
     c.jsrt_throw_error(class, msg.ptr);
 }
 
+/// The TypeError naming `v` that Node raises; answers undefined for the caller to return.
+fn throwAbout(v: Value, comptime fmt: []const u8) Value {
+    var buf: [128]u8 = undefined;
+    throwFmt(&c.jsrt_class_type_error, fmt, .{describe(v, &buf)});
+    return rt.undefined_value;
+}
+
 fn describe(v: Value, buf: []u8) []const u8 {
     if (rt.is(v, c.JSRT_TAG_STRING) or c.jsrt_is_number(v) or rt.is(v, c.JSRT_TAG_BOOL) or c.jsrt_is_nullish(v)) {
-        const s = c.jsrt_to_string(v);
-        const p = c.jsrt_shape_key_ephemeral(s);
-        defer std.c.free(p);
-        const text = std.mem.span(p);
-        const n = @min(text.len, buf.len);
-        @memcpy(buf[0..n], text[0..n]);
-        return buf[0..n];
+        return rt.copyText(c.jsrt_to_string(v), buf);
     }
     if (rt.is(v, c.JSRT_TAG_CLOSURE)) return std.mem.span(closureOf(v).name);
     return "object";
@@ -96,30 +97,23 @@ fn trampoline(argc: u32, argv: [*c]const Value, env: [*c]Env) callconv(.c) Value
     const fe: *Env = env;
     const this = if (argc > 0) argv[0] else rt.undefined_value;
     const args = if (argc > 1) argv[1..argc] else &[_]Value{};
+    return callInterpreted(fe, fe.slots()[compile.fnenv_self], this, args);
+}
+
+/// [[Call]] of an interpreted function: a class constructor refuses it.
+fn callInterpreted(fe: *Env, callee: Value, this: Value, args: []const Value) Value {
     const t = templateOf(fe);
     if (t.kind.ctor()) {
         throwFmt(&c.jsrt_class_type_error, "Class constructor {s} cannot be invoked without 'new'", .{std.mem.span(t.name)});
         return rt.undefined_value;
     }
-    return run(t, fe, fe.slots()[compile.fnenv_self], this, args, rt.undefined_value);
+    return run(t, fe, callee, this, args, rt.undefined_value);
 }
 
 /// Calls any value with a receiver; a non-function is the TypeError Node raises.
 pub fn call(callee: Value, this: Value, args: []const Value) Value {
-    if (!rt.is(callee, c.JSRT_TAG_CLOSURE)) {
-        var buf: [128]u8 = undefined;
-        throwFmt(&c.jsrt_class_type_error, "{s} is not a function", .{describe(callee, &buf)});
-        return rt.undefined_value;
-    }
-    if (isInterpreted(callee)) {
-        const fe = fnEnv(callee);
-        const t = templateOf(fe);
-        if (t.kind.ctor()) {
-            throwFmt(&c.jsrt_class_type_error, "Class constructor {s} cannot be invoked without 'new'", .{std.mem.span(t.name)});
-            return rt.undefined_value;
-        }
-        return run(t, fe, callee, this, args, rt.undefined_value);
-    }
+    if (!rt.is(callee, c.JSRT_TAG_CLOSURE)) return throwAbout(callee, "{s} is not a function");
+    if (isInterpreted(callee)) return callInterpreted(fnEnv(callee), callee, this, args);
     return c.jsrt_call_with_this(callee, this, @intCast(args.len), args.ptr);
 }
 
@@ -147,11 +141,7 @@ fn isDyn(v: Value) bool {
 
 /// `new callee(...args)` with `nt` as new.target (§7.3.14 Construct).
 pub fn construct(callee: Value, args: []const Value, nt: Value) Value {
-    if (!isConstructor(callee)) {
-        var buf: [128]u8 = undefined;
-        throwFmt(&c.jsrt_class_type_error, "{s} is not a constructor", .{describe(callee, &buf)});
-        return rt.undefined_value;
-    }
+    if (!isConstructor(callee)) return throwAbout(callee, "{s} is not a constructor");
     if (isInterpreted(callee)) {
         const fe = fnEnv(callee);
         const t = templateOf(fe);
@@ -545,8 +535,7 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
 
     while (true) {
         const at = pc;
-        const o: Op = @fromBackingInt(@intCast(code[pc]));
-        pc += 1;
+        const o: Op = @fromBackingInt(@intCast(next8(code, &pc)));
         switch (o) {
             .undef => push(vs, &top, rt.undefined_value),
             .null => push(vs, &top, rt.null_value),
@@ -554,18 +543,11 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
             .false => push(vs, &top, rt.false_value),
             .uninit => push(vs, &top, rt.uninitialized),
             .int => {
-                const v: i32 = @bitCast(bc.read32(code, pc));
-                pc += 4;
+                const v: i32 = @bitCast(next32(code, &pc));
                 push(vs, &top, rt.number(@floatFromInt(v)));
             },
-            .num => {
-                push(vs, &top, rt.number(t.numbers[bc.read16(code, pc)]));
-                pc += 2;
-            },
-            .str => {
-                push(vs, &top, rt.string(t.strings[bc.read16(code, pc)]));
-                pc += 2;
-            },
+            .num => push(vs, &top, rt.number(t.numbers[next16(code, &pc)])),
+            .str => push(vs, &top, rt.string(t.strings[next16(code, &pc)])),
             .pop => top -= 1,
             .dup => push(vs, &top, vs[top - 1]),
             .dup2 => {
@@ -574,51 +556,37 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 top += 2;
             },
             .swap => std.mem.swap(Value, &vs[top - 1], &vs[top - 2]),
-            .insert3 => {
-                const v = vs[top - 1];
-                vs[top - 1] = vs[top - 2];
-                vs[top - 2] = vs[top - 3];
-                vs[top - 3] = v;
-            },
-            .insert4 => {
-                const v = vs[top - 1];
-                vs[top - 1] = vs[top - 2];
-                vs[top - 2] = vs[top - 3];
-                vs[top - 3] = vs[top - 4];
-                vs[top - 4] = v;
+            // The top value sinks under the next two or three.
+            .insert3, .insert4 => {
+                const n: usize = if (o == .insert3) 3 else 4;
+                std.mem.rotate(Value, vs[top - n .. top], n - 1);
             },
 
             .load => {
-                push(vs, &top, locals[bc.read16(code, pc)]);
-                pc += 2;
+                push(vs, &top, locals[next16(code, &pc)]);
             },
             .store => {
                 top -= 1;
-                locals[bc.read16(code, pc)] = vs[top];
-                pc += 2;
+                locals[next16(code, &pc)] = vs[top];
             },
             .load_checked => {
-                const v = locals[bc.read16(code, pc)];
-                const name = t.keys[bc.read16(code, pc + 2)];
-                pc += 4;
+                const v = locals[next16(code, &pc)];
+                const name = t.keys[next16(code, &pc)];
                 if (v == rt.uninitialized) tdzError(name) else push(vs, &top, v);
             },
             .store_checked => {
-                const slot = bc.read16(code, pc);
-                const name = t.keys[bc.read16(code, pc + 2)];
-                pc += 4;
+                const slot = next16(code, &pc);
+                const name = t.keys[next16(code, &pc)];
                 top -= 1;
                 if (locals[slot] == rt.uninitialized) tdzError(name) else locals[slot] = vs[top];
             },
             .load_env, .load_env_checked, .store_env, .store_env_checked => {
                 var e: *Env = frame.env;
-                var hops = code[pc];
+                var hops = next8(code, &pc);
                 while (hops > 0) : (hops -= 1) e = e.parent;
-                const slot = bc.read16(code, pc + 1);
-                pc += 3;
+                const slot = next16(code, &pc);
                 const checked = o == .load_env_checked or o == .store_env_checked;
-                const name: [*:0]const u8 = if (checked) t.keys[bc.read16(code, pc)] else "";
-                if (checked) pc += 2;
+                const name: [*:0]const u8 = if (checked) t.keys[next16(code, &pc)] else "";
                 const cell = &e.slots()[slot];
                 if (o == .load_env or o == .load_env_checked) {
                     if (checked and cell.* == rt.uninitialized) tdzError(name) else push(vs, &top, cell.*);
@@ -628,8 +596,7 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 }
             },
             .load_global, .typeof_global => {
-                const k = t.keys[bc.read16(code, pc)];
-                pc += 2;
+                const k = t.keys[next16(code, &pc)];
                 const g = builtins.global();
                 if (!c.jsrt_has_prop(g, k)) {
                     if (o == .typeof_global) push(vs, &top, rt.string("undefined")) else throwFmt(&c.jsrt_class_reference_error, "{s} is not defined", .{keyText(k)});
@@ -639,33 +606,28 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 }
             },
             .store_global => {
-                const k = t.keys[bc.read16(code, pc)];
-                const strict = code[pc + 2] != 0;
-                pc += 3;
-                top -= 1;
                 const g = builtins.global();
+                const k = t.keys[next16(code, &pc)];
+                const strict = next8(code, &pc) != 0;
+                top -= 1;
                 if (strict and !c.jsrt_has_prop(g, k)) throwFmt(&c.jsrt_class_reference_error, "{s} is not defined", .{keyText(k)}) else c.jsrt_set_prop(g, k, vs[top], null);
             },
             .delete_global => {
-                const k = t.keys[bc.read16(code, pc)];
-                pc += 2;
+                const k = t.keys[next16(code, &pc)];
                 push(vs, &top, rt.boolean(c.jsrt_delete(builtins.global(), rt.string(keyText(k)))));
             },
             .declare_global => {
-                const k = t.keys[bc.read16(code, pc)];
-                pc += 2;
+                const k = t.keys[next16(code, &pc)];
                 const g = builtins.global();
                 if (!c.jsrt_has_prop(g, k)) c.jsrt_set_prop(g, k, rt.undefined_value, null);
             },
             .push_env => {
-                frame.env = c.jsrt_env_new(frame.env, bc.read16(code, pc));
-                pc += 2;
+                frame.env = c.jsrt_env_new(frame.env, next16(code, &pc));
             },
             .pop_env => frame.env = frame.env.*.parent,
             .clone_env => frame.env = c.jsrt_env_clone(frame.env),
             .save_env => {
-                locals[bc.read16(code, pc)] = boxPtr(frame.env);
-                pc += 2;
+                locals[next16(code, &pc)] = boxPtr(frame.env);
             },
             .const_assign => {
                 pc += 2;
@@ -677,13 +639,11 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
             },
 
             .arg => {
-                const i = bc.read16(code, pc);
-                pc += 2;
+                const i = next16(code, &pc);
                 push(vs, &top, if (i < argv.len) argv[i] else rt.undefined_value);
             },
             .rest => {
-                const i = bc.read16(code, pc);
-                pc += 2;
+                const i = next16(code, &pc);
                 const from = @min(i, argv.len);
                 push(vs, &top, c.jsrt_array_new(@intCast(argv.len - from), argv[from..].ptr));
             },
@@ -695,24 +655,17 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
             .home => push(vs, &top, if (fe) |e| e.slots()[compile.fnenv_home] else rt.undefined_value),
 
             .get_prop => {
-                const k = t.keys[bc.read16(code, pc)];
-                const ic = &t.ics[bc.read16(code, pc + 2)];
-                pc += 4;
-                vs[top - 1] = getProp(vs[top - 1], k, ic);
+                const site = nextSite(t, code, &pc);
+                vs[top - 1] = getProp(vs[top - 1], site.key, site.ic);
             },
             .set_prop => {
-                const k = t.keys[bc.read16(code, pc)];
-                const ic = &t.ics[bc.read16(code, pc + 2)];
-                pc += 4;
+                const site = nextSite(t, code, &pc);
                 const v = vs[top - 1];
                 top -= 1;
-                setProp(vs[top - 1], k, v, ic);
+                setProp(vs[top - 1], site.key, v, site.ic);
                 vs[top - 1] = v;
             },
-            .get_elem => {
-                top -= 1;
-                vs[top - 1] = getElem(vs[top - 1], vs[top]);
-            },
+            .get_elem => binop(vs, &top, getElem),
             .set_elem => {
                 const v = vs[top - 1];
                 top -= 2;
@@ -720,29 +673,21 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 vs[top - 1] = v;
             },
             .delete_prop => {
-                const k = t.keys[bc.read16(code, pc)];
-                pc += 2;
+                const k = t.keys[next16(code, &pc)];
                 vs[top - 1] = deleteKey(vs[top - 1], rt.string(keyText(k)));
             },
-            .delete_elem => {
-                top -= 1;
-                vs[top - 1] = deleteKey(vs[top - 1], vs[top]);
-            },
+            .delete_elem => binop(vs, &top, deleteKey),
             .in => {
                 top -= 1;
                 const obj = vs[top];
-                if (!rt.isObjectLike(obj)) {
-                    var buf: [128]u8 = undefined;
-                    throwFmt(&c.jsrt_class_type_error, "Cannot use 'in' operator to search for a key in {s}", .{describe(obj, &buf)});
-                } else vs[top - 1] = rt.boolean(c.jsrt_in(toKey(vs[top - 1]), obj));
+                vs[top - 1] = if (!rt.isObjectLike(obj))
+                    throwAbout(obj, "Cannot use 'in' operator to search for a key in {s}")
+                else
+                    rt.boolean(c.jsrt_in(toKey(vs[top - 1]), obj));
             },
-            .instanceof => {
-                top -= 1;
-                vs[top - 1] = rt.boolean(instanceOf(vs[top - 1], vs[top]));
-            },
+            .instanceof => binop(vs, &top, instanceOfValue),
             .super_get => {
-                const k = t.keys[bc.read16(code, pc)];
-                pc += 2;
+                const k = t.keys[next16(code, &pc)];
                 top -= 1;
                 const proto = protoOf(vs[top - 1]);
                 vs[top - 1] = if (c.jsrt_is_nullish(proto)) rt.undefined_value else getProp(proto, k, null);
@@ -753,7 +698,7 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 vs[top - 1] = if (c.jsrt_is_nullish(proto)) rt.undefined_value else getElem(proto, vs[top + 1]);
             },
 
-            .add => binop(vs, &top, c.jsrt_op_add),
+            inline .add, .bitand, .bitor, .bitxor, .shl, .shr, .ushr => |op| binop(vs, &top, @field(c, "jsrt_op_" ++ @tagName(op))),
             .sub, .mul, .div, .mod => {
                 top -= 1;
                 const a = c.jsrt_to_number(vs[top - 1]);
@@ -766,12 +711,6 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 });
             },
             .exp => binop(vs, &top, c.jsrt_math_pow),
-            .bitand => binop(vs, &top, c.jsrt_op_bitand),
-            .bitor => binop(vs, &top, c.jsrt_op_bitor),
-            .bitxor => binop(vs, &top, c.jsrt_op_bitxor),
-            .shl => binop(vs, &top, c.jsrt_op_shl),
-            .shr => binop(vs, &top, c.jsrt_op_shr),
-            .ushr => binop(vs, &top, c.jsrt_op_ushr),
             .neg => vs[top - 1] = rt.number(-c.jsrt_to_number(vs[top - 1])),
             .plus => vs[top - 1] = rt.number(c.jsrt_to_number(vs[top - 1])),
             .bitnot => vs[top - 1] = c.jsrt_op_bitnot(vs[top - 1]),
@@ -810,14 +749,14 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 pc = if (taken) bc.read32(code, pc) else pc + 4;
             },
             .jump_if_int => {
-                const want: i32 = @bitCast(bc.read32(code, pc));
+                const want: i32 = @bitCast(next32(code, &pc));
+                const target = next32(code, &pc);
                 top -= 1;
-                pc = if (c.jsrt_to_number(vs[top]) == @as(f64, @floatFromInt(want))) bc.read32(code, pc + 4) else pc + 8;
+                if (c.jsrt_to_number(vs[top]) == @as(f64, @floatFromInt(want))) pc = target;
             },
 
             .call => {
-                const argc = bc.read16(code, pc);
-                pc += 2;
+                const argc = next16(code, &pc);
                 const args = vs[top - argc .. top];
                 const r = call(vs[top - argc - 2], vs[top - argc - 1], args);
                 top -= argc + 1;
@@ -829,8 +768,7 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 vs[top - 1] = r;
             },
             .new => {
-                const argc = bc.read16(code, pc);
-                pc += 2;
+                const argc = next16(code, &pc);
                 const ctor = vs[top - argc - 1];
                 const r = construct(ctor, vs[top - argc .. top], ctor);
                 top -= argc;
@@ -846,8 +784,7 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 var argc: usize = 1;
                 var args: []const Value = undefined;
                 if (o == .super_call) {
-                    argc = bc.read16(code, pc);
-                    pc += 2;
+                    argc = next16(code, &pc);
                     args = vs[top - argc .. top];
                 } else args = arrayItems(vs[top - 1]);
                 const f = vs[top - argc - 2];
@@ -885,15 +822,13 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 c.jsrt_throw(vs[top]);
             },
             .throw_error => {
-                const k = t.keys[bc.read16(code, pc)];
-                pc += 2;
+                const k = t.keys[next16(code, &pc)];
                 c.jsrt_throw_error(&c.jsrt_class_type_error, k);
             },
 
             .new_object => push(vs, &top, c.jsrt_dynobj_new()),
             .new_array => {
-                const n = bc.read16(code, pc);
-                pc += 2;
+                const n = next16(code, &pc);
                 const arr = c.jsrt_array_new(n, vs[top - n ..].ptr);
                 top -= n;
                 push(vs, &top, arr);
@@ -912,8 +847,7 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 top -= 1;
             },
             .define => {
-                const k = t.keys[bc.read16(code, pc)];
-                pc += 2;
+                const k = t.keys[next16(code, &pc)];
                 top -= 1;
                 defineOwn(vs[top - 1], k, vs[top]);
             },
@@ -922,15 +856,13 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 defineOwn(vs[top - 1], keyOf(vs[top]), vs[top + 1]);
             },
             .define_accessor => {
-                const k = t.keys[bc.read16(code, pc)];
-                const setter = code[pc + 2] != 0;
-                pc += 3;
+                const k = t.keys[next16(code, &pc)];
+                const setter = next8(code, &pc) != 0;
                 top -= 1;
                 defineAccessor(vs[top - 1], k, vs[top], setter);
             },
             .define_accessor_elem => {
-                const setter = code[pc] != 0;
-                pc += 1;
+                const setter = next8(code, &pc) != 0;
                 top -= 2;
                 defineAccessor(vs[top - 1], keyOf(vs[top]), vs[top + 1], setter);
             },
@@ -949,18 +881,15 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 }
             },
             .closure => {
-                const f = makeClosure(t.funcs[bc.read16(code, pc)], frame.env);
-                pc += 2;
+                const f = makeClosure(t.funcs[next16(code, &pc)], frame.env);
                 push(vs, &top, f);
             },
             .set_home => {
-                const d = code[pc];
-                pc += 1;
+                const d = next8(code, &pc);
                 fnEnv(vs[top - 1]).slots()[compile.fnenv_home] = vs[top - 1 - d];
             },
             .class_setup => {
-                const has = code[pc] != 0;
-                pc += 1;
+                const has = next8(code, &pc) != 0;
                 if (classSetup(vs[top - 2], vs[top - 1], has)) |proto| {
                     vs[top - 2] = vs[top - 1];
                     vs[top - 1] = proto;
@@ -979,16 +908,14 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 }
             },
             .regexp => {
-                const s = t.strings[bc.read16(code, pc)];
-                const flags = t.strings[bc.read16(code, pc + 2)];
-                pc += 4;
+                const s = t.strings[next16(code, &pc)];
+                const flags = t.strings[next16(code, &pc)];
                 // The flags string is made first and kept on the stack while the source is.
                 push(vs, &top, rt.string(flags));
                 vs[top - 1] = c.jsrt_regexp_new(rt.string(s), vs[top - 1]);
             },
             .tagged_template => {
-                const n = bc.read16(code, pc);
-                pc += 2;
+                const n = next16(code, &pc);
                 const strings = vs[top - n - 1];
                 c.jsrt_set_prop(strings, "raw", strings, null);
                 const r = call(vs[top - n - 3], vs[top - n - 2], vs[top - n - 1 .. top]);
@@ -998,8 +925,7 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
 
             .get_iterator => vs[top - 1] = getIterator(vs[top - 1]),
             .iter_next => {
-                const target = bc.read32(code, pc);
-                pc += 4;
+                const target = next32(code, &pc);
                 var v: Value = rt.undefined_value;
                 if (iterStep(vs[top - 1], &v)) {
                     vs[top - 1] = v;
@@ -1031,10 +957,9 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
             },
             .for_in_keys => vs[top - 1] = if (c.jsrt_is_nullish(vs[top - 1])) c.jsrt_array_new(0, null) else c.jsrt_object_for_in_keys(vs[top - 1]),
             .for_in_next => {
-                const keys = locals[bc.read16(code, pc)];
-                const idx_slot = bc.read16(code, pc + 2);
-                const target = bc.read32(code, pc + 4);
-                pc += 8;
+                const keys = locals[next16(code, &pc)];
+                const idx_slot = next16(code, &pc);
+                const target = next32(code, &pc);
                 const items = arrayItems(keys);
                 const i: usize = @intFromFloat(c.jsrt_to_number(locals[idx_slot]));
                 if (i >= items.len) {
@@ -1057,6 +982,30 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
     }
 }
 
+/// Reads the operand at `pc.*` and steps past it.
+fn next8(code: []const u8, pc: *usize) u8 {
+    defer pc.* += 1;
+    return code[pc.*];
+}
+
+fn next16(code: []const u8, pc: *usize) u16 {
+    defer pc.* += 2;
+    return bc.read16(code, pc.*);
+}
+
+/// A named property site: its key, then its inline cache.
+const Site = struct { key: [*:0]const u8, ic: *c.JSRTIC };
+
+fn nextSite(t: *Template, code: []const u8, pc: *usize) Site {
+    const key = t.keys[next16(code, pc)];
+    return .{ .key = key, .ic = &t.ics[next16(code, pc)] };
+}
+
+fn next32(code: []const u8, pc: *usize) u32 {
+    defer pc.* += 4;
+    return bc.read32(code, pc.*);
+}
+
 fn push(vs: []Value, top: *usize, v: Value) void {
     vs[top.*] = v;
     top.* += 1;
@@ -1065,6 +1014,10 @@ fn push(vs: []Value, top: *usize, v: Value) void {
 fn binop(vs: []Value, top: *usize, comptime f: anytype) void {
     top.* -= 1;
     vs[top.* - 1] = f(vs[top.* - 1], vs[top.*]);
+}
+
+fn instanceOfValue(v: Value, target: Value) Value {
+    return rt.boolean(instanceOf(v, target));
 }
 
 fn jsMod(a: f64, b: f64) f64 {
@@ -1076,10 +1029,7 @@ fn jsMod(a: f64, b: f64) f64 {
 }
 
 fn deleteKey(obj: Value, key: Value) Value {
-    if (c.jsrt_is_nullish(obj)) {
-        rt.throwType("Cannot convert undefined or null to object");
-        return rt.undefined_value;
-    }
+    if (!rt.coercible(obj)) return rt.undefined_value;
     if (!rt.isObjectLike(obj)) return rt.true_value;
     return rt.boolean(c.jsrt_delete(ownTable(obj), key));
 }
