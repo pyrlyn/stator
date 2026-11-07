@@ -2,9 +2,9 @@
  *
  * `JSRT_FRAME(n)` declares n rooted slots and is written ONCE, at the top of a function, before a
  * line of the body exists — so n is decided by a counting pass and the body is emitted against
- * whatever that pass decided. Nothing in the C compiler checks the two agree. Under Boehm they can
- * disagree for a long time without a symptom: the collector scans the stack conservatively and
- * finds the value anyway. It stops being invisible when §12's precise GC lands, which is exactly
+ * whatever that pass decided. Nothing in the C compiler checks the two agree. The collector also
+ * scans the C stack conservatively (plan/T66), so they can disagree for a long time without a
+ * symptom: it finds the value anyway. It stops being invisible when §12's precise GC lands, which is exactly
  * the moment the discipline exists to survive (docs/VALUE.md §4, AGENTS.md).
  *
  * So this test reads the generated C for every golden fixture and holds it to three invariants:

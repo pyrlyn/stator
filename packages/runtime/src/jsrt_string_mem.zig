@@ -15,9 +15,9 @@
 //! else), so it copies into a fresh buffer, as any other string does. Capacity doubles, so the
 //! copies cost O(n) in total.
 //!
-//! A buffered header holds the buffer's address in `buffer`, the block's start, so the collector
-//! keeps the buffer alive through the header without depending on interior-pointer recognition.
-//! The header is therefore a scanned allocation; the buffer is pointer-free and atomic.
+//! Several headers share one append buffer, so the buffer is a collected object of its own, not
+//! storage a header owns: each header names it in `buffer` and its kind traces that reference.
+//! Neither can reach a cycle, so both kinds are acyclic.
 
 const std = @import("std");
 const concurrent = @import("jsrt_concurrent.zig");
@@ -39,8 +39,12 @@ const Buffer = extern struct {
     }
 };
 
-fn atomic(bytes: usize) *anyopaque {
-    return gc.allocAtomic(bytes) orelse c.jsrt_panic("out of memory allocating a string");
+const flat_kind = gc.kind(anyopaque, "string", null, null, .{ .cyclic = false });
+const buffer_kind = gc.kind(anyopaque, "string buffer", null, null, .{ .cyclic = false });
+const view_kind = gc.kind(c.JSString, "string", traceView, null, .{ .cyclic = false });
+
+fn traceView(s: *c.JSString, visit: c.jsrt_gc_visit_fn) void {
+    visit.?(s.buffer);
 }
 
 fn box(s: *c.JSString) c.jsrt_value {
@@ -56,7 +60,7 @@ fn units(s: *const c.JSString) []const u16 {
 }
 
 export fn jsrt_string_alloc(len: u32) *c.JSString {
-    const block: [*]u8 = @ptrCast(atomic(@sizeOf(c.JSString) + @as(usize, len) * @sizeOf(u16)));
+    const block: [*]u8 = @ptrCast(gc.alloc(@sizeOf(c.JSString) + @as(usize, len) * @sizeOf(u16), &flat_kind));
     const s: *c.JSString = @ptrCast(@alignCast(block));
     s.* = .{
         .length = len,
@@ -69,14 +73,14 @@ export fn jsrt_string_alloc(len: u32) *c.JSString {
 
 /// A header viewing the first `len` units of `buf`.
 fn view(buf: *Buffer, len: u32) c.jsrt_value {
-    const s: *c.JSString = @ptrCast(@alignCast(gc.alloc(@sizeOf(c.JSString), "string")));
+    const s: *c.JSString = @ptrCast(@alignCast(gc.alloc(@sizeOf(c.JSString), &view_kind)));
     s.* = .{ .length = len, .flags = c.JSRT_STRING_GROWN, .data = buf.units(), .buffer = buf };
     return box(s);
 }
 
 fn newBuffer(len: u32) *Buffer {
     const capacity: u32 = @min(@max(len *| 2, 2 * reserve_floor), c.JSRT_MAX_STRING_LENGTH);
-    const block = atomic(@sizeOf(Buffer) + @as(usize, capacity) * @sizeOf(u16));
+    const block = gc.alloc(@sizeOf(Buffer) + @as(usize, capacity) * @sizeOf(u16), &buffer_kind);
     const buf: *Buffer = @ptrCast(@alignCast(block));
     buf.* = .{ .capacity = capacity, .used = 0 };
     return buf;

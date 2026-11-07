@@ -14642,3 +14642,76 @@ throws Node's own "Digest method not supported", where Node would hash with Open
 its own; `DataView` input and the `options` of `createHash` and `copy` are not landed;
 `x instanceof crypto.Hash` through the namespace is `STA1214` in `ts` mode ("instanceof against
 anything but a class name"), while the named `Hash` works.
+
+## 403. T66: Boehm is replaced by pyrlyn/gc as deferred reference counting (2026-11-07)
+
+**Direction.** The creator asked to replace Boehm with https://github.com/pyrlyn/gc used as a Zig
+module, as one change (T66). pyrlyn/gc (checked at `9bfc433`, 2026-11-07) is the KotlinX memory
+manager: an object header word (count in bits 0-31, color 32-33, buffered bit 34), a vtable
+`{rel, trav, relo, freemem, cyclic}` in word 1 (`kxgc.h`, `KXGC_API_VERSION 1`), size-class pools
+(`rt_alloc_trace`), `rt_gc_mem_*` for reference-holding storage and Bacon-Rajan trial deletion
+(`rt_cc_possible_root`, `rt_gc_collect`). KotlinX gets exact counts from its code generator, which
+emits Perceus retain/release at every reference copy.
+
+**Why Stator does not copy that model.** Exact counting would put an ownership discipline on every
+runtime function (17.9k lines of C and Zig, `jsrt_value.h` included) and a retain/release on every
+copy the emitter writes, in both compilers (`packages/compiler` and the Zig port that
+`test:zigdiff` compares). The emitted code already routes every heap store through a runtime call
+(`jsrt_object_set`, `jsrt_map_set`, `jsrt_array_push`, ...); the one inline heap store is
+`JSRT_ENV_AT`. Measured on an `--emit=c` probe at `583edf18`.
+
+**Design: deferred RC (Deutsch-Bobrow) over pyrlyn/gc.**
+
+- Counts cover **heap-to-heap references only**: object fields, array elements, Map entries, env
+  slots, closure envs, promise and iterator state. Every runtime store goes through one barrier
+  (`jsrt_heap_store`: retain new, store, release old); `JSRT_ENV_AT` writes become
+  `JSRT_ENV_SET`.
+- Frame slots, globals and C locals are **not** counted. They are roots, read at collection: the
+  `JSRT_FRAME` chain (globals included) precisely, the pending cell and handoff explicitly, and each
+  registered thread's native stack and registers conservatively with the 48-bit payload mask, as
+  Boehm's hook did. Runtime C keeps raw pointers in locals across allocations exactly as today
+  (plan-notes 163).
+- A new object starts at count 0 in a **zero-count table** (ZCT); a release that reaches 0 puts it
+  back there. Collection frees every ZCT entry no root names, releasing its children, which may
+  join the ZCT in the same pass.
+- **Cycles** use pyrlyn/gc's trial deletion. The host keeps `rt_rel_draining` set outside its own
+  collection, so a store barrier never starts one; the collection pins every object the roots name
+  (+1), runs `rt_gc_collect`, then unpins. Without the pin a cycle held only by a stack slot would
+  read as garbage.
+- Every collected allocation gets the kxgc header and a per-kind vtable whose `trav` visits exactly
+  the references the barrier counts; a mismatch corrupts counts, so each kind's `trav` and its
+  stores are tested together. Statically allocated closures and classes carry an immortal count
+  the barrier skips.
+- Threads: workers run user code (`std/thread`, `jsrt_sync.zig` channels). A collection stops the
+  world at the existing statement safepoints (`jsrt_gc_safepoint`); a thread blocked in a native
+  wait records its stack top and counts as stopped. Barriers are atomic while threads are enabled.
+- Collector variant: `perceus` (synchronous). `epoch` needs mutator-logged inc/dec and is not used.
+
+**Cost.** pyrlyn/gc declares `minimum_zig_version = "0.17.1"`; the creator approved moving Stator
+from Zig 0.16.0 to 0.17.1 for T66 (2026-11-07).
+
+**As built (amends the design above, 2026-11-07).** The per-store barrier was replaced before
+landing; the module comment of `packages/runtime/src/jsrt_gc.zig` is the full description.
+
+- **Coalesced deferred RC (Levanoni-Petrank), not Deutsch-Bobrow.** A runtime function calls
+  `jsrt_gc_write(obj)` before it changes the references of an existing object. The first call per
+  collection marks the object dirty and logs what it held; the collection then counts what the
+  object holds now against its log. Stores need no retain/release, so `JSRT_ENV_AT` stays: closure
+  environments are an `always_dirty` kind, reconciled at every collection. No codegen changed.
+- **Young objects.** A new object is born dirty and young, on no list but the young one. A
+  collection traces only the young objects a root or a reconciled object names; the rest are
+  freed untraced. A young garbage cycle therefore never reaches trial deletion.
+- **Pinned objects are suspects.** Roots are never counted, so the decrement that would make a
+  cycle a candidate never happens when its last root lets go. Unpinning an object whose count is
+  still above 0, and a ZCT entry whose count is not 0, mark it a possible cycle root.
+- **Verification.** `JSRT_GC_VERIFY=1` recounts every heap reference after each collection and
+  names the kind whose stores skipped the barrier; `JSRT_GC_STRESS=1` collects on every
+  allocation. Golden ran 505/505 under verify; ASan ran 505/505.
+- **Lists are reused.** The dirty, log and ZCT lists swap with spares instead of being freed:
+  freeing and regrowing multi-megabyte lists every collection left about 220 MB in malloc's
+  large-block cache (measured with `heap -s` and `vmmap --summary` on the cycle leak test).
+- **FFI.** Each `--emit=lib` library carries its own private collector, because every runtime
+  symbol, pyrlyn/gc's `rt_*` included, is made local; the weak shared Boehm kind is gone.
+- **Known cost.** An object pinned at every collection with a heap count above 0 is a suspect at
+  every collection, so trial deletion revisits it. Not measured separately yet; a generation
+  bit for long-lived suspects is the fix if a workload shows it.

@@ -31,6 +31,12 @@ static bool on_main(void) {
   return !jsrt_pending();
 }
 
+/* A reaction's state is a raw pointer to one of the structs below, or a NaN-boxed promise cast to
+ * a pointer (adoption); the mask turns either into the object it names. */
+static void visit_state(void *state, jsrt_gc_visit_fn visit) {
+  visit((void *)((uintptr_t)state & JSRT_PAYLOAD_MASK));
+}
+
 /* ------------------------------------------------------------ microtasks */
 
 /* A queued reaction, with the value it will be handed. The value is captured at QUEUE time, not
@@ -50,16 +56,23 @@ typedef struct Microtask {
 static Microtask *queue_first;
 static Microtask *queue_last;
 
+JSRT_GC_TRACE(microtask_trace, Microtask, task) {
+  visit_state(task->state, visit);
+  jsrt_gc_visit_value(task->value, visit);
+  visit(task->next);
+}
+
+static const JSRTGcKind microtask_kind =
+    JSRT_GC_KIND("microtask", microtask_trace, NULL, JSRT_GC_CYCLIC, 0);
+
 static void enqueue(JSRTSettle on_settle, void *state, jsrt_value value, bool rejected) {
-  Microtask *task = (Microtask *)jsrt_gc_alloc(sizeof(Microtask), "microtask");
-  task->on_settle = on_settle;
-  task->state = state;
-  task->value = value;
-  task->rejected = rejected;
-  task->next = NULL;
+  Microtask *task = JSRT_GC_NEW(Microtask, &microtask_kind);
+  *task = (Microtask){
+      .on_settle = on_settle, .state = state, .value = value, .rejected = rejected};
   if (queue_last == NULL) {
     queue_first = task;
   } else {
+    jsrt_gc_write(queue_last);
     queue_last->next = task;
   }
   queue_last = task;
@@ -100,9 +113,25 @@ void jsrt_run_microtasks(void) {
 
 /* -------------------------------------------------------------- promises */
 
+JSRT_GC_TRACE(promise_trace, JSRTPromise, p) {
+  jsrt_gc_visit_value(p->value, visit);
+  visit(p->first);
+  visit(p->last);
+}
+
+JSRT_GC_TRACE(reaction_trace, JSRTReaction, r) {
+  visit_state(r->state, visit);
+  visit(r->next);
+}
+
+static const JSRTGcKind promise_kind =
+    JSRT_GC_KIND("promise", promise_trace, NULL, JSRT_GC_CYCLIC, 0);
+static const JSRTGcKind reaction_kind =
+    JSRT_GC_KIND("promise reaction", reaction_trace, NULL, JSRT_GC_CYCLIC, 0);
+
 jsrt_value jsrt_promise_new(void) {
   if (!on_main()) return JSRT_UNDEFINED;
-  JSRTPromise *p = (JSRTPromise *)jsrt_gc_alloc(sizeof(JSRTPromise), "promise");
+  JSRTPromise *p = JSRT_GC_NEW(JSRTPromise, &promise_kind);
   p->cls = &jsrt_class_promise;
   p->state = JSRT_PROMISE_PENDING;
   p->resolved = false;
@@ -124,10 +153,12 @@ void jsrt_promise_subscribe(jsrt_value promise, JSRTSettle on_settle, void *stat
     enqueue(on_settle, state, p->value, p->state == JSRT_PROMISE_REJECTED);
     return;
   }
-  JSRTReaction *r = (JSRTReaction *)jsrt_gc_alloc(sizeof(JSRTReaction), "promise reaction");
+  JSRTReaction *r = JSRT_GC_NEW(JSRTReaction, &reaction_kind);
   r->on_settle = on_settle;
   r->state = state;
   r->next = NULL;
+  jsrt_gc_write(p);
+  jsrt_gc_write(p->last);
   if (p->last == NULL) {
     p->first = r;
   } else {
@@ -140,6 +171,7 @@ void jsrt_promise_subscribe(jsrt_value promise, JSRTSettle on_settle, void *stat
  * this settlement is the one that counts. */
 static void promise_settle_now(jsrt_value promise, jsrt_value value, bool rejected) {
   JSRTPromise *p = jsrt_as_promise(promise);
+  jsrt_gc_write(p);
   p->state = rejected ? JSRT_PROMISE_REJECTED : JSRT_PROMISE_FULFILLED;
   p->value = value;
   if (rejected && p->first == NULL) {
@@ -232,6 +264,15 @@ typedef struct {
   uint32_t index;
 } AllElement;
 
+static void all_element_trace(void *obj, jsrt_gc_visit_fn visit) {
+  visit(((const AllElement *)obj)->all);
+}
+
+static const JSRTGcKind all_state_kind = JSRT_GC_VALUE_KIND(
+    "Promise.all", JSRT_GC_CYCLIC, offsetof(AllState, results), offsetof(AllState, promise));
+static const JSRTGcKind all_element_kind =
+    JSRT_GC_KIND("Promise.all element", all_element_trace, NULL, JSRT_GC_CYCLIC, 0);
+
 static void all_element(void *state, jsrt_value value, bool rejected) {
   AllElement *e = (AllElement *)state;
   AllState *all = e->all;
@@ -256,7 +297,7 @@ jsrt_value jsrt_promise_all(jsrt_value array) {
     jsrt_panic("STA2005: Promise.all over a non-array is not yet supported");
   }
   const uint32_t n = jsrt_as_array(array)->length;
-  AllState *all = (AllState *)jsrt_gc_alloc(sizeof(AllState), "Promise.all");
+  AllState *all = JSRT_GC_NEW(AllState, &all_state_kind);
   all->promise = jsrt_promise_new();
   all->remaining = n;
   all->results = jsrt_array_new(0, NULL);
@@ -269,7 +310,7 @@ jsrt_value jsrt_promise_all(jsrt_value array) {
     return all->promise;
   }
   for (uint32_t i = 0; i < n; i++) {
-    AllElement *e = (AllElement *)jsrt_gc_alloc(sizeof(AllElement), "Promise.all element");
+    AllElement *e = JSRT_GC_NEW(AllElement, &all_element_kind);
     e->all = all;
     e->index = i;
     jsrt_promise_subscribe(jsrt_promise_resolve(jsrt_unhole(jsrt_as_array(array)->elements[i])), all_element, e);
@@ -279,6 +320,15 @@ jsrt_value jsrt_promise_all(jsrt_value array) {
 
 /* ---------------------------------------------------------- async bodies */
 
+JSRT_GC_TRACE(async_trace, JSRTAsync, self) {
+  visit(self->env);
+  jsrt_gc_visit_value(self->promise, visit);
+}
+
+/* Generated resume functions store `self->env` directly. */
+static const JSRTGcKind async_kind =
+    JSRT_GC_KIND("async frame", async_trace, NULL, JSRT_GC_CYCLIC, 1);
+
 static void async_resume(void *state, jsrt_value value, bool rejected) {
   JSRTAsync *self = (JSRTAsync *)state;
   self->resume(self, value, rejected);
@@ -286,7 +336,7 @@ static void async_resume(void *state, jsrt_value value, bool rejected) {
 
 jsrt_value jsrt_async_start(JSRTEnv *env, JSRTResume resume) {
   if (!on_main()) return JSRT_UNDEFINED;
-  JSRTAsync *self = (JSRTAsync *)jsrt_gc_alloc(sizeof(JSRTAsync), "async frame");
+  JSRTAsync *self = JSRT_GC_NEW(JSRTAsync, &async_kind);
   self->env = env;
   self->resume = resume;
   self->promise = jsrt_promise_new();
@@ -319,6 +369,18 @@ typedef struct {
   jsrt_value on_rejected;
 } ThenState;
 
+static const JSRTGcKind then_state_kind =
+    JSRT_GC_VALUE_KIND("Promise.then", JSRT_GC_CYCLIC, offsetof(ThenState, derived),
+                       offsetof(ThenState, on_fulfilled), offsetof(ThenState, on_rejected));
+
+/* A then/finally reaction state of `kind`: its first field is the derived promise its reaction
+ * settles, made here; the caller fills the rest. */
+static void *derived_state(const JSRTGcKind *kind, size_t bytes) {
+  jsrt_value *state = (jsrt_value *)jsrt_gc_alloc(bytes, kind);
+  state[0] = jsrt_promise_new();
+  return state;
+}
+
 static void then_react(void *state, jsrt_value value, bool rejected) {
   ThenState *s = (ThenState *)state;
   jsrt_value handler = rejected ? s->on_rejected : s->on_fulfilled;
@@ -337,8 +399,7 @@ static void then_react(void *state, jsrt_value value, bool rejected) {
 
 jsrt_value jsrt_promise_then(jsrt_value promise, jsrt_value on_fulfilled, jsrt_value on_rejected) {
   if (!on_main()) return JSRT_UNDEFINED;
-  ThenState *s = (ThenState *)jsrt_gc_alloc(sizeof(ThenState), "Promise.then");
-  s->derived = jsrt_promise_new();
+  ThenState *s = (ThenState *)derived_state(&then_state_kind, sizeof(ThenState));
   s->on_fulfilled = on_fulfilled;
   s->on_rejected = on_rejected;
   jsrt_promise_subscribe(promise, then_react, s);
@@ -357,6 +418,12 @@ typedef struct {
   bool rejected;
 } FinallyState;
 
+static const JSRTGcKind finally_state_kind =
+    JSRT_GC_VALUE_KIND("Promise.finally", JSRT_GC_CYCLIC, offsetof(FinallyState, derived),
+                       offsetof(FinallyState, on_finally), offsetof(FinallyState, value));
+_Static_assert(offsetof(ThenState, derived) == 0 && offsetof(FinallyState, derived) == 0,
+               "derived_state stores the derived promise first");
+
 /* The `valueThunk`/`thrower` half of the spec's pass-through wrapper (§27.5.5.3): `thenFinally`
  * answers `p.then(valueThunk)`, and the outer reaction adopts that intermediate -- it is the
  * intermediate this settles, never the derived promise directly. On the callback promise's
@@ -374,6 +441,7 @@ static void finally_thunk(void *state, jsrt_value value, bool rejected) {
 
 static void finally_react(void *state, jsrt_value value, bool rejected) {
   FinallyState *s = (FinallyState *)state;
+  jsrt_gc_write(s);
   s->value = value;
   s->rejected = rejected;
   if (!jsrt_is(s->on_finally, JSRT_TAG_CLOSURE)) {
@@ -385,8 +453,7 @@ static void finally_react(void *state, jsrt_value value, bool rejected) {
     jsrt_promise_settle(s->derived, done.value, true);
     return;
   }
-  FinallyState *inner = (FinallyState *)jsrt_gc_alloc(sizeof(FinallyState), "Promise.finally");
-  inner->derived = jsrt_promise_new();
+  FinallyState *inner = (FinallyState *)derived_state(&finally_state_kind, sizeof(FinallyState));
   inner->on_finally = JSRT_UNDEFINED;
   inner->value = value;
   inner->rejected = rejected;
@@ -399,8 +466,7 @@ static void finally_react(void *state, jsrt_value value, bool rejected) {
 
 jsrt_value jsrt_promise_finally(jsrt_value promise, jsrt_value on_finally) {
   if (!on_main()) return JSRT_UNDEFINED;
-  FinallyState *s = (FinallyState *)jsrt_gc_alloc(sizeof(FinallyState), "Promise.finally");
-  s->derived = jsrt_promise_new();
+  FinallyState *s = (FinallyState *)derived_state(&finally_state_kind, sizeof(FinallyState));
   s->on_finally = on_finally;
   s->value = JSRT_UNDEFINED;
   s->rejected = false;

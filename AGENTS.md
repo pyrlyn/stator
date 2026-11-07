@@ -112,13 +112,13 @@ Gallery + captions: `docs/ARCHITECTURE.md`. Shared theme: `docs/architecture/the
 ## Commands
 
 Dev runs TS directly on the pinned Node (≥24, see `.node-version`) — no build step needed.
-`mise install` provides that Node, pnpm, just, moon, LLVM clang 21.1.8, Zig 0.17.0 (Unix; required for the runtime once T9.1 lands), and jactionlint, hk and shellcheck for the workflow lint.
+`mise install` provides that Node, pnpm, just, moon, LLVM clang 21.1.8, Zig 0.17.1 (Unix; required for the runtime once T9.1 lands), and jactionlint, hk and shellcheck for the workflow lint.
 If bare `node --version` disagrees with `.node-version` (on some hosts PATH puts mise's
 `node/lts` ahead of the shims, so bare `node` answers 24), prefix commands with
 `mise exec node --` — `pnpm run ci` refuses to start otherwise (plan.md Task 6.2a).
 
 ```
-mise install                    # Node, pnpm, just, moon, LLVM clang, Zig 0.17.0 (Unix)
+mise install                    # Node, pnpm, just, moon, LLVM clang, Zig 0.17.1 (Unix)
 pnpm install --frozen-lockfile  # install (exact-pinned deps)
 pnpm --dir site install --frozen-lockfile  # site/ has its own lockfile; `lint` type-checks site/ too
 pnpm run typecheck              # tsc --noEmit (strict; must be clean)
@@ -141,7 +141,7 @@ pnpm run test:zigdiff           # each Zig compiler stage vs this compiler, over
 pnpm run test:selfhost          # Stator explains (and builds) its own packages; ratcheted per-code counts; record changes with --update
 pnpm run test:runtime           # the runtime's own print corpus vs Node, byte-for-byte
 pnpm run test:asan              # golden fixtures with runtime + generated C under ASan/UBSan
-pnpm run test:leak              # 10M-object loop; RSS must plateau (skips without Boehm)
+pnpm run test:leak              # 10M-object loop plus a cyclic one; RSS must plateau
 pnpm run test262                # Test262 slice against packages/tests/test262/pin.json (not part of `ci`)
 pnpm run interp:test            # the interpreter's Zig tests (packages/interpreter; not part of `ci`)
 pnpm run test262:interp-parse   # Test262 language/ through the interpreter's parse entry, ratcheted (not part of `ci`)
@@ -182,7 +182,7 @@ because mise's `pnpm` is unusable from a raw child process on this machine — p
 ## Implementation standards — C runtime (`runtime/`)
 
 - C11, `clang -Wall -Wextra -Werror`; ASan/UBSan job in CI is mandatory and blocking. The full flag set is the rule for code we WRITE (`runtime/src/`); `runtime/vendor/` compiles with `-Wall` alone, because upstream source is not ours to fix and a warning flag is not a correctness flag (plan-notes 101). ASan/UBSan cover both.
-- T9.1 (plan-notes 238) landed the memory core in Zig (`runtime/src/*.zig`): the GC glue, the growable buffers, the shape table and the allocation helpers. It compiles against the C headers through `zig translate-c` (`src/jsrt_c.h`, `src/jsrt_gc_c.h`, the justfile) rather than mirroring any layout, exports only the C ABI declared in `jsrt.h`, `jsrt_value.h` and `src/jsrt_mem.h`, and passes `zig fmt --check`. Zig has no warnings, only errors; the ASan flavor builds it `ReleaseSafe`, so its safety checks stand in for the sanitizers it cannot take. Do not invent a second memory core. Since plan-notes 289, new memory-managing or cross-platform runtime code is Zig too (golden rule 9); existing C is ported only by a card.
+- T9.1 (plan-notes 238) landed the memory core in Zig (`runtime/src/*.zig`): the GC glue, the growable buffers, the shape table and the allocation helpers. It compiles against the C headers through `zig translate-c` (`src/jsrt_c.h`, the justfile) rather than mirroring any layout, exports only the C ABI declared in `jsrt.h`, `jsrt_value.h` and `src/jsrt_mem.h`, and passes `zig fmt --check`. Zig has no warnings, only errors; the ASan flavor builds it `ReleaseSafe`, so its safety checks stand in for the sanitizers it cannot take. Do not invent a second memory core. Since plan-notes 289, new memory-managing or cross-platform runtime code is Zig too (golden rule 9); existing C is ported only by a card.
 - All value access goes through `jsrt_value.h` accessors; no hand-rolled bit twiddling outside it.
 - GC rooting discipline: every generated function opens `JSRT_FRAME(n)`; locals via `JSRT_LOCAL`; frames pop on **every** exit path including landing pads. The runtime may assume it; codegen must guarantee it.
 - Generated C is never hand-edited — fix the emitter and re-emit.

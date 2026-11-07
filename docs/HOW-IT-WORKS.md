@@ -97,8 +97,8 @@ just -f packages/runtime/justfile -d packages/runtime runtime
 If bare `node --version` disagrees with `.node-version`, prefix CLI runs with
 `mise exec node --` (`pnpm run ci` refuses to start otherwise).
 
-Boehm GC is optional (`pkg-config bdw-gc`); without it the runtime still
-builds with a bump allocator. ICU is a separate
+The collector is pyrlyn/gc, a Zig package the runtime recipe fetches (docs/VALUE.md §4.12);
+nothing to install. ICU is a separate
 `just -f packages/runtime/justfile -d packages/runtime runtime-intl` feature.
 
 ## CLI usage

@@ -1,7 +1,7 @@
 /* The GC hygiene test (plan.md §7 Task 4.5): compile a loop that allocates ten million objects and
  * watch the process's RSS while it runs, then do the same for the FFI string-conversion loop
- * (strings.ts) and the computed-key read loop (keys.js, T16) — one watcher, one cap, one plateau
- * rule, a row per loop in FIXTURES below.
+ * (strings.ts), the computed-key read loop (keys.js, T16) and the garbage-cycle loop (cycles.ts,
+ * T66) — one watcher, one cap, one plateau rule, a row per loop in FIXTURES below.
  *
  * This is the one test that can tell whether the rooting discipline is doing its job END TO END.
  * The frame audit (tests/unit/frames.test.ts) proves the emitted C declares the slots it writes;
@@ -15,13 +15,9 @@
  * keep climbing. Ten million two-field objects are ~320 MB if nothing is ever freed, so a cap of
  * 64 MB separates the two outcomes by a factor of five — wide enough that allocator bookkeeping,
  * a different page size, or a differently tuned collector cannot move a passing run across it.
- *
- * Boehm is optional (`pkg-config bdw-gc`), and without it the runtime is plain malloc with no
- * collection — by design, and documented as such. There is no plateau to find in that build, so
- * this test REPORTS that it did not run rather than failing, and rather than passing quietly.
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,18 +53,12 @@ const FIXTURES: readonly LeakFixture[] = [
     nodeArgs: ['--import', join(HERE, '..', 'golden', 'ts', 'extern_strstr', 'node_shim.ts')],
   },
   { file: 'keys.js', label: '2M computed-key reads', nodeArgs: [], buildArgs: ['--mode=js'] },
+  { file: 'cycles.ts', label: '2M garbage cycles', nodeArgs: [] },
 ];
 
 /** A runtime that never collects needs ~320 MB for this fixture; one that does needs a few. */
 const RSS_CAP_KB = 64 * 1024;
 const SAMPLE_MS = 25;
-
-/** Whether the archive this build links was compiled against Boehm — the same file the CLI reads
- * to link it, so the answer here and the answer at link time are one answer. */
-function collecting(): boolean {
-  const flags = join(REPO, 'runtime', 'build', 'link-flags.txt');
-  return existsSync(flags) && readFileSync(flags, 'utf8').includes('-lgc');
-}
 
 function compile(fixture: LeakFixture, out: string): void {
   const build = spawnSync(
@@ -136,15 +126,6 @@ function expected(fixture: LeakFixture): string {
 }
 
 async function main(fixture: LeakFixture): Promise<void> {
-  if (!collecting()) {
-    process.stdout.write(
-      'leak: SKIPPED — the runtime was built without Boehm (plain malloc, no collection). ' +
-        'Install bdw-gc (macOS: `brew install bdw-gc`; Debian: `apt install libgc-dev`) and ' +
-        'rebuild with `just runtime` to run it.\n',
-    );
-    return;
-  }
-
   const work = mkdtempSync(join(tmpdir(), 'stator-leak-'));
   let run: Run;
   try {

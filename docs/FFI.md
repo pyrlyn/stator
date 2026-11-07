@@ -175,8 +175,7 @@ bytes_sum((void *)jsrt_uint8array_bytes(slot), jsrt_uint8array_count(slot));
   callee may take `data` unconditionally; it must read only `length` bytes.
 - **Stable for the call, and only for the call.** Four facts make the pointer valid until the
   callee returns. The view stays in its rooted argument slot, and its `buffer` edge keeps the data
-  block alive. Neither collector moves memory: Boehm is non-moving, and the no-GC build is plain
-  malloc. A buffer never resizes, transfers or detaches (no such API exists). And the C call runs
+  block alive. The collector never moves memory (docs/VALUE.md §4.12). A buffer never resizes, transfers or detaches (no such API exists). And the C call runs
   no Stator code, so nothing can collect or mutate the buffer mid-call. A callee that keeps the
   pointer past its return is out of contract: nothing roots the bytes after the call.
 - **Checked on every call.** The emitter guards the layout read with `jsrt_check_uint8array`
@@ -466,8 +465,8 @@ and generated uniformly:
   the microtask drain, then the exported-const stores. Idempotent via a set-before static
   guard: a second `JSRT_GLOBALS_ENTER` would wipe every global. `jsrt_init()` is
   idempotent on its own (plan-notes 341): two units linked against one `libjsrt.a` each
-  call it, and before the guard in `jsrt_gc_init` the second call installed the Boehm roots
-  hook as its own predecessor, so the first collection overflowed the stack. Calling an exported function before init
+  call it, and before the guard in `jsrt_gc_init` the second call installed the (then Boehm)
+  roots hook as its own predecessor, so the first collection overflowed the stack. Calling an exported function before init
   is undefined behavior (the header says so). A top-level throw lands in the error cell
   like any stub failure instead of `jsrt_uncaught`'s exit — the unit is then unusable.
   `jsrt_init` also installs the stack-overflow fault handler for SIGSEGV and SIGBUS
@@ -490,9 +489,9 @@ and generated uniformly:
   — the normal return and the single `_jsrt_err` epilogue every throw path funnels
   through. Arguments convert into the frame's slots (which double as `argv`), so every
   operand is rooted across the call's own allocation. Stubs never `JSRT_GLOBALS_ENTER`
-  (init owns it). No per-call Boehm registration exists in v0, deliberately: Boehm scans
-  the init thread's C stack itself since `jsrt_init`, every stub runs on that thread, and
-  a second thread is UB by the header — Phase 10 adds `GC_register_my_thread` at spawn,
+  (init owns it). No per-call collector registration exists, deliberately: the collector
+  scans the init thread's C stack itself since `jsrt_init`, every stub runs on that thread,
+  and a second thread is UB by the header — threads register at spawn (docs/THREADS.md),
   which is already where that registration belongs.
 - **Ownership at the edge, stated once:** a `const char *` PARAMETER is the caller's
   borrow (copied in, never freed, never retained); a `const char *` ANSWER is a fresh
@@ -554,7 +553,7 @@ plus a manual link proof (fresh pair links and runs; version-skewed pair fails w
   one `stator_<unit>_<name>` — a compile error, never last-writer-wins; `STA1126` an
   exported `Out<T>` slot, which names a call-local address with no cross-boundary meaning.
 - **Tests:** `tests/ffi/` fixture + `main.c` byte-compare, double-build `cmp`
-  determinism, collision/error-path goldens, GC-hygiene loop under Boehm, ASan job.
+  determinism, collision/error-path goldens, GC-hygiene loop, ASan job.
 
 ### Static library: `--emit=lib` (plan.md §10 Task 7.4) — LANDED
 
@@ -572,8 +571,8 @@ PKG_CONFIG_PATH=out cc main.c $(pkg-config --cflags --libs libconsumer) -o app
   nothing else, and so is `--emit=lib` without `--emit-header`.
 - **`lib<name>.pc`** is written beside the archive. It is relocatable (`prefix=${pcfiledir}`),
   so the three files can move together. `Libs` carries exactly the binary link's list
-  (`build.ts` `systemLinkFlags`: the runtime's recorded `link-flags.txt` — Boehm's `-lgc`,
-  `-lm` — plus the unit's `@statorLink` and `--link=` flags), all in `Libs` rather than
+  (`build.ts` `systemLinkFlags`: the runtime's recorded `link-flags.txt` — `-lm`,
+  ICU's in the feature build — plus the unit's `@statorLink` and `--link=` flags), all in `Libs` rather than
   `Libs.private`: there is no shared variant, and `pkg-config --libs` must give a working
   line without `--static`.
 - **The runtime is private.** Every global in the member except the header's symbols
@@ -589,11 +588,11 @@ PKG_CONFIG_PATH=out cc main.c $(pkg-config --cflags --libs libconsumer) -o app
   1. *Size*: each library carries its own runtime, about 200 KB of code per extra library
      in a program (`-dead_strip`; the member before the final link is about 400 KB). One
      library costs what an `--emit-header` object plus `libjsrt.a` costs.
-  2. *One collector*: Boehm stays a shared system library, so every runtime copy shares one
-     heap. The copies share one Boehm object kind through a weak global the library keeps
-     exported (`jsrt_gc_shared_kind_p48`, `packages/runtime/src/jsrt_mem.h`); without it the
-     13th library in one process aborted with Boehm's "Too many kinds". Each copy chains
-     its own roots hook, so a collection sees every library's frames.
+  2. *One collector per copy*: the collector is part of the runtime (pyrlyn/gc compiled into
+     `libjsrt.a`, plan/T66), so its symbols are made local with the rest and each library
+     collects its own heap from its own roots. Nothing is shared, so no global stays exported
+     beside the header's symbols. Before T66 the copies shared one Boehm heap through a weak
+     exported kind (plan-notes 342).
   3. *No `jsrt_value` crossing*: an export whose header would need `jsrt_value.h` (any
      position outside §2's table) is `STA1220` under `--emit=lib`, because the consumer
      has no runtime API to make or read one. Plain `--emit-header` still exposes it.
@@ -601,7 +600,7 @@ PKG_CONFIG_PATH=out cc main.c $(pkg-config --cflags --libs libconsumer) -o app
      sets its own limit, so unbounded recursion inside any library is a `RangeError` in that
      library's `last_error`. The SIGSEGV/SIGBUS fault handler (plan-notes 338) is installed
      once per copy; each one hands a fault outside its guard region back to the handler it
-     replaced, so the copies chain like the Boehm roots hooks do.
+     replaced, so the copies chain.
 - **Deterministic**: the prelink drops debug information (`-Wl,-S`), which would name the
   build machine's runtime paths, and the archiver runs in its deterministic mode (`ar D` on
   ELF; `ZERO_AR_DATE=1` for Apple's `ar`, which refuses `D`). Two builds of the same input
@@ -617,7 +616,8 @@ PKG_CONFIG_PATH=out cc main.c $(pkg-config --cflags --libs libconsumer) -o app
 - **Proof**: `packages/tests/ffi/example-c-consumer/static-lib.ts` builds the example twice
   and compares the bytes, links `main.c` from a fresh directory through `pkg-config` alone
   and checks `expected.txt`, then links `consumer` and a second library (`keeper.ts`) into
-  `two.c`, forces Boehm collections between calls into both, and overflows the stack in one
+  `two.c`, runs it under `JSRT_GC_STRESS=1` so both private collectors collect on every
+  allocation, and overflows the stack in one
   while the other keeps answering. The ffi CI jobs (Linux and
   macOS) run it, and so does the ASan gate (`pnpm run test:asan`) against the sanitized
   runtime.

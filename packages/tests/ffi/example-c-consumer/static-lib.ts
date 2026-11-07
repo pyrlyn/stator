@@ -7,8 +7,8 @@
  *   repository (but the unit's own error-stack locations), and `main.c` links through `pkg-config --cflags --libs libconsumer` alone, runs,
  *   and prints `expected.txt`.
  * - `keeper.ts` builds to a second library, and `two.c` links BOTH into one program: two private
- *   runtimes over one Boehm, with forced collections that `two.c` confirms through
- *   `GC_get_gc_no` (plan-notes 341, 342). CI has Boehm, so there a run without it fails.
+ *   runtimes, each with its own collector, run under `JSRT_GC_STRESS=1` so both collect on
+ *   every allocation (plan-notes 341, 342; plan/T66).
  *
  * `STATOR_RUNTIME=asan` (the ASan gate's stage) builds against the sanitized runtime; the
  * libraries then carry `-fsanitize` in their `.pc`, so the consumer link is unchanged.
@@ -88,31 +88,16 @@ function pkgConfig(dir: string, names: readonly string[]): string[] {
 }
 
 /** Links `source` in `dir` against the named libraries through pkg-config only, runs it, and
- * returns its stdout. `boehm` reports whether the libraries link Boehm. */
-function linkAndRun(
-  dir: string,
-  source: string,
-  names: readonly string[],
-): { output: string; boehm: boolean } {
+ * returns its stdout. `stress` runs it with a collection on every allocation. */
+function linkAndRun(dir: string, source: string, names: readonly string[], stress = false): string {
   const flags = pkgConfig(dir, names);
-  const boehm = flags.includes('-lgc');
   const app = join(dir, source.replace(/\.c$/, ''));
   linkConsumer(
     selectCC(RUNTIME),
-    [
-      '-std=c11',
-      '-Wall',
-      '-Wextra',
-      '-Werror',
-      ...(boehm ? ['-DSTATOR_TEST_BOEHM'] : []),
-      join(dir, source),
-      ...flags,
-      '-o',
-      app,
-    ],
+    ['-std=c11', '-Wall', '-Wextra', '-Werror', join(dir, source), ...flags, '-o', app],
     fail,
   );
-  return { output: run(app, [], source, fail), boehm };
+  return run(app, [], source, fail, stress ? { ...process.env, JSRT_GC_STRESS: '1' } : process.env);
 }
 
 function main(): void {
@@ -138,9 +123,9 @@ function main(): void {
     copyFileSync(join(HERE, 'main.c'), join(consumer, 'main.c'));
     const one = linkAndRun(consumer, 'main.c', ['libconsumer']);
     const expected = readFileSync(join(HERE, 'expected.txt'), 'utf8');
-    if (one.output !== expected) {
+    if (one !== expected) {
       fail(
-        `output differs\n  actual:   ${JSON.stringify(one.output)}\n` +
+        `output differs\n  actual:   ${JSON.stringify(one)}\n` +
           `  expected: ${JSON.stringify(expected)}`,
       );
     }
@@ -150,16 +135,13 @@ function main(): void {
     deliver(first, 'consumer', 'unit.ts', both);
     deliver(join(work, 'keeper'), 'keeper', 'keeper.ts', both);
     copyFileSync(join(HERE, 'two.c'), join(both, 'two.c'));
-    const two = linkAndRun(both, 'two.c', ['libconsumer', 'libkeeper']);
-    if (two.output !== 'keeper=5000\ntwo libraries ok\n') {
-      fail(`two-library output differs: ${JSON.stringify(two.output)}`);
-    }
-    if (!two.boehm && process.env['CI'] !== undefined) {
-      fail('the runtime links no Boehm, so no collection ran — CI must prove one');
+    const two = linkAndRun(both, 'two.c', ['libconsumer', 'libkeeper'], true);
+    if (two !== 'keeper=5000\ntwo libraries ok\n') {
+      fail(`two-library output differs: ${JSON.stringify(two)}`);
     }
     process.stdout.write(
       `ffi static-lib: ok (${SANITIZED ? 'asan, ' : ''}two libraries, ` +
-        `${two.boehm ? 'forced Boehm collections' : 'no collector'})\n`,
+        'two collectors collecting on every allocation)\n',
     );
   } finally {
     rmSync(work, { recursive: true, force: true });

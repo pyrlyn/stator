@@ -13,6 +13,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "jsrt.h"
+
 /* ---------------------------------------------------------------- layout */
 
 typedef uint64_t jsrt_value;
@@ -85,6 +87,12 @@ static inline int32_t jsrt_as_int32(jsrt_value v) {
 
 static inline void *jsrt_ptr(jsrt_value v) {
   return (void *)(uintptr_t)(v & JSRT_PAYLOAD_MASK);
+}
+
+/* For a kind's trace (jsrt.h): reports the object a boxed value names, if it names one. */
+static inline void jsrt_gc_visit_value(jsrt_value v, jsrt_gc_visit_fn visit) {
+  if ((v & JSRT_NANBOX_MASK) == JSRT_NANBOX_MASK && ((v >> JSRT_TAG_SHIFT) & 7) >= JSRT_TAG_OBJECT)
+    visit(jsrt_ptr(v));
 }
 
 /* Phase 2 never calls this -- the walking skeleton keeps every number an f64 (plan.md §5), and
@@ -2066,8 +2074,7 @@ static inline JSRTEnv *jsrt_env_up(JSRTEnv *env, uint32_t levels) {
 
 /* INVARIANT: on every path leaving a function -- normal return, early return, landing pad --
  * the count of JSRT_FRAME_POP() executed equals the count of JSRT_FRAME() entered. A skipped
- * pop leaves a frame pointing at dead stack: a crash under a precise GC, and an invisible time
- * bomb under Boehm that only surfaces when §12 lands. */
+ * pop leaves a frame pointing at dead stack, which the collector then reads as roots. */
 #define JSRT_FRAME_POP() (jsrt_frame_top = _jsrt_frame.prev)
 
 /* Module-level bindings outlive `main`'s frame -- a function called from anywhere still reads them,

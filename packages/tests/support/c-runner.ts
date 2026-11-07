@@ -42,8 +42,14 @@ export function expectOutput(side: string, actual: string, expected: string, fai
   );
 }
 
-export function run(command: string, args: readonly string[], what: string, fail: Fail): string {
-  const result = spawnSync(command, [...args], { encoding: 'utf8' });
+export function run(
+  command: string,
+  args: readonly string[],
+  what: string,
+  fail: Fail,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const result = spawnSync(command, [...args], { encoding: 'utf8', env });
   if (result.status !== 0) {
     fail(`${what} exited ${String(result.status)}:\n${result.stdout}${result.stderr}`);
   }

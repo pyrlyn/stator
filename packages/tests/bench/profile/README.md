@@ -20,7 +20,7 @@ can read without a GUI.
 3. **Convert.** `to_speedscope.py` resolves frame addresses through the sidecar, writes
    `profile.speedscope.json` (one sampled profile per thread) and `summary.txt` (CPU share per
    library, top N functions by self and by total/inclusive time). Samples are weighted by
-   thread CPU time (`threadCPUDelta`), so Boehm GC's parked marker threads do not dominate;
+   thread CPU time (`threadCPUDelta`), so parked helper threads do not dominate;
    `--weight samples` gives raw sample counts instead.
 4. `out/SUMMARY.md` concatenates all summaries.
 
@@ -60,12 +60,12 @@ means the library has no symbol for that address.
 
 - macOS/Linux only (samply). On macOS the wrapper calls `/usr/bin/clang` unless `CC` is set,
   because a custom `CC` disables the driver's stale-ld/SDK retry for the mise clang.
-- Homebrew's `libgc` exports only public symbols, so internal mark-loop functions appear as
-  `libgc.1.5.6.dylib+0x…`; build bdw-gc from source with `-g` for full names.
+- The collector is part of `libjsrt.a` (pyrlyn/gc, plan/T66), so its frames resolve through the
+  same sidecar as the rest of the runtime.
 - `libdyld.dylib+0x7e54/0x7e5c` are the thread-local-variable accessor (`tlv_get_addr`), i.e.
   the cost of runtime `threadlocal` state.
-- `__psynch_cvwait` with CPU weight is time Boehm's parallel marker threads spend in
-  condition-variable hand-offs during collection, i.e. GC overhead, not program work.
+- `__psynch_cvwait` with CPU weight is time threads spend in condition-variable hand-offs, such
+  as a stop-the-world collection waiting for workers to park.
 - `hello`, `json-roundtrip`, `string-churn` run for only a few milliseconds, so their profiles
   are mostly process start-up and are noisy; use them for start-up cost, not hot loops.
 - One run per program; sampling at 4 kHz gives statistical, not exact, percentages.

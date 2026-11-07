@@ -24,7 +24,7 @@ that changes the pin, and note the reason in `plan-notes.md`.
 | pnpm                      | `12.3.4`           | `packageManager` in root `package.json`, `npm:pnpm` in `mise.toml`                                                                                                                                                               |
 | LLVM                      | `21.1.8`           | `mise.toml` (`conda:llvm` + `conda:clang`, Unix). The C compiler the justfile and `packages/compiler/src/cli/build.ts` look up as `$CC`/`clang`. Conda prebuilts — the asdf llvm plugin compiles from source and is not the pin. |
 | just                      | `1.58.0`           | `mise.toml`. The runtime build (`just -f packages/runtime/justfile -d packages/runtime runtime`, `runtime-asan`, `runtime-intl`).                                                                                                |
-| Zig                       | `0.16.0`           | `mise.toml` (`zig`, Unix). The memory-core objects in `libjsrt.a` (plan-notes 238, T9.1) and the `std/*` backings in `libjsrt_std.a` (T11.2). CI install via `mlugg/setup-zig@v2` in `.github/actions/setup` (skipped on Windows, which never builds the runtime). |
+| Zig                       | `0.17.1`           | `mise.toml` (`zig`, Unix). The memory-core objects in `libjsrt.a` (plan-notes 238, T9.1) and the `std/*` backings in `libjsrt_std.a` (T11.2). CI install via `mlugg/setup-zig@v2` in `.github/actions/setup` (skipped on Windows, which never builds the runtime). |
 
 Node ≥ 24 is required because dev runs the compiler's TypeScript sources directly
 (`node packages/compiler/src/cli/main.ts`) via native type stripping — there is no build step in development.
@@ -108,7 +108,7 @@ Release archives are thin-LTO bitcode where the toolchain can link one (plan-not
 the CLI's single clang call compiles the generated C to bitcode too and the runtime's accessors and
 builtins inline across the archive boundary. ld64 and lld read bitcode archives; GNU ld needs the
 LLVMgold plugin, and without it the probe fails and the archive is plain objects, reported on the
-recipe's status line. Sanitized builds never use LTO. A probe result or Boehm status that differs
+recipe's status line. Sanitized builds never use LTO. A probe result that differs
 from the last build rebuilds every object (`packages/runtime/build*/cflags.txt`).
 
 ## CI stages (`.github/workflows/ci.yml`)
@@ -227,7 +227,7 @@ compiled against (plan-notes 106).
 | fdlibm (V8 `ieee754.cc`, mechanically ported to C11) | vendored, fdlibm + BSD-3-Clause | yes                          | `Math.sin` and 19 siblings, bit-identical to the pinned Node's                                                     | `packages/runtime/vendor/fdlibm/` — provenance in its `VENDOR.md`                          |
 | Ryū (`d2s`)                                          | vendored, Apache-2.0 OR Boost-1.0 | yes                        | shortest round-trip digits for `Number::toString` (golden rule 5; docs/VALUE.md §3.1)                              | `packages/runtime/vendor/ryu/` — provenance in its `VENDOR.md`                            |
 | libm (`-lm`)                                         | system                          | yes                          | `floor`/`trunc`/`sqrt`/`fmod` — ToInt32, array indexing, the print path                                            | part of libSystem on macOS (the flag is a no-op there), separate on glibc (plan-notes 122) |
-| Boehm GC (`bdw-gc`)                                  | system                          | optional                     | the collector (`docs/VALUE.md` §4.12); without it the runtime falls back to plain `malloc`, no collection          | `pkg-config --libs bdw-gc`; macOS `brew install bdw-gc`, Debian `apt install libgc-dev`    |
+| pyrlyn/gc (`kxgc`)                                   | Zig package, MIT                | yes                          | the collector (`docs/VALUE.md` §4.12, plan/T66)                                                                    | `packages/runtime/build.zig.zon` pins it; the justfile fetches it into `packages/runtime/zig-pkg/` |
 | ICU (`icu-uc`, `icu-i18n`)                           | system                          | optional, feature build only | `Intl` — `just -f packages/runtime/justfile -d packages/runtime runtime-intl`, into `packages/runtime/build-intl/` | `pkg-config`; macOS `brew install icu4c`, Debian `apt install libicu-dev`                  |
 
 The default archive is byte-identical whether or not ICU is installed on the host — that is why
@@ -251,13 +251,13 @@ Beyond Node/pnpm (pinned above), the build shells out to:
 | `objcopy` (`$OBJCOPY`) | `packages/compiler/src/cli/library.ts`, ELF only               | `--emit=lib`: `--keep-global-symbols` makes the private runtime's symbols local (GNU binutils or `llvm-objcopy`; macOS needs none, its linker localizes). Missing or failing: `STA0020` |
 | `pkg-config` (consumer side) | a C build using an `--emit=lib` library              | `pkg-config --cflags --libs lib<name>` reads the emitted `.pc` (docs/FFI.md §8); the CI check `static-lib.ts` uses it |
 | `just`          | justfile                                                             | the runtime build (pinned `1.58.0` in `mise.toml`)       |
-| `zig`           | justfiles (T9.1, T11.2)                                              | memory-core objects into `libjsrt.a`, std backings into `libjsrt_std.a` (pinned `0.16.0` in `mise.toml`; required) |
-| `pkg-config`    | justfile                                                             | finding bdw-gc and ICU; absent means both are simply off |
+| `zig`           | justfiles (T9.1, T11.2)                                              | memory-core objects into `libjsrt.a`, std backings into `libjsrt_std.a` (pinned `0.17.1` in `mise.toml`; required) |
+| `pkg-config`    | justfile                                                             | finding ICU; absent means the feature build reports it missing |
 | `diff`          | `just -f packages/runtime/justfile -d packages/runtime runtime-test` | the print corpus against Node, byte-for-byte             |
 | `nm`            | `packages/tests/impact/` (`test:impact:record`)                      | which `libjsrt.a` members a test's binary linked (Task 6.17); a missing `nm` records "all of the runtime" |
 | `git`           | `packages/tests/impact/` (`test:impact`)                             | the diff against the impact map's commit                  |
 
-`clang` (and the rest of LLVM) and `zig` 0.17.0 are `mise install` on Unix. The others still come from the Xcode
+`clang` (and the rest of LLVM) and `zig` 0.17.1 are `mise install` on Unix. The others still come from the Xcode
 command-line tools (`xcode-select --install`) on macOS and from `binutils`/`pkg-config`/
 `diffutils` on Debian/Ubuntu. A missing compiler is a diagnostic with the install hint (`STA0008`),
 not a crash.

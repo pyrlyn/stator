@@ -193,22 +193,35 @@ fn require(comptime T: type, v: Value, comptime method: []const u8) ?*T {
 
 // ------------------------------------------------------------------------- allocation
 
+fn finalizeBuffer(b: *Buffer) void {
+    gc.bufferFree(b.data);
+}
+
+fn traceView(v: *View, visit: c.jsrt_gc_visit_fn) void {
+    visit.?(v.buffer);
+}
+
+// The bytes are the ArrayBuffer's own buffer and hold no references; a view references only its
+// ArrayBuffer, so neither can be part of a cycle.
+const buffer_kind = gc.kind(Buffer, "ArrayBuffer", null, finalizeBuffer, .{ .cyclic = false });
+const view_kind = gc.kind(View, "Uint8Array", traceView, null, .{ .cyclic = false });
+
 /// A zeroed buffer of `len` bytes, or null with V8's RangeError pending when the allocator refuses.
 fn newBuffer(len: usize) ?*Buffer {
-    // The bytes first: their only reference until the header holds them is this raw local, which
-    // the collector's conservative stack scan sees.
-    const data = gc.allocAtomic(len) orelse {
+    const b: *Buffer = @ptrCast(@alignCast(gc.alloc(@sizeOf(Buffer), &buffer_kind)));
+    b.* = .{ .cls = &jsrt_class_arraybuffer, .data = null, .byte_length = 0 };
+    const data = gc.bufferOrNull(b, len) orelse {
         c.jsrt_throw_error(&c.jsrt_class_range_error, "Array buffer allocation failed");
         return null;
     };
-    const b: *Buffer = @ptrCast(@alignCast(gc.alloc(@sizeOf(Buffer), "ArrayBuffer")));
-    b.* = .{ .cls = &jsrt_class_arraybuffer, .data = @ptrCast(data), .byte_length = len };
+    b.data = @ptrCast(data);
+    b.byte_length = len;
     return b;
 }
 
 /// `cls` is `jsrt_class_uint8array` or a class extending it (plan/T11.6a).
 fn newView(cls: [*c]const c.JSRTClass, buffer: *Buffer, byte_offset: usize, length: usize) Value {
-    const v: *View = @ptrCast(@alignCast(gc.alloc(@sizeOf(View), "Uint8Array")));
+    const v: *View = @ptrCast(@alignCast(gc.alloc(@sizeOf(View), &view_kind)));
     v.* = .{ .cls = cls, .buffer = buffer, .byte_offset = byte_offset, .length = length };
     return box(v);
 }
