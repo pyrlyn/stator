@@ -4,6 +4,7 @@
 // not runtime edges: a program pulls a module in only when it reads one of its globals or imports
 // the module (frontend/location.ts, `NODE_GLOBALS`).
 
+import type * as buffer from './buffer.ts';
 import type { Performance } from './perf_hooks.ts';
 import type { Process } from './process.ts';
 import type * as timers from './timers.ts';
@@ -27,6 +28,10 @@ declare global {
   /** The global `process`: the `node:process` module's default export, which the frontend
    * imports into every file that reads it (`frontend/location.ts`). */
   const process: Process;
+
+  /** `node:buffer`'s `Buffer`, imported the same way; the type is its instances. */
+  const Buffer: typeof buffer.Buffer;
+  type Buffer = buffer.Buffer;
 
   /** `node:perf_hooks`'s `performance`, imported the same way. */
   const performance: Performance;

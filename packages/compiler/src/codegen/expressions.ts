@@ -635,6 +635,8 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
           expr.span,
         );
       }
+      // Named, never guessed from argc: a call that omits an optional parameter would otherwise
+      // shift `this` into the arguments (plan-notes 395, 400).
       const withReceiver = receiverCall(method, emitter.slotAt(base), expr.args.length);
       const withoutReceiver = `jsrt_call_at(${method}, ${String(expr.args.length)}, ${argv}, ${loc})`;
       return emitter.finishStatement(
