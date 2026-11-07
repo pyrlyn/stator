@@ -250,10 +250,10 @@ jsrt_value jsrt_get_iterator(jsrt_value value) {
   if (jsrt_is(value, JSRT_TAG_OBJECT)) {
     const JSRTClass *cls = jsrt_as_object(value)->cls;
     /* The builtin iterables, each with its default walk (a Map yields entries, a Set values). */
-    const int walk = cls == &jsrt_class_map          ? JSRT_ITER_MAP_ENTRIES
-                     : cls == &jsrt_class_set        ? JSRT_ITER_SET_VALUES
-                     : cls == &jsrt_class_uint8array ? JSRT_ITER_UINT8ARRAY
-                                                     : -1;
+    const int walk = cls == &jsrt_class_map            ? JSRT_ITER_MAP_ENTRIES
+                     : cls == &jsrt_class_set          ? JSRT_ITER_SET_VALUES
+                     : jsrt_class_is_uint8array(cls)   ? JSRT_ITER_UINT8ARRAY
+                                                       : -1;
     if (walk >= 0) {
       return jsrt_iterator_new(value, (uint8_t)walk);
     }

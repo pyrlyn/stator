@@ -317,7 +317,8 @@ fn gateMethodCall(g: *Gate, call: *Node, callee: *Node, args: []const *Node) Res
     if (member.isStringReceiver(g, receiver) or member.constraintMatches(g, receiver, .string)) return gateStringMethod(g, name, args);
     if (member.isArrayReceiver(g, receiver) or member.constraintMatches(g, receiver, .array)) return gateArrayMethod(g, name, args);
     if (member.isRegExpReceiver(g, receiver) or member.constraintMatches(g, receiver, .regexp)) return gateRegExpMethod(g, name, args);
-    if (globals.typedReceiverKind(g, receiver)) |typed_receiver| {
+    // A method a `Uint8Array` subclass declares is the class's, not the family's (plan/T11.6a).
+    if (if (globals.isUserClassMember(g, callee)) null else globals.typedReceiverKind(g, receiver)) |typed_receiver| {
         const op = N.typedMember(typed_receiver, name) orelse {
             return g.notYet(g.fmt("{s}.prototype.{s} is not yet supported", .{ N.typedClassName(typed_receiver), name }), 11);
         };

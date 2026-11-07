@@ -1416,6 +1416,8 @@ gains each package in the change that creates it.
 
 ### T11.6. `packages/node`: the N1 wrappers → [`plan/T11.6`](plan/T11.6/task.md)
 
+### ~~T11.6a. `packages/compiler`: a class that extends `Uint8Array`~~ → [`plan/T11.6a`](plan/T11.6a/done.md)
+
 ### T11.7. Node's own test suite, synced and run through vitest → [`plan/T11.7`](plan/T11.7/task.md)
 
 **Deferred — N2 (not a card yet).** `std/loop` written in Zig (the creator chose an own loop

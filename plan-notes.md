@@ -14437,3 +14437,33 @@ table per arity) produced five clones instead of one, because the tables match e
 identifier renaming. So the switch gets `jscpd:ignore` markers that say why in the file, as
 `hir/nodes.ts` does (plan-notes 71). `.jscpd-baseline.json` only shrinks: 19 fingerprints that
 match nothing under 5.4.2 are removed, none added.
+
+## 398. T11.6a: a class that extends `Uint8Array` is a view stamped with its own class (2026-11-07)
+
+**Why.** `node:buffer`'s `Buffer` is a subclass of `Uint8Array` in Node, and the creator directed
+(2026-11-06) that Stator's `Buffer` be one too, as a separate prerequisite card before the T11.6
+Buffer slice. Before this card `class B extends Uint8Array {}` was `STA1214`: the heritage rule
+accepts only a class declaration as a base.
+
+**Decision.** An instance is not a class object with a view inside it; it IS a `JSRTTypedArray`
+whose `cls` word holds the class's descriptor, and the root descriptor's `parent` is
+`&jsrt_class_uint8array`. `cls` sits at offset 0 in both layouts, so the existing parent walk
+(`instanceof`, method lookup) works on views, and the view test becomes that walk
+(`jsrt_class_is_uint8array`). In the type model the instance keeps HType `uint8array`, tagged
+`subclass: {name, bases, methods}`; `classLayoutOf` derives the class layout the method-call,
+`instanceof` and verifier paths read. Nothing that takes a `Uint8Array` -- indexing, `TYPED_OPS`,
+iteration, the extern `bytes` ABI -- needed a change.
+
+**Scope.** The gate admits such a class only with no constructor, no instance field, no instance
+accessor, no `#private` member, not generic, at module scope (every class in the chain). With no
+constructor, `new Sub(...)` is the builtin constructor plus the stamp (`jsrt_uint8array_new_class`),
+and the species construction of `subarray` and `slice` is a copy of the receiver's descriptor --
+the spec's `new Sub(buffer, offset, length)` and `new Sub(count)` run nothing else. A constructor
+would need `super(...)` to build the view and species to call it; that stays `STA1214` until a
+card needs it. `Buffer` itself needs none of the refused forms.
+
+**Evidence.** Goldens `ts/uint8array_subclass` and `js/uint8array_subclass` match the pinned Node
+byte for byte: methods, statics, an override of `toString` (direct and through ToString on an
+untyped receiver), `instanceof` both ways, species `subarray` / `slice`, a two-level chain, and
+Node's `Name(n) [Uint8Array] [ … ]` print, `[Name [Uint8Array]]` past the depth cap. Decision tests
+`subset_uint8array_subclass{,_not_yet}_{ts,js}`. Docs: `docs/VALUE.md` §4.19, `docs/SUBSET.md`.
