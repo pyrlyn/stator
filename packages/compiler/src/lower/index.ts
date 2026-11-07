@@ -8936,9 +8936,8 @@ function lowerFunction(
     // site passes its receiver or nothing, and `jsrt_call` shifts a bare call's arguments so slot
     // zero reads `undefined` (docs/VALUE.md §4.16 `has_receiver` — reused, not reinvented; emitted
     // modules are always strict ESM, so `undefined` is the honest answer, never the sloppy
-    // global). Only functions that need it pay for it: an unconditional receiver would make
-    // `f(1, 2)` on `function f(a)` look like a receiver call (argc meets the shifted width) and
-    // bind `this = 1, a = 2`. Arrows never own one — they capture the enclosing receiver through
+    // global). Only functions that need it pay for it: the shift copies argv on every bare call.
+    // Arrows never own one — they capture the enclosing receiver through
     // the environment, which the capture analysis already records against plain functions.
     const isPlainFunction = ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node);
     let effectiveReceiver = receiver;

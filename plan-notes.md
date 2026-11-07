@@ -14557,7 +14557,93 @@ statically to `Uint8Array`'s member, where Node dispatches to the override (`sli
 of sharing). Fixing it means a class check at every `TYPED_OPS` call whose receiver may be a
 subclass; it waits for a program that needs it. Listed in `docs/SUBSET.md`.
 
-## 401. T66: Boehm is replaced by pyrlyn/gc as deferred reference counting (2026-11-07)
+## 401. T14.1: the interpreter's parse entry on Test262 `language/`; parse speed and `libjsrt_interp.a` (2026-11-07)
+
+**What landed.** `packages/interpreter/` (Zig 0.17.0). `src/parse.zig` is the parse entry from
+docs/INTERPRETER.md §1. `src/capi.zig` is `jsrt_interp_parse_script`, which throws `SyntaxError`
+through `jsrt_throw_error`. `test262/parse.zig` is the Test262 driver. stator-ts's `lib.zig` does
+not export `parser.zig`, so the package roots a module of its own at that file, and the tree types
+are named through `parser.parse`'s signature. `packages/transpiler` is unchanged.
+
+**Rate.** Test262 is at the pin (`packages/tests/test262/pin.json`, `771005236e88`). The driver
+reads every `test/language/**/*.js` that is not a `_FIXTURE`, in each mode Test262's
+INTERPRETING.md asks for. A `negative: phase: parse` test must answer a `SyntaxError`, and every
+other test must parse.
+
+| | Value |
+| --- | --- |
+| Tests | 23,726 (40,694 parses: both modes unless a flag picks one) |
+| Pass | 19,162 (80.76%), ratcheted per directory in `packages/interpreter/test262-parse.json` |
+| Parse speed, `ReleaseFast`, Apple M3 Max | 188–194 MiB/s over 73.41 MiB (3 runs; parse calls only, arena reset per test) |
+| `libjsrt_interp.a`, `ReleaseFast` | 3,152,688 B; 562,888 B after `strip -S` (`__TEXT` 423,458 B) |
+| `libjsrt_interp.a`, `ReleaseSmall` / `ReleaseSafe` | 323,280 B / 3,553,464 B |
+
+**What fails is stator-ts's.** It is coordinated with that package's owners and is not fixed in
+this change.
+
+1. **3,444 early errors not reported** (2,951 sloppy, 320 strict, 173 module). The largest groups,
+   by directory unless the line says otherwise:
+   - `class` (1,092): strict-mode `yield`, escaped keywords, rest-parameter trailing comma, private
+     names.
+   - Destructuring (516 tests carry the `destructuring-binding` tag, overlapping the groups here):
+     rest not last, rest with an initializer.
+   - Invalid assignment targets (`expressions/assignmenttargettype`, 198).
+   - RegExp pattern early errors (`literals/regexp`, 173): modifiers, group names.
+   - Redeclarations (`block-scope/syntax`, 102).
+   - `"use strict"` with non-simple parameters.
+
+   tsc reports many of these from its binder (`checkStrictModeIdentifier`, redeclarations) or its
+   checker. stator-ts's binder would answer part of them, but the interpreter reaches it only once
+   `lib.zig` exports the parser along with the binder it already exports.
+2. **779 identifiers rejected** (`Invalid character.`). The cause is a Unicode escape or a non-ASCII
+   character at an identifier's start: in private names (`#\u{6F}`, `#℘`, ZWNJ/ZWJ inside one),
+   and in `identifiers/start-unicode-*-class-escaped`.
+3. **232 proposal tests rejected**: `import defer` (142) and source-phase `import source` (90).
+   `import.defer(…)` and `import.source(…)` also set `is_module` the way `import.meta` does, so the
+   Script goal rejects them with the `import.meta` message.
+4. **75 top-level `await` tests rejected** under the module goal (`module-code/top-level-await`).
+   The parser has no goal flag, so a module that neither imports nor exports reads `await` as an
+   identifier.
+5. **34 other rejects**:
+   - an escaped identifier part (15)
+   - class bodies (8)
+   - U+2028 / U+2029 between tokens or in a comment (4)
+   - hashbang comments (3)
+   - `using` / `await using` (2)
+   - import attributes (1)
+   - a no-break space (1)
+
+TypeScript-only syntax in JavaScript source (a type annotation, `as`, `enum`) still parses: neither
+stator-ts nor the interpreter rejects it, and Test262 does not test it.
+
+## 402. T11.6: `node:crypto` digests over `std/hash` (2026-11-07)
+
+**What landed.** `packages/node/src/internal/crypto.ts` gives `createHash`, the `Hash` class
+(`update`, `copy`, `digest`) and the one-shot `hash`, each checked against Node v26.7.0
+`lib/internal/crypto/hash.js`: `update` chains and reads a string in its input encoding (UTF-8
+when absent or unknown), `digest` answers a `Buffer` without an encoding or with an unknown one
+and text otherwise, a finished hash throws `ERR_CRYPTO_HASH_FINALIZED` from `digest`, `update` and
+`copy`, and `hash` defaults to hex and throws `ERR_INVALID_ARG_VALUE` for an unknown output
+encoding. `node:crypto` has a namespace default export, and `require('crypto')` answers it, which
+is how `tsc` loads it (`sys.createSHA256Hash`). `docs/NODE.md`: `node:crypto` 6/148, slice N1
+33/37.
+
+**One-shot backing.** `std/hash` computes a digest over a whole input, so `update` keeps copies of
+its input and `digest` hashes their concatenation once. The answer is the same; the cost is the
+buffered input, which for `tsc` is one file's text. A streaming `std/hash` is not needed until a
+caller hashes more than it can hold.
+
+**Algorithms.** `std/hash` has SHA-256, SHA-1 and MD5, so those are the algorithms, under the
+spellings OpenSSL reads case-insensitively (`sha-256`, `sha2-256`, `RSA-SHA256`, …). Any other
+throws Node's own "Digest method not supported", where Node would hash with OpenSSL (`sha512`,
+`sha384`, …). Adding one is a `std/hash` digest plus a case in `digestName`.
+
+**Gaps.** Arguments are not type-checked (`ERR_INVALID_ARG_TYPE`), as `node:timers` documents for
+its own; `DataView` input and the `options` of `createHash` and `copy` are not landed;
+`x instanceof crypto.Hash` through the namespace is `STA1214` in `ts` mode ("instanceof against
+anything but a class name"), while the named `Hash` works.
+
+## 403. T66: Boehm is replaced by pyrlyn/gc as deferred reference counting (2026-11-07)
 
 **Direction.** The creator asked to replace Boehm with https://github.com/pyrlyn/gc used as a Zig
 module, as one change (T66). pyrlyn/gc (checked at `9bfc433`, 2026-11-07) is the KotlinX memory

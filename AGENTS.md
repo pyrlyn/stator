@@ -83,6 +83,9 @@ packages/transpiler/ stator-ts: TypeScript parser, binder, checker and JS emitte
                    `stator_ts` module by path dependency (plan/T62); its own AGENTS.md
 packages/jstext/   Zig: JavaScript text semantics over WTF-8 (Number::toString, `\s`, UTF-16 length and
                    order, JSON.stringify of a string), shared by transpiler and compiler-zig (plan/T62)
+packages/interpreter/ Zig: the Phase-14 interpreter (docs/INTERPRETER.md) → libjsrt_interp.a; src/parse.zig
+                   (stator-ts's parser as `eval` and `new Function` read source), src/capi.zig (the C ABI),
+                   test262/parse.zig (Test262 language/ parse driver, ratcheted in test262-parse.json)
 examples/vite/     `vite build` → native binary through vite-stator (a workspace package)
 ```
 
@@ -140,6 +143,8 @@ pnpm run test:runtime           # the runtime's own print corpus vs Node, byte-f
 pnpm run test:asan              # golden fixtures with runtime + generated C under ASan/UBSan
 pnpm run test:leak              # 10M-object loop plus a cyclic one; RSS must plateau
 pnpm run test262                # Test262 slice against packages/tests/test262/pin.json (not part of `ci`)
+pnpm run interp:test            # the interpreter's Zig tests (packages/interpreter; not part of `ci`)
+pnpm run test262:interp-parse   # Test262 language/ through the interpreter's parse entry, ratcheted (not part of `ci`)
 pnpm run test:node-suite        # Node's own tests (packages/tests/node-suite/pin.json) through vitest, ratcheted (not part of `ci`)
 pnpm run differential           # fuzzer vs Node (failures land in packages/tests/differential/failures/)
 pnpm run bench:record           # refresh packages/tests/bench/baseline.json (valid for this machine only)
