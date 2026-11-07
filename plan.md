@@ -1193,6 +1193,8 @@ untouched. This reopens the settled C11-runtime decision (§15.4) on the creator
 
 ### ~~T9.1. Runtime memory core in Zig~~ → [`plan/T9.1`](plan/T9.1/done.md)
 
+### ~~T66. Replace Boehm with pyrlyn/gc~~ → [`plan/T66`](plan/T66/done.md)
+
 ### Language & library boundaries
 
 Normative. Agents do not invent a second compiler language, a Rust crate, or a new runtime.
