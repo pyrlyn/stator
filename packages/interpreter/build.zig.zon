@@ -5,6 +5,7 @@
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .stator_ts = .{ .path = "../transpiler" },
+        .jstext = .{ .path = "../jstext" },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src", "test262" },
 }

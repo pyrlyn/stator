@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const ast = @import("ast.zig");
+/// The tree, for a client that builds the parser as a module of its own (the interpreter).
+pub const ast = @import("ast.zig");
 const jsdoc = @import("jsdoc.zig");
 const lexer = @import("lexer.zig");
 const spelling = @import("spelling.zig");

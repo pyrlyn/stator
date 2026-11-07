@@ -108,6 +108,30 @@ the stator-ts AST to bytecode and runs that.
   inline cache, `jsrt_call_at`, `jsrt_op_add`, …). An instruction that touches a property owns an
   IC slot in its function's IC table, the same `JSRTIC` compiled code uses.
 
+### What runs today (T14.2, first slice)
+
+`jsrt_interp_eval_script` (`src/capi.zig`) parses a Script, resolves it (`src/scope.zig`),
+compiles it (`src/compile.zig`) and runs it (`src/vm.zig`) in the process's one realm
+(`src/realm.zig`). The slice takes expressions (optional chains, compound and logical
+assignment, templates, regexp literals, object and array literals with spread and accessors),
+every statement but `with` and the destructuring forms, and plain and arrow functions with
+default and rest parameters, closures, `this` and a strict `arguments` object. Exceptions unwind
+through `try`/`catch`/`finally`, including `break`, `continue` and `return` out of a `finally`.
+Classes, generators, async functions, destructuring, `with`, BigInt literals and spread
+arguments fail with `Error: not yet supported by the interpreter: …`; the parts of the Check
+that are left (classes onward, the §8 dashboard column, §7's numbers) stay with T14.2.
+
+- **Globals.** A script's top-level `var` and function declarations are properties of the
+  global object; its `let`, `const` and `class` live in the realm's global lexical table, with
+  the hole for the TDZ. The global object holds `globalThis`, `NaN`, `Infinity`, the
+  constructors `jsrt_builtin_ctor` hands out as values, and the five error constructors, which
+  are the realm's own closures because the runtime names error classes only statically. The
+  same reason makes the VM answer `constructor` of a runtime error object itself.
+- **Frames.** Each call takes one collected block: its registers, then its operand stack,
+  published as a `JSRTFrame` so the collector scans it. A pending exception after any
+  instruction that can run user code unwinds to the innermost handler of the function's
+  handler table, or returns to the caller with the exception still pending.
+
 ## 3. Direct `eval`, indirect `eval`, and scopes
 
 - **Which calls are direct.** A call `eval(…)` whose callee is the identifier `eval` with no
@@ -135,9 +159,10 @@ the stator-ts AST to bytecode and runs that.
 ## 4. The boundary with compiled code
 
 - **Calls, compiled → interpreted.** An interpreted function is an ordinary `JSRTClosure` whose
-  `fn` is one trampoline (`jsrt_interp_call`) and whose `env` points at the function's template
-  and captured cells. `jsrt_call`, `jsrt_construct`, `typeof`, `.length` (from `arity`) and
-  `.name` work on it unchanged. `has_receiver` is set for a function that reads `this`.
+  `fn` is one entry point (`vm.zig`'s `entry`) and whose `env` is a two-slot environment holding
+  the function's template and the closure itself, whose parent is the environment the function
+  was created in. `jsrt_call`, `jsrt_construct`, `typeof`, `.length` (from `arity`) and `.name`
+  work on it unchanged. `has_receiver` is always set, so `this` is always `argv[0]`.
 - **Calls, interpreted → compiled.** The VM calls `jsrt_call_at`, `jsrt_call_with_this` and
   `jsrt_construct`, so a compiled callee cannot tell who called it.
 - **Exceptions.** The runtime has no `setjmp`: a throw sets the pending exception and returns, and
@@ -206,6 +231,12 @@ goes to plan-notes with both numbers.
   entry point directly; after T14.3 it is a compiled `js` program that hands the test source to an
   indirect `eval`, so every test executes in the interpreter and the harness's `$262` helpers are
   compiled code. The pass rate is a column of its own in the Task 6.3 dashboard.
+  Today's driver is `test262/run.zig` (`pnpm run test262:interp`): each test with `assert.js`,
+  `sta.js` and its includes, in each mode its flags ask for, in a forked child so a runtime panic
+  costs one test; a negative test passes when it throws an error of the type it names. Counts
+  are ratcheted per directory in `packages/interpreter/test262-run.json`. At the first slice
+  3,231 of 23,726 tests pass; module and async tests are counted as failures, and the 7 crashes
+  left are runtime limits (`String.prototype.replace` with a function, a sticky regexp).
 - **Differential fuzzing** (Task 6.2): the fuzzer's programs also run as `eval` strings, against
   the pinned Node.
 - **Golden fixtures** (`packages/tests/golden/js/eval_*`): byte-for-byte against Node.
@@ -214,7 +245,7 @@ goes to plan-notes with both numbers.
 
 | Package | Holds | Must not |
 | --- | --- | --- |
-| `packages/interpreter` (Zig) | the parser front (`src/parse.zig`, T14.1); the bytecode compiler and the VM; the entry points the runtime calls (`src/capi.zig`: `eval`, the `Function` constructor, the trampoline); the Test262 parse driver (`test262/parse.zig`). It is built into `libjsrt_interp.a` and imports stator-ts's `parser.zig` | hold its own value model, object model or GC |
+| `packages/interpreter` (Zig) | the parser front (`src/parse.zig`, T14.1); the bytecode compiler and the VM; the entry points the runtime calls (`src/capi.zig`: `eval`, the `Function` constructor, the trampoline); the Test262 drivers (`test262/parse.zig`, `test262/run.zig`). It is built into `libjsrt_interp.a` and imports stator-ts's `parser.zig` | hold its own value model, object model or GC |
 | `packages/transpiler` (stator-ts) | the parser | know the interpreter exists |
 | `packages/compiler` (and plan/T41's Zig port) | the `Interpret` HIR node, the eval-visible cells and scope descriptors of §3, and linking `libjsrt_interp.a` only when an `Interpret` node exists | interpret anything at compile time |
 | `packages/runtime` | the C ABI the VM calls | grow a second dispatch path |

@@ -6,10 +6,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const parser = @import("parser");
 
-/// stator-ts's tree, named through the parser's signature: its `ast.zig` belongs to the parser
-/// module and is not exported from it.
+/// stator-ts's tree.
+pub const ast = parser.ast;
 pub const File = std.meta.Child(@typeInfo(@TypeOf(parser.parse)).@"fn".return_type.?);
-pub const Node = std.meta.Child(@FieldType(File, "root"));
+pub const Node = ast.Node;
 
 pub const Goal = enum { script, module };
 

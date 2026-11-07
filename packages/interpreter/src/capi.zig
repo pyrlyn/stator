@@ -3,14 +3,9 @@
 
 const std = @import("std");
 const interp = @import("stator_interp");
+const c = interp.c;
 
-/// `JSRTClass` (jsrt_value.h), only ever passed by address.
-const JSRTClass = opaque {};
-extern const jsrt_class_syntax_error: JSRTClass;
-extern fn jsrt_throw_error(cls: *const JSRTClass, message: [*:0]const u8) void;
-
-/// Parses `src` with the Script goal: true, or false with a `SyntaxError` pending. T14.3 compiles
-/// the tree instead of dropping it.
+/// Parses `src` with the Script goal: true, or false with a `SyntaxError` pending.
 export fn jsrt_interp_parse_script(src: [*]const u8, len: usize) bool {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -19,8 +14,14 @@ export fn jsrt_interp_parse_script(src: [*]const u8, len: usize) bool {
         .syntax_error => |e| {
             const message = arena.allocator().dupeSentinel(u8, e.message, 0) catch @panic("out of memory");
             // jsrt_throw_error copies the message into a string before the arena goes.
-            jsrt_throw_error(&jsrt_class_syntax_error, message);
+            c.jsrt_throw_error(&c.jsrt_class_syntax_error, message);
             return false;
         },
     }
+}
+
+/// Runs `src` as a global script in the interpreter's realm (ECMA-262 ScriptEvaluation): its
+/// completion value, or `undefined` with the exception pending.
+export fn jsrt_interp_eval_script(src: [*]const u8, len: usize) c.jsrt_value {
+    return interp.vm.evalScript(src[0..len]);
 }
