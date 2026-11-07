@@ -61,6 +61,29 @@ pub fn numberToString(a: Allocator, value: f64) Allocator.Error![]const u8 {
     return out.items;
 }
 
+/// The value of a NumericLiteral as the lexer read it (ECMA-262 §12.9.3.3): separators, binary,
+/// octal and hex, and Annex B's legacy octal `017`; a leading-zero decimal `089` reads as decimal.
+/// Null for text that is not one. Past 64 bits a binary, octal or hex literal is read as a big
+/// integer and rounded once to the nearest double, as tsgo does.
+pub fn numericLiteral(raw: []const u8) ?f64 {
+    if (raw.len > 2 and raw[0] == '0') switch (raw[1]) {
+        'x', 'X' => return radixLiteral(raw[2..], 16),
+        'o', 'O' => return radixLiteral(raw[2..], 8),
+        'b', 'B' => return radixLiteral(raw[2..], 2),
+        else => {},
+    };
+    if (raw.len > 1 and raw[0] == '0' and std.mem.indexOfNone(u8, raw, "01234567") == null) return radixLiteral(raw[1..], 8);
+    return std.fmt.parseFloat(f64, raw) catch null;
+}
+
+fn radixLiteral(digits: []const u8, base: u8) ?f64 {
+    if (std.fmt.parseInt(u64, digits, base)) |v| return @floatFromInt(v) else |e| if (e == error.InvalidCharacter) return null;
+    var m = std.math.big.int.Managed.init(std.heap.page_allocator) catch return null;
+    defer m.deinit();
+    m.setString(base, digits) catch return null;
+    return m.toFloat(f64, .nearest_even)[0];
+}
+
 /// JavaScript's `\s`: WhiteSpace and LineTerminator.
 pub fn isSpace(cp: u21) bool {
     return switch (cp) {
@@ -256,6 +279,20 @@ test "Number::toString" {
     try testing.expectEqualStrings("NaN", try numberToString(a, std.math.nan(f64)));
     try testing.expectEqualStrings("0", try numberToString(a, -0.0));
     try testing.expectEqualStrings("-Infinity", try numberToString(a, -std.math.inf(f64)));
+}
+
+test "NumericLiteral values" {
+    try std.testing.expectEqual(@as(?f64, 1000.5), numericLiteral("1_000.5"));
+    try std.testing.expectEqual(@as(?f64, 255), numericLiteral("0xF_F"));
+    try std.testing.expectEqual(@as(?f64, 5), numericLiteral("0b101"));
+    try std.testing.expectEqual(@as(?f64, 15), numericLiteral("0o17"));
+    try std.testing.expectEqual(@as(?f64, 15), numericLiteral("017"));
+    try std.testing.expectEqual(@as(?f64, 89), numericLiteral("089"));
+    try std.testing.expectEqual(@as(?f64, 0), numericLiteral("0"));
+    try std.testing.expectEqual(@as(?f64, 0.0005), numericLiteral(".5e-3"));
+    try std.testing.expectEqual(@as(?f64, 1e100), numericLiteral("1" ++ ("0000000000" ++ "0000000000") ++ ("0000000000" ++ "0000000000") ++ ("0000000000" ++ "0000000000") ++ ("0000000000" ++ "0000000000") ++ ("0000000000" ++ "0000000000")));
+    try std.testing.expectEqual(@as(?f64, 0x1p72), numericLiteral("0x1000000000000000000"));
+    try std.testing.expectEqual(@as(?f64, null), numericLiteral("0xZ"));
 }
 
 test "the \\s set, not ASCII's" {

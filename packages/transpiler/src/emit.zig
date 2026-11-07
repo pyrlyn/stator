@@ -1035,32 +1035,7 @@ pub fn numberText(a: std.mem.Allocator, v: f64) []const u8 {
     return jstext.numberToString(a, v) catch oom();
 }
 
-pub fn parseNumber(raw: []const u8) ?f64 {
-    if (raw.len > 2 and raw[0] == '0') switch (raw[1]) {
-        'x', 'X' => return parseRadix(raw[2..], 16),
-        'o', 'O' => return parseRadix(raw[2..], 8),
-        'b', 'B' => return parseRadix(raw[2..], 2),
-        else => {},
-    };
-    var buf: [64]u8 = undefined;
-    var n: usize = 0;
-    for (raw) |c| {
-        if (c == '_') continue;
-        if (n == buf.len) return null;
-        buf[n] = c;
-        n += 1;
-    }
-    return std.fmt.parseFloat(f64, buf[0..n]) catch null;
-}
-
-/// Past 64 bits tsgo reads the digits as a big integer and rounds once to the nearest double.
-fn parseRadix(digits: []const u8, base: u8) ?f64 {
-    if (std.fmt.parseInt(u64, digits, base)) |v| return @floatFromInt(v) else |e| if (e == error.InvalidCharacter) return null;
-    var m = std.math.big.int.Managed.init(std.heap.page_allocator) catch return null;
-    defer m.deinit();
-    m.setString(base, digits) catch return null;
-    return m.toFloat(f64, .nearest_even)[0];
-}
+pub const parseNumber = jstext.numericLiteral;
 
 fn enumKey(n: *Node) ?[]const u8 {
     return switch (n.data) {
