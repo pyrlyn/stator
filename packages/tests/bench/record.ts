@@ -162,6 +162,37 @@ function sameHostPrevious(): { readonly path: string; readonly stator: EngineRes
   return stator === undefined ? undefined : { path: join(RESULTS, file), stator };
 }
 
+interface Test262Rate {
+  readonly passed: number;
+  readonly total: number;
+}
+
+/** Test262 `language/` through the interpreter (plan T14.2), summed from the ratchet that
+ * `zig build test262-exec -- --update` records: that driver measures it, this page only shows it. */
+export function interpreterTest262(file = join(REPO, 'interpreter', 'test262-exec.json')): Test262Rate | undefined {
+  if (!existsSync(file)) return undefined;
+  const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+  if (typeof parsed !== 'object' || parsed === null || !('dirs' in parsed)) return undefined;
+  const dirs: unknown = parsed.dirs;
+  if (typeof dirs !== 'object' || dirs === null) return undefined;
+  let passed = 0;
+  let total = 0;
+  for (const counts of Object.values(dirs)) {
+    if (typeof counts !== 'object' || counts === null) continue;
+    if (!('passed' in counts) || !('total' in counts)) continue;
+    if (typeof counts.passed !== 'number' || typeof counts.total !== 'number') continue;
+    passed += counts.passed;
+    total += counts.total;
+  }
+  return total === 0 ? undefined : { passed, total };
+}
+
+export function test262Cell(rate: Test262Rate | undefined): string {
+  return rate === undefined
+    ? '—'
+    : `${((rate.passed * 100) / rate.total).toFixed(2)}% (${String(rate.passed)} / ${String(rate.total)})`;
+}
+
 function geomean(measurements: readonly ProgramMeasurement[]): number {
   const values = measurements
     .map((measurement) => measurement.runtimeMsBest)
@@ -201,6 +232,7 @@ function main(): void {
     );
   }
   const stamp = new Date().toISOString();
+  const test262 = interpreterTest262();
   const result = {
     recordedAt: stamp,
     host: {
@@ -214,6 +246,7 @@ function main(): void {
     runsPerProgram: RUNS,
     programs,
     engines,
+    interpreterTest262: test262 ?? null,
     regression: { thresholdPercent: 20, statorGeomeanMs: geomean(stator.measurements) },
   };
   const previous = sameHostPrevious();
@@ -243,12 +276,13 @@ function main(): void {
     '',
     `Generated: ${stamp}`,
     '',
-    '| Engine | Version | Geomean runtime (ms) |',
-    '|---|---|---:|',
+    '| Engine | Version | Geomean runtime (ms) | Test262 language/ (interpreter) |',
+    '|---|---|---:|---:|',
   ];
+  // Only Stator's own interpreter has a Test262 column: no other engine's run is measured here.
   for (const engine of engines)
     lines.push(
-      `| ${engine.engine} | ${engine.version} | ${engine.measurements.length === 0 ? '—' : geomean(engine.measurements).toFixed(2)} |`,
+      `| ${engine.engine} | ${engine.version} | ${engine.measurements.length === 0 ? '—' : geomean(engine.measurements).toFixed(2)} | ${engine.engine === 'stator' ? test262Cell(test262) : '—'} |`,
     );
   writeFileSync(join(HERE, 'README.md'), `${lines.join('\n')}\n`, 'utf8');
   process.stdout.write(`bench: recorded ${String(programs.length)} programs to ${path}\n`);
