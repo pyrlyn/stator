@@ -51,7 +51,7 @@ console.log(less);
 
 const nums = [];
 for (let i = 0; i < 500; i++) nums.push((i * 17) % 500);
-nums.sort();
+nums.sort(); // NOSONAR javascript:S2871 -- the default string order is the path under test
 console.log(nums[0], nums[nums.length - 1], nums.length);
 
 let eq = 0;
