@@ -3,51 +3,51 @@
   "tests": {
     "test-path-basename.js": {
       "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then path.win32 (T11.6), and the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "reason": "stops first at path.win32 (T11.6)"
     },
     "test-path-dirname.js": {
       "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then path.win32 (T11.6), and the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "reason": "stops first at the bundle's CommonJS interop helpers `__toESM`/`__copyProps` need `Object.defineProperty` and `Object.getOwnPropertyDescriptor` (STA1214, T12.3 over T11.4); then path.win32 (T11.6)"
     },
     "test-path-extname.js": {
       "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then path.win32 (T11.6), and the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "reason": "stops first at `JSON.stringify` of a value that may be undefined (STA1214, Phase 5); then path.win32 (T11.6)"
     },
     "test-path-glob.js": {
       "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then path.win32 (T11.6), path.matchesGlob (T11.6), ERR_INVALID_ARG_TYPE argument checks in node:path, and the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "reason": "stops first at destructuring in a `for-of` binding (STA1214, Phase 6); then path.matchesGlob and path.win32 (T11.6)"
     },
     "test-path-isabsolute.js": {
       "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then path.win32 (T11.6), and the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "reason": "stops first at path.win32 (T11.6)"
     },
     "test-path-join.js": {
       "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then path.win32 (T11.6), and the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "reason": "stops first at `JSON.stringify` as a value (STA1214, Phase 5); then path.win32 (T11.6)"
     },
     "test-path-makelong.js": {
       "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then path.win32 (T11.6), and the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "reason": "stops first at the bundle's CommonJS interop helpers `__toESM`/`__copyProps` need `Object.defineProperty` and `Object.getOwnPropertyDescriptor` (STA1214, T12.3 over T11.4); then path.win32 (T11.6)"
     },
     "test-path-normalize.js": {
       "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then path.win32 (T11.6), and the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "reason": "stops first at path.win32 (T11.6)"
     },
     "test-path-parse-format.js": {
       "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then path.win32 (T11.6), ERR_INVALID_ARG_TYPE argument checks in node:path, and the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "reason": "stops first at the bundle's CommonJS interop helpers `__toESM`/`__copyProps` need `Object.defineProperty` and `Object.getOwnPropertyDescriptor` (STA1214, T12.3 over T11.4); then path.win32 (T11.6), and ERR_INVALID_ARG_TYPE argument checks in node:path"
     },
     "test-path-posix-exists.js": {
-      "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "expect": "pass",
+      "reason": "passes since untyped reads and writes run class accessors (plan-notes 403)"
     },
     "test-path-posix-relative-on-windows.js": {
-      "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "expect": "pass",
+      "reason": "passes since untyped reads and writes run class accessors (plan-notes 403)"
     },
     "test-path-relative.js": {
       "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then path.win32 (T11.6), and the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "reason": "stops first at `JSON.stringify` as a value (STA1214, Phase 5); then path.win32 (T11.6)"
     },
     "test-path-resolve.js": {
       "expect": "skip",
@@ -55,7 +55,7 @@
     },
     "test-path-win32-exists.js": {
       "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then path.win32 (T11.6), and the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "reason": "stops first at `node:path/win32` has not landed (STA1214, T11.6)"
     },
     "test-path-win32-normalize-device-names.js": {
       "expect": "skip",
@@ -63,11 +63,11 @@
     },
     "test-path-zero-length-strings.js": {
       "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then path.win32 (T11.6), and the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "reason": "stops first at path.win32 (T11.6)"
     },
     "test-path.js": {
       "expect": "fail",
-      "reason": "CommonJS through the T12 bundler; `../common` resolves (the corpus links it to this harness), and the harness stops at `node:process` (STA1214, T11.6); then path.win32 (T11.6), ERR_INVALID_ARG_TYPE argument checks in node:path, and the bundle's CommonJS interop helper `__commonJSMin` (STA4013, T12.3)"
+      "reason": "stops first at the bundle's CommonJS interop helpers `__toESM`/`__copyProps` need `Object.defineProperty` and `Object.getOwnPropertyDescriptor` (STA1214, T12.3 over T11.4); then path.win32 (T11.6), and ERR_INVALID_ARG_TYPE argument checks in node:path"
     }
   }
 }
