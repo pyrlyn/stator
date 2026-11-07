@@ -16,13 +16,11 @@ function report(run: () => string | object): void {
 }
 
 console.log(createHash("sha256").update("abc").digest("hex"));
-console.log(crypto.createHash("sha1").update("abc").digest("hex"));
-console.log(createHash("md5").update("abc").digest("base64"));
 console.log(createHash("sha256").digest("hex"));
 
-// Spellings OpenSSL accepts.
-for (const name of ["SHA256", "sha-256", "RSA-SHA256", "Sha1", "MD5"]) {
-  console.log(name, createHash(name).update("x").digest("hex").length);
+// Every digest `std/hash` computes, under spellings OpenSSL accepts.
+for (const name of ["SHA256", "sha-256", "RSA-SHA256", "Sha1", "sha-1", "MD5", "rsa-md5"]) {
+  console.log(name, createHash(name).update("abc").digest("hex"));
 }
 report(() => createHash("nope"));
 
@@ -33,24 +31,24 @@ h.update(new Uint8Array([99]));
 const twin = h.copy();
 console.log(h.digest("hex"));
 console.log(twin.digest("base64"));
-console.log(createHash("md5").update("ff", "hex").update("ZmY=", "base64").digest("hex"));
-console.log(createHash("sha1").update("é", "latin1").digest("hex"));
-console.log(createHash("sha1").update("é").digest("hex"));
-console.log(createHash("md5").update("x", "bogus").digest("hex"));
+console.log(createHash("sha256").update("ff", "hex").update("ZmY=", "base64").digest("hex"));
+console.log(createHash("sha256").update("é", "latin1").digest("hex"));
+console.log(createHash("sha256").update("é").digest("hex"));
+console.log(createHash("sha256").update("x", "bogus").digest("hex"));
 
 // The input is hashed as `update` receives it.
 const bytes = new Uint8Array([1, 2, 3]);
-const early = createHash("md5").update(bytes);
+const early = createHash("sha256").update(bytes);
 bytes[0] = 9;
 console.log(early.digest("hex"));
 
 // A digest without an encoding, or with an unknown one, is a `Buffer`.
-const raw = createHash("md5").update("hi").digest();
+const raw = createHash("sha256").update("hi").digest();
 console.log(raw.length, raw instanceof Uint8Array, raw.toString("hex"));
-const odd = createHash("md5").update("hi").digest("bogus");
+const odd = createHash("sha256").update("hi").digest("bogus");
 console.log(typeof odd, odd.length);
-console.log(createHash("md5").update("hi").digest("latin1").length);
-console.log(createHash("md5").update("x").digest("base64url"));
+console.log(createHash("sha256").update("hi").digest("latin1").length);
+console.log(createHash("sha256").update("x").digest("base64url"));
 
 // A finished hash refuses more work.
 const done = createHash("sha256");

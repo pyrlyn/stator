@@ -14,8 +14,8 @@ function sha256(data) {
 
 console.log(sha256("abc"));
 console.log(sha256(""));
-console.log(createHash("md5").update("ab").update("c").digest("base64"));
-const h = createHash("sha1");
+console.log(createHash("sha256").update("ab").update("c").digest("base64"));
+const h = createHash("sha256");
 h.update("x");
 const twin = h.copy();
 console.log(h.digest("hex"), twin.digest("hex"));
