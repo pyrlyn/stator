@@ -45,7 +45,7 @@
 
 ## Check
 
-Run in worktree `stator-t66` on macOS arm64. The lint step ran as `oxlint --deny-warnings .` plus
+Run in worktree `stator-t66` on macOS arm64, after merging `origin/main` at `bc79ca46`. The lint step ran as `oxlint --deny-warnings .` plus
 `oxfmt --check` over tracked and untracked non-ignored files, because the local git-ignored
 `.claude/settings.local.json` is not project source; every other step is `pnpm run ci`'s.
 
@@ -53,16 +53,16 @@ Run in worktree `stator-t66` on macOS arm64. The lint step ran as `oxlint --deny
 88 clones · 1.4% duplication
 Test Files  63 passed (63)
      Tests  816 passed (816)
-subset: 1032 fixtures — 1001 passed, 31 expected-fail, 0 failed
-golden: 505 fixtures — 505 passed, 0 failed
-selfhost: 20 targets match the baseline
+subset: 1035 fixtures — 1004 passed, 31 expected-fail, 0 failed
+golden: 508 fixtures — 508 passed, 0 failed
+selfhost: 21 targets match the baseline
 builtins: 258/324 surface members landed (80%), +5 nondeterministic (proved outside golden)
-leak: 10M objects — peak RSS 12832 KB of a 65536 KB cap, 44 samples, plateau
-leak: 10M FFI strings — peak RSS 12592 KB of a 65536 KB cap, 402 samples, plateau
-leak: 2M computed-key reads — peak RSS 12944 KB of a 65536 KB cap, 26 samples, plateau
-leak: 2M garbage cycles — peak RSS 16000 KB of a 65536 KB cap, 60 samples, plateau
+leak: 10M objects — peak RSS 11824 KB of a 65536 KB cap, 43 samples, plateau
+leak: 10M FFI strings — peak RSS 12560 KB of a 65536 KB cap, 393 samples, plateau
+leak: 2M computed-key reads — peak RSS 12304 KB of a 65536 KB cap, 29 samples, plateau
+leak: 2M garbage cycles — peak RSS 15936 KB of a 65536 KB cap, 54 samples, plateau
 ffi static-lib: ok (asan, two libraries, two collectors collecting on every allocation)
-golden: 505 fixtures — 505 passed, 0 failed          (golden-asan)
+golden: 508 fixtures — 508 passed, 0 failed          (golden-asan)
 asan: golden-asan green
 CI-ALL-GREEN
 ```
@@ -73,7 +73,7 @@ Beyond the Check:
 $ pnpm run test:ffi
 ffi: 5 checks — 5 passed, 0 failed, 0 not run
 $ JSRT_GC_VERIFY=1 node packages/tests/golden/run.ts
-golden: 505 fixtures — 505 passed, 0 failed
+golden: 508 fixtures — 508 passed, 0 failed
 $ git grep -nE 'JSRT_HAVE_BOEHM|[<"/]gc\.h|bdw-gc|GC_[a-z_]+\(' -- packages docs .github mise.toml toolchain.md ':!packages/tests/bench/memory/' ':!docs/research/'
 (empty, exit 1)
 ```
