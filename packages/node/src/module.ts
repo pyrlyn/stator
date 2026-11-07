@@ -8,6 +8,7 @@
 // is not-yet), and the errors do not extend `Error` (internal/errors.ts).
 
 import assert from './assert.ts';
+import crypto from './crypto.ts';
 import { NodeError } from './internal/errors.ts';
 import fs from './fs.ts';
 import { fileHrefToPath } from './internal/url.ts';
@@ -113,6 +114,8 @@ function landed(id: string): unknown {
       // A static called through a class object is not yet supported (plan-notes 399, 400), so the
       // named import and the global are `Buffer`'s spellings; `require` answers the not-yet error.
       return undefined;
+    case 'crypto':
+      return crypto;
     case 'fs':
       return fs;
     case 'module':

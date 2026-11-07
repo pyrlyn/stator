@@ -14615,3 +14615,30 @@ this change.
 
 TypeScript-only syntax in JavaScript source (a type annotation, `as`, `enum`) still parses: neither
 stator-ts nor the interpreter rejects it, and Test262 does not test it.
+
+## 402. T11.6: `node:crypto` digests over `std/hash` (2026-11-07)
+
+**What landed.** `packages/node/src/internal/crypto.ts` gives `createHash`, the `Hash` class
+(`update`, `copy`, `digest`) and the one-shot `hash`, each checked against Node v26.7.0
+`lib/internal/crypto/hash.js`: `update` chains and reads a string in its input encoding (UTF-8
+when absent or unknown), `digest` answers a `Buffer` without an encoding or with an unknown one
+and text otherwise, a finished hash throws `ERR_CRYPTO_HASH_FINALIZED` from `digest`, `update` and
+`copy`, and `hash` defaults to hex and throws `ERR_INVALID_ARG_VALUE` for an unknown output
+encoding. `node:crypto` has a namespace default export, and `require('crypto')` answers it, which
+is how `tsc` loads it (`sys.createSHA256Hash`). `docs/NODE.md`: `node:crypto` 6/148, slice N1
+33/37.
+
+**One-shot backing.** `std/hash` computes a digest over a whole input, so `update` keeps copies of
+its input and `digest` hashes their concatenation once. The answer is the same; the cost is the
+buffered input, which for `tsc` is one file's text. A streaming `std/hash` is not needed until a
+caller hashes more than it can hold.
+
+**Algorithms.** `std/hash` has SHA-256, SHA-1 and MD5, so those are the algorithms, under the
+spellings OpenSSL reads case-insensitively (`sha-256`, `sha2-256`, `RSA-SHA256`, …). Any other
+throws Node's own "Digest method not supported", where Node would hash with OpenSSL (`sha512`,
+`sha384`, …). Adding one is a `std/hash` digest plus a case in `digestName`.
+
+**Gaps.** Arguments are not type-checked (`ERR_INVALID_ARG_TYPE`), as `node:timers` documents for
+its own; `DataView` input and the `options` of `createHash` and `copy` are not landed;
+`x instanceof crypto.Hash` through the namespace is `STA1214` in `ts` mode ("instanceof against
+anything but a class name"), while the named `Hash` works.
