@@ -44,7 +44,7 @@ import {
 import { assertedBy, isCheckable } from './narrowing.ts';
 import * as frontendTypes from './types.ts';
 import { classDeclarationOf, accessorDeclaringClass, classDisplayName } from './types.ts';
-import { isClassFormationDeclarator } from './types.ts';
+import { isClassFormationDeclarator, isGlobalNamed } from './types.ts';
 import {
   classifyExternDeclaration,
   classifyOutSlotCall,
@@ -3219,7 +3219,10 @@ function gateCall(call: ts.CallExpression, typeChecker: ts.TypeChecker, mode: Mo
     // A Uint8Array / ArrayBuffer method: a landed row is vetted for the argument count it allows;
     // any other member is the rest of the family's surface, refused by its qualified name (the
     // refusal stops the walk, so the member gate never gets to say it).
-    const typedReceiver = typedReceiverKind(callee.expression, typeChecker);
+    // A method a `Uint8Array` subclass declares is the class's, not the family's (plan/T11.6a).
+    const typedReceiver = isUserClassMember(callee, typeChecker)
+      ? undefined
+      : typedReceiverKind(callee.expression, typeChecker);
     const typedOp =
       typedReceiver === undefined ? undefined : typedMember(typedReceiver, callee.name.text);
     if (typedReceiver !== undefined && typedOp === undefined) {
@@ -4652,6 +4655,9 @@ function gateHeritage(
     if (clause.types.length !== 1) {
       return notYet('extending other than exactly one class is not yet supported', 5);
     }
+    if (frontendTypes.extendsUint8Array(declaration, checker)) {
+      return gateViewClass(declaration);
+    }
     const base = frontendTypes.baseClassOf(declaration, checker);
     if (base === undefined) {
       return notYet('extending anything but a class declaration is not yet supported', 5);
@@ -4672,6 +4678,44 @@ function gateHeritage(
     }
   }
   return { kind: 'accept' };
+}
+
+/** A class whose chain extends `Uint8Array` (plan/T11.6a). Its instances are views the runtime
+ * lays out, so it may add methods and statics but no per-instance state: no instance field, no
+ * accessor, no `#private` member. It declares no constructor either, which is what makes
+ * species construction (`subarray` and `slice` answer the subclass) exactly "a view with the
+ * receiver's class": with a constructor, Node runs it on every species construction. */
+function gateViewClass(declaration: ts.ClassDeclaration | ts.ClassExpression): GateResult {
+  if (declaration.typeParameters !== undefined && declaration.typeParameters.length > 0) {
+    return notYet(`a generic class extending Uint8Array is not yet supported`, 11);
+  }
+  if (!isClassAtModuleScope(declaration)) {
+    return notYet(`a nested class extending Uint8Array is not yet supported`, 11);
+  }
+  const refused = declaration.members.map(viewMemberRefusal).find((r) => r !== undefined);
+  return refused === undefined
+    ? { kind: 'accept' }
+    : notYet(`${refused} in a class extending Uint8Array is not yet supported`, 11);
+}
+
+/** What `gateViewClass` refuses `member` as, or `undefined` when a view class may declare it. */
+function viewMemberRefusal(member: ts.ClassElement): string | undefined {
+  if (ts.isConstructorDeclaration(member)) {
+    return 'a constructor';
+  }
+  if (frontendTypes.isStaticMember(member) || ts.isSemicolonClassElement(member)) {
+    return undefined;
+  }
+  if (member.name !== undefined && ts.isPrivateIdentifier(member.name)) {
+    return 'a #private member';
+  }
+  if (ts.isPropertyDeclaration(member)) {
+    return 'an instance field';
+  }
+  if (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) {
+    return 'an accessor';
+  }
+  return undefined;
 }
 
 /** Whether `extends Base<...>` on `declaration` names one complete tuple the layout can ground
@@ -6116,7 +6160,9 @@ function gateMemberAccess(
   // property only as a read (the assignment gate refuses a write into a builtin, as it does for
   // `re.lastIndex`). Everything else on the prototype is the rest of the family's surface.
   const typedReceiver = typedReceiverKind(access.expression, checker);
-  if (typedReceiver !== undefined) {
+  // A member a `Uint8Array` subclass declares itself is the class's, vetted by the class paths
+  // below (plan/T11.6a); only what it inherits from the lib is a typed-array member.
+  if (typedReceiver !== undefined && !isUserClassMember(access, checker)) {
     const member = access.name.text;
     const qualified = `${typedClassName(typedReceiver)}.prototype.${member}`;
     const op = typedMember(typedReceiver, member);
@@ -6655,6 +6701,20 @@ export function typedConstructorOf(
   return isGlobalNamed(node, checker, 'ArrayBuffer') ? 'arraybuffer' : undefined;
 }
 
+/** Whether `access` names a member some user class declares (a method of a `Uint8Array`
+ * subclass, say) rather than one the lib declares. */
+export function isUserClassMember(
+  access: ts.PropertyAccessExpression,
+  checker: ts.TypeChecker,
+): boolean {
+  const declaration = checker.getSymbolAtLocation(access.name)?.valueDeclaration;
+  return (
+    declaration !== undefined &&
+    !declaration.getSourceFile().isDeclarationFile &&
+    (ts.isClassDeclaration(declaration.parent) || ts.isClassExpression(declaration.parent))
+  );
+}
+
 /** The checker says the receiver is a Uint8Array or an ArrayBuffer -- through the HType mapping,
  * so the gate and the lowering agree on it the way they do for a Date. */
 export function typedReceiverKind(
@@ -6673,14 +6733,6 @@ export function errorCtorName(
 ): ErrorClass | undefined {
   const hit = ERROR_CLASSES.find((name) => isGlobalNamed(node, checker, name));
   return hit;
-}
-
-function isGlobalNamed(node: ts.Expression, checker: ts.TypeChecker, name: string): boolean {
-  if (!ts.isIdentifier(node) || node.text !== name) {
-    return false;
-  }
-  const declarations = checker.getSymbolAtLocation(node)?.declarations ?? [];
-  return declarations.length > 0 && declarations.every((d) => d.getSourceFile().isDeclarationFile);
 }
 
 /** The Object namespace calls that lower, and what each takes.

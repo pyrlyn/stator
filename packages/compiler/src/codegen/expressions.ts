@@ -1238,7 +1238,10 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
         return `${name}(${operands})`;
       }
       const { base, parts, flushed, operands } = sequenceCallOperands(emitter, expr, expr.span);
-      const opCall = `${name}(${operands})`;
+      const opCall =
+        expr.kind === 'typed-op' && expr.viewClass !== undefined
+          ? `jsrt_uint8array_new_class(${classDescriptor(emitter, expr.viewClass)}, ${operands})`
+          : `${name}(${operands})`;
       // Every typed op can throw: a RangeError for a length or bound, or the TypeError a lying
       // receiver gets (golden rule 4) -- so each one is a statement with its pending check.
       return emitter.finishOp(
@@ -1339,9 +1342,7 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
       if (expr.builtin === true) {
         return `jsrt_bool(jsrt_instanceof_builtin(${emitter.emitExpression(expr.target)}, ${cNameLiteral(expr.className)}))`;
       }
-      emitter.classAt(expr.className);
-      const id = String(emitter.classIds.get(expr.className));
-      return `jsrt_bool(jsrt_instanceof(${emitter.emitExpression(expr.target)}, &_jsrt_class_${id}))`;
+      return `jsrt_bool(jsrt_instanceof(${emitter.emitExpression(expr.target)}, ${classDescriptor(emitter, expr.className)}))`;
     }
 
     // `new v(...)` where `v` is a class object or a constructible function: allocation and the
@@ -1527,7 +1528,9 @@ export function methodIdOrNull(emitter: Emitter, entry: VtableEntry): number | n
 
 export function baseDescriptor(emitter: Emitter, cls: ClassDeclaration, id: number): string {
   if (cls.base === undefined) {
-    return 'NULL';
+    // The parent walk `instanceof` and method lookup do then reaches the builtin's descriptor,
+    // which is what makes a subclass instance a `Uint8Array` everywhere the runtime asks.
+    return cls.view === true ? '&jsrt_class_uint8array' : 'NULL';
   }
   const baseId = emitter.classIds.get(cls.base);
   if (baseId === undefined || baseId >= id) {
@@ -1538,6 +1541,12 @@ export function baseDescriptor(emitter: Emitter, cls: ClassDeclaration, id: numb
 
 /* The declaration a class name refers to. A miss means counting and emission disagree about
  * which classes exist, which is an emitter bug rather than anything the program did. */
+
+/** `&_jsrt_class_N` for a class by name; `classAt` checks that counting registered it. */
+export function classDescriptor(emitter: Emitter, name: string): string {
+  emitter.classAt(name);
+  return `&_jsrt_class_${String(emitter.classIds.get(name))}`;
+}
 
 export function classAt(emitter: Emitter, name: string): ClassDeclaration {
   const id = emitter.classIds.get(name);

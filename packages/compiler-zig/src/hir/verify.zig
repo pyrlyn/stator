@@ -366,7 +366,8 @@ const Verifier = struct {
         slot: i32,
     ) Allocator.Error!void {
         const target_type = target.getType();
-        const object: ?*const HObject = if (target_type.* == .object) &target_type.object else null;
+        const layout = types.classLayoutOf(target_type);
+        const object: ?*const HObject = if (layout) |*found| found else null;
         if (object == null or
             (!std.mem.eql(u8, object.?.name, class_name) and !contains(object.?.bases, class_name)))
         {
@@ -564,7 +565,8 @@ const Verifier = struct {
     fn classMember(self: *Verifier, class: *const nodes.ClassDeclaration, member: nodes.ClassMethod, scope: *Scope) Allocator.Error!void {
         const params = member.@"fn".params;
         const receiver: ?*const HType = if (params.len > 0) params[0].type else null;
-        const takes_class = receiver != null and receiver.?.* == .object and std.mem.eql(u8, receiver.?.object.name, class.name);
+        const layout = if (receiver) |r| types.classLayoutOf(r) else null;
+        const takes_class = layout != null and std.mem.eql(u8, layout.?.name, class.name);
         try self.reportIf(!takes_class, "class-declaration", "STA4049", member.@"fn".span, "{s}.{s} does not take {s} as its receiver", .{ class.name, member.name, class.name });
         try self.function(member.@"fn", scope);
     }
@@ -979,7 +981,10 @@ const Verifier = struct {
                 .bytes => H_UINT8ARRAY,
                 .value, .void => continue,
             };
-            try self.reportIf(!hTypeEquals(arg_type, want), "extern-call", "STA4098", span, "extern call '{s}' argument {d} has type '{s}', not '{s}'", .{ callee, index, arg_type, want });
+            // A `bytes` slot takes any view, a subclass instance's included (plan/T11.6a): the
+            // callee reads the layout, which the class tag does not change.
+            const fits = if (kind == .bytes) hTypeAssignable(arg_type, want) else hTypeEquals(arg_type, want);
+            try self.reportIf(!fits, "extern-call", "STA4098", span, "extern call '{s}' argument {d} has type '{s}', not '{s}'", .{ callee, index, arg_type, want });
         }
         const result = nodes.externKindHType(node.ret_kind);
         try self.reportIf(!hTypeEquals(t, result), "extern-call", "STA4098", span, "extern call '{s}' results in '{s}', not '{s}'", .{ callee, t, result });
@@ -1074,6 +1079,10 @@ const Verifier = struct {
         }
         if (node.args.len != count) {
             try self.report("typed-op", "STA4101", span, "{s} takes {d} operands, not {d}", .{ op, count, node.args.len });
+        } else if (node.view_class) |class| {
+            const stamped = node.op == .@"new Uint8Array" and t.* == .uint8array and t.uint8array.subclass != null and
+                std.mem.eql(u8, t.uint8array.subclass.?.name, class);
+            try self.reportIf(!stamped, "typed-op", "STA4101", span, "{s} stamped {s} results in '{s}'", .{ op, class, t });
         } else try self.reportIf(!hTypeEquals(t, result), "typed-op", "STA4101", span, "{s} results in '{s}', not '{s}'", .{ op, t, result });
     }
 };

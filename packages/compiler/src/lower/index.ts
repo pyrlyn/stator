@@ -160,6 +160,7 @@ import {
   errorHType,
   externKindHType,
   forOfElementType,
+  GLOBAL_CALLS,
   isAccessorEntry,
   isComputedEntry,
   isSetOperation,
@@ -172,13 +173,11 @@ import {
   typedMember,
   typedResultType,
 } from '../hir/nodes.ts';
-import { GLOBAL_CALLS } from '../hir/nodes.ts';
-import { hasPlaceholderField } from '../hir/types.ts';
-import type { HField, HObject, HType } from '../hir/types.ts';
 import {
   accessorName,
   accessorProperty,
   callableFieldSlot,
+  classLayoutOf,
   fieldSlot,
   H_BOOLEAN,
   H_NUMBER,
@@ -186,9 +185,12 @@ import {
   H_STRING,
   H_UNDEFINED,
   hArray,
+  hasPlaceholderField,
   hasTypeParam,
   hFunction,
+  type HField,
   hObject,
+  type HObject,
   hIterator,
   hPromise,
   hTypeAssignable,
@@ -196,6 +198,7 @@ import {
   hTypeEquals,
   hTypeHasUnknown,
   hTypeName,
+  type HType,
   hUnknown,
   objectFieldsPrefix,
 } from '../hir/types.ts';
@@ -4826,7 +4829,8 @@ function lowerClassMethodCall(
   if (target === null) {
     return null;
   }
-  if (target.type.kind !== 'object') {
+  const layout = classLayoutOf(target.type);
+  if (layout === undefined) {
     diagnostics.push(
       lowerDiagnostic(at, sourceFile, 'STA4049', 'internal', 'receiver is not an object'),
     );
@@ -4856,7 +4860,7 @@ function lowerClassMethodCall(
   }
   if (callPriv !== undefined) {
     const privateOwner = mangleClassName(callPriv.owner, obj, checker, bindings);
-    const privateSlot = target.type.methods.findIndex((m) => m.name === callPriv.property);
+    const privateSlot = layout.methods.findIndex((m) => m.name === callPriv.property);
     if (privateOwner === null || privateSlot < 0) {
       return missingMethodSlot(at, sourceFile, diagnostics, callPriv.property, target);
     }
@@ -4878,7 +4882,7 @@ function lowerClassMethodCall(
     // The slot is resolved against the receiver's STATIC type and read from its DYNAMIC one,
     // which is sound for the same reason a field slot is: a subclass's method table begins
     // with its base's, in the base's order.
-    const slot = target.type.methods.findIndex((m) => m.name === propName);
+    const slot = layout.methods.findIndex((m) => m.name === propName);
     if (slot < 0) {
       return missingMethodSlot(at, sourceFile, diagnostics, propName, target);
     }
@@ -4893,7 +4897,7 @@ function lowerClassMethodCall(
       owner,
       propName,
       slot,
-      !viaSuper && isOverridden(target.type.name, propName, checker) ? 'virtual' : 'direct',
+      !viaSuper && isOverridden(layout.name, propName, checker) ? 'virtual' : 'direct',
       args,
     );
   }
@@ -6551,14 +6555,20 @@ function lowerExpression(
     // The gate admitted only the global constructors, so the result type names the row.
     if (type.kind === 'uint8array' || type.kind === 'arraybuffer') {
       const args = lowerArguments(node.arguments, sourceFile, checker, bindings, diagnostics);
-      return args === null
-        ? null
-        : typedOpNode(
-            type.kind === 'uint8array' ? 'new Uint8Array' : 'new ArrayBuffer',
-            undefined,
-            args,
-            makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
-          );
+      if (args === null) {
+        return null;
+      }
+      const op = typedOpNode(
+        type.kind === 'uint8array' ? 'new Uint8Array' : 'new ArrayBuffer',
+        undefined,
+        args,
+        makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
+      );
+      // A subclass has no constructor of its own (the gate's rule), so its `new` IS the builtin
+      // one with the class stamped on the view.
+      return type.kind === 'uint8array' && type.subclass !== undefined
+        ? { ...op, type, viewClass: type.subclass.name }
+        : op;
     }
     // A Date is allocated too, but unlike a collection it takes an ARGUMENT: the one-argument form
     // is the only one the gate let through, and `jsrt_date_from_value` discriminates its three
@@ -9652,7 +9662,7 @@ function isClassInstance(node: ts.Expression, checker: ts.TypeChecker, bindings:
   ) {
     return false;
   }
-  return typeAt(node, checker, bindings).kind === 'object';
+  return classLayoutOf(typeAt(node, checker, bindings)) !== undefined;
 }
 
 /** An object layout with its member types substituted: same name, bases, and slot order —
@@ -9885,8 +9895,12 @@ function lowerClass(
       self = symbol === undefined ? undefined : checker.getDeclaredTypeOfSymbol(symbol);
     }
   }
-  const type = self === undefined ? undefined : frontendTypes.tsTypeToHType(self, checker);
-  if (displayName === undefined || type === undefined || type.kind !== 'object') {
+  const instanceType = self === undefined ? undefined : frontendTypes.tsTypeToHType(self, checker);
+  // A `Uint8Array` subclass lays out no slots: its instances are views (plan/T11.6a), and the
+  // layout below is only what its methods and descriptor are built against.
+  const isView = instanceType?.kind === 'uint8array';
+  const type = instanceType === undefined ? undefined : classLayoutOf(instanceType);
+  if (displayName === undefined || type === undefined) {
     diagnostics.push(
       lowerDiagnostic(
         node,
@@ -9950,6 +9964,14 @@ function lowerClass(
     }
     return { ...type, name: selfName, bases: type.bases.map(renameBase) };
   })();
+  // What `this` is inside a member: the layout, or for a view class the view typed by its class,
+  // so `this[i]` and `this.length` take the typed paths.
+  const receiverType: HType = isView
+    ? {
+        kind: 'uint8array',
+        subclass: { name: layout.name, bases: layout.bases, methods: layout.methods },
+      }
+    : layout;
 
   // The slot list comes from the TYPE, not from a second walk of the members: HObject.fields is
   // what every FieldAccess slot was resolved against, so re-deriving the order here would be a
@@ -10194,7 +10216,7 @@ function lowerClass(
 
   const methods: ClassMethod[] = [];
   for (const method of methodNodes) {
-    const fn = lowerFunction(method, sourceFile, checker, bindings, diagnostics, layout);
+    const fn = lowerFunction(method, sourceFile, checker, bindings, diagnostics, receiverType);
     if (fn === null) {
       return null;
     }
@@ -10244,10 +10266,12 @@ function lowerClass(
           : baseDecl.name?.text;
   let ctor: ClassMethod | undefined;
   // The carrier builds no constructor: it is never constructed, and its body would lower a
-  // type parameter no substitution binds.
+  // type parameter no substitution binds. Nor does a view class: the gate admits no constructor
+  // in its chain, so constructing one is building the view (`new` lowers to the typed op).
   if (
     (ctorNode !== undefined || initializers.length > 0 || base !== undefined) &&
-    spec?.staticsOnly !== true
+    spec?.staticsOnly !== true &&
+    !isView
   ) {
     // A field-initializer arrow reads the constructor's receiver through the class's capture
     // entry (see `enclosingThisOwner`): an explicit constructor already carries it in its own
@@ -10350,6 +10374,7 @@ function lowerClass(
     span,
     name: selfName,
     ...(base !== undefined && { base }),
+    ...(isView && { view: true as const }),
     fields,
     ...(ctor !== undefined && { ctor }),
     methods,
@@ -10739,7 +10764,7 @@ function methodCallAtSlot(
   dispatch: 'direct' | 'virtual',
   args: Expression[],
 ): MethodCall {
-  const methods = target.type.kind === 'object' ? target.type.methods : [];
+  const methods = classLayoutOf(target.type)?.methods ?? [];
   return {
     kind: 'method-call',
     type: typeAt(node, checker, bindings),

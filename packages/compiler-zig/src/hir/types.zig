@@ -41,6 +41,20 @@ pub const HObject = struct {
 
 pub const HTypeParam = struct { name: []const u8 };
 
+/// Set when the value is an instance of a class extending `Uint8Array` (plan/T11.6a). Every element
+/// read, `length` and extern `bytes` pass is still the view's, which is why the kind stays
+/// `uint8array`; only the class's own methods, statics and `instanceof` need the name.
+pub const HUint8Array = struct { subclass: ?ViewClass = null };
+
+/// `bases` lists the user ancestors nearest first, as `HObject.bases` does, so assignability reads
+/// the chain without the declarations. `methods` is what user classes in the chain declare, in
+/// `HObject.methods`' order.
+pub const ViewClass = struct {
+    name: []const u8,
+    bases: []const []const u8,
+    methods: []const HField,
+};
+
 pub const HType = union(enum) {
     number,
     string,
@@ -55,7 +69,7 @@ pub const HType = union(enum) {
     iterator: HIterator,
     regexp,
     date,
-    uint8array,
+    uint8array: HUint8Array,
     arraybuffer,
     promise: HPromise,
     object: HObject,
@@ -64,7 +78,7 @@ pub const HType = union(enum) {
 
 /// The payload-free kinds, each a static singleton. Built from the list so the `H_*` names stay
 /// plain aliases of it.
-const Leaf = enum { number, string, boolean, undefined, null, regexp, date, uint8array, arraybuffer };
+const Leaf = enum { number, string, boolean, undefined, null, regexp, date, arraybuffer };
 pub const leaf = leaves: {
     var all: std.enums.EnumFieldStruct(Leaf, *const HType, null) = undefined;
     for (std.meta.fieldNames(Leaf)) |name| @field(all, name) = &@unionInit(HType, name, {});
@@ -78,7 +92,8 @@ pub const H_UNDEFINED = leaf.undefined;
 pub const H_NULL = leaf.null;
 pub const H_REGEXP = leaf.regexp;
 pub const H_DATE = leaf.date;
-pub const H_UINT8ARRAY = leaf.uint8array;
+/// A plain view: the subclass-free `uint8array`, a singleton like the leaves.
+pub const H_UINT8ARRAY: *const HType = &.{ .uint8array = .{} };
 pub const H_ARRAYBUFFER = leaf.arraybuffer;
 
 const unknown_explicit: HType = .{ .unknown = .{ .from_implicit_any = false } };
@@ -176,6 +191,22 @@ pub fn callableFieldSlot(t: *const HType, name: []const u8) ?usize {
     };
 }
 
+/// The class layout a value's methods resolve against: the object itself, or, for an instance of a
+/// `Uint8Array` subclass, a layout with no slots (the storage is the view's) and the class's
+/// methods (plan/T11.6a). Every member-call path asks this rather than testing for `object`.
+pub fn classLayoutOf(t: *const HType) ?HObject {
+    return switch (t.*) {
+        .object => |o| o,
+        .uint8array => |u| if (u.subclass) |s| .{ .name = s.name, .fields = &.{}, .methods = s.methods, .bases = s.bases } else null,
+        else => null,
+    };
+}
+
+/// The view type of a `Uint8Array` subclass laid out as `layout`.
+pub fn hViewClass(arena: Allocator, layout: HObject) Allocator.Error!*const HType {
+    return make(arena, .{ .uint8array = .{ .subclass = .{ .name = layout.name, .bases = layout.bases, .methods = layout.methods } } });
+}
+
 pub fn methodOf(t: *const HObject, name: []const u8) ?*const HField {
     for (t.methods) |*method| {
         if (std.mem.eql(u8, method.name, name)) return method;
@@ -208,6 +239,7 @@ pub fn hTypeEquals(a: *const HType, b: *const HType) bool {
         // is the nominal one.
         .object => |x| std.mem.eql(u8, x.name, b.object.name),
         .type_param => |x| std.mem.eql(u8, x.name, b.type_param.name),
+        .uint8array => |x| optionalEql(viewName(x), viewName(b.uint8array)),
         .@"fn" => |x| {
             const y = b.@"fn";
             if (x.params.len != y.params.len) return false;
@@ -216,8 +248,17 @@ pub fn hTypeEquals(a: *const HType, b: *const HType) bool {
             }
             return hTypeEquals(x.ret, y.ret);
         },
-        .number, .string, .boolean, .undefined, .null, .regexp, .date, .uint8array, .arraybuffer => true,
+        .number, .string, .boolean, .undefined, .null, .regexp, .date, .arraybuffer => true,
     };
+}
+
+fn viewName(t: HUint8Array) ?[]const u8 {
+    return if (t.subclass) |s| s.name else null;
+}
+
+fn optionalEql(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null or b == null) return a == null and b == null;
+    return std.mem.eql(u8, a.?, b.?);
 }
 
 /// Sound for classes only because a subclass's fields begin with its base's in the base's slot
@@ -227,12 +268,13 @@ pub fn hTypeAssignable(value: *const HType, target: *const HType) bool {
     // promises nothing: the two directions are the same fact seen twice.
     if (value.* == .unknown or target.* == .unknown) return true;
     if (value.* == .object and target.* == .object) {
-        const v = value.object;
-        if (std.mem.eql(u8, v.name, target.object.name)) return true;
-        for (v.bases) |base| {
-            if (std.mem.eql(u8, base, target.object.name)) return true;
-        }
-        return false;
+        return namedOrBase(value.object.name, value.object.bases, target.object.name);
+    }
+    // A subclass view goes where its ancestors' or a plain `Uint8Array` does, never back.
+    if (value.* == .uint8array and target.* == .uint8array) {
+        const want = viewName(target.uint8array) orelse return true;
+        const have = value.uint8array.subclass orelse return false;
+        return namedOrBase(have.name, have.bases, want);
     }
     // `unknown[]` is not kind unknown, and equality would reject two of them that differ only in
     // from_implicit_any, which is what `var xs = []` is after the hoist.
@@ -240,6 +282,14 @@ pub fn hTypeAssignable(value: *const HType, target: *const HType) bool {
         return hTypeAssignable(value.array.element, target.array.element);
     }
     return hTypeEquals(value, target);
+}
+
+fn namedOrBase(name: []const u8, bases: []const []const u8, want: []const u8) bool {
+    if (std.mem.eql(u8, name, want)) return true;
+    for (bases) |base| {
+        if (std.mem.eql(u8, base, want)) return true;
+    }
+    return false;
 }
 
 /// `type_param` guards because no node should carry one: meeting one means something upstream
@@ -256,6 +306,8 @@ pub fn hTypeConversionRunsUserCode(t: *const HType) bool {
     return switch (t.*) {
         .object, .unknown, .type_param => true,
         .array => |a| hTypeConversionRunsUserCode(a.element),
+        // A subclass may declare its own `toString` (Node's `Buffer` does).
+        .uint8array => |u| u.subclass != null,
         .number,
         .string,
         .boolean,
@@ -267,7 +319,6 @@ pub fn hTypeConversionRunsUserCode(t: *const HType) bool {
         .iterator,
         .regexp,
         .date,
-        .uint8array,
         .arraybuffer,
         .promise,
         => false,
@@ -333,7 +384,7 @@ pub fn hTypeName(arena: Allocator, t: *const HType) Allocator.Error![]const u8 {
         },
         .regexp => "RegExp",
         .date => "Date",
-        .uint8array => "Uint8Array",
+        .uint8array => |u| viewName(u) orelse "Uint8Array",
         .arraybuffer => "ArrayBuffer",
         .number, .string, .boolean, .undefined, .null, .unknown => @tagName(t.*),
     };
@@ -424,6 +475,23 @@ test "assignability follows the base chain and unknown either way" {
         try hArray(arena, hUnknown(true)),
         try hArray(arena, hUnknown(false)),
     ));
+}
+
+test "a subclass view goes where its ancestors and Uint8Array do, never back" {
+    var state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer state.deinit();
+    const arena = state.allocator();
+
+    const bytes = try hViewClass(arena, .{ .name = "Bytes", .fields = &.{}, .methods = &.{}, .bases = &.{} });
+    const tagged = try hViewClass(arena, .{ .name = "Tagged", .fields = &.{}, .methods = &.{}, .bases = &.{"Bytes"} });
+    try std.testing.expect(hTypeAssignable(tagged, bytes));
+    try std.testing.expect(hTypeAssignable(bytes, H_UINT8ARRAY));
+    try std.testing.expect(!hTypeAssignable(bytes, tagged));
+    try std.testing.expect(!hTypeAssignable(H_UINT8ARRAY, bytes));
+    try std.testing.expect(!hTypeEquals(bytes, H_UINT8ARRAY));
+    try std.testing.expectEqualStrings("Tagged", try hTypeName(arena, tagged));
+    try std.testing.expectEqualStrings("Tagged", classLayoutOf(tagged).?.name);
+    try std.testing.expect(classLayoutOf(H_UINT8ARRAY) == null);
 }
 
 test "names match the TypeScript spelling" {

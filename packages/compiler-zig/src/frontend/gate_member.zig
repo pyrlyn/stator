@@ -255,7 +255,9 @@ pub fn gateMemberAccess(g: *Gate, access: *Node) Result {
         }
         return g.notYet(g.fmt("{s}.{s} is not yet supported", .{ N.typedClassName(typed), name }), 11);
     }
-    if (globals.typedReceiverKind(g, receiver)) |typed| {
+    // A member a `Uint8Array` subclass declares itself is the class's, vetted by the class paths
+    // below (plan/T11.6a); only what it inherits from the lib is a typed-array member.
+    if (if (globals.isUserClassMember(g, access)) null else globals.typedReceiverKind(g, receiver)) |typed| {
         const qualified = g.fmt("{s}.prototype.{s}", .{ N.typedClassName(typed), name });
         const op = N.typedMember(typed, name) orelse return g.notYet(g.fmt("{s} is not yet supported", .{qualified}), 11);
         return if (N.TYPED_OPS.get(op).form != .call or is_callee)

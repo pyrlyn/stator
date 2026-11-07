@@ -1908,6 +1908,9 @@ export interface TypedOp extends Node {
   readonly kind: 'typed-op';
   readonly op: TypedOperation;
   readonly args: readonly Expression[];
+  /** `new Sub(...)` for a class extending `Uint8Array` (plan/T11.6a): the class the view is
+   * stamped with. Only on `new Uint8Array`, and then `type` is that class's view type. */
+  readonly viewClass?: string;
 }
 
 /** `Number.prototype`'s landed methods (plan-notes 310): one runtime function each, the receiver
@@ -2269,6 +2272,10 @@ export interface ClassDeclaration extends Node {
    * inherited ones (base-first, which is what makes a derived instance readable as a base one), so
    * this is not needed for layout -- it is needed for `instanceof`, which asks about the chain. */
   readonly base?: string;
+  /** The chain's root extends `Uint8Array` (plan/T11.6a): instances are views, built by the
+   * typed `new`, so the class has no fields and no constructor, and the root's descriptor names
+   * `jsrt_class_uint8array` as its parent. */
+  readonly view?: true;
   readonly fields: readonly Parameter[];
   readonly ctor?: ClassMethod;
   readonly methods: readonly ClassMethod[];

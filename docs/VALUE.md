@@ -1392,6 +1392,22 @@ buffer as `ArrayBuffer { [Uint8Contents]: <01 02>, [byteLength]: 2 }`, the hex c
 bytes. `String(u)` is the comma join; `JSON.stringify` writes a view as its index-keyed object
 and a buffer as `{}`, which is what Node does because neither has a `toJSON`.
 
+**A class extending `Uint8Array`** (plan/T11.6a, plan-notes 398) builds the same view: its
+instances are `JSRTTypedArray`s whose `cls` is the class's own descriptor, and the root class's
+descriptor names `&jsrt_class_uint8array` as its `parent`. So the view test is a parent walk
+(`jsrt_class_is_uint8array`, `jsrt_value.h`), the one `instanceof` already does, and every
+`Uint8Array` entry point, iteration and printing accept the instance unchanged. In the type model
+the instance is still HType `uint8array`, tagged `subclass: {name, bases, methods}`, so indexing,
+the landed members and the extern `bytes` ABI need nothing new; the class's own methods, statics
+and `instanceof` read the class layout `classLayoutOf` derives from that tag, and its methods are
+checked before the `TYPED_OPS` rows, which is how an override wins. Such a class has no constructor
+and no instance fields (the gate's `STA1214` not-yet), so `new Sub(...)` is the builtin
+constructor with the class stamped on the result (`jsrt_uint8array_new_class`), and `subarray` /
+`slice` construct through the species by copying the receiver's descriptor. An untyped receiver
+finds the class's methods before the layout's members (`jsrt_get_prop`, `jsrt_user_get`), so
+ToString runs an overriding `toString`. `console.log` prints Node's `Name(n) [Uint8Array] [ … ]`,
+and `[Name [Uint8Array]]` past the depth cap.
+
 ## 4.20 Ordinary functions as constructors — a prototype on the closure, a chain on the object (plan.md §11c T11.4 family 4)
 
 JavaScript before classes builds objects with `function P(x) { this.x = x; }`, `P.prototype.m =

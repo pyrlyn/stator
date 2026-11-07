@@ -664,11 +664,29 @@ static void inspect_array(JSRTBuf *out, jsrt_value v, int recurse, size_t indent
   inspect_list(out, v, jsrt_as_array(v)->length, array_element, "", "[Array]", recurse, indent);
 }
 
+/* A subclass's view (plan/T11.6a) is Node's `Name(n) [Uint8Array] [ ... ]`, and `[Name [Uint8Array]]`
+ * past the depth cap. */
 static void inspect_uint8array(JSRTBuf *out, jsrt_value v, int recurse, size_t indent) {
   const uint32_t length = (uint32_t)jsrt_number_value(jsrt_uint8array_length(v));
-  char label[48];
-  snprintf(label, sizeof label, "Uint8Array(%u) ", length);
-  inspect_list(out, v, length, uint8array_element, label, "[Uint8Array]", recurse, indent);
+  const JSRTClass *cls = jsrt_as_object(v)->cls;
+  const char *tag = cls == &jsrt_class_uint8array ? "" : " [Uint8Array]";
+  char count[24];
+  snprintf(count, sizeof count, "(%u)", length);
+  JSRTBuf label;
+  JSRTBuf brief;
+  jsrt_buf_init(&label);
+  jsrt_buf_init(&brief);
+  jsrt_buf_puts(&label, cls->name);
+  jsrt_buf_puts(&label, count);
+  jsrt_buf_puts(&label, tag);
+  jsrt_buf_putc(&label, ' ');
+  jsrt_buf_putc(&brief, '[');
+  jsrt_buf_puts(&brief, cls->name);
+  jsrt_buf_puts(&brief, tag);
+  jsrt_buf_putc(&brief, ']');
+  inspect_list(out, v, length, uint8array_element, label.data, brief.data, recurse, indent);
+  jsrt_buf_free(&label);
+  jsrt_buf_free(&brief);
 }
 
 /* `ArrayBuffer { [Uint8Contents]: <00 ff>, [byteLength]: 2 }` -- Node's formatArrayBuffer: the

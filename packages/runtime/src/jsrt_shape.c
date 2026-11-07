@@ -127,7 +127,7 @@ bool jsrt_is_fixed_object(jsrt_value v) {
   return cls != &jsrt_class_promise && cls != &jsrt_class_date && cls != &jsrt_class_map &&
          cls != &jsrt_class_set && cls != &jsrt_class_weakmap && cls != &jsrt_class_weakset &&
          cls != &jsrt_class_regexp && cls != &jsrt_class_iterator &&
-         cls != &jsrt_class_generator && cls != &jsrt_class_uint8array &&
+         cls != &jsrt_class_generator && !jsrt_class_is_uint8array(cls) &&
          cls != &jsrt_class_arraybuffer && cls != &jsrt_class_accessor;
 }
 
@@ -563,10 +563,15 @@ jsrt_value jsrt_get_prop(jsrt_value obj, const char *key, JSRTIC *ic) {
     return JSRT_UNDEFINED;
   }
   /* ArrayBuffer and Uint8Array have no shape: their data properties, index keys and methods are
-   * answered by the layout itself (jsrt_typed.zig), and a key neither class has reads undefined. */
+   * answered by the layout itself (jsrt_typed.zig), and a key neither class has reads undefined.
+   * A subclass's methods (plan/T11.6a) come first, as its prototype sits before the builtin's;
+   * the builtin descriptors list no methods, so for them the lookup always misses. */
   if (jsrt_is_uint8array(obj) || jsrt_is_arraybuffer(obj)) {
-    jsrt_value out = JSRT_UNDEFINED;
-    (void)jsrt_typed_get_prop(obj, key, &out);
+    bool found = false;
+    jsrt_value out = fixed_method_get(obj, key, &found);
+    if (!found) {
+      (void)jsrt_typed_get_prop(obj, key, &out);
+    }
     return out;
   }
   if (!has_prop_table(obj)) {
@@ -740,8 +745,12 @@ bool jsrt_user_get(jsrt_value obj, const char *key, jsrt_value *out, const char 
     } else if (c->klass == NULL) {
       found = function_own_get(obj, key, &value);
     }
-  } else if (jsrt_is_uint8array(obj) || jsrt_is_arraybuffer(obj)) {
+  } else if (jsrt_is_arraybuffer(obj)) {
     found = false; /* no shape: every key is the layout's own, and none is a user method */
+  } else if (jsrt_is_uint8array(obj)) {
+    /* Only a subclass's methods (plan/T11.6a) are user members. A view declares no fields and is
+     * not a fixed object, so fixed_user_get reads nothing but the method table. */
+    found = fixed_user_get(obj, key, &value, &where, &sure);
   } else if (!has_prop_table(obj)) {
     found = jsrt_is(obj, JSRT_TAG_OBJECT) && fixed_user_get(obj, key, &value, &where, &sure);
   } else {
