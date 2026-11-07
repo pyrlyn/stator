@@ -64,10 +64,10 @@ extern "c" fn pthread_getattr_np(thread: std.c.pthread_t, attr: *std.c.pthread_a
 extern "c" fn pthread_attr_getstack(attr: *const std.c.pthread_attr_t, addr: *?*anyopaque, size: *usize) c_int;
 extern "c" fn pthread_attr_destroy(attr: *std.c.pthread_attr_t) c_int;
 
-const Bounds = struct { low: usize, high: usize };
+pub const Bounds = struct { low: usize, high: usize };
 
 /// The calling thread's stack as [low, high), or null where this platform gives no way to ask.
-fn currentBounds() ?Bounds {
+pub fn currentBounds() ?Bounds {
     const self = std.c.pthread_self();
     switch (builtin.os.tag) {
         .macos, .ios, .tvos, .watchos, .visionos => {

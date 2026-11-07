@@ -19,6 +19,14 @@ const Event = struct {
     next: ?*Event = null,
     active_next: ?*Event = null,
 };
+
+fn traceEvent(event: *Event, visit: c.jsrt_gc_visit_fn) void {
+    gc.visitValues(&.{ event.work, event.cleanup, event.promise, event.value }, visit);
+    visit.?(event.next);
+    visit.?(event.active_next);
+}
+
+const event_kind = gc.kind(Event, "thread event", traceEvent, null, .{});
 var gate: std.c.pthread_mutex_t = .{};
 var changed: std.c.pthread_cond_t = .{};
 var first: ?*Event = null;
@@ -47,13 +55,18 @@ export fn jsrt_thread_require_main() void {
     if (worker) common.fail("std/thread.promise(): EPERM");
 }
 
+// The links live in events and in statics; gc.write ignores a static address.
 fn append(head: *?*Event, tail: *?*Event, event: *Event) void {
+    gc.write(tail.*);
+    gc.write(head);
     if (tail.*) |item| item.next = event else head.* = event;
     tail.* = event;
 }
 
 fn take(head: *?*Event, tail: *?*Event) ?*Event {
     const event = head.* orelse return null;
+    gc.write(head);
+    gc.write(event);
     head.* = event.next;
     if (head.* == null) tail.* = null;
     event.next = null;
@@ -79,10 +92,12 @@ fn execute(event: *Event) void {
     roots.open(.{ event.work, c.JSRT_UNDEFINED });
     const done = c.jsrt_call_protected(roots.slots[0], 0, null);
     roots.slots[1] = done.value;
+    gc.write(event);
     event.value = roots.slots[1];
     event.rejected = done.threw;
     if (!done.threw and c.jsrt_is_promise(done.value)) {
         common.fail("std/thread.spawn(): EINVAL");
+        gc.write(event);
         event.value = c.jsrt_take_exception();
         event.rejected = true;
     }
@@ -128,6 +143,8 @@ fn enqueue(event: *Event) bool {
 }
 
 fn joinWorker(thread: std.c.pthread_t) void {
+    gc.enterBlocking();
+    defer gc.leaveBlocking();
     if (std.c.pthread_join(thread, null) != .SUCCESS) c.jsrt_panic("thread join failed");
 }
 
@@ -140,10 +157,12 @@ export fn jsrt_thread_spawn(work: Value, cleanup: Value, pooled: bool) Value {
     var roots: common.Roots(3) = undefined;
     roots.open(.{ work, c.JSRT_UNDEFINED, cleanup });
     defer roots.pop();
-    const event = common.allocate(Event);
+    const event = common.allocate(Event, &event_kind);
     event.* = .{ .work = roots.slots[0], .cleanup = roots.slots[2], .pooled = pooled };
     roots.slots[1] = common.box(event);
-    event.promise = c.jsrt_promise_new();
+    const promise = c.jsrt_promise_new();
+    gc.write(event);
+    event.promise = promise;
     common.lock(&gate);
     event.active_next = active;
     active = event;
@@ -171,7 +190,7 @@ export fn jsrt_thread_run_on_main(work: Value) void {
         common.fail("std/thread.runOnMain(): EINVAL");
         return;
     }
-    const event = common.allocate(Event);
+    const event = common.allocate(Event, &event_kind);
     event.* = .{ .work = work, .callback = true };
     post(event);
 }
@@ -198,11 +217,14 @@ export fn jsrt_thread_poll() bool {
         var link = &active;
         while (link.*) |item| {
             if (item == event) {
+                gc.write(link);
+                gc.write(event);
                 link.* = event.active_next;
                 break;
             }
             link = &item.active_next;
         }
+        gc.write(event);
         event.active_next = null;
     }
     common.unlock(&gate);
@@ -213,6 +235,7 @@ export fn jsrt_thread_poll() bool {
         if (!event.pooled) joinWorker(event.thread);
         c.jsrt_promise_settle(event.promise, event.value, event.rejected);
     }
+    gc.write(event);
     event.work = c.JSRT_UNDEFINED;
     event.cleanup = c.JSRT_UNDEFINED;
     event.value = c.JSRT_UNDEFINED;

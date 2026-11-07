@@ -97,7 +97,7 @@ entry.ts / entry.js (+ module graph)
         ▼
   C emitter (#line maps) ──► clang -O2 ──► link runtime/build/libjsrt.a ──► native binary
                                                    ▲
-        runtime/ (C11 + Zig memory core): NaN-boxed jsrt_value, Boehm GC (v0) → precise generational (§12),
+        runtime/ (C11 + Zig memory core): NaN-boxed jsrt_value, pyrlyn/gc deferred RC (plan/T66) → precise generational (§12),
         builtins, QuickJS-NG libregexp, Ryū dtoa, optional QuickJS-NG interpreter tier
         for eval/untyped modules (Phase 8, js mode only)
 ```
@@ -123,7 +123,7 @@ The three packages sit under a private pnpm workspace and are orchestrated by mo
 - the exact bit layout, including how `-0.0` survives (it is a valid double, not a boxed int — `Object.is(-0, 0) === false` is a decision test);
 - the **string struct**: `struct JSString { uint32_t length; uint16_t data[]; }` — UTF-16 code units (JS semantics: `.length`, `charCodeAt`, Test262 assume it; do not choose UTF-8 for v0), accessed from generated C only via `jsrt_string_length(v)` / `jsrt_string_char(v, i)` inline accessors;
 - **number→string is spec-exact**: shortest-round-trip formatting (vendor Ryū's C implementation), byte-identical to Node. Never "round to N decimals" to paper over differences;
-- the **GC rooting protocol** (needed by the *first* line of generated C): every generated function opens a `JSRT_FRAME(n)` shadow-stack frame; every local holding a `jsrt_value` or heap pointer is declared through `JSRT_LOCAL(frame, i)`; frames pop on every exit path *including landing pads*. Under Boehm (conservative) the macros may compile to almost nothing — the discipline exists so §12's precise generational GC is a runtime-only change, never a codegen rewrite. (Boa's history: retrofitting precise GC onto undisciplined codegen means rewriting codegen.)
+- the **GC rooting protocol** (needed by the *first* line of generated C): every generated function opens a `JSRT_FRAME(n)` shadow-stack frame; every local holding a `jsrt_value` or heap pointer is declared through `JSRT_LOCAL(frame, i)`; frames pop on every exit path *including landing pads*. The collector (pyrlyn/gc, plan/T66) reads these frames as precise roots, and the discipline also exists so §12's precise generational GC is a runtime-only change, never a codegen rewrite. (Boa's history: retrofitting precise GC onto undisciplined codegen means rewriting codegen.)
 
 **Statics that are actually typed compile to raw machine values** (unboxed i32/f64/struct fields) — boxing only at boundaries. This is where the 10–20× over interpreters comes from (Static Hermes evidence).
 
@@ -896,7 +896,7 @@ is a line of C. The phase is four weeks because of what surrounds it, and all fo
 same shape — a thing that is implicit inside the compiled world and must become explicit at the
 edge:
 
-- **Memory.** Inside, Boehm sees every pointer because generated code keeps them in `JSRT_FRAME`
+- **Memory.** Inside, the collector sees every pointer because generated code keeps them in `JSRT_FRAME`
   slots. A pointer handed to C is invisible to the collector for the duration of the call, and the
   callee may keep it after returning. Every FFI signature therefore has to say who owns what and
   for how long — the compiler cannot infer it, and getting it wrong is a use-after-free, not a
@@ -983,7 +983,7 @@ Steps (detailed 2026-09-01; plan-notes 131):
    evaluation order and any temporaries (step 3's string copies) are freed on **every** exit path,
    landing pads included — the same discipline `JSRT_FRAME` already demands of generated code.
 6. **GC and ownership, per signature, in the declaration.** A pointer handed to C is invisible to
-   Boehm for the duration of the call; the frame that owns it must stay live across the call, and
+   the collector for the duration of the call; the frame that owns it must stay live across the call, and
    the callee must not retain it past return unless the declaration says it takes ownership. Two
    options only — **borrowed for the call** or **copied/transferred** — because a third would be a
    lifetime the compiler cannot express. This is documentation the compiler cannot check, which is
@@ -1042,7 +1042,7 @@ Steps (detailed 2026-09-01; plan-notes 131):
    process on an uncaught exception — is defensible for v0 but must be a written choice, not the
    default that happens if nobody decides. Whatever is chosen, an exception must never unwind into
    the C caller's frame.
-5. **Frame and stack roots.** A function entered from C has no parent `JSRT_FRAME`, and Boehm needs
+5. **Frame and stack roots.** A function entered from C has no parent `JSRT_FRAME`, and the collector needs
    that thread's stack base to scan conservatively; the generated entry stub establishes both, and
    pops the frame on every exit path including the one step 4 introduces.
 6. **Threads: single-threaded in v0, said out loud.** Calling in from a second thread is undefined
@@ -1132,7 +1132,7 @@ two things that must exist before implementation is allowed to start:
    `jsrt_value` object reaching interpreted code becomes a `JSValue` holding an opaque handle, and
    the reverse; a copy would make mutation invisible across the boundary. (b) **Identity must round-
    trip**: an object that crosses out and back must be `===` to itself, which means a two-way handle
-   table, not a per-crossing wrapper. (c) **Two collectors** — Boehm (conservative, ours) and
+   table, not a per-crossing wrapper. (c) **Two collectors** — ours (pyrlyn/gc deferred RC, plan/T66) and
    QuickJS's refcount-plus-cycle collector — so a live handle must be a root on both sides
    simultaneously. State plainly which cases leak: a cycle spanning the boundary is uncollectable
    in v0, and that ceiling belongs in the doc rather than being discovered later.
@@ -1187,8 +1187,8 @@ phase is **not sequenced after Phase 8** — §11 is gated on a named user and m
 T9.1 proceeds independently. §15.1's top-down rule does not apply here.
 
 The Zig modules export the same C ABI and link into `libjsrt.a`. `jsrt_value.h` stays the
-codegen↔runtime contract, and generated code stays C. Boehm GC stays: Zig calls bdw-gc through
-its C ABI. Zig 0.17.1 is pinned in stator's `mise.toml`; a global 0.14.1 (if present) is
+codegen↔runtime contract, and generated code stays C. The collector is pyrlyn/gc, a Zig package
+driven as deferred reference counting (plan/T66, plan-notes 400; Boehm before it). Zig 0.17.1 is pinned in stator's `mise.toml`; a global 0.14.1 (if present) is
 untouched. This reopens the settled C11-runtime decision (§15.4) on the creator's direction.
 
 ### ~~T9.1. Runtime memory core in Zig~~ → [`plan/T9.1`](plan/T9.1/done.md)
@@ -1208,7 +1208,7 @@ Full survey: plan-notes 239. Short form:
 | `std` + OS threads | First-party `jsrt_std_*` + `std/*` modules; threads↔async bridge | Phase 10 (240) |
 | Host compile parallelism | Same TS compiler; `STATOR_COMPILE_JOBS` / worker or process pool | Phase 10 T10.3 (240) |
 | Vendored | QuickJS-NG libregexp/libunicode, fdlibm | settled |
-| Optional native | Boehm; ICU (intl build) | settled |
+| Optional native | ICU (intl build); the collector is pyrlyn/gc, compiled in (plan/T66) | settled |
 | CLI-only | ink/react, dotenv; OTel opt-in | settled (187) |
 
 **Zig:** T9.1's GC glue, alloc helpers, shape tables and growable buffers, plus — since plan-notes
@@ -1255,7 +1255,7 @@ the existing pipeline (`node:worker_threads` / a process pool), not Zig/Rust/Go 
 | Neighbor | How Phase 10 relates |
 |---|---|
 | Phase 7 FFI | `std` is **first-party** runtime code (`jsrt_std_*`, Zig by default per §0.5), not user `declare` bindings. Phase 7's memory/string/error rules still apply when `std` calls libc. Phase 7's "single-threaded v0" is reopened **only** by T10.2 — FFI callbacks from foreign threads stay undefined until T10.2's bridge exists and 7.2's header is updated. |
-| Phase 9 / T9.1 | Threads need a **threads-enabled Boehm** and per-thread stack registration. Prefer landing T9.1's GC glue (or the equivalent C path) before stress-testing T10.2; T10.1's non-thread modules do not wait on Zig. |
+| Phase 9 / T9.1 | Threads need per-thread stack registration with the collector. Prefer landing T9.1's GC glue (or the equivalent C path) before stress-testing T10.2; T10.1's non-thread modules do not wait on Zig. |
 | Task 4.6 async | The resume machine, `jsrt_promise_subscribe`, and `jsrt_run_microtasks` are the async half of the bridge. Do not invent a second event loop. |
 | §12 ladder | Host compile parallelism (T10.3) is a **developer-time** win; it is not a §12 runtime rung. Measure wall time of `stator build` before/after; keep only if geomean moves. |
 | Test262 `SharedArrayBuffer` / `Atomics` / `Worker` | **Out of scope for T10.2 v0.** Those are JS-compat surfaces with their own not-yet codes. `std.thread` / `std.sync` are the Stator-native API; a later card may map SAB/Atomics onto the same primitives. |
@@ -1315,7 +1315,7 @@ Rules that make async ↔ threads sound:
 5. **Blocking I/O from async code:** prefer `await std.fs.readTextAsync(path)` implemented as
    spawn-join under the hood, so the main thread stays responsive. Do not block main inside an
    async function's sync prefix.
-6. **GC:** build/link Boehm with threads; every spawn registers the thread with the collector;
+6. **GC:** every spawn registers the thread with the collector;
    `_Thread_local jsrt_frame_top` already exists (`docs/VALUE.md`). A thread that allocates without
    registering is a use-after-free waiting to happen — the Check must include a multi-thread
    allocate/collect golden.
@@ -1575,7 +1575,7 @@ Ordering rule (from the Boa deep-dive): **memory first, codegen last**. Each ste
 |---|---|---|---|
 | 1 | mimalloc/jemalloc as default allocator | 5–15% on heap-heavy code (Boa evidence) | days |
 | 2 | Escape analysis → stack allocation; bump/arena allocation for non-escaping object graphs (one of Perry's actual speed sources, with LICM and integer div/mod fast paths) | large on allocation-bound code | 2–4 wk |
-| 3 | Replace Boehm with precise generational GC (nursery + tenured; the §2 shadow-frame discipline makes this runtime-only). Evaluate MMTk before writing one. | Boa budgets 350 h for the same move; 50–70% pause reduction, 10–20% throughput | 6–10 wk |
+| 3 | Replace the deferred-RC collector (plan/T66) with precise generational GC (nursery + tenured; the §2 shadow-frame discipline makes this runtime-only). Evaluate MMTk before writing one. | Boa budgets 350 h for the same move; 50–70% pause reduction, 10–20% throughput | 6–10 wk |
 | 4 | Hot/cold field split in object layout; IC hit-rate counters on dynamic-residue paths to find type-check hotspots | 5–10% (Nova-inspired) | 1–2 wk |
 | 5 | String ropes for concat-heavy code + small-string inlining | 5–15% on string workloads (V8/JSC precedent) | 3–5 wk |
 | 6 | Direct LLVM backend: emit `.ll` text (no bindings needed from TS) on the hot path; LTO + PGO; keep the C emitter as `--emit=c` debug backend | clang already does most of this — measure before believing | 4–8 wk |
@@ -1602,46 +1602,42 @@ byte-for-byte, and the directed card landed it without a §12 before/after (plan
   result into `plan-notes.md`. An unrecorded non-gain is re-attempted by the next person at full
   price, which is the most expensive kind of missing note.
 - **Semantics are not a variable.** Golden suites stay byte-for-byte, ASan/UBSan and `test:leak` stay
-  green, and both GC configurations still build. An optimization that changes output is a semantics
+  green, and the runtime still builds. An optimization that changes output is a semantics
   bug wearing a speedup's clothes.
 - **Anything that adds a dependency or a build mode is feature-flagged** on the `just runtime-intl` model
   (Task 4.4): its own build directory, its own CI job, default archive unchanged.
 
 **1 — Allocator.** Check the premise before spending the days: Boa's 5–15% is an *object*-allocator
-result, and here the object allocator is Boehm. Every collected allocation goes through
-`GC_generic_malloc` in `jsrt_gc_alloc` (`runtime/src/jsrt_gc.c`), which mimalloc under `malloc` never
-sees. What a swapped allocator does reach is the non-collected sites — regexp capture and key
+result, and here the object allocator is the collector's. Every collected allocation goes through
+`jsrt_gc_alloc` (`runtime/src/jsrt_gc.zig`), which serves small blocks from its own pools (plan/T66),
+so mimalloc under `malloc` never sees them one by one. What a swapped allocator does reach is the non-collected sites — regexp capture and key
 scratch, shape key encoding, unicode conversion buffers, JSON digit buffers, the `console.count` /
-`console.time` tables, Intl — plus the no-Boehm fallback, where `jsrt_gc_alloc` *is* `malloc`.
+`console.time` tables, Intl.
 So profile those sites first; if they are a couple of percent, record it and skip the rung.
 Otherwise this lands **after** rung 3, when the collector is ours and its backing allocator is a real
 choice. Acquisition is a vendor drop with a `VENDOR.md` pin (plan-notes 188),
-never a package fetch — the pin is what makes the version auditable — and never a global `malloc` interposition while Boehm is in
-the process: two allocators contending for one symbol is a debugging session, not a benchmark.
+never a package fetch — the pin is what makes the version auditable — and never a global `malloc` interposition: two allocators contending for one symbol is a debugging
+session, not a benchmark.
 
 **2 — Escape analysis.** The preconditions already hold: allocation sites are visible in HIR (object
 and array literals, closures), and the pass belongs in `src/passes/` beside `constfold`/`dce`/
 `inline`, with `verifyHir` running after it like every other pass. Conservative by default — an
 allocation escapes unless proven otherwise — and three things escape: stores into a global slot,
 anything a callee can reach, and anything live on a landing-pad path out of the frame. The trap is
-specific to this design: `jsrt_push_roots` masks every frame slot and hands it to Boehm as a heap
-address, so a stack-allocated or arena object must **never** occupy a `JSRT_FRAME` slot. Make that an
+specific to this design: the collector masks every frame slot and treats it as a root, so a stack-allocated or arena object must **never** occupy a `JSRT_FRAME` slot. Make that an
 HIR-verifier check (a stack allocation's uses are all frame-local), not a code-review habit. LICM and
 the integer div/mod fast paths named in the row are separate changes — land them separately or the
 geomean cannot attribute the win to any of the three.
 
 **3 — Precise GC.** Half of it is already paid for: root enumeration is real and load-bearing
-(`jsrt_push_roots` walks the shadow stack), which is what §2's rooting discipline was always for.
-What is missing is *heap* precision — `jsrt_mark` masks every word and marks conservatively, with a
-documented ceiling of retaining objects it does not own. Precise means a layout descriptor per
-collected allocation, which touches every `jsrt_gc_alloc` call site. Two things settle before code:
+(the collector walks the shadow stack), which is what §2's rooting discipline was always for.
+*Heap* precision landed with T66: every kind traces its own fields. What stays conservative is the
+scan of native stacks, registers and data segments. Two things settle before code:
 (a) **MMTk's API is Rust**, and "no Rust anywhere" is settled (§15.4) — evaluating MMTk is fine,
 adopting it reopens a settled decision and needs measured evidence in `plan-notes.md`, not a
 preference; (b) a **moving** collector invalidates any NaN-boxed reference a C local holds across a
 safepoint, so "a reference that crosses an allocation lives in a frame slot" must become an enforced
-codegen invariant *before* anything moves. The second win is easy to miss: the no-Boehm build never
-collects at all today (justfile: "plain malloc (no collection)"), so this rung is also what
-makes `pnpm run test:leak` meaningful on a machine without bdw-gc instead of skipping.
+codegen invariant *before* anything moves.
 
 **4 — Hot/cold split and IC counters.** Cheap because both mechanisms exist already
 (`runtime/src/jsrt_shape.c`, the emitter's `icSite()`); this is instrumentation, not machinery.
@@ -1671,7 +1667,7 @@ instruction selection but everything clang was doing for free, starting with `#l
 
 **7 — Startup snapshot: measured, and not scheduled.** V8 snapshots exist because V8 *constructs* a
 builtin object graph at startup. Stator does not: `jsrt_init()` is a 48-bit-pointer probe plus
-`GC_INIT()`, builtins are dead-stripped C functions rather than constructed objects, and `main()`
+the collector's init, builtins are dead-stripped C functions rather than constructed objects, and `main()`
 opens a globals frame and runs the program. Measured 2026-09-01 (Apple M3 Max, Darwin 25.6, Apple
 clang 21.0.0, `-O2`, Boehm build, Node v26.7.0, best of 15 spawns): empty compiled program
 **3.2 ms**, `node` on an empty module **27.0 ms**, `/bin/true` **0.23 ms**. The whole budget a
@@ -1682,7 +1678,7 @@ page-in behaviour), not a heap snapshot.
 
 **8 — WasmGC.** The row is honest that it is optionality, not speed; gate it like Phase 8, on a named
 user needing a browser target, recorded before work starts. Be equally honest about the size: under
-WasmGC the *host* owns objects, so NaN-boxing, Boehm, and the shadow-stack rooting discipline all
+WasmGC the *host* owns objects, so NaN-boxing, the collector, and the shadow-stack rooting discipline all
 stop applying. That is a second backend and a second runtime sharing a frontend — which is why it is
 months, and why it is last.
 
@@ -1982,3 +1978,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.87** (2026-10-25): **T11.6: `node:process` follow-up slice** (plan-notes 390). The members `tsc` reads (`argv`, `cwd`, `env`, `execArgv`, `exit`, `memoryUsage`, `nextTick`, `pid`, `platform`, `stdout`) plus `argv0`, `execPath`, `exitCode`, `arch`, `ppid` and `stderr`. A free `process` under `--node` is rewritten to `import process from "node:process"`. `std/env.names()` lists libc's `environ`. A js-mode spread into `unknown` or rest `unknown[]` is accepted. Slice N1 is 25 / 37 (68%). The Check stays open.
 - **v4.88** (2026-11-02): **T41 opens: the compiler moves to Zig on stator-ts** (plan-notes 393). `packages/compiler` stays on `typescript` 6.0.3 as the oracle; Zig goes to 0.17.0 project-wide; `test:typediff` measures stator-ts against the checker.
 - **v4.89** (2026-11-06): **T14.0: the interpreter is Zig in the runtime, on stator-ts's parser, running bytecode** (plan-notes 396, `docs/INTERPRETER.md`). The creator chose the parser and the language from the spike's numbers; §11f and plan/T14.1–T14.4 follow.
+- **v4.90** (2026-11-07): **T66: Boehm is replaced by pyrlyn/gc as coalesced deferred reference counting** (plan-notes 400, `docs/VALUE.md` §4.12). No system GC library; each `--emit=lib` library carries its own collector; Zig moves to 0.17.1.

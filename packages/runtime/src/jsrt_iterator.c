@@ -36,13 +36,11 @@ static bool is_map_kind(uint8_t kind) {
   return kind >= JSRT_ITER_MAP_KEYS && kind <= JSRT_ITER_SET_ENTRIES;
 }
 
+static const JSRTGcKind iterator_kind = JSRT_GC_VALUE_KIND("iterator", JSRT_GC_CYCLIC, offsetof(JSRTIterator, target), offsetof(JSRTIterator, extra));
+
 static jsrt_value make_iter(jsrt_value target, jsrt_value extra, uint8_t kind) {
-  JSRTIterator *it = (JSRTIterator *)jsrt_gc_alloc(sizeof(JSRTIterator), "iterator");
-  it->cls = &jsrt_class_iterator;
-  it->target = target;
-  it->extra = extra;
-  it->index = 0;
-  it->kind = kind;
+  JSRTIterator *it = JSRT_GC_NEW(JSRTIterator, &iterator_kind);
+  *it = (JSRTIterator){.cls = &jsrt_class_iterator, .target = target, .extra = extra, .kind = kind};
   if (is_map_kind(kind)) {
     jsrt_map_iter_begin(target);
   }
@@ -149,15 +147,22 @@ static bool uint8array_step(JSRTIterator *it, jsrt_value *out) {
 
 const JSRTClass jsrt_class_generator = {"Generator", 0, NULL, NULL, 0, NULL, NULL, NULL, NULL};
 
+JSRT_GC_TRACE(generator_trace, JSRTGenerator, g) {
+  visit(g->env);
+  jsrt_gc_visit_value(g->yielded, visit);
+}
+
+/* Generated resume functions store `self->env` and yield through `self` directly. */
+static const JSRTGcKind generator_kind =
+    JSRT_GC_KIND("generator", generator_trace, NULL, JSRT_GC_CYCLIC, 1);
+
 jsrt_value jsrt_generator_new(JSRTEnv *env, JSRTGenResume resume) {
-  JSRTGenerator *g = (JSRTGenerator *)jsrt_gc_alloc(sizeof(JSRTGenerator), "generator");
-  g->cls = &jsrt_class_generator;
-  g->env = env;
-  g->resume = resume;
-  g->state = 0;
-  g->yielded = JSRT_UNDEFINED;
-  g->done = false;
-  g->inject = JSRT_GEN_INJECT_NONE;
+  JSRTGenerator *g = JSRT_GC_NEW(JSRTGenerator, &generator_kind);
+  *g = (JSRTGenerator){.cls = &jsrt_class_generator,
+                       .env = env,
+                       .resume = resume,
+                       .yielded = JSRT_UNDEFINED,
+                       .inject = JSRT_GEN_INJECT_NONE};
   return JSRT_BOX(JSRT_TAG_OBJECT, (uintptr_t)g);
 }
 

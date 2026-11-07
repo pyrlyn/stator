@@ -183,16 +183,16 @@ export fn jsrt_shape_transition(from: *Shape, key: [*c]const u8) *Shape {
     return next;
 }
 
-/// Doubling from 4, so repeated additions stay amortized O(1). The old slots are copied, not
-/// reallocated in place: under Boehm the old block is simply dropped for the collector.
+/// Doubling from 4, so repeated additions stay amortized O(1). The slots are a buffer of the
+/// object that holds `slots` (jsrt_gc.zig); the old one is retired, since a caller may still hold
+/// a pointer into it.
 export fn jsrt_shape_reserve(slots: *[*c]c.jsrt_value, capacity: *u32, offset: u32) void {
     if (offset < capacity.*) return;
     var grown: u32 = if (capacity.* == 0) 4 else capacity.* * 2;
     while (grown <= offset) grown *= 2;
     const bytes = @as(usize, grown) * @sizeOf(c.jsrt_value);
-    const fresh: [*]c.jsrt_value = @ptrCast(@alignCast(gc.alloc(bytes, "dynamic object slots")));
-    if (capacity.* > 0) @memcpy(fresh[0..capacity.*], slots.*[0..capacity.*]);
-    if (!gc.boehm) std.c.free(@ptrCast(slots.*));
+    gc.write(slots);
+    const fresh: [*]c.jsrt_value = @ptrCast(@alignCast(gc.bufferResize(gc.ownerOf(@ptrCast(slots)), slots.*, bytes, "dynamic object slots")));
     slots.* = fresh;
     capacity.* = grown;
 }
@@ -204,6 +204,7 @@ export fn jsrt_shape_reserve(slots: *[*c]c.jsrt_value, capacity: *u32, offset: u
 /// a different pointer, so every cache filled against the old shape simply misses.
 export fn jsrt_shape_remove(shape: **Shape, slots: [*c]c.jsrt_value, hit: *const Shape) void {
     const count = slotCount(shape.*);
+    gc.write(slots);
     const links = chainLinks(shape.*, count);
     defer std.c.free(@ptrCast(links));
     var replay: *Shape = &jsrt_shape_root;

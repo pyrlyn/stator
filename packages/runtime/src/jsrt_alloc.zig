@@ -1,9 +1,8 @@
 //! The value allocation helpers jsrt_value.h declares: fixed-layout objects, arrays and their
-//! growth, closure environments, closures, rest arrays and dynamic objects. Every block is the one
-//! collected allocation (jsrt_gc.zig), and every jsrt_value slot in it is `undefined` before the
-//! block is reachable from any root: a conservative collector scans those words before the caller
-//! has stored anything, so they must never hold stale bits that happen to look like pointers --
-//! the discipline JSRT_FRAME follows for frame slots.
+//! growth, closure environments, closures, rest arrays and dynamic objects, and the collector
+//! kinds that say what each of them references (jsrt_gc.zig). Every jsrt_value slot is
+//! `undefined` before the caller can see the block, so a trace never reads a word that was not
+//! stored as a value.
 
 const std = @import("std");
 const mem = @import("jsrt_mem.zig");
@@ -14,22 +13,66 @@ const c = mem.c;
 const Value = c.jsrt_value;
 const undefined_value: Value = c.JSRT_UNDEFINED;
 
-fn create(comptime T: type, bytes: usize, what: [*:0]const u8) *T {
-    return @ptrCast(@alignCast(gc.alloc(bytes, what)));
+fn create(comptime T: type, bytes: usize, kind: *const gc.Kind) *T {
+    return @ptrCast(@alignCast(gc.alloc(bytes, kind)));
 }
+
+fn traceObject(o: *c.JSRTObject, visit: c.jsrt_gc_visit_fn) void {
+    gc.visitValues(o.fields()[0..o.cls.*.field_count], visit);
+    visit.?(o.extras);
+}
+
+fn traceArray(a: *c.JSRTArray, visit: c.jsrt_gc_visit_fn) void {
+    // NULL while jsrt_array_new allocates the first buffer, which may collect.
+    if (a.elements != null) gc.visitValues(a.elements[0..a.capacity], visit);
+    if (a.slots != null) gc.visitValues(a.slots[0..a.slot_capacity], visit);
+}
+
+fn finalizeArray(a: *c.JSRTArray) void {
+    gc.bufferFree(a.elements);
+    gc.bufferFree(a.slots);
+}
+
+fn traceEnv(env: *c.JSRTEnv, visit: c.jsrt_gc_visit_fn) void {
+    visit.?(env.parent);
+    gc.visitValues(env.slots()[0..env.count], visit);
+}
+
+fn traceClosure(closure: *c.JSRTClosure, visit: c.jsrt_gc_visit_fn) void {
+    visit.?(closure.env);
+    gc.visitValue(closure.prototype, visit);
+    visit.?(closure.props);
+}
+
+fn traceDynobj(o: *c.JSRTDynObject, visit: c.jsrt_gc_visit_fn) void {
+    if (o.slots != null) gc.visitValues(o.slots[0..o.capacity], visit);
+    gc.visitValue(o.proto, visit);
+    gc.visitValue(o.ctor, visit);
+}
+
+fn finalizeDynobj(o: *c.JSRTDynObject) void {
+    gc.bufferFree(o.slots);
+}
+
+const object_kind = gc.kind(c.JSRTObject, "object", traceObject, null, .{});
+const array_kind = gc.kind(c.JSRTArray, "array", traceArray, finalizeArray, .{});
+// Generated code stores captured variables straight into the slots (JSRT_ENV_AT).
+const env_kind = gc.kind(c.JSRTEnv, "closure environment", traceEnv, null, .{ .always_dirty = true });
+const closure_kind = gc.kind(c.JSRTClosure, "closure", traceClosure, null, .{});
+const dynobj_kind = gc.kind(c.JSRTDynObject, "dynamic object", traceDynobj, finalizeDynobj, .{});
 
 /// An array's element buffer. Split from the header because the array grows: `elements` is
 /// replaced where the header is not.
-fn elements(capacity: u32) [*]Value {
+fn elements(owner: ?*const c.JSRTArray, capacity: u32) [*]Value {
     const bytes = @as(usize, capacity) * @sizeOf(Value);
-    return @ptrCast(@alignCast(gc.alloc(bytes, "array elements")));
+    return @ptrCast(@alignCast(gc.buffer(owner, bytes, "array elements")));
 }
 
 /// One allocation, header and slots together: the flexible member is safe because an object's slot
 /// count never changes (see the comment on JSRTObject).
 export fn jsrt_object_new(cls: *const c.JSRTClass) Value {
     const bytes = @sizeOf(c.JSRTObject) + @as(usize, cls.field_count) * @sizeOf(Value);
-    const object = create(c.JSRTObject, bytes, "object");
+    const object = create(c.JSRTObject, bytes, &object_kind);
     object.cls = cls;
     object.frozen = false;
     object.extras = null;
@@ -38,11 +81,11 @@ export fn jsrt_object_new(cls: *const c.JSRTClass) Value {
 }
 
 pub export fn jsrt_array_new(count: u32, items: [*c]const Value) Value {
-    const array = create(c.JSRTArray, @sizeOf(c.JSRTArray), "array");
+    const array = create(c.JSRTArray, @sizeOf(c.JSRTArray), &array_kind);
     // An empty literal still gets a one-element buffer, so `elements` is never NULL and every path
     // can index it without a null test.
     const capacity: u32 = if (count > 0) count else 1;
-    const buf = elements(capacity);
+    const buf = elements(array, capacity);
     if (count > 0) @memcpy(buf[0..count], items[0..count]);
     @memset(buf[count..capacity], undefined_value);
     // No named-property table until something hangs a property off this array (a RegExp match is
@@ -66,16 +109,19 @@ export fn jsrt_array_grow(a: *c.JSRTArray, index: u32) void {
     while (capacity <= index) capacity *= 2;
     if (capacity > std.math.maxInt(u32)) c.jsrt_panic("array index too large");
     const grown: u32 = @intCast(capacity);
-    const buf = elements(grown);
+    const buf = elements(a, grown);
     @memcpy(buf[0..a.length], a.elements[0..a.length]);
     @memset(buf[a.length..grown], undefined_value);
+    gc.write(a);
+    // A caller may still hold a pointer into the old elements.
+    gc.bufferRetire(a.elements);
     a.elements = buf;
     a.capacity = grown;
 }
 
 pub export fn jsrt_env_new(parent: ?*c.JSRTEnv, count: u32) *c.JSRTEnv {
     const bytes = @sizeOf(c.JSRTEnv) + @as(usize, count) * @sizeOf(Value);
-    const env = create(c.JSRTEnv, bytes, "closure environment");
+    const env = create(c.JSRTEnv, bytes, &env_kind);
     env.parent = parent;
     env.count = count;
     @memset(env.slots()[0..count], undefined_value);
@@ -104,7 +150,7 @@ pub export fn jsrt_closure_new(
     env: ?*c.JSRTEnv,
     has_receiver: bool,
 ) Value {
-    const closure = create(c.JSRTClosure, @sizeOf(c.JSRTClosure), "closure");
+    const closure = create(c.JSRTClosure, @sizeOf(c.JSRTClosure), &closure_kind);
     closure.* = .{
         .@"fn" = func,
         .arity = arity,
@@ -135,7 +181,7 @@ export fn jsrt_args_rest(argc: u32, argv: [*c]const Value, from: u32) Value {
 }
 
 fn dynobjNew(cls: *const c.JSRTClass) Value {
-    const o = create(c.JSRTDynObject, @sizeOf(c.JSRTDynObject), "dynamic object slots");
+    const o = create(c.JSRTDynObject, @sizeOf(c.JSRTDynObject), &dynobj_kind);
     o.* = .{
         .cls = cls,
         .shape = &shapes.jsrt_shape_root,

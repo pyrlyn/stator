@@ -2,7 +2,7 @@
 status: in progress
 priority: P1
 complexity: 5
-readiness: 5%
+readiness: 85%
 agent: Claude Code / claude-opus-5-5
 ---
 
@@ -34,8 +34,9 @@ pyrlyn/gc; every heap store goes through the barrier and every kind's `trav` mat
 cyclic garbage included, is reclaimed; docs describe the new memory model.
 
 Check: `pnpm run ci`, `pnpm run test:asan` and `pnpm run test:leak` (RSS plateaus, no Boehm skip,
-plus a cyclic-garbage variant) pass, and `git grep -nE 'JSRT_HAVE_BOEHM|gc\.h|bdw-gc|GC_[a-z_]+\('`
-over `packages/`, `docs/`, `.github/`, `mise.toml` and `toolchain.md` is empty.
+plus a cyclic-garbage variant) pass, and `git grep -nE 'JSRT_HAVE_BOEHM|[<"/]gc\.h|bdw-gc|GC_[a-z_]+\('`
+over `packages/`, `docs/`, `.github/`, `mise.toml` and `toolchain.md` is empty, but for dated
+bench recordings and their analysis under `packages/tests/bench/memory/` and `docs/research/`.
 
 ## Execution plan
 

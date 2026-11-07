@@ -198,6 +198,7 @@ static bool fixed_set(jsrt_value obj, const char *key, jsrt_value value) {
   if (slot < 0) {
     return false;
   }
+  jsrt_gc_write(jsrt_as_object(obj));
   jsrt_as_object(obj)->fields[slot] = value;
   return true;
 }
@@ -426,6 +427,7 @@ jsrt_value jsrt_function_prototype(jsrt_value fn) {
      * non-enumerable, so `console.log(F.prototype)` prints `{}`. */
     const jsrt_value proto = jsrt_dynobj_new();
     ((JSRTDynObject *)jsrt_ptr(proto))->ctor = fn;
+    jsrt_gc_write(c);
     c->prototype = proto;
     c->has_prototype = true;
   }
@@ -914,6 +916,7 @@ static void array_set_length(jsrt_value array, jsrt_value value) {
     jsrt_panic("STA2002: sparse arrays are not yet supported: an array length grown by assignment");
   }
   /* The dropped tail is cleared so the collector does not keep its elements alive. */
+  jsrt_gc_write(a);
   for (uint32_t i = length; i < a->length; i++) {
     a->elements[i] = JSRT_UNDEFINED;
   }
@@ -927,6 +930,7 @@ static void write_own_slot(jsrt_value *slot, const char *key, jsrt_value obj, js
   if (honor_accessor && accessor_write(*slot, key, obj, value)) {
     return;
   }
+  jsrt_gc_write(slot); /* the setter path above may have collected; `slot` is inside the owner */
   *slot = value;
 }
 
@@ -987,6 +991,7 @@ static void store_prop(jsrt_value obj, const char *key, jsrt_value value, JSRTIC
      * else lands in the function's property object, created on the first write. */
     JSRTClosure *c = function_record(obj);
     if (strcmp(key, "prototype") == 0 && (c->constructible || c->has_prototype)) {
+      jsrt_gc_write(c);
       c->prototype = value;
       c->has_prototype = true;
       return;
@@ -999,7 +1004,9 @@ static void store_prop(jsrt_value obj, const char *key, jsrt_value value, JSRTIC
       return;
     }
     if (c->props == NULL) {
-      c->props = (JSRTDynObject *)jsrt_ptr(jsrt_dynobj_new());
+      JSRTDynObject *props = (JSRTDynObject *)jsrt_ptr(jsrt_dynobj_new());
+      jsrt_gc_write(c);
+      c->props = props;
     }
     store_prop(JSRT_BOX(JSRT_TAG_OBJECT, (uintptr_t)c->props), key, value, NULL, honor_accessor);
     return;
@@ -1025,7 +1032,9 @@ static void store_prop(jsrt_value obj, const char *key, jsrt_value value, JSRTIC
           return;
         }
         if (o->extras == NULL) {
-          o->extras = (JSRTDynObject *)jsrt_ptr(jsrt_dynobj_new());
+          JSRTDynObject *extras = (JSRTDynObject *)jsrt_ptr(jsrt_dynobj_new());
+          jsrt_gc_write(o);
+          o->extras = extras;
         }
         store_prop(extras_value(o->extras), key, value, NULL, honor_accessor);
         return;
@@ -1061,6 +1070,7 @@ static void store_prop(jsrt_value obj, const char *key, jsrt_value value, JSRTIC
   /* New property: take (or build) the transition, and make its slot writable. */
   JSRTShape *next = jsrt_shape_transition((*o.shape), key);
   jsrt_shape_reserve(o.slots, o.capacity, next->offset);
+  jsrt_gc_write(*o.slots);
   (*o.slots)[next->offset] = value;
   /* Transitions are not IC-cached: each object performs a given addition exactly once, so a
    * transition cache would only ever hit across objects — worth building when Phase 5 measures
@@ -1072,9 +1082,10 @@ void jsrt_set_prop(jsrt_value obj, const char *key, jsrt_value value, JSRTIC *ic
   store_prop(obj, key, value, ic, true);
 }
 
+static const JSRTGcKind accessor_kind = JSRT_GC_VALUE_KIND("accessor", JSRT_GC_CYCLIC, offsetof(JSRTAccessorCell, get), offsetof(JSRTAccessorCell, set));
+
 void jsrt_define_accessor(jsrt_value obj, const char *key, jsrt_value get, jsrt_value set) {
-  JSRTAccessorCell *cell =
-      (JSRTAccessorCell *)jsrt_gc_alloc(sizeof(JSRTAccessorCell), "dynamic object slots");
+  JSRTAccessorCell *cell = JSRT_GC_NEW(JSRTAccessorCell, &accessor_kind);
   cell->cls = &jsrt_class_accessor;
   cell->get = get;
   cell->set = set;

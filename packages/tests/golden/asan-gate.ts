@@ -350,7 +350,7 @@ function runGoldenAsan(): { status: number; passed: number; failed: number; tota
 
 /* Stage 2b, unconditional like stages 1-2 and as cheap: the `--emit=lib` Check (plan.md §10
  * Task 7.4) against the sanitized runtime -- two private runtime copies in one program, under
- * ASan/UBSan and forced Boehm collections. */
+ * ASan/UBSan, each collector collecting on every allocation. */
 function runStaticLibAsan(): void {
   const result = spawnSync(process.execPath, [STATIC_LIB_RUN], {
     stdio: 'inherit',

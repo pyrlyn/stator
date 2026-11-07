@@ -48,5 +48,5 @@ opt-in via `pnpm run bootstrap:stages` and `stator self`; the CI job is skipped 
 
 - The compiler depends on Node and the TypeScript/tsgo program APIs; T61 must replace or wrap
   them, and some may stay host-only.
-- The runtime links Boehm GC (`libgc`); the snapshot must document or vendor it.
+- The runtime compiles in pyrlyn/gc, a Zig package fetched by the runtime recipe; the snapshot must vendor it.
 - No bundled tcc; Windows is out of scope (plan.md §1).

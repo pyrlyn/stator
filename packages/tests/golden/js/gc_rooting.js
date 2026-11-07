@@ -1,5 +1,5 @@
 // Allocation pressure on two runtime paths that build a value while allocating (plan-notes 222).
-// Boehm collects on allocation volume, so the loop count is the pressure: with the half-built value
+// The collector runs on allocation volume, so the loop count is the pressure: with the half-built value
 // held only in a C local -- invisible to the collector, because a NaN-boxed word is not a pointer
 // by any conservative test -- a collection under pressure freed it and the next write went into
 // reclaimed memory. The answers below are what Node prints; before the fix the first loop reported

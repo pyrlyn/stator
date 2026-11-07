@@ -394,12 +394,9 @@ const TWO_UNITS_MAIN =
   '#include "ka.h"\n' +
   '#include "kb.h"\n' +
   '#include <stdio.h>\n' +
-  '#ifdef STATOR_TEST_BOEHM\n' +
-  'void GC_gcollect(void);\n' +
-  '#define COLLECT() GC_gcollect()\n' +
-  '#else\n' +
-  '#define COLLECT() ((void)0)\n' +
-  '#endif\n' +
+  // Both units share one libjsrt.a here, so its collection entry point is a global symbol.
+  'void jsrt_gc_collect(void);\n' +
+  '#define COLLECT() jsrt_gc_collect()\n' +
   'int main(void) {\n' +
   '  stator_ka_init();\n' +
   '  stator_kb_init();\n' +
@@ -443,7 +440,6 @@ test('two --emit-header units share one libjsrt.a across forced collections', NA
         '-Wall',
         '-Wextra',
         '-Werror',
-        ...(sysFlags.includes('-lgc') ? ['-DSTATOR_TEST_BOEHM'] : []),
         '-I',
         work,
         mainPath,

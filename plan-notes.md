@@ -14552,3 +14552,29 @@ copy the emitter writes, in both compilers (`packages/compiler` and the Zig port
 
 **Cost.** pyrlyn/gc declares `minimum_zig_version = "0.17.1"`; the creator approved moving Stator
 from Zig 0.16.0 to 0.17.1 for T66 (2026-11-07).
+
+**As built (amends the design above, 2026-11-07).** The per-store barrier was replaced before
+landing; the module comment of `packages/runtime/src/jsrt_gc.zig` is the full description.
+
+- **Coalesced deferred RC (Levanoni-Petrank), not Deutsch-Bobrow.** A runtime function calls
+  `jsrt_gc_write(obj)` before it changes the references of an existing object. The first call per
+  collection marks the object dirty and logs what it held; the collection then counts what the
+  object holds now against its log. Stores need no retain/release, so `JSRT_ENV_AT` stays: closure
+  environments are an `always_dirty` kind, reconciled at every collection. No codegen changed.
+- **Young objects.** A new object is born dirty and young, on no list but the young one. A
+  collection traces only the young objects a root or a reconciled object names; the rest are
+  freed untraced. A young garbage cycle therefore never reaches trial deletion.
+- **Pinned objects are suspects.** Roots are never counted, so the decrement that would make a
+  cycle a candidate never happens when its last root lets go. Unpinning an object whose count is
+  still above 0, and a ZCT entry whose count is not 0, mark it a possible cycle root.
+- **Verification.** `JSRT_GC_VERIFY=1` recounts every heap reference after each collection and
+  names the kind whose stores skipped the barrier; `JSRT_GC_STRESS=1` collects on every
+  allocation. Golden ran 505/505 under verify; ASan ran 505/505.
+- **Lists are reused.** The dirty, log and ZCT lists swap with spares instead of being freed:
+  freeing and regrowing multi-megabyte lists every collection left about 220 MB in malloc's
+  large-block cache (measured with `heap -s` and `vmmap --summary` on the cycle leak test).
+- **FFI.** Each `--emit=lib` library carries its own private collector, because every runtime
+  symbol, pyrlyn/gc's `rt_*` included, is made local; the weak shared Boehm kind is gone.
+- **Known cost.** An object pinned at every collection with a heap count above 0 is a suspect at
+  every collection, so trial deletion revisits it. Not measured separately yet; a generation
+  bit for long-lived suspects is the fix if a workload shows it.

@@ -108,6 +108,7 @@ static bool array_take(JSRTArray *a, bool from_front, jsrt_value *out) {
     return false;
   }
   *out = from_front ? a->elements[0] : a->elements[a->length - 1];
+  jsrt_gc_write(a);
   if (from_front) {
     memmove(a->elements, a->elements + 1, (size_t)(a->length - 1) * sizeof(jsrt_value));
   }
@@ -145,6 +146,7 @@ jsrt_value jsrt_array_unshift(jsrt_value array, jsrt_value element) {
   /* Grow by appending (the public path owns capacity), then rotate the new slot to the front. */
   append(array, element);
   JSRTArray *a = arr(array);
+  jsrt_gc_write(a);
   memmove(a->elements + 1, a->elements, (size_t)(a->length - 1) * sizeof(jsrt_value));
   a->elements[0] = element;
   return jsrt_array_length(array);
@@ -165,6 +167,7 @@ static jsrt_value unshift_items(jsrt_value array, uint32_t n, const jsrt_value *
   }
   /* `append` may have reallocated the buffer, so the header is re-read, not reused. */
   JSRTArray *a = arr(array);
+  jsrt_gc_write(a);
   memmove(a->elements + n, a->elements, (size_t)len * sizeof(jsrt_value));
   for (uint32_t i = 0; i < n; i++) {
     a->elements[i] = items[i];
@@ -229,12 +232,17 @@ static int64_t array_search_forward(const JSRTArray *a, jsrt_value search, jsrt_
   return -1;
 }
 
-/* A half-open [from, to) range from optional start/end, defaulting to [0, length) — the shared
- * slice/fill step (§23.1.3.23, §23.1.3.8). `to` may be below `from`; callers treat that as empty. */
-static void array_half_open_range(const JSRTArray *a, jsrt_value start, jsrt_value end,
-                                  uint32_t *from, uint32_t *to) {
-  *from = jsrt_relative_index(jsrt_int_or_inf(start, 0.0), a->length);
-  *to = jsrt_relative_index(jsrt_int_or_inf(end, (double)a->length), a->length);
+/* The receiver as an array (NULL after the TypeError), and a half-open [from, to) range from
+ * optional start/end, defaulting to [0, length) — the shared slice/fill step (§23.1.3.23,
+ * §23.1.3.8). `to` may be below `from`; callers treat that as empty. */
+static JSRTArray *array_half_open_range(jsrt_value array, const char *method, jsrt_value start,
+                                        jsrt_value end, uint32_t *from, uint32_t *to) {
+  JSRTArray *a = jsrt_require_array(array, method);
+  if (a != NULL) {
+    *from = jsrt_relative_index(jsrt_int_or_inf(start, 0.0), a->length);
+    *to = jsrt_relative_index(jsrt_int_or_inf(end, (double)a->length), a->length);
+  }
+  return a;
 }
 
 jsrt_value jsrt_array_index_of(jsrt_value array, jsrt_value search, jsrt_value from) {
@@ -295,13 +303,12 @@ jsrt_value jsrt_array_includes(jsrt_value array, jsrt_value search, jsrt_value f
 }
 
 jsrt_value jsrt_array_slice(jsrt_value array, jsrt_value start, jsrt_value end) {
-  const JSRTArray *a = jsrt_require_array(array, "slice");
+  uint32_t from;
+  uint32_t to;
+  const JSRTArray *a = array_half_open_range(array, "slice", start, end, &from, &to);
   if (a == NULL) {
     return JSRT_UNDEFINED;
   }
-  uint32_t from;
-  uint32_t to;
-  array_half_open_range(a, start, end, &from, &to);
   uint32_t count = to > from ? to - from : 0;
   return jsrt_array_new(count, count > 0 ? a->elements + from : NULL);
 }
@@ -367,6 +374,7 @@ jsrt_value jsrt_array_reverse(jsrt_value array) {
   if (a == NULL) {
     return JSRT_UNDEFINED;
   }
+  jsrt_gc_write(a);
   for (uint32_t i = 0, j = a->length; i + 1 < j; i++, j--) {
     jsrt_value tmp = a->elements[i];
     a->elements[i] = a->elements[j - 1];
@@ -376,13 +384,13 @@ jsrt_value jsrt_array_reverse(jsrt_value array) {
 }
 
 jsrt_value jsrt_array_fill(jsrt_value array, jsrt_value value, jsrt_value start, jsrt_value end) {
-  JSRTArray *a = jsrt_require_array(array, "fill");
+  uint32_t from;
+  uint32_t to;
+  JSRTArray *a = array_half_open_range(array, "fill", start, end, &from, &to);
   if (a == NULL) {
     return JSRT_UNDEFINED;
   }
-  uint32_t from;
-  uint32_t to;
-  array_half_open_range(a, start, end, &from, &to);
+  jsrt_gc_write(a);
   for (uint32_t i = from; i < to; i++) {
     a->elements[i] = value;
   }
@@ -401,6 +409,7 @@ jsrt_value jsrt_array_copy_within(jsrt_value array, jsrt_value target, jsrt_valu
   const uint32_t span = last > from ? last - from : 0;
   const uint32_t room = a->length - to;
   const uint32_t count = span < room ? span : room;
+  jsrt_gc_write(a);
   memmove(a->elements + to, a->elements + from, (size_t)count * sizeof(jsrt_value));
   return array;
 }
@@ -430,6 +439,7 @@ jsrt_value jsrt_array_splice(jsrt_value array, jsrt_value start, jsrt_value dele
   uint32_t count = 0;
   splice_span(array, start, delete_count, &from, &count);
   jsrt_value removed = jsrt_array_new(count, count > 0 ? a->elements + from : NULL);
+  jsrt_gc_write(a);
   memmove(a->elements + from, a->elements + from + count,
           (size_t)(a->length - from - count) * sizeof(jsrt_value));
   for (uint32_t i = a->length - count; i < a->length; i++) {
@@ -473,6 +483,7 @@ static jsrt_value splice_insert_items(jsrt_value array, jsrt_value start, jsrt_v
   }
   /* `append` may have reallocated the buffer, so the header is re-read, not reused. */
   a = arr(array);
+  jsrt_gc_write(a);
   memmove(a->elements + from + n, a->elements + from + count,
           (size_t)(len - from - count) * sizeof(jsrt_value));
   for (uint32_t i = 0; i < n; i++) {
@@ -638,7 +649,10 @@ static bool visit_for_each(jsrt_value array, uint32_t i, void *ctx) {
 
 static bool visit_map(jsrt_value array, uint32_t i, void *ctx) {
   MapWalk *w = (MapWalk *)ctx;
-  arr(w->out)->elements[i] = call_cb(w->cb, array, i);
+  const jsrt_value answer = call_cb(w->cb, array, i);
+  JSRTArray *out = arr(w->out);
+  jsrt_gc_write(out);
+  out->elements[i] = answer;
   return true;
 }
 
@@ -863,6 +877,7 @@ static void sort_merge(jsrt_value *elems, jsrt_value *scratch, uint32_t lo, uint
   if (jsrt_pending()) {
     return; /* the merge is incomplete, so writing it back would duplicate elements */
   }
+  jsrt_gc_write(elems); /* the comparisons above may have collected since the last write */
   memcpy(elems + lo, scratch + lo, (size_t)(hi - lo) * sizeof(jsrt_value));
 }
 
@@ -893,6 +908,7 @@ jsrt_value jsrt_array_sort(jsrt_value array, jsrt_value cmp) {
   /* §23.1.3.30 SortIndexedProperties collects only the indices the array HAS: the present
    * elements sort (undefined among them sinking, by sort_compare), and the holes follow them. */
   uint32_t present = 0;
+  jsrt_gc_write(a);
   for (uint32_t i = 0; i < a->length; i++) {
     if (a->elements[i] != JSRT_HOLE) {
       a->elements[present++] = a->elements[i];
@@ -934,6 +950,7 @@ static jsrt_value dense_copy(const JSRTArray *a) {
 
 jsrt_value jsrt_array_fill_holes(jsrt_value array) {
   JSRTArray *c = arr(array);
+  jsrt_gc_write(c);
   for (uint32_t i = 0; i < c->length; i++) {
     c->elements[i] = jsrt_unhole(c->elements[i]);
   }
@@ -993,6 +1010,7 @@ jsrt_value jsrt_array_with(jsrt_value array, jsrt_value index, jsrt_value value)
         "RangeError, which builtins cannot raise yet");
   }
   jsrt_value out = dense_copy(a);
+  jsrt_gc_write(arr(out));
   arr(out)->elements[(uint32_t)rel] = value;
   return out;
 }

@@ -108,7 +108,7 @@ Release archives are thin-LTO bitcode where the toolchain can link one (plan-not
 the CLI's single clang call compiles the generated C to bitcode too and the runtime's accessors and
 builtins inline across the archive boundary. ld64 and lld read bitcode archives; GNU ld needs the
 LLVMgold plugin, and without it the probe fails and the archive is plain objects, reported on the
-recipe's status line. Sanitized builds never use LTO. A probe result or Boehm status that differs
+recipe's status line. Sanitized builds never use LTO. A probe result that differs
 from the last build rebuilds every object (`packages/runtime/build*/cflags.txt`).
 
 ## CI stages (`.github/workflows/ci.yml`)
@@ -227,7 +227,7 @@ compiled against (plan-notes 106).
 | fdlibm (V8 `ieee754.cc`, mechanically ported to C11) | vendored, fdlibm + BSD-3-Clause | yes                          | `Math.sin` and 19 siblings, bit-identical to the pinned Node's                                                     | `packages/runtime/vendor/fdlibm/` — provenance in its `VENDOR.md`                          |
 | Ryū (`d2s`)                                          | vendored, Apache-2.0 OR Boost-1.0 | yes                        | shortest round-trip digits for `Number::toString` (golden rule 5; docs/VALUE.md §3.1)                              | `packages/runtime/vendor/ryu/` — provenance in its `VENDOR.md`                            |
 | libm (`-lm`)                                         | system                          | yes                          | `floor`/`trunc`/`sqrt`/`fmod` — ToInt32, array indexing, the print path                                            | part of libSystem on macOS (the flag is a no-op there), separate on glibc (plan-notes 122) |
-| Boehm GC (`bdw-gc`)                                  | system                          | optional                     | the collector (`docs/VALUE.md` §4.12); without it the runtime falls back to plain `malloc`, no collection          | `pkg-config --libs bdw-gc`; macOS `brew install bdw-gc`, Debian `apt install libgc-dev`    |
+| pyrlyn/gc (`kxgc`)                                   | Zig package, MIT                | yes                          | the collector (`docs/VALUE.md` §4.12, plan/T66)                                                                    | `packages/runtime/build.zig.zon` pins it; the justfile fetches it into `packages/runtime/zig-pkg/` |
 | ICU (`icu-uc`, `icu-i18n`)                           | system                          | optional, feature build only | `Intl` — `just -f packages/runtime/justfile -d packages/runtime runtime-intl`, into `packages/runtime/build-intl/` | `pkg-config`; macOS `brew install icu4c`, Debian `apt install libicu-dev`                  |
 
 The default archive is byte-identical whether or not ICU is installed on the host — that is why
@@ -252,7 +252,7 @@ Beyond Node/pnpm (pinned above), the build shells out to:
 | `pkg-config` (consumer side) | a C build using an `--emit=lib` library              | `pkg-config --cflags --libs lib<name>` reads the emitted `.pc` (docs/FFI.md §8); the CI check `static-lib.ts` uses it |
 | `just`          | justfile                                                             | the runtime build (pinned `1.58.0` in `mise.toml`)       |
 | `zig`           | justfiles (T9.1, T11.2)                                              | memory-core objects into `libjsrt.a`, std backings into `libjsrt_std.a` (pinned `0.17.1` in `mise.toml`; required) |
-| `pkg-config`    | justfile                                                             | finding bdw-gc and ICU; absent means both are simply off |
+| `pkg-config`    | justfile                                                             | finding ICU; absent means the feature build reports it missing |
 | `diff`          | `just -f packages/runtime/justfile -d packages/runtime runtime-test` | the print corpus against Node, byte-for-byte             |
 | `nm`            | `packages/tests/impact/` (`test:impact:record`)                      | which `libjsrt.a` members a test's binary linked (Task 6.17); a missing `nm` records "all of the runtime" |
 | `git`           | `packages/tests/impact/` (`test:impact`)                             | the diff against the impact map's commit                  |

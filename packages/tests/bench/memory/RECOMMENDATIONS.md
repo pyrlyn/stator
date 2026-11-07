@@ -4,6 +4,10 @@ Grounded in the recording in [`RESULTS.md`](RESULTS.md) (Apple M3 Max, median of
 loaded machine and are directional; the RSS and size gaps are stable across recordings.
 Each item names the measurement that motivates it, in priority order.
 
+The recording predates plan/T66, which replaced Boehm with pyrlyn/gc compiled into `libjsrt.a`:
+the binaries no longer load `libgc`, so items 2 and 5 and the start-up analysis describe the old
+collector until the next recording.
+
 1. **Scalar-replace non-escaping objects (escape analysis).** `objects-churn` takes
    1066 ms in stator vs 85 ms scriptc, 89 ms shermes, 115 ms Perry — the `{a,b}` object never
    escapes the loop body, so the others never really allocate it. This is ladder item 2 in

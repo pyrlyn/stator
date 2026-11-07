@@ -103,8 +103,10 @@ static JSRTDate *as_date(jsrt_value v) {
   return (JSRTDate *)jsrt_ptr(v);
 }
 
+static const JSRTGcKind date_kind = JSRT_GC_KIND("date", NULL, NULL, JSRT_GC_ACYCLIC, 0);
+
 jsrt_value jsrt_date_new(double time) {
-  JSRTDate *d = (JSRTDate *)jsrt_gc_alloc(sizeof(JSRTDate), "date");
+  JSRTDate *d = JSRT_GC_NEW(JSRTDate, &date_kind);
   d->cls = &jsrt_class_date;
   d->time = time_clip(time);
   return JSRT_BOX(JSRT_TAG_OBJECT, (uintptr_t)d);

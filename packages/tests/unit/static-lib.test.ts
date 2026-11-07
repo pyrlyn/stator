@@ -95,7 +95,7 @@ test('the .pc is relocatable and carries the binary link list in Libs', () => {
     name: 'consumer',
     unit: 'consumer',
     includeDir: '',
-    libs: ['-L/opt/gc/lib', '-lgc', '-lm'],
+    libs: ['-L/opt/icu/lib', '-licuuc', '-lm'],
   });
   assert.equal(
     beside,
@@ -109,7 +109,7 @@ test('the .pc is relocatable and carries the binary link list in Libs', () => {
       'Description: Stator unit consumer as a static library with a private runtime',
       `Version: ${String(EXPORT_ABI_VERSION)}`,
       'Cflags: -I${includedir}',
-      'Libs: -L${libdir} -lconsumer -L/opt/gc/lib -lgc -lm',
+      'Libs: -L${libdir} -lconsumer -L/opt/icu/lib -licuuc -lm',
       '',
     ].join('\n'),
   );

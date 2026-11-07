@@ -195,12 +195,11 @@ export function resolveRuntime(): Runtime {
 const STD_ARCHIVE = join(STD_ROOT, 'build', 'libjsrt_std.a');
 const SANITIZER_FLAGS = ['-O1', '-g', '-fsanitize=address,undefined'];
 
-/** What a program linking this archive must pass — Boehm's `-lgc` when the runtime was built
- * against it, ICU's when the archive is the feature build, `-flto=thin` when its objects are
+/** What a program linking this archive must pass — ICU's when the archive is the feature build, `-flto=thin` when its objects are
  * bitcode (plan-notes 162) — written next to the archive by the just recipe that produced it.
  * Reading them back is the only way this link cannot disagree with the objects it links:
  * rediscovering them here would ask `pkg-config` a second time, in a different environment, and
- * an archive compiled WITH Boehm linked WITHOUT `-lgc` is an undefined-symbol error at the end of
+ * an archive compiled WITH ICU linked WITHOUT its libraries is an undefined-symbol error at the end of
  * every compile (plan-notes 106). The flags go on the one clang call below, so `-flto` also turns
  * the generated C into bitcode and the runtime inlines into it. Absent means an archive built
  * before the recipe wrote one; the link then fails the way it always did, which is the honest

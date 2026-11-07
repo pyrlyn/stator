@@ -1,6 +1,6 @@
 # Toolchain
 
-Pins below are the ones in `mise.toml` and the package manifests. `docs/TOOLCHAIN.md` is the longer note (CI stages, environment variables, vendored C, Boehm, ICU) and matches these pins (plan-notes 359).
+Pins below are the ones in `mise.toml` and the package manifests. `docs/TOOLCHAIN.md` is the longer note (CI stages, environment variables, vendored C, the collector, ICU) and matches these pins (plan-notes 359).
 
 ## Programs
 
@@ -46,3 +46,9 @@ Pins below are the ones in `mise.toml` and the package manifests. `docs/TOOLCHAI
 | playwright-core 1.63.0 | `site/` devDependency | https://www.npmjs.com/package/playwright-core | Browser check of the built site |
 
 `memfs` is not a dependency. It was removed from the root and `packages/tests` manifests (plan-notes 353).
+
+## Zig packages
+
+| Package | Where | Source | Why here |
+| --- | --- | --- | --- |
+| kxgc (pyrlyn/gc) 0.1.0 at `9bfc433` | local (`packages/runtime/build.zig.zon`) | https://github.com/pyrlyn/gc | The collector: deferred reference counting with trial deletion (plan/T66) |

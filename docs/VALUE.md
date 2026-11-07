@@ -381,13 +381,13 @@ not need to become one. See plan-notes 50.
 
 ### 4.1 Why this exists, and what the collector actually reads
 
-Phase 2 uses Boehm GC, which is conservative: it scans memory word by word and retains anything
-that looks like a heap address. **A `jsrt_value` is not one.** NaN-boxing puts the tag above bit 48
-(§1.1), so a boxed reference is a word no conservative scan recognises — the machine-stack scan
-walks straight past every value a frame slot, an array, a Map or an object slot holds. These macros
-are therefore not bookkeeping the collector would duplicate anyway: the frame chain is the only
-root set there is, and §4.12 is the hook that reads it. This is measured, not theoretical — before
-that hook existed, a forced collection over a live 200-entry Map segfaulted (plan-notes 108).
+**A `jsrt_value` is not a heap address.** NaN-boxing puts the tag above bit 48 (§1.1), so a
+boxed reference is a word a plain conservative scan does not recognise. Boehm, the collector before
+plan/T66, walked straight past every value a frame slot, an array, a Map or an object slot held:
+the frame chain was the only root set it had for values. This was measured, not theoretical —
+before its root hook existed, a forced collection over a live 200-entry Map segfaulted
+(plan-notes 108). The collector now (§4.12) masks every conservatively scanned word with
+`JSRT_PAYLOAD_MASK` and reads the frame chain precisely, so it finds both.
 
 They would be mandatory even under a collector that did see them, because §12's precise
 generational GC needs an exact root set. If codegen is written without the discipline and the
@@ -772,8 +772,8 @@ truthiness and `instanceof` all see an ordinary object. Its name is `""` — a d
 plain object, and prints like a literal (`{ a: 1 }`), because Node cannot tell them apart. Slots
 are **out of line**, unlike a fixed-shape object's, because property addition grows them
 (doubling from 4) and the header's address must stay stable — every boxed reference is that
-address. Under Boehm the slots are a collected, scanned allocation; the shapes hold no values and
-use plain malloc either way.
+address. The slots are a buffer block the object owns (§4.12); the shapes hold no values and use
+plain malloc.
 
 **The inline cache.** One `JSRTIC { shape, offset }` per property-access *site*, emitted `static`
 in generated C. The whole protocol is two rules:
@@ -872,58 +872,53 @@ is the four characters `null` and not an abort.
 **Invalid Date.** `toISOString` throws a `RangeError` through `jsrt_throw` (§21.4.4.36); generated
 C checks `jsrt_pending()` after the op (Phase 5 step 11).
 
-## 4.12 The collector — Boehm, and the two hooks that make it see a value
+## 4.12 The collector — pyrlyn/gc as deferred reference counting
 
-Everything above assumes the collector can find what is live. A conservative collector and a
-NaN-boxed value do not meet on their own (§4.1); `runtime/src/jsrt_gc.zig` is where they are made to.
+Everything above assumes the collector can find what is live. `runtime/src/jsrt_gc.zig` drives
+[pyrlyn/gc](https://github.com/pyrlyn/gc) (a Zig package pinned in `runtime/build.zig.zon`) as
+coalesced deferred reference counting. Its module comment is the full design; plan-notes 400 says
+why Stator does not count exactly the way pyrlyn/gc's own compiler does.
 
-**One allocation seam.** `jsrt_gc_alloc(bytes, what)` (`runtime/include/jsrt.h`) is the runtime's
-only collected allocation, and the only place that knows whether a collector is configured at all.
-Everything that can hold a `jsrt_value` comes from it — a value stored in memory from anywhere else
-is invisible to the collector, because the heap hook below does not cover that memory. `what` names
-the allocation in the out-of-memory panic; the call never returns NULL, so callers do not test it.
+**One allocation seam, one layout.** `jsrt_gc_alloc(bytes, kind)` (`runtime/include/jsrt.h`) is
+the runtime's only collected allocation: zeroed, never NULL (out of memory panics). Every block has
+a hidden 16-byte prefix in pyrlyn/gc's layout (count, color and buffered bits, then a vtable
+pointer); runtime pointers address the object after it, so no runtime layout changed. The vtable is
+the object's `JSRTGcKind`, built with `JSRT_GC_KIND(name, trace, finalize, cyclic, always_dirty)`:
+`trace` visits exactly the references the object holds, `finalize` frees what it owns outside the
+collected heap. Owned storage — array elements, Map entries, dynamic-object slots — is a buffer
+(`jsrt_gc_buffer`), never counted, freed by its owner.
 
-**Hook 1 — the heap.** Every allocation belongs to a custom object kind (`GC_new_kind`) whose mark
-procedure masks each word with `JSRT_PAYLOAD_MASK` before offering it to `GC_MARK_AND_PUSH`. The
-word count comes from `GC_size(addr)`, so one procedure covers every allocation shape the runtime
-has — fixed struct, flexible array member, bare value buffer — without any of them carrying a
-layout descriptor.
+**Counts cover the heap only, and are reconciled at collection.** A runtime function that changes
+the references inside an existing object calls `jsrt_gc_write(obj)` first. The first call after a
+collection marks the object dirty and logs what it held; the next collection adds a count for
+every reference the object holds now and drops one for every reference in the log. A store pays
+nothing more. A new object is *young*: it needs no `jsrt_gc_write`, and a collection traces only
+the young objects something reachable names. The rest are freed untraced, so a short-lived object
+costs its allocation and a young garbage cycle needs no cycle collection.
 
-**Hook 2 — the roots.** `GC_set_push_other_roots` walks the `JSRT_FRAME` chain, unboxes each slot
-into a 128-pointer buffer and hands that buffer to `GC_push_all_eager`. The eager push scans a
-memory range *conservatively*, which is exactly what fails on a boxed word — unboxing into a plain
-array of raw pointers first is what makes the range scannable. The walk also pushes each frame's
-`env` (§4.3, the mark procedure then covers its slots and parent chain) and the pending-exception
-cell (§4.9). It runs *after* the hook it replaced (`GC_get_push_other_roots`), because in a
-threads-enabled Boehm that default is the C stack and register scan itself: a raw pointer in a
-runtime local is a root only through it, and the runtime relies on that whenever a function
-allocates twice (plan-notes 163).
+**Roots are read, not counted.** With the world stopped, each thread's `JSRT_FRAME` chain (the
+globals frame included), pending-exception cell and handoff slot are read precisely; its native
+stack, saved registers and the image's writable segments conservatively, each word masked with
+`JSRT_PAYLOAD_MASK`. That is what lets runtime C keep raw pointers in locals across allocations
+(plan-notes 163). A rooted object is pinned for the collection; an object whose count is 0 and
+that no root names is freed, releasing what it held. Older cycles go to pyrlyn/gc's trial deletion
+(Bacon-Rajan), run with the roots pinned.
 
 **Why masking is safe.** Only two word shapes reach it: a boxed value, whose payload is its low 48
 bits, and a raw pointer, whose top 16 bits are zero — `jsrt_init` asserts that against a real
-allocation and aborts on a platform where it does not hold (5-level paging, AArch64 TBI). On the
-first the mask yields the referent; on the second it is the identity. A word that is neither — a
-double, a length — can mask to a plausible address and retain one object it does not own. That is
-ordinary conservative-collector behaviour: it costs memory, never correctness.
+allocation and aborts on a platform where it does not hold (5-level paging, AArch64 TBI). A word
+that is neither — a double, a length — can mask to a plausible address and pin one object it does
+not own for one collection. It costs memory, never correctness.
 
-**Two configurations, both supported.** The justfile asks `pkg-config` for `bdw-gc`. Found:
-the archive compiles with `-DJSRT_HAVE_BOEHM` and records `-lgc` in `packages/runtime/build*/link-flags.txt`, which
-`packages/compiler/src/cli/build.ts` reads back so the emitted program links the same collector its archive was
-compiled against (plan-notes 106). Not found: `jsrt_gc_alloc` is plain `malloc`, nothing is ever
-collected, and every test still passes — the program simply keeps every object it allocates. The runtime recipe
-prints which one it built (`Runtime built with: Boehm GC` / `plain malloc (no collection)`).
+**The checks.** `JSRT_GC_VERIFY=1` recounts every heap reference after each collection and names
+the kind whose stores skipped `jsrt_gc_write` or whose `trace` misses a field. `JSRT_GC_STRESS=1`
+(or `jsrt_gc_stress(1)`) collects before every allocation. `pnpm run test:leak` samples RSS over a
+10M-object loop and a loop of garbage cycles that live through collections: the last third of
+each run must not sit meaningfully above the middle. Each `--emit=lib` library carries its own
+private collector, because every runtime symbol in it is made local (FFI.md).
 
-**The check.** `pnpm run test:leak` compiles a 10M-object loop and samples RSS from `ps`: the last
-third of the run must not sit meaningfully above the middle. It reads that same `link-flags.txt`
-and SKIPS when the build has no collector, because a build that never frees has no plateau to find.
-Retention is that test's job specifically — the sanitized suite runs with
-`ASAN_OPTIONS=detect_leaks=0`, and the rest of the corpus allocates far too little to reach Boehm's
-first collection, which is why the suite stayed green through the whole period the two hooks above
-did not exist (plan-notes 108).
-
-**What §12 changes.** A precise generational collector replaces both hooks: the object layout
-becomes traced rather than masked, and the frame chain becomes an exact root set rather than an
-unboxing pass over one. The discipline that makes that swap runtime-only is already emitted (§4.1).
+**What §12 changes.** A precise generational collector would read the frame chain as its only
+root set. The discipline that makes that swap runtime-only is already emitted (§4.1).
 
 ---
 
@@ -1751,7 +1746,7 @@ reads as scheduling, not omission:
 | `JSRT_FRAME` / `JSRT_LOCAL` | yes, from the first emitted function | — |
 | `jsrt_typeof` / `jsrt_check_*` | yes, from Task 3.5 (§4.7, §4.8) | `jsrt_check_*` for shapes: needs Task 4.1 |
 | Landing-pad frame discipline | yes, from Task 3.10 (§4.9): pads take the pending exception, unwind pads pop | — |
-| Boehm GC, with the mark procedure and root hook of §4.12 | yes, when `bdw-gc` is installed; plain `malloc` and no collection otherwise | precise generational, §12 |
+| pyrlyn/gc deferred reference counting, §4.12 | yes (plan/T66; Boehm before it) | precise generational, §12 |
 
 ### Thread roots (T10.2)
 

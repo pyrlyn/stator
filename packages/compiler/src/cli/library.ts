@@ -3,9 +3,8 @@
  *
  * The archive carries a PRIVATE runtime (plan-notes 342): the unit's object is prelinked with the
  * runtime archives it references (`cc -r`), then every global except the unit's own C symbols is
- * made local, so two Stator libraries in one program never collide on `jsrt_*`. Boehm stays one
- * shared library per process; the runtime copies coalesce on one weak symbol to share their
- * object kind, which is why that symbol is kept global too.
+ * made local, so two Stator libraries in one program never collide on `jsrt_*` or on the
+ * collector's own symbols. Each copy runs its own collector over its own heap (plan/T66).
  *
  * Every step is deterministic, like the header (Task 7.2 step 8): the prelink and the
  * localization write the same bytes for the same inputs, and the archiver runs in its
@@ -30,10 +29,6 @@ export function libraryName(out: string): string | undefined {
 export function pkgConfigPath(out: string, name: string): string {
   return join(dirname(out), `lib${name}.pc`);
 }
-
-/** Runtime symbols every library keeps global beside its unit's own: the weak Boehm kind the
- * private runtime copies share (packages/runtime/src/jsrt_mem.h). */
-export const SHARED_RUNTIME_SYMBOLS: readonly string[] = ['jsrt_gc_shared_kind_p48'];
 
 /** How the prelinked object's symbols are localized: Mach-O through the linker's export list,
  * ELF through `objcopy` after the link. Windows has no `--emit=lib` yet (STA1219). */
@@ -187,7 +182,7 @@ export function writeStaticLibrary(lib: StaticLibrary): void {
     throw new Error(`--emit=lib output "${lib.out.path}" passed build()'s name check`);
   }
   const keepList = join(lib.scratch, 'keep.txt');
-  writeFileSync(keepList, keptSymbolsText(lib.format, [...lib.symbols, ...SHARED_RUNTIME_SYMBOLS]));
+  writeFileSync(keepList, keptSymbolsText(lib.format, lib.symbols));
   // The member keeps the library's name, so an archive listing says whose runtime it holds.
   const prelinked = join(lib.scratch, `${name}.o`);
   runTool(

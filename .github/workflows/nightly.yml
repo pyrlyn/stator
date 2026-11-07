@@ -28,7 +28,7 @@ jobs:
           just-version: '1.59.0'
       - uses: ./.github/actions/setup
       - name: Install runtime dependencies
-        run: sudo apt-get update && sudo apt-get install -y libgc-dev libsqlite3-dev clang llvm
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev clang llvm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run runtime
       - name: Differential fuzzing

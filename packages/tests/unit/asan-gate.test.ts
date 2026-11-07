@@ -36,7 +36,7 @@ function sampleInputs(): GateInputs {
       { name: 'jsrt_b.o', bytes: text('b-object') },
       { name: 'jsrt_a.o', bytes: text('a-object') },
     ],
-    linkFlags: ' -lgc -lm',
+    linkFlags: ' -licuuc -lm',
     cflags: 'Apple clang version 21.0.0 -O1 -g -fsanitize=address,undefined',
     tracked: [
       { path: 'packages/runtime/src/b.c', bytes: text('int b(void){return 1;}') },

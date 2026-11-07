@@ -107,8 +107,8 @@ def convert(profile, symbolizer):
             stack_cache[si] = chain
             return chain
 
-        # Weight by CPU time (threadCPUDelta, microseconds) so idle threads - e.g. Boehm GC's
-        # parked marker threads - do not drown the profile; fall back to sample counts.
+        # Weight by CPU time (threadCPUDelta, microseconds) so idle threads - e.g. parked
+        # helper threads - do not drown the profile; fall back to sample counts.
         cpu = samples.get('threadCPUDelta')
         if WEIGHT == 'cpu' and cpu and any(cpu):
             weights, unit = [c or 0 for c in cpu], 'microseconds'
