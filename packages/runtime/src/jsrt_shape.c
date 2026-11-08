@@ -166,14 +166,23 @@ static int32_t fixed_slot(jsrt_value obj, const char *key) {
  * Sets `*found` true on a hit and answers the closure; otherwise sets it false and answers
  * `undefined`. A NULL table entry (a capturing method with no one constant form) is skipped,
  * leaving the hidden slot -- which carries the construction-site environment -- as the hit.
- * Accessors (`get x`) are not methods under `x` and never match here. */
-static jsrt_value fixed_method_get(jsrt_value obj, const char *key, bool *found) {
+ * Accessors (`get x`) are not methods under `x` and never match here; `fixed_accessor_get` asks
+ * for them by their own name. */
+static bool spells(const char *name, const char *half, const char *key) {
+  const size_t n = strlen(half);
+  return strncmp(name, half, n) == 0 && strcmp(name + n, key) == 0;
+}
+
+/* The member `half` + `key` names: `half` is "" for a method, or "get " / "set " for an accessor
+ * half, the name no source can spell under which a class declares it (docs/SUBSET.md, rung 6b). */
+static jsrt_value fixed_member_get(jsrt_value obj, const char *half, const char *key,
+                                   bool *found) {
   JSRTObject *o = jsrt_as_object(obj);
   const JSRTClass *cls = o->cls;
   if (cls->fields != NULL) {
     for (uint32_t i = 0; i < cls->field_count; i++) {
       const char *name = cls->fields[i];
-      if (name != NULL && strncmp(name, "#method:", 8) == 0 && strcmp(name + 8, key) == 0) {
+      if (name != NULL && strncmp(name, "#method:", 8) == 0 && spells(name + 8, half, key)) {
         *found = true;
         return o->fields[i];
       }
@@ -183,7 +192,7 @@ static jsrt_value fixed_method_get(jsrt_value obj, const char *key, bool *found)
     for (uint32_t i = 0; i < cls->method_count; i++) {
       const char *name = cls->method_names[i];
       const JSRTClosure *entry = cls->methods[i];
-      if (name != NULL && entry != NULL && (name == key || strcmp(name, key) == 0)) {
+      if (name != NULL && entry != NULL && ((half[0] == '\0' && name == key) || spells(name, half, key))) {
         *found = true;
         return jsrt_closure(entry);
       }
@@ -191,6 +200,38 @@ static jsrt_value fixed_method_get(jsrt_value obj, const char *key, bool *found)
   }
   *found = false;
   return JSRT_UNDEFINED;
+}
+
+static jsrt_value fixed_method_get(jsrt_value obj, const char *key, bool *found) {
+  return fixed_member_get(obj, "", key, found);
+}
+
+/* An untyped `o.x` on a class instance runs the getter a typed read calls (the class's `get x`);
+ * `*found` is false when the class declares none. */
+static jsrt_value fixed_accessor_get(jsrt_value obj, const char *key, bool *found) {
+  const jsrt_value getter = fixed_member_get(obj, "get ", key, found);
+  return *found ? jsrt_call_with_this(getter, obj, 0, NULL) : JSRT_UNDEFINED;
+}
+
+/* An untyped `o.x = v` on a class instance: the class's `set x` runs, and a getter with no setter
+ * throws as strict code does (every compiled module is strict). False when the class declares
+ * neither half, so the write lands as an own property. */
+static bool fixed_accessor_set(jsrt_value obj, const char *key, jsrt_value value) {
+  bool found = false;
+  const jsrt_value setter = fixed_member_get(obj, "set ", key, &found);
+  if (found) {
+    (void)jsrt_call_with_this(setter, obj, 1, &value);
+    return true;
+  }
+  (void)fixed_member_get(obj, "get ", key, &found);
+  if (!found) {
+    return false;
+  }
+  char msg[256];
+  snprintf(msg, sizeof msg, "Cannot set property %s of #<%s> which has only a getter", key,
+           jsrt_as_object(obj)->cls->name);
+  jsrt_throw_error(&jsrt_class_type_error, msg);
+  return true;
 }
 
 static bool fixed_set(jsrt_value obj, const char *key, jsrt_value value) {
@@ -599,7 +640,8 @@ jsrt_value jsrt_get_prop(jsrt_value obj, const char *key, JSRTIC *ic) {
       if (found || jsrt_regexp_property(obj, key, &method)) {
         return method;
       }
-      return JSRT_UNDEFINED;
+      const jsrt_value got = fixed_accessor_get(obj, key, &found);
+      return found ? got : JSRT_UNDEFINED;
     }
     if (jsrt_is(obj, JSRT_TAG_STRING)) {
       if (strcmp(key, "length") == 0) {
@@ -1010,6 +1052,9 @@ static void store_prop(jsrt_value obj, const char *key, jsrt_value value, JSRTIC
   if (!has_prop_table(obj)) {
     if (jsrt_is(obj, JSRT_TAG_OBJECT)) {
       if (fixed_set(obj, key, value)) {
+        return;
+      }
+      if (jsrt_is_fixed_object(obj) && fixed_accessor_set(obj, key, value)) {
         return;
       }
       /* Growth (docs/VALUE.md §4.24): a name the class never declared lands in the overflow
