@@ -20,8 +20,7 @@ bytecode, and a CLI, `stator-engine`.
   parser test); `analyze.zig` leaked on rejected templates; the engine lacked `console` and
   `String.fromCharCode` (plan-notes 409).
 
-Commits on the `t67-engine` branch: 8979536d (move), 04a9897b (stator-ts fix), fee8a64a (JIT and
-CLI), and the corpus, benchmark and docs commit that closes this card.
+The work is the `T67:` commits on the `t67-engine` branch, squash-merged by its pull request.
 
 ## Check
 
@@ -38,7 +37,7 @@ $ pnpm run engine:bench
 | nbody | 55.9 | 98.7 | 32.3 | 0.58x | ...
 | objects-churn | 77.4 | 2783 | 1187 | 15.33x | ...
 $ pnpm run test:golden
-golden: 518 fixtures — 518 passed, 0 failed
+golden: 525 fixtures — 525 passed, 0 failed
 $ STATOR_TEST262=<corpus> pnpm run test262:interp-parse
 test262-parse: 19162 / 23726 pass (80.76%)
 ```
