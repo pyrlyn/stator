@@ -1246,12 +1246,20 @@ Three things this decision has to pay for, none of them a representation:
   pending cell. This is the one runtime behaviour the decision adds.
 
 **A real bound closure has exactly one creator, and it is not this.** `Function.prototype.bind`
-(and `call`/`apply`) stay not-yet. When `bind` lands it is a `JSRTClosure` whose `env` holds the
-receiver in slot 0 and the target in slot 1, driven by ONE shared runtime thunk that inserts slot 0
-at `argv[0]` — an env, which is where captured values already live (§4.3), never a second closure
-struct. Writing that down now is the whole point of this section: `bind` is the only construct in
-the language that creates a bound function, so it is the only place a second representation could
-enter, and it enters as a two-slot env or not at all.
+is a `JSRTClosure` over a three-slot env — the target in slot 0, the bound `this` in slot 1, the
+bound arguments as an array in slot 2 — driven by ONE shared runtime thunk (`bound_call` in
+`jsrt_builtin_values.c`) that prepends slot 2 to the call's arguments and calls the target through
+`jsrt_call_with_this` with slot 1. It is an env, which is where captured values already live
+(§4.3), never a second closure struct: `typeof`, `call`, `apply` and a second `bind` need no case
+of their own. **Landed with plan/T34.** The card reserved two slots; the bound arguments needed the
+third. The interpreter's `bind` (`packages/interpreter/src/builtins.zig`) calls this one, so a
+bound function is the same value whichever tier made it. `new` on a bound function constructs the target with the bound arguments
+first (§10.4.1.2, `jsrt_bound_construct`), and `instanceof` asks the target. `name` is
+`"bound " + name` and `length` is `max(0, length - bound arguments)`. Two limits: `bind` on a class
+is `not-yet(STA1214)`, because `new` on a class-typed value builds the descriptor directly and
+would drop the bound arguments; and in `ts` mode a bound function's `name` and `length` are the
+named refusal every function value's properties get (docs/SUBSET.md). Goldens `bind_receiver`,
+`bind_partial_args` (both modes), `js/bind_new`.
 
 **A builtin method in value position stays not-yet, on purpose.** `const f = m.get` on a `Map` is
 not this case: a builtin is not a `JSRTClosure` at all but a compile-time-selected runtime function
@@ -1464,7 +1472,7 @@ function with own properties prints them after its label (`[Function: assert] { 
 
 **Gate and lowering.** The member predicates live in `frontend/types.ts`: `isFunctionValueCallee`
 (the callee of `new`/`instanceof` is a function the program wrote, or Unknown — never a class or a
-lib builtin), `isFunctionValueMember` (`f.x` on such a function, except `length` and the lib's
+lib builtin; the lib's anonymous function type, which is what `bind` returns, counts as written), `isFunctionValueMember` (`f.x` on such a function, except `length` and the lib's
 `call`/`apply`/`bind`), and `isFunctionMemberRead` (`F.prototype` used as a receiver, whose
 checker type — inferred from one `F.prototype = { … }` — is no layout). They lower to the
 existing `new-value`, `instanceof-value`, `dyn-field-access`, `dyn-field-assignment` and

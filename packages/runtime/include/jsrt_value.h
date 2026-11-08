@@ -261,6 +261,15 @@ bool jsrt_builtin_member(jsrt_value obj, const char *key, jsrt_value *out);
 jsrt_value jsrt_object_proto_method(const char *name);
 jsrt_value jsrt_arraybuffer_is_view(jsrt_value v);
 jsrt_value jsrt_function_call_method(jsrt_value fn, bool apply);
+/* Function.prototype.bind (docs/VALUE.md §4.16): `fn.bind` as a value, and the bound closures
+ * it makes -- a plain closure whose env holds the receiver, the target and the bound arguments.
+ * `jsrt_construct` and `instanceof` see through one to its target (§10.4.1.2, §7.3.22). */
+jsrt_value jsrt_function_bind_method(jsrt_value fn);
+bool jsrt_is_bound_function(jsrt_value fn);
+jsrt_value jsrt_bound_target(jsrt_value fn);
+jsrt_value jsrt_bound_construct(jsrt_value fn, uint32_t argc, const jsrt_value *argv);
+/* The bound arguments followed by `argv`, as a fresh array the caller roots. */
+jsrt_value jsrt_bound_arguments(jsrt_value fn, uint32_t argc, const jsrt_value *argv);
 jsrt_value jsrt_builtin_ctor_value(jsrt_value name);
 jsrt_value jsrt_builtin_proto_value(jsrt_value name);
 jsrt_value jsrt_object_proto_method_value(jsrt_value name);

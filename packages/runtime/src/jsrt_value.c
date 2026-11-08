@@ -200,6 +200,9 @@ jsrt_value jsrt_construct(jsrt_value ctor, uint32_t argc, const jsrt_value *argv
     jsrt_throw_error(&jsrt_class_type_error, message);
     return JSRT_UNDEFINED;
   }
+  if (jsrt_is_bound_function(ctor)) {
+    return jsrt_bound_construct(ctor, argc, argv);
+  }
   const JSRTClosure *c = jsrt_as_closure(ctor);
   if (c->klass == NULL) {
     return construct_function(ctor, argc, argv);
@@ -220,6 +223,9 @@ jsrt_value jsrt_construct(jsrt_value ctor, uint32_t argc, const jsrt_value *argv
 }
 
 bool jsrt_instanceof_ctor(jsrt_value obj, jsrt_value ctor) {
+  if (jsrt_is_bound_function(ctor)) {
+    return jsrt_instanceof_ctor(obj, jsrt_bound_target(ctor));
+  }
   if (jsrt_is(ctor, JSRT_TAG_CLOSURE)) {
     const JSRTClosure *c = jsrt_as_closure(ctor);
     if (c->klass != NULL) {

@@ -605,6 +605,14 @@ jsrt_value jsrt_get_prop(jsrt_value obj, const char *key, JSRTIC *ic) {
       }
       return jsrt_function_call_method(obj, key[0] == 'a');
     }
+    /* Function.prototype.bind (§20.2.3.2), for a class too: its bound form constructs. */
+    if (strcmp(key, "bind") == 0) {
+      jsrt_value own = JSRT_UNDEFINED;
+      if (c->klass == NULL && function_own_get(obj, key, &own)) {
+        return own;
+      }
+      return jsrt_function_bind_method(obj);
+    }
     if (strcmp(key, "name") == 0) {
       return jsrt_string_from_utf8(c->name, strlen(c->name));
     }

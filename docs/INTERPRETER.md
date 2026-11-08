@@ -127,7 +127,8 @@ and `src/vm.zig` runs it:
 - **Globals.** `src/builtins.zig` builds the global object. Where the runtime already has a
   builtin (Map, Date, JSON, Math) the global names it. The rest are Zig natives over the
   runtime's helpers: the error constructors, `Object`'s reflection, `Symbol`, `Function.prototype`'s
-  `call`/`apply`/`bind`. `Array.prototype` and `String.prototype` hold forwarders to the runtime's
+  `call`/`apply`/`bind`. `bind` builds the runtime's bound function (`docs/VALUE.md` §4.16), so
+  compiled and interpreted code construct and test `instanceof` through each other's. `Array.prototype` and `String.prototype` hold forwarders to the runtime's
   method tables, so `Array.prototype.map.call(arrayLike, f)` works. An array-like receiver is
   copied into an array first, so a method that writes to its receiver (`push`, `splice`, …) throws
   a `TypeError` on a non-array instead of writing to a copy.
