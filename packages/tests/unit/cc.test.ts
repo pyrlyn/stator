@@ -32,6 +32,16 @@ test('--cc beats CC, CC beats the default, empty CC is unset', () => {
   });
 });
 
+test('CC beats config "cc"; config "cc" beats the default', () => {
+  const config = { command: 'gcc-14', source: 'config' } as const;
+  assert.deepEqual(chooseCC(config, { CC: 'cc' }, false, LINUX).choice, {
+    command: 'cc',
+    source: 'CC',
+  });
+  assert.deepEqual(chooseCC(config, {}, false, LINUX).choice, config);
+  assert.deepEqual(chooseCC(config, { CC: '' }, false, LINUX).choice, config);
+});
+
 const BASE: CliOptions = {
   entry: undefined,
   out: undefined,

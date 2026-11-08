@@ -37,7 +37,7 @@ One key per flag. The schema is generated from `packages/compiler/src/cli/config
 | `emitHeader` | path | `--emit-header` | — | `build` |
 | `unitName` | string, letters, digits and `_` only (else `STA0004`) | `--unit-name` | entry basename, sanitized | `build` |
 | `bundler` | `"vite"` \| `"none"` \| module | `--bundler` | `"vite"` | both, `js` mode only (`STA0004` in `ts` mode) |
-| `cc` | C compiler name or path (clang, Apple clang or gcc) | `--cc` (env `CC`, below the file) | `"clang"` | `build` |
+| `cc` | C compiler name or path (clang, Apple clang or gcc) | `--cc`, env `CC` | `"clang"` | `build` |
 | `diagnostics` | `"text"` \| `"json"` | `--json`, `--diagnostics=text\|json` | `"text"` | `explain` |
 | `node` | boolean | `--node` | `false` | both |
 
@@ -71,7 +71,7 @@ its key and a regenerated schema
 Highest first:
 
 1. the command line;
-2. the environment (`STATOR_OPT` for `opt`), which a project `.env` may fill in for
+2. the environment (`STATOR_OPT` for `opt`, `CC` for `cc`), which a project `.env` may fill in for
    `STATOR_OPT`, `STATOR_RUNTIME` and `STATOR_OTEL` only; never `CC`, `STATOR_RUNTIME_ROOT`,
    `OTEL_*`, `STATOR_COMPILE_JOBS` or `STATOR_COMPILE_TIMING` (docs/TOOLCHAIN.md, "Environment
    variables and `.env`"). `STATOR_COMPILE_JOBS` has no flag and no config key: it is only the
@@ -82,9 +82,8 @@ Highest first:
 `link` is the exception: the file's flags and the command line's are **concatenated**, file
 first, so a project's libraries stay linked when a run adds one more.
 
-`cc` is the other exception: the file's `cc` sits **above** `CC` (`--cc` > `cc` > `CC` >
-`clang`, plan/T35), because `CC` is often set for a whole shell or CI image while the file names
-the compiler the project was built and tested with (docs/TOOLCHAIN.md, "C compiler").
+`cc` follows the same order (`--cc` > `CC` > `cc` > `clang`; docs/TOOLCHAIN.md, "C compiler"),
+except that a `.env` file may not set `CC`.
 
 ## Example
 
