@@ -7,7 +7,7 @@ language: 'typescript'
 # never through pnpm (plan-notes 204).
 tasks:
   typecheck:
-    script: './node_modules/.bin/tsc --noEmit -p packages/vite-stator/tsconfig.json'
+    script: 'node scripts/typecheck.ts packages/vite-stator'
     toolchain: 'system'
     options:
       runFromWorkspaceRoot: true
