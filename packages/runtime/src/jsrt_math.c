@@ -27,15 +27,18 @@
 /* Math functions apply ECMAScript ToNumber to every argument before their numeric work. */
 static double arg(jsrt_value v) { return jsrt_to_number(v); }
 
-jsrt_value jsrt_math_abs(jsrt_value x) { return jsrt_number(fabs(arg(x))); }
+/* One unary member: `Math.name` answers `fn` of its argument. */
+#define JSRT_MATH_UNARY(name, fn)                \
+  jsrt_value jsrt_math_##name(jsrt_value x) {    \
+    return jsrt_number(fn(arg(x)));              \
+  }
 
-jsrt_value jsrt_math_ceil(jsrt_value x) { return jsrt_number(ceil(arg(x))); }
-
-jsrt_value jsrt_math_floor(jsrt_value x) { return jsrt_number(floor(arg(x))); }
-
-jsrt_value jsrt_math_sqrt(jsrt_value x) { return jsrt_number(sqrt(arg(x))); }
-
-jsrt_value jsrt_math_trunc(jsrt_value x) { return jsrt_number(trunc(arg(x))); }
+/* Group 1's plain members: the IEEE-defined libm call itself. */
+JSRT_MATH_UNARY(abs, fabs)
+JSRT_MATH_UNARY(ceil, ceil)
+JSRT_MATH_UNARY(floor, floor)
+JSRT_MATH_UNARY(sqrt, sqrt)
+JSRT_MATH_UNARY(trunc, trunc)
 
 /* NOT C round(), twice over: C rounds ties AWAY from zero (round(-2.5) is -3, ECMA says -2 — ties
  * go toward +∞), and the naive floor(x + 0.5) breaks at 0.49999999999999994, where the addition
@@ -129,30 +132,16 @@ jsrt_value jsrt_math_fround(jsrt_value v) { return jsrt_number((double)(float)ar
  * as every other member here; the arithmetic is entirely V8's. Do NOT "simplify" any of these to
  * the libm call of the same name -- that is precisely the bug the vendoring fixed, and it is
  * invisible until a golden test disagrees with Node in the seventeenth digit. */
-#define JSRT_MATH_FDLIBM_1(name)                     \
-  jsrt_value jsrt_math_##name(jsrt_value x) {        \
-    return jsrt_number(fdlibm_##name(arg(x)));       \
-  }
-JSRT_MATH_FDLIBM_1(acos)
-JSRT_MATH_FDLIBM_1(acosh)
-JSRT_MATH_FDLIBM_1(asin)
-JSRT_MATH_FDLIBM_1(asinh)
-JSRT_MATH_FDLIBM_1(atan)
-JSRT_MATH_FDLIBM_1(atanh)
-JSRT_MATH_FDLIBM_1(cbrt)
-JSRT_MATH_FDLIBM_1(cos)
-JSRT_MATH_FDLIBM_1(cosh)
-JSRT_MATH_FDLIBM_1(exp)
-JSRT_MATH_FDLIBM_1(expm1)
-JSRT_MATH_FDLIBM_1(log)
-JSRT_MATH_FDLIBM_1(log10)
-JSRT_MATH_FDLIBM_1(log1p)
-JSRT_MATH_FDLIBM_1(log2)
-JSRT_MATH_FDLIBM_1(sin)
-JSRT_MATH_FDLIBM_1(sinh)
-JSRT_MATH_FDLIBM_1(tan)
-JSRT_MATH_FDLIBM_1(tanh)
-#undef JSRT_MATH_FDLIBM_1
+#define JSRT_MATH_FDLIBM_UNARY(X) \
+  X(acos) X(acosh) X(asin) X(asinh) X(atan) \
+  X(atanh) X(cbrt) X(cos) X(cosh) X(exp) \
+  X(expm1) X(log) X(log10) X(log1p) X(log2) \
+  X(sin) X(sinh) X(tan) X(tanh)
+#define JSRT_MATH_FDLIBM(name) JSRT_MATH_UNARY(name, fdlibm_##name)
+JSRT_MATH_FDLIBM_UNARY(JSRT_MATH_FDLIBM)
+#undef JSRT_MATH_FDLIBM
+#undef JSRT_MATH_FDLIBM_UNARY
+#undef JSRT_MATH_UNARY
 
 jsrt_value jsrt_math_atan2(jsrt_value y, jsrt_value x) {
   return jsrt_number(fdlibm_atan2(arg(y), arg(x)));

@@ -12,6 +12,7 @@
 #include "jsrt.h"
 #include "jsrt_mem.h"
 #include "jsrt_value.h"
+#include "jsrt_utf.h"
 
 #include "libregexp.h"
 
@@ -34,9 +35,7 @@ static void regexp_finalize(void *obj) { free(((JSRTRegExp *)obj)->bytecode); }
 static const JSRTGcKind regexp_kind =
     JSRT_GC_KIND("regexp", regexp_trace, regexp_finalize, JSRT_GC_ACYCLIC, 0);
 
-/* ============================================================================
- * The three functions libregexp.h says "must be provided by the user"
- * ============================================================================ */
+/* --- The three functions libregexp.h says "must be provided by the user" --- */
 
 /* The engine's only allocator. Its convention is realloc's, with size 0 meaning free.
  *
@@ -89,9 +88,7 @@ int lre_check_timeout(void *opaque) {
   return 0;
 }
 
-/* ============================================================================
- * Patterns
- * ============================================================================ */
+/* --- Patterns --- */
 
 /* The compiler reads the pattern as UTF-8 — or as CESU-8 when the pattern is not a unicode one,
  * which is the same rule quickjs applies: a LONE surrogate has no UTF-8 encoding, and a
@@ -108,27 +105,8 @@ static char *pattern_utf8(jsrt_value source, bool unicode, size_t *out_len) {
   }
   size_t n = 0;
   for (uint32_t i = 0; i < str->length; i++) {
-    uint32_t cp = str->data[i];
-    if (unicode && cp >= 0xD800u && cp <= 0xDBFFu && i + 1 < str->length &&
-        str->data[i + 1] >= 0xDC00u && str->data[i + 1] <= 0xDFFFu) {
-      cp = 0x10000u + ((cp - 0xD800u) << 10) + (str->data[i + 1] - 0xDC00u);
-      i++;
-    }
-    if (cp < 0x80u) {
-      out[n++] = (char)cp;
-    } else if (cp < 0x800u) {
-      out[n++] = (char)(0xC0u | (cp >> 6));
-      out[n++] = (char)(0x80u | (cp & 0x3Fu));
-    } else if (cp < 0x10000u) {
-      out[n++] = (char)(0xE0u | (cp >> 12));
-      out[n++] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
-      out[n++] = (char)(0x80u | (cp & 0x3Fu));
-    } else {
-      out[n++] = (char)(0xF0u | (cp >> 18));
-      out[n++] = (char)(0x80u | ((cp >> 12) & 0x3Fu));
-      out[n++] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
-      out[n++] = (char)(0x80u | (cp & 0x3Fu));
-    }
+    const uint32_t cp = unicode ? jsrt_utf16_code_point(str->data, str->length, &i) : str->data[i];
+    n += jsrt_utf8_encode(cp, out + n);
   }
   out[n] = '\0';
   *out_len = n;
@@ -458,9 +436,7 @@ jsrt_value jsrt_regexp_construct(jsrt_value pattern, jsrt_value flags) {
   return built ? out : JSRT_UNDEFINED;
 }
 
-/* ============================================================================
- * Matching
- * ============================================================================ */
+/* --- Matching --- */
 
 /* One match attempt at `start`, with the capture array the caller owns.
  *
@@ -544,9 +520,7 @@ bool jsrt_regexp_test(jsrt_value re_value, jsrt_value str) {
   return matched;
 }
 
-/* ============================================================================
- * Scanning — the one engine under search, split and replace
- * ============================================================================ */
+/* --- Scanning — the one engine under search, split and replace --- */
 
 /* A capture group that did not participate. Distinguishable from index 0, which is a real
  * position; the spec's own answer for one is `undefined`. */
@@ -633,9 +607,7 @@ static const JSString *subject_of(jsrt_value str, const char *method) {
   return (const JSString *)jsrt_ptr(str);
 }
 
-/* ============================================================================
- * The regexp-taking String.prototype methods (§22.2.5)
- * ============================================================================ */
+/* --- The regexp-taking String.prototype methods (§22.2.5) --- */
 
 jsrt_value jsrt_regexp_search(jsrt_value re_value, jsrt_value str) {
   const JSString *s = subject_of(str, "search");

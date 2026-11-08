@@ -23,6 +23,7 @@
 #include "jsrt.h"
 
 #include "jsrt_mem.h"
+#include "jsrt_utf.h"
 
 #include "ryu/ryu.h"
 
@@ -32,9 +33,7 @@
 #include <string.h>
 #include <time.h>
 
-/* ============================================================================
- * Shortest round-trip digits
- * ============================================================================ */
+/* --- Shortest round-trip digits --- */
 
 /* Decompose a finite, strictly positive double into ECMA-262 step 5's (s, k, n):
  *   digits — the decimal digits of s, NUL-terminated, no sign and no point
@@ -123,36 +122,19 @@ static void format_double(double d, char *buf, size_t buflen, bool negative_zero
   format_positive(d, buf, buflen);
 }
 
-/* ============================================================================
- * Output buffer
- * ============================================================================ */
+/* --- Output buffer --- */
 
 /* Output is built up in a JSRTBuf (jsrt_mem.h) rather than streamed: array layout cannot be
  * decided until every element has been rendered and measured. */
 
-/* ============================================================================
- * UTF-16 -> UTF-8 output
- * ============================================================================ */
+/* --- UTF-16 -> UTF-8 output --- */
 
 /* UTF-8 encoding of one resolved code point, shared by append_string (whose surrogate
  * fixup runs first) and json_quote (whose escapes run first): the four arms are one rule,
  * not two. */
 static void append_utf8(JSRTBuf *out, uint32_t cp) {
-  if (cp < 0x80u) {
-    jsrt_buf_putc(out, (char)cp);
-  } else if (cp < 0x800u) {
-    jsrt_buf_putc(out, (char)(0xC0u | (cp >> 6)));
-    jsrt_buf_putc(out, (char)(0x80u | (cp & 0x3Fu)));
-  } else if (cp < 0x10000u) {
-    jsrt_buf_putc(out, (char)(0xE0u | (cp >> 12)));
-    jsrt_buf_putc(out, (char)(0x80u | ((cp >> 6) & 0x3Fu)));
-    jsrt_buf_putc(out, (char)(0x80u | (cp & 0x3Fu)));
-  } else {
-    jsrt_buf_putc(out, (char)(0xF0u | (cp >> 18)));
-    jsrt_buf_putc(out, (char)(0x80u | ((cp >> 12) & 0x3Fu)));
-    jsrt_buf_putc(out, (char)(0x80u | ((cp >> 6) & 0x3Fu)));
-    jsrt_buf_putc(out, (char)(0x80u | (cp & 0x3Fu)));
-  }
+  char bytes[4];
+  jsrt_buf_append(out, bytes, jsrt_utf8_encode(cp, bytes));
 }
 
 static void append_units(JSRTBuf *out, const JSString *str, uint32_t from, uint32_t to);
@@ -166,26 +148,11 @@ static void append_string(JSRTBuf *out, const JSString *str) {
  * util.format slice ends at a `%`, so it never splits a pair. */
 static void append_units(JSRTBuf *out, const JSString *str, uint32_t from, uint32_t to) {
   for (uint32_t i = from; i < to; i++) {
-    uint32_t cp = str->data[i];
-
-    if (cp >= 0xD800u && cp <= 0xDBFFu && i + 1 < to) {
-      uint32_t low = str->data[i + 1];
-      if (low >= 0xDC00u && low <= 0xDFFFu) {
-        cp = 0x10000u + ((cp - 0xD800u) << 10) + (low - 0xDC00u);
-        i++;
-      }
-    }
-    if (cp >= 0xD800u && cp <= 0xDFFFu) {
-      cp = 0xFFFDu; /* lone surrogate */
-    }
-
-    append_utf8(out, cp);
+    append_utf8(out, jsrt_utf16_scalar(jsrt_utf16_code_point(str->data, to, &i)));
   }
 }
 
-/* ============================================================================
- * util.inspect — the form a value takes INSIDE an array
- * ============================================================================ */
+/* --- util.inspect — the form a value takes INSIDE an array --- */
 
 /* Node's defaults for console.log, each confirmed against the pinned Node rather than assumed:
  * an array breaks across lines past 80 columns, stops recursing below depth 2 ("[Array]"), and
@@ -1233,9 +1200,7 @@ static void inspect_value(JSRTBuf *out, jsrt_value v, int recurse, size_t indent
   }
 }
 
-/* ============================================================================
- * Public
- * ============================================================================ */
+/* --- Public --- */
 
 /* console.group's indentation, in GROUPS -- Node writes two spaces per level in front of every
  * line of every console write, including each line of a multi-line inspect. One counter for the
@@ -1298,16 +1263,14 @@ void jsrt_print(jsrt_value v) { print_to(v, stdout, true); }
  * why the golden runner compares BOTH streams byte-for-byte. */
 void jsrt_eprint(jsrt_value v) { print_to(v, stderr, true); }
 
-/* ============================================================================
- * util.format -- console.log's placeholders (plan.md §9 Task 6.24)
+/* --- util.format -- console.log's placeholders (plan.md §9 Task 6.24) ---
  *
  * Node's console methods run every call through `formatWithOptionsInternal`
  * (lib/internal/util/inspect.js, v26.7.0; plan-notes 337). When the first of two or more
  * arguments is a string, `%s %d %i %f %j %o %O %c` each consume the next argument and `%%` is a
  * literal `%`. The loop below is that function's loop, statement for statement, because its edge
  * cases ARE the semantics: a `%` in the last position is literal, an exhausted argument list
- * leaves every placeholder but `%%` as written, and an unknown letter after `%` is skipped.
- * ============================================================================ */
+ * leaves every placeholder but `%%` as written, and an unknown letter after `%` is skipped. */
 
 static void json_format(JSRTBuf *out, jsrt_value v);
 
@@ -1546,16 +1509,20 @@ void jsrt_console_group_end(void) {
   }
 }
 
-/* console.count's per-label tallies. A linked list rather than a hash: the labels a program
- * counts are a handful of literals, and a list keeps the keys immortal for free -- the same
- * lifetime rule shape keys follow, and for the same reason (the table only grows). */
-typedef struct CountEntry {
+/* console.count's per-label tallies and console.time's per-label start times. A linked list
+ * rather than a hash: the labels a program counts or times are a handful of literals, and a list
+ * keeps the keys immortal for free -- the same lifetime rule shape keys follow, and for the same
+ * reason (the table only grows). One entry type serves both tables, each using its own fields. */
+typedef struct LabelEntry {
   const char *label;
   uint32_t count;
-  struct CountEntry *next;
-} CountEntry;
+  double started_ms;
+  bool running;
+  struct LabelEntry *next;
+} LabelEntry;
 
-static CountEntry *counts = NULL;
+static LabelEntry *counts = NULL;
+static LabelEntry *timers = NULL;
 
 /* Pointer-or-content label comparison, shared by the count and timer table walks: labels are
  * immortal shape keys, so the pointer test usually hits and strcmp is the fallback. */
@@ -1569,20 +1536,23 @@ static const char *count_label(jsrt_value label) {
   return label == JSRT_UNDEFINED ? "default" : jsrt_shape_key(label);
 }
 
-static CountEntry *count_entry(const char *label) {
-  for (CountEntry *e = counts; e != NULL; e = e->next) {
+/* The entry for `label` in `*table`; a missing one is added zeroed when `create`, else NULL. */
+static LabelEntry *label_entry(LabelEntry **table, const char *label, bool create) {
+  for (LabelEntry *e = *table; e != NULL; e = e->next) {
     if (labels_equal(e->label, label)) {
       return e;
     }
   }
-  CountEntry *fresh = (CountEntry *)malloc(sizeof(CountEntry));
+  if (!create) {
+    return NULL;
+  }
+  LabelEntry *fresh = (LabelEntry *)calloc(1, sizeof(LabelEntry));
   if (fresh == NULL) {
-    jsrt_panic("out of memory: console.count");
+    jsrt_panic("out of memory: console label");
   }
   fresh->label = label;
-  fresh->count = 0;
-  fresh->next = counts;
-  counts = fresh;
+  fresh->next = *table;
+  *table = fresh;
   return fresh;
 }
 
@@ -1603,7 +1573,7 @@ static void count_print(const char *label, uint32_t count) {
 
 jsrt_value jsrt_console_count(jsrt_value label) {
   const char *name = count_label(label);
-  CountEntry *entry = count_entry(name);
+  LabelEntry *entry = label_entry(&counts, name, true);
   entry->count++;
   count_print(name, entry->count);
   return JSRT_UNDEFINED;
@@ -1614,7 +1584,7 @@ jsrt_value jsrt_console_count(jsrt_value label) {
  * has no channel for -- so an unknown label simply starts at zero, which is what the next
  * `count` on it would have done anyway. */
 jsrt_value jsrt_console_count_reset(jsrt_value label) {
-  count_entry(count_label(label))->count = 0;
+  label_entry(&counts, count_label(label), true)->count = 0;
   return JSRT_UNDEFINED;
 }
 
@@ -1628,17 +1598,6 @@ jsrt_value jsrt_console_count_reset(jsrt_value label) {
  * What IS pinned, and what the proof asserts: the label is echoed, a duration follows it, the unit
  * is `ms` below a second, and a timer that was never started prints nothing at all. */
 
-/* Per-label start times. The same linked list `console.count` uses, for the same reason: the
- * labels a program times are a handful of literals, and the list keeps the keys immortal. */
-typedef struct TimerEntry {
-  const char *label;
-  double started_ms;
-  bool running;
-  struct TimerEntry *next;
-} TimerEntry;
-
-static TimerEntry *timers = NULL;
-
 /* A MONOTONIC clock, not a wall clock: `console.time` measures elapsed time, and a wall clock can
  * step backwards under NTP, which would print a negative duration for a program that did nothing
  * wrong. CLOCK_MONOTONIC is POSIX and present on both platforms the runtime builds for. */
@@ -1646,27 +1605,6 @@ static double monotonic_ms(void) {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1.0e6;
-}
-
-static TimerEntry *timer_entry(const char *label, bool create) {
-  for (TimerEntry *e = timers; e != NULL; e = e->next) {
-    if (labels_equal(e->label, label)) {
-      return e;
-    }
-  }
-  if (!create) {
-    return NULL;
-  }
-  TimerEntry *fresh = (TimerEntry *)malloc(sizeof(TimerEntry));
-  if (fresh == NULL) {
-    jsrt_panic("out of memory: console.time");
-  }
-  fresh->label = label;
-  fresh->started_ms = 0.0;
-  fresh->running = false;
-  fresh->next = timers;
-  timers = fresh;
-  return fresh;
 }
 
 /* Node's own unit ladder (`lib/internal/console/constructor.js`, `formatTime`): milliseconds below
@@ -1700,7 +1638,7 @@ static void format_time(JSRTBuf *out, double ms) {
 }
 
 jsrt_value jsrt_console_time(jsrt_value label) {
-  TimerEntry *entry = timer_entry(count_label(label), true);
+  LabelEntry *entry = label_entry(&timers, count_label(label), true);
   /* Node warns and KEEPS the original start when a label is timed twice, so a re-`time` on a
    * running label must not restart it. */
   if (!entry->running) {
@@ -1713,7 +1651,7 @@ jsrt_value jsrt_console_time(jsrt_value label) {
 jsrt_value jsrt_console_time_end(jsrt_value label) {
   const double now = monotonic_ms();
   const char *name = count_label(label);
-  TimerEntry *entry = timer_entry(name, false);
+  LabelEntry *entry = label_entry(&timers, name, false);
   /* A label that was never started warns in Node and prints no duration. Warning is a channel this
    * runtime does not have (the `countReset` rule), so it prints nothing -- which is exactly what
    * Node writes to stdout for this case. */
@@ -1790,9 +1728,7 @@ void jsrt_console_assert_bare(jsrt_value condition) {
   }
 }
 
-/* ============================================================================
- * console.table
- * ============================================================================
+/* --- console.table ---
  *
  * The layout Node draws (WHATWG console "table", as Node implements it in `lib/internal/cli_table`)
  * is a box-drawn grid: a leading `(index)` column, one column per key seen across the rows, and a
@@ -2112,9 +2048,7 @@ jsrt_value jsrt_array_join(jsrt_value array, jsrt_value separator) {
   return result;
 }
 
-/* ============================================================================
- * JSON.stringify (§25.5.2) — SerializeJSONProperty over the value graph
- * ============================================================================
+/* --- JSON.stringify (§25.5.2) — SerializeJSONProperty over the value graph ---
  *
  * Lives here for jsrt_array_join's reason: serialization IS stringification, and it needs JSRTBuf,
  * format_double and the UTF-16 walk. Two departures from the inspect code above are the whole
@@ -2141,13 +2075,8 @@ static bool json_unserializable(jsrt_value v) {
 static void json_quote(JSRTBuf *out, const JSString *str) {
   jsrt_buf_putc(out, '"');
   for (uint32_t i = 0; i < str->length; i++) {
-    uint32_t cp = str->data[i];
-    if (cp >= 0xD800u && cp <= 0xDBFFu && i + 1 < str->length && str->data[i + 1] >= 0xDC00u &&
-        str->data[i + 1] <= 0xDFFFu) {
-      /* A paired surrogate passes through as its code point, encoded UTF-8 below. */
-      cp = 0x10000u + ((cp - 0xD800u) << 10) + (str->data[i + 1] - 0xDC00u);
-      i++;
-    }
+    /* A paired surrogate passes through as its code point, encoded UTF-8 below. */
+    const uint32_t cp = jsrt_utf16_code_point(str->data, str->length, &i);
     if (cp == '"' || cp == '\\') {
       jsrt_buf_putc(out, '\\');
       jsrt_buf_putc(out, (char)cp);

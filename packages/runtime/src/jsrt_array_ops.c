@@ -30,6 +30,19 @@ static void collect_varargs(uint32_t n, jsrt_value *items, va_list *ap) {
   }
 }
 
+/* Declares `items` and fills it from the variadic caller's arguments after `n`. A macro, not a
+ * function: `va_start` names the caller's own last parameter, and the VLA must live in the
+ * caller's frame — the `jsrt_call_at` shifted-argv precedent — so the items stay reachable to a
+ * conservative collector across the allocating appends that follow. */
+#define VARARGS_ITEMS(items, n)                                                                    \
+  jsrt_value items[(n) > 0 ? (n) : 1];                                                             \
+  do {                                                                                             \
+    va_list ap_;                                                                                   \
+    va_start(ap_, n);                                                                              \
+    collect_varargs((n), items, &ap_);                                                             \
+    va_end(ap_);                                                                                   \
+  } while (0)
+
 /* Append one element through the public write path, which owns growth; `length` is the one index
  * a write may extend through, so no hole can appear. */
 static void append(jsrt_value array, jsrt_value element) {
@@ -90,13 +103,7 @@ jsrt_value jsrt_array_push_many(jsrt_value array, uint32_t n, ...) {
   if (jsrt_require_array(array, "push") == NULL) {
     return JSRT_UNDEFINED;
   }
-  /* VLA on the C stack, the `jsrt_call_at` shifted-argv precedent: the items stay reachable to a
-   * conservative collector across the allocating appends below. */
-  jsrt_value items[n > 0 ? n : 1];
-  va_list ap;
-  va_start(ap, n);
-  collect_varargs(n, items, &ap);
-  va_end(ap);
+  VARARGS_ITEMS(items, n);
   return push_items(array, n, items);
 }
 
@@ -179,11 +186,7 @@ jsrt_value jsrt_array_unshift_many(jsrt_value array, uint32_t n, ...) {
   if (jsrt_require_array(array, "unshift") == NULL) {
     return JSRT_UNDEFINED;
   }
-  jsrt_value items[n > 0 ? n : 1];
-  va_list ap;
-  va_start(ap, n);
-  collect_varargs(n, items, &ap);
-  va_end(ap);
+  VARARGS_ITEMS(items, n);
   return unshift_items(array, n, items);
 }
 
@@ -192,14 +195,8 @@ jsrt_value jsrt_array_at(jsrt_value array, jsrt_value index) {
   if (a == NULL) {
     return JSRT_UNDEFINED;
   }
-  double k = jsrt_int_or_inf(index, 0.0);
-  if (k < 0.0) {
-    k += (double)a->length;
-  }
-  if (k < 0.0 || k >= (double)a->length) {
-    return JSRT_UNDEFINED;
-  }
-  return jsrt_unhole(a->elements[(uint32_t)k]);
+  const int64_t k = jsrt_element_index(index, a->length, true);
+  return k < 0 ? JSRT_UNDEFINED : jsrt_unhole(a->elements[(uint32_t)k]);
 }
 
 /* SameValueZero: strict equality plus NaN finding NaN (§7.2.9). `includes` searches with it;
@@ -361,11 +358,7 @@ jsrt_value jsrt_array_concat_many(jsrt_value array, uint32_t n, ...) {
   if (jsrt_require_array(array, "concat") == NULL) {
     return JSRT_UNDEFINED;
   }
-  jsrt_value items[n > 0 ? n : 1];
-  va_list ap;
-  va_start(ap, n);
-  collect_varargs(n, items, &ap);
-  va_end(ap);
+  VARARGS_ITEMS(items, n);
   return concat_items(array, n, items);
 }
 
@@ -501,11 +494,7 @@ jsrt_value jsrt_array_splice_insert(jsrt_value array, jsrt_value start, jsrt_val
   if (jsrt_require_array(array, "splice") == NULL) {
     return JSRT_UNDEFINED;
   }
-  jsrt_value items[n > 0 ? n : 1];
-  va_list ap;
-  va_start(ap, n);
-  collect_varargs(n, items, &ap);
-  va_end(ap);
+  VARARGS_ITEMS(items, n);
   return splice_insert_items(array, start, delete_count, n, items);
 }
 
@@ -640,6 +629,7 @@ typedef struct {
   jsrt_value cb;
   jsrt_value out;
   bool flag;
+  bool stop_on;
 } MapWalk;
 
 static bool visit_for_each(jsrt_value array, uint32_t i, void *ctx) {
@@ -668,18 +658,11 @@ static bool visit_filter(jsrt_value array, uint32_t i, void *ctx) {
   return true;
 }
 
-static bool visit_some(jsrt_value array, uint32_t i, void *ctx) {
+/* some/every: stop at the first answer whose truthiness is `stop_on` (true for some, false for
+ * every), recording in `flag` that the walk stopped there. */
+static bool visit_until(jsrt_value array, uint32_t i, void *ctx) {
   MapWalk *w = (MapWalk *)ctx;
-  if (jsrt_truthy(call_cb(w->cb, array, i))) {
-    w->flag = true;
-    return false;
-  }
-  return true;
-}
-
-static bool visit_every(jsrt_value array, uint32_t i, void *ctx) {
-  MapWalk *w = (MapWalk *)ctx;
-  if (!jsrt_truthy(call_cb(w->cb, array, i))) {
+  if (jsrt_truthy(call_cb(w->cb, array, i)) == w->stop_on) {
     w->flag = true;
     return false;
   }
@@ -712,36 +695,41 @@ jsrt_value jsrt_array_map(jsrt_value array, jsrt_value cb) {
   /* §23.1.3.21: the answer has the receiver's length at entry, and an index the walk skips -- a
    * hole, or one the callback cut off -- stays a hole in it. */
   const uint32_t len = arr(array)->length;
-  MapWalk w = {cb, holes(len), false};
+  MapWalk w = {cb, holes(len), false, false};
   walk_present(array, len, visit_map, &w);
   return w.out;
 }
 
-jsrt_value jsrt_array_filter(jsrt_value array, jsrt_value cb) {
-  if (jsrt_require_array(array, "filter") == NULL) {
+/* filter/flatMap: a fresh array the visitor appends to, over the present indices. */
+static jsrt_value walk_appending(jsrt_value array, jsrt_value cb, const char *method,
+                                 bool (*visit)(jsrt_value array, uint32_t i, void *ctx)) {
+  if (jsrt_require_array(array, method) == NULL) {
     return JSRT_UNDEFINED;
   }
-  MapWalk w = {cb, jsrt_array_new(0, NULL), false};
-  walk_present(array, arr(array)->length, visit_filter, &w);
+  MapWalk w = {cb, jsrt_array_new(0, NULL), false, false};
+  walk_present(array, arr(array)->length, visit, &w);
   return w.out;
 }
 
-jsrt_value jsrt_array_some(jsrt_value array, jsrt_value cb) {
-  if (jsrt_require_array(array, "some") == NULL) {
+/* some answers whether the walk stopped on a truthy answer, every whether it never stopped on a
+ * falsy one. */
+static jsrt_value some_or_every(jsrt_value array, jsrt_value cb, bool some) {
+  if (jsrt_require_array(array, some ? "some" : "every") == NULL) {
     return JSRT_UNDEFINED;
   }
-  MapWalk w = {cb, JSRT_UNDEFINED, false};
-  walk_present(array, arr(array)->length, visit_some, &w);
-  return w.flag ? JSRT_TRUE : JSRT_FALSE;
+  MapWalk w = {cb, JSRT_UNDEFINED, false, some};
+  walk_present(array, arr(array)->length, visit_until, &w);
+  return jsrt_bool(w.flag == some);
 }
 
+jsrt_value jsrt_array_filter(jsrt_value array, jsrt_value cb) {
+  return walk_appending(array, cb, "filter", visit_filter);
+}
+
+jsrt_value jsrt_array_some(jsrt_value array, jsrt_value cb) { return some_or_every(array, cb, true); }
+
 jsrt_value jsrt_array_every(jsrt_value array, jsrt_value cb) {
-  if (jsrt_require_array(array, "every") == NULL) {
-    return JSRT_UNDEFINED;
-  }
-  MapWalk w = {cb, JSRT_UNDEFINED, false};
-  walk_present(array, arr(array)->length, visit_every, &w);
-  return w.flag ? JSRT_FALSE : JSRT_TRUE;
+  return some_or_every(array, cb, false);
 }
 
 jsrt_value jsrt_array_find(jsrt_value array, jsrt_value cb) {
@@ -753,12 +741,7 @@ jsrt_value jsrt_array_find(jsrt_value array, jsrt_value cb) {
 
 /* map, then a depth-1 flatten of each answer -- one pass, no intermediate array. */
 jsrt_value jsrt_array_flat_map(jsrt_value array, jsrt_value cb) {
-  if (jsrt_require_array(array, "flatMap") == NULL) {
-    return JSRT_UNDEFINED;
-  }
-  MapWalk w = {cb, jsrt_array_new(0, NULL), false};
-  walk_present(array, arr(array)->length, visit_flat_map, &w);
-  return w.out;
+  return walk_appending(array, cb, "flatMap", visit_flat_map);
 }
 
 jsrt_value jsrt_array_find_index(jsrt_value array, jsrt_value cb) {
@@ -779,13 +762,16 @@ static jsrt_value reduce_call(jsrt_value cb, jsrt_value acc, jsrt_value array, u
   return jsrt_call(cb, 4, args);
 }
 
-jsrt_value jsrt_array_reduce(jsrt_value array, jsrt_value cb, jsrt_value initial) {
-  if (jsrt_require_array(array, "reduce") == NULL) {
+/* Both directions visit the entry length's indices and skip the absent ones -- an index past a
+ * length the callback shrank is absent too, so neither direction needs `walking`'s early stop. */
+static jsrt_value reduce_walk(bool upward, jsrt_value array, jsrt_value cb, jsrt_value initial) {
+  if (jsrt_require_array(array, upward ? "reduce" : "reduceRight") == NULL) {
     return JSRT_UNDEFINED;
   }
   const uint32_t len = arr(array)->length;
   jsrt_value acc = initial;
-  for (uint32_t i = 0; walking(array, i, len); i++) {
+  for (uint32_t k = 0; k < len && !jsrt_pending(); k++) {
+    const uint32_t i = upward ? k : len - 1 - k;
     if (index_present(array, i)) {
       acc = reduce_call(cb, acc, array, i);
     }
@@ -793,19 +779,12 @@ jsrt_value jsrt_array_reduce(jsrt_value array, jsrt_value cb, jsrt_value initial
   return acc;
 }
 
+jsrt_value jsrt_array_reduce(jsrt_value array, jsrt_value cb, jsrt_value initial) {
+  return reduce_walk(true, array, cb, initial);
+}
+
 jsrt_value jsrt_array_reduce_right(jsrt_value array, jsrt_value cb, jsrt_value initial) {
-  if (jsrt_require_array(array, "reduceRight") == NULL) {
-    return JSRT_UNDEFINED;
-  }
-  const uint32_t len = arr(array)->length;
-  jsrt_value acc = initial;
-  for (uint32_t i = len; i-- > 0 && !jsrt_pending();) {
-    if (!index_present(array, i)) {
-      continue;
-    }
-    acc = reduce_call(cb, acc, array, i);
-  }
-  return acc;
+  return reduce_walk(false, array, cb, initial);
 }
 
 /* Array.prototype.sort, ECMA-262 §23.1.3.30. Stability is normative, so this is a merge sort,
@@ -1000,11 +979,8 @@ jsrt_value jsrt_array_with(jsrt_value array, jsrt_value index, jsrt_value value)
   if (a == NULL) {
     return JSRT_UNDEFINED;
   }
-  double rel = jsrt_int_or_inf(index, 0.0);
-  if (rel < 0.0) {
-    rel += (double)a->length;
-  }
-  if (rel < 0.0 || rel >= (double)a->length) {
+  const int64_t rel = jsrt_element_index(index, a->length, true);
+  if (rel < 0) {
     jsrt_panic(
         "Array.prototype.with index out of range is not yet supported; the spec throws "
         "RangeError, which builtins cannot raise yet");
@@ -1033,88 +1009,58 @@ jsrt_value jsrt_array_with(jsrt_value array, jsrt_value index, jsrt_value value)
  * the ORIGINAL receiver -- binding at get time is the only protocol an Unknown-receiver call
  * supports, and rebinding per call would need the receiver in argv, which it does not carry. */
 
-typedef enum {
-  ARRAY_M_AT,
-  ARRAY_M_CONCAT,
-  ARRAY_M_COPY_WITHIN,
-  ARRAY_M_ENTRIES,
-  ARRAY_M_EVERY,
-  ARRAY_M_FILL,
-  ARRAY_M_FILTER,
-  ARRAY_M_FIND,
-  ARRAY_M_FIND_INDEX,
-  ARRAY_M_FIND_LAST,
-  ARRAY_M_FIND_LAST_INDEX,
-  ARRAY_M_FLAT,
-  ARRAY_M_FLAT_MAP,
-  ARRAY_M_FOR_EACH,
-  ARRAY_M_INCLUDES,
-  ARRAY_M_INDEX_OF,
-  ARRAY_M_JOIN,
-  ARRAY_M_KEYS,
-  ARRAY_M_LAST_INDEX_OF,
-  ARRAY_M_MAP,
-  ARRAY_M_POP,
-  ARRAY_M_PUSH,
-  ARRAY_M_REDUCE,
-  ARRAY_M_REDUCE_RIGHT,
-  ARRAY_M_REVERSE,
-  ARRAY_M_SHIFT,
-  ARRAY_M_SLICE,
-  ARRAY_M_SOME,
-  ARRAY_M_SORT,
-  ARRAY_M_SPLICE,
-  ARRAY_M_TO_REVERSED,
-  ARRAY_M_TO_SORTED,
-  ARRAY_M_TO_SPLICED,
-  ARRAY_M_TO_STRING,
-  ARRAY_M_UNSHIFT,
-  ARRAY_M_VALUES,
-  ARRAY_M_WITH
-} ArrayMethod;
+/* Every method as (op, name, spec `length`): one list, so the enum and the table cannot drift. */
+#define ARRAY_METHODS(X)                                                                          \
+  X(AT, "at", 1)                                                                                   \
+  X(CONCAT, "concat", 1)                                                                           \
+  X(COPY_WITHIN, "copyWithin", 2)                                                                  \
+  X(ENTRIES, "entries", 0)                                                                         \
+  X(EVERY, "every", 1)                                                                             \
+  X(FILL, "fill", 1)                                                                               \
+  X(FILTER, "filter", 1)                                                                           \
+  X(FIND, "find", 1)                                                                               \
+  X(FIND_INDEX, "findIndex", 1)                                                                    \
+  X(FIND_LAST, "findLast", 1)                                                                      \
+  X(FIND_LAST_INDEX, "findLastIndex", 1)                                                           \
+  X(FLAT, "flat", 0)                                                                               \
+  X(FLAT_MAP, "flatMap", 1)                                                                        \
+  X(FOR_EACH, "forEach", 1)                                                                        \
+  X(INCLUDES, "includes", 1)                                                                       \
+  X(INDEX_OF, "indexOf", 1)                                                                        \
+  X(JOIN, "join", 1)                                                                               \
+  X(KEYS, "keys", 0)                                                                               \
+  X(LAST_INDEX_OF, "lastIndexOf", 1)                                                               \
+  X(MAP, "map", 1)                                                                                 \
+  X(POP, "pop", 0)                                                                                 \
+  X(PUSH, "push", 1)                                                                               \
+  X(REDUCE, "reduce", 1)                                                                           \
+  X(REDUCE_RIGHT, "reduceRight", 1)                                                                \
+  X(REVERSE, "reverse", 0)                                                                         \
+  X(SHIFT, "shift", 0)                                                                             \
+  X(SLICE, "slice", 2)                                                                             \
+  X(SOME, "some", 1)                                                                               \
+  X(SORT, "sort", 1)                                                                               \
+  X(SPLICE, "splice", 2)                                                                           \
+  X(TO_REVERSED, "toReversed", 0)                                                                  \
+  X(TO_SORTED, "toSorted", 1)                                                                      \
+  X(TO_SPLICED, "toSpliced", 2)                                                                    \
+  X(TO_STRING, "toString", 0)                                                                      \
+  X(UNSHIFT, "unshift", 1)                                                                         \
+  X(VALUES, "values", 0)                                                                           \
+  X(WITH, "with", 2)
+
+#define ARRAY_METHOD_OP(op, name, arity) ARRAY_M_##op,
+typedef enum { ARRAY_METHODS(ARRAY_METHOD_OP) } ArrayMethod;
+#undef ARRAY_METHOD_OP
 
 static const struct {
   const char *name;
   uint8_t arity;
   uint8_t op;
 } ARRAY_METHOD_TABLE[] = {
-    {"at", 1, ARRAY_M_AT},
-    {"concat", 1, ARRAY_M_CONCAT},
-    {"copyWithin", 2, ARRAY_M_COPY_WITHIN},
-    {"entries", 0, ARRAY_M_ENTRIES},
-    {"every", 1, ARRAY_M_EVERY},
-    {"fill", 1, ARRAY_M_FILL},
-    {"filter", 1, ARRAY_M_FILTER},
-    {"find", 1, ARRAY_M_FIND},
-    {"findIndex", 1, ARRAY_M_FIND_INDEX},
-    {"findLast", 1, ARRAY_M_FIND_LAST},
-    {"findLastIndex", 1, ARRAY_M_FIND_LAST_INDEX},
-    {"flat", 0, ARRAY_M_FLAT},
-    {"flatMap", 1, ARRAY_M_FLAT_MAP},
-    {"forEach", 1, ARRAY_M_FOR_EACH},
-    {"includes", 1, ARRAY_M_INCLUDES},
-    {"indexOf", 1, ARRAY_M_INDEX_OF},
-    {"join", 1, ARRAY_M_JOIN},
-    {"keys", 0, ARRAY_M_KEYS},
-    {"lastIndexOf", 1, ARRAY_M_LAST_INDEX_OF},
-    {"map", 1, ARRAY_M_MAP},
-    {"pop", 0, ARRAY_M_POP},
-    {"push", 1, ARRAY_M_PUSH},
-    {"reduce", 1, ARRAY_M_REDUCE},
-    {"reduceRight", 1, ARRAY_M_REDUCE_RIGHT},
-    {"reverse", 0, ARRAY_M_REVERSE},
-    {"shift", 0, ARRAY_M_SHIFT},
-    {"slice", 2, ARRAY_M_SLICE},
-    {"some", 1, ARRAY_M_SOME},
-    {"sort", 1, ARRAY_M_SORT},
-    {"splice", 2, ARRAY_M_SPLICE},
-    {"toReversed", 0, ARRAY_M_TO_REVERSED},
-    {"toSorted", 1, ARRAY_M_TO_SORTED},
-    {"toSpliced", 2, ARRAY_M_TO_SPLICED},
-    {"toString", 0, ARRAY_M_TO_STRING},
-    {"unshift", 1, ARRAY_M_UNSHIFT},
-    {"values", 0, ARRAY_M_VALUES},
-    {"with", 2, ARRAY_M_WITH},
+#define ARRAY_METHOD_ROW(op, name, arity) {name, arity, ARRAY_M_##op},
+    ARRAY_METHODS(ARRAY_METHOD_ROW)
+#undef ARRAY_METHOD_ROW
 };
 
 /* The bound receiver and op travel in the closure's environment -- slot 0 the array (kept alive

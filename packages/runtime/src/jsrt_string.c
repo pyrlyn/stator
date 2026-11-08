@@ -2,6 +2,7 @@
 
 #include "jsrt.h"
 #include "jsrt_value.h"
+#include "jsrt_utf.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -11,9 +12,7 @@
  * rather than repeating the assert-and-cast pair. */
 static JSString *as_string(jsrt_value v);
 
-/* ============================================================================
- * String accessors — bounds-checked, required by generated C
- * ============================================================================ */
+/* --- String accessors — bounds-checked, required by generated C --- */
 
 uint32_t jsrt_string_length(jsrt_value v) {
   return as_string(v)->length;
@@ -30,9 +29,7 @@ uint16_t jsrt_string_char(jsrt_value v, uint32_t i) {
   return str->data[i];
 }
 
-/* ============================================================================
- * String construction from UTF-8
- * ============================================================================ */
+/* --- String construction from UTF-8 --- */
 
 /* Decode a single UTF-8 sequence and return the code point and the number of
  * bytes consumed. Returns -1 on invalid UTF-8. */
@@ -136,10 +133,9 @@ static void utf16_put(uint16_t **out, int codepoint) {
  * and *i advances past its width. False at the end of input or at invalid UTF-8, and both
  * passes below stop there: for v0, trailing garbage is treated as empty string (U+FFFD
  * substitution is not implemented yet), so nothing past the first bad byte is counted. */
-static bool decode_step(const char *bytes, size_t len, size_t *i, int *cp) {
+static bool decode_step(const unsigned char *bytes, size_t len, size_t *i, int *cp) {
   int consumed = 0;
-  const int codepoint =
-      utf8_decode((const unsigned char *)bytes + *i, len - *i, &consumed);
+  const int codepoint = utf8_decode(bytes + *i, len - *i, &consumed);
   if (codepoint < 0) {
     return false;
   }
@@ -148,28 +144,29 @@ static bool decode_step(const char *bytes, size_t len, size_t *i, int *cp) {
   return true;
 }
 
-jsrt_value jsrt_string_from_utf8(const char *bytes, size_t len) {
-  /* First pass: count UTF-16 code units needed. */
+/* One UTF-8 decoding step (`decode_step`, `utf8_strict_step`): the code point at bytes[*i] lands
+ * in *cp and *i advances past it; false stops the decode. */
+typedef bool (*Utf8Step)(const unsigned char *bytes, size_t len, size_t *i, int *cp);
+
+/* UTF-8 to a fresh string in two passes of `step`: count the UTF-16 units, then store them. */
+static jsrt_value string_from_utf8_with(const unsigned char *bytes, size_t len, Utf8Step step) {
   uint32_t utf16_len = 0;
   size_t i = 0;
   int codepoint = 0;
-
-  while (decode_step(bytes, len, &i, &codepoint)) {
+  while (step(bytes, len, &i, &codepoint)) {
     utf16_len += utf16_units_for(codepoint);
   }
-
   JSString *str = jsrt_string_alloc(utf16_len);
-
-  /* Second pass: decode UTF-8 and encode as UTF-16. */
   uint16_t *out_ptr = str->data;
   i = 0;
-
-  while (decode_step(bytes, len, &i, &codepoint)) {
+  while (step(bytes, len, &i, &codepoint)) {
     utf16_put(&out_ptr, codepoint);
   }
-
-  /* Box the string into a jsrt_value. */
   return JSRT_BOX(JSRT_TAG_STRING, (uintptr_t)str);
+}
+
+jsrt_value jsrt_string_from_utf8(const char *bytes, size_t len) {
+  return string_from_utf8_with((const unsigned char *)bytes, len, decode_step);
 }
 
 /* Build a string directly from UTF-16 code units -- the constructor JSON.parse needs, since a
@@ -183,9 +180,7 @@ jsrt_value jsrt_string_from_units(const uint16_t *units, uint32_t len) {
   return JSRT_BOX(JSRT_TAG_STRING, (uintptr_t)str);
 }
 
-/* ============================================================================
- * FFI string conversions — docs/FFI.md §3
- * ============================================================================ */
+/* --- FFI string conversions — docs/FFI.md §3 --- */
 
 /* TS → C: a NUL-terminated UTF-8 copy in malloc memory the caller owns. Truncates at the
  * first U+0000 (C string semantics); lone surrogates become U+FFFD, because CString is
@@ -198,45 +193,13 @@ char *jsrt_string_to_cstr(jsrt_value v) {
   if (out == NULL) {
     jsrt_panic("out of memory: CString copy");
   }
-  size_t w = 0;
-  for (uint32_t r = 0; r < str->length; r++) {
-    uint32_t cp = str->data[r];
-    if (cp == 0) {
-      break;
-    }
-    if (cp >= 0xD800u && cp <= 0xDBFFu && r + 1 < str->length) {
-      const uint32_t low = str->data[r + 1];
-      if (low >= 0xDC00u && low <= 0xDFFFu) {
-        cp = 0x10000u + ((cp - 0xD800u) << 10) + (low - 0xDC00u);
-        r++;
-      }
-    }
-    if (cp >= 0xD800u && cp <= 0xDFFFu) {
-      cp = 0xFFFDu; /* lone surrogate */
-    }
-    if (cp < 0x80u) {
-      out[w++] = (char)cp;
-    } else if (cp < 0x800u) {
-      out[w++] = (char)(0xC0u | (cp >> 6));
-      out[w++] = (char)(0x80u | (cp & 0x3Fu));
-    } else if (cp < 0x10000u) {
-      out[w++] = (char)(0xE0u | (cp >> 12));
-      out[w++] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
-      out[w++] = (char)(0x80u | (cp & 0x3Fu));
-    } else {
-      out[w++] = (char)(0xF0u | (cp >> 18));
-      out[w++] = (char)(0x80u | ((cp >> 12) & 0x3Fu));
-      out[w++] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
-      out[w++] = (char)(0x80u | (cp & 0x3Fu));
-    }
-  }
-  out[w] = '\0';
+  (void)jsrt_utf16_to_cstr(str->data, str->length, true, out);
   return out;
 }
 
 /* One strict UTF-8 step for the C → TS copy: *cp is the decoded code point, or U+FFFD for
- * one ill-formed maximal subsequence, and *i advances past exactly that subpart. Always
- * succeeds while *i < len.
+ * one ill-formed maximal subsequence, and *i advances past exactly that subpart. False only at
+ * the end of input.
  *
  * Strict means the WTF-8 `utf8_decode` above accepts is rejected here: the continuation
  * bounds per starter byte throw out overlongs (C0/C1 never start, E0's second byte starts
@@ -244,47 +207,48 @@ char *jsrt_string_to_cstr(jsrt_value v) {
  * stops at 8F, F5 and up never start). A byte that ends a partial sequence is reprocessed
  * as a fresh start, and a sequence cut off by the end of input is one subpart — the two
  * rules that make E1 80 E1 80 80 decode to U+FFFD U+4C00, exactly as Node answers. */
-static void utf8_strict_step(const unsigned char *bytes, size_t len, size_t *i, int *cp) {
+static bool utf8_strict_step(const unsigned char *bytes, size_t len, size_t *i, int *cp) {
+  if (*i >= len) {
+    return false;
+  }
   const unsigned char b0 = bytes[*i];
   if (b0 < 0x80u) {
     *cp = (int)b0;
     *i += 1;
-    return;
+    return true;
   }
+  /* Unicode's Table 3-7, Well-Formed UTF-8 Byte Sequences: per starter range, the continuation
+   * count and the FIRST continuation's bounds (the rest are always 80..BF). */
+  static const struct {
+    unsigned char first, last;
+    unsigned char need, lo, hi;
+  } STARTERS[] = {
+      {0xC2, 0xDF, 1, 0x80, 0xBF}, {0xE0, 0xE0, 2, 0xA0, 0xBF}, {0xE1, 0xEC, 2, 0x80, 0xBF},
+      {0xED, 0xED, 2, 0x80, 0x9F}, {0xEE, 0xEF, 2, 0x80, 0xBF}, {0xF0, 0xF0, 3, 0x90, 0xBF},
+      {0xF1, 0xF3, 3, 0x80, 0xBF}, {0xF4, 0xF4, 3, 0x80, 0x8F},
+  };
   unsigned need = 0;
   unsigned lo = 0x80u;
   unsigned hi = 0xBFu;
-  if (b0 >= 0xC2u && b0 <= 0xDFu) {
-    need = 1;
-  } else if (b0 == 0xE0u) {
-    need = 2;
-    lo = 0xA0u;
-  } else if (b0 >= 0xE1u && b0 <= 0xECu) {
-    need = 2;
-  } else if (b0 == 0xEDu) {
-    need = 2;
-    hi = 0x9Fu;
-  } else if (b0 >= 0xEEu && b0 <= 0xEFu) {
-    need = 2;
-  } else if (b0 == 0xF0u) {
-    need = 3;
-    lo = 0x90u;
-  } else if (b0 >= 0xF1u && b0 <= 0xF3u) {
-    need = 3;
-  } else if (b0 == 0xF4u) {
-    need = 3;
-    hi = 0x8Fu;
-  } else {
+  for (size_t r = 0; r < sizeof STARTERS / sizeof STARTERS[0]; r++) {
+    if (b0 >= STARTERS[r].first && b0 <= STARTERS[r].last) {
+      need = STARTERS[r].need;
+      lo = STARTERS[r].lo;
+      hi = STARTERS[r].hi;
+      break;
+    }
+  }
+  if (need == 0) {
     /* 0x80-0xC1 and 0xF5-0xFF never start a sequence. */
     *cp = 0xFFFD;
     *i += 1;
-    return;
+    return true;
   }
   if (*i + need >= len) {
     /* Cut off by the end of input: the rest is one maximal subpart. */
     *cp = 0xFFFD;
     *i = len;
-    return;
+    return true;
   }
   /* Only the FIRST continuation carries the starter's tighter bounds. */
   for (unsigned k = 1; k <= need; k++) {
@@ -295,7 +259,7 @@ static void utf8_strict_step(const unsigned char *bytes, size_t len, size_t *i, 
       /* The subpart is b0 plus the valid continuations before k; bk reprocesses. */
       *cp = 0xFFFD;
       *i += k;
-      return;
+      return true;
     }
   }
   int codepoint = 0;
@@ -310,6 +274,7 @@ static void utf8_strict_step(const unsigned char *bytes, size_t len, size_t *i, 
   }
   *cp = codepoint;
   *i += need + 1;
+  return true;
 }
 
 /* C → TS: copy a NUL-terminated return into a fresh runtime string. The pointer is never
@@ -317,30 +282,10 @@ static void utf8_strict_step(const unsigned char *bytes, size_t len, size_t *i, 
  * C function needs its own extern free function in the same binding (docs/FFI.md §3). */
 jsrt_value jsrt_string_from_cstr(const char *s) {
   assert(s != NULL);
-  const size_t len = strlen(s);
-  const unsigned char *bytes = (const unsigned char *)s;
-  /* First pass: count UTF-16 code units needed. */
-  uint32_t utf16_len = 0;
-  size_t i = 0;
-  int codepoint = 0;
-  while (i < len) {
-    utf8_strict_step(bytes, len, &i, &codepoint);
-    utf16_len += utf16_units_for(codepoint);
-  }
-  JSString *str = jsrt_string_alloc(utf16_len);
-  /* Second pass: decode again, this time storing. */
-  uint16_t *out_ptr = str->data;
-  i = 0;
-  while (i < len) {
-    utf8_strict_step(bytes, len, &i, &codepoint);
-    utf16_put(&out_ptr, codepoint);
-  }
-  return JSRT_BOX(JSRT_TAG_STRING, (uintptr_t)str);
+  return string_from_utf8_with((const unsigned char *)s, strlen(s), utf8_strict_step);
 }
 
-/* ============================================================================
- * String operations — equality, comparison, and concatenation
- * ============================================================================ */
+/* --- String operations — equality, comparison, and concatenation --- */
 
 /* Unwrap a value the caller has already established is a string. The assert is the contract:
  * these three operations are reached only from the emitter's string paths and from jsrt_ops.c
