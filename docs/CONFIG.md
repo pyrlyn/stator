@@ -37,6 +37,7 @@ One key per flag. The schema is generated from `packages/compiler/src/cli/config
 | `emitHeader` | path | `--emit-header` | — | `build` |
 | `unitName` | string, letters, digits and `_` only (else `STA0004`) | `--unit-name` | entry basename, sanitized | `build` |
 | `bundler` | `"vite"` \| `"none"` \| module | `--bundler` | `"vite"` | both, `js` mode only (`STA0004` in `ts` mode) |
+| `cc` | C compiler name or path (clang, Apple clang or gcc) | `--cc` (env `CC`, below the file) | `"clang"` | `build` |
 | `diagnostics` | `"text"` \| `"json"` | `--json`, `--diagnostics=text\|json` | `"text"` | `explain` |
 | `node` | boolean | `--node` | `false` | both |
 
@@ -55,7 +56,7 @@ written, whether those paths came from flags or from this file. An output the fi
 not take (a missing directory, no permission, a read-only or full disk, `-o` naming a directory)
 is `STA0019`, never the compiler-bug `STA4072` (docs/DIAGNOSTICS.md).
 
-**Paths** (`entry`, `out`, `emitHeader`, and a `bundler` module that starts with `.`) in the file resolve against the **file's directory**;
+**Paths** (`entry`, `out`, `emitHeader`, and a `bundler` module or `cc` that starts with `.`) in the file resolve against the **file's directory**;
 paths on the command line resolve against the current directory. Each `link` entry splits on
 whitespace like one `--link` value; `-L` paths inside it are passed to clang as written.
 
@@ -80,6 +81,10 @@ Highest first:
 
 `link` is the exception: the file's flags and the command line's are **concatenated**, file
 first, so a project's libraries stay linked when a run adds one more.
+
+`cc` is the other exception: the file's `cc` sits **above** `CC` (`--cc` > `cc` > `CC` >
+`clang`, plan/T35), because `CC` is often set for a whole shell or CI image while the file names
+the compiler the project was built and tested with (docs/TOOLCHAIN.md, "C compiler").
 
 ## Example
 

@@ -883,7 +883,8 @@ test('.env may set STATOR_OPT, and the real environment wins over it (F4)', asyn
 test('a C compiler that exits 0 but writes nothing fails the build (F4)', NATIVE_ONLY, async () => {
   await inScratch({ 'app.ts': 'console.log(1);\n', 'lib.ts': ADD }, async (dir) => {
     const fake = join(dir, 'silentcc.sh');
-    writeFileSync(fake, '#!/bin/sh\nexit 0\n');
+    // Passes the `--version` probe as clang, then swallows the compile.
+    writeFileSync(fake, '#!/bin/sh\n[ "$1" = --version ] && echo "clang version 21.1.8"\nexit 0\n');
     chmodSync(fake, 0o755);
     const [binary, object] = await Promise.all([
       statorEnv(dir, { CC: fake }, 'build', 'app.ts', '-o', 'app'),
@@ -897,4 +898,61 @@ test('a C compiler that exits 0 but writes nothing fails the build (F4)', NATIVE
       );
     }
   });
+});
+
+/** A `CC` that fails the `--version` probe (plan/T35): the diagnostic, its fix, no stack. */
+async function refusedCompiler(
+  env: Readonly<Record<string, string | undefined>>,
+  ...flags: string[]
+): Promise<string> {
+  let stderr = '';
+  await inScratch({ 'app.ts': 'console.log(1);\n' }, async (dir) => {
+    const r = await statorEnv(dir, env, 'build', 'app.ts', '-o', 'app', ...flags);
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /STA0022 /);
+    assert.match(r.stderr, /--cc=<name\|path>, config "cc" or CC/);
+    assert.doesNotMatch(r.stderr, / at \S+ \(|node:internal|STA4072/, 'no stack trace');
+    assert.equal(existsSync(join(dir, 'app')), false);
+    stderr = r.stderr;
+  });
+  return stderr;
+}
+
+test('--cc names a missing compiler: STA0022 naming the value and --cc (T35)', async () => {
+  const stderr = await refusedCompiler({ CC: undefined }, '--cc=stator-no-such-cc');
+  assert.match(stderr, /C compiler "stator-no-such-cc" \(from --cc\) not found/);
+});
+
+test(
+  'CC=/usr/bin/false fails the --version probe: STA0022 naming CC (T35)',
+  NATIVE_ONLY,
+  async () => {
+    const stderr = await refusedCompiler({ CC: '/usr/bin/false' });
+    assert.match(
+      stderr,
+      /C compiler "\/usr\/bin\/false" \(from CC\) failed `--version` \(exit 1\)/,
+    );
+  },
+);
+
+test('an unknown --version banner is refused: STA0022 quoting it (T35)', NATIVE_ONLY, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'stator-cc-'));
+  try {
+    const fake = join(dir, 'oddcc.sh');
+    writeFileSync(fake, '#!/bin/sh\necho "Odd C 1.0"\n');
+    chmodSync(fake, 0o755);
+    const stderr = await refusedCompiler({ CC: '/usr/bin/false' }, `--cc=${fake}`);
+    assert.match(
+      stderr,
+      /\(from --cc\) is not clang, Apple clang or gcc: `--version` printed "Odd C 1\.0"/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('build --help lists --cc (T35)', async () => {
+  const { status, stdout } = await stator('build', '--help');
+  assert.equal(status, 0);
+  assert.match(stdout, /--cc <cc>/);
 });

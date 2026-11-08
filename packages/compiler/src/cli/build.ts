@@ -46,6 +46,17 @@ import {
   lowerFrontend,
   reportedDiagnostics,
 } from './bundler.ts';
+import {
+  type CCompiler,
+  type CcChoice,
+  type CcHost,
+  type ChosenCC,
+  chooseCC,
+  describeSource,
+  detectCC,
+  requireFlagsSupported,
+  type VersionRun,
+} from './cc.ts';
 import { type NamedPath, refuseAliasedOutputs, requireWritable, writeOutput } from './outputs.ts';
 import { diagnosticLines, INK_COLORS, print, type Line } from './render.ts';
 import { libraryName, objectFormat, pkgConfigPath, writeStaticLibrary } from './library.ts';
@@ -93,6 +104,8 @@ export interface BuildOptions {
   readonly node?: boolean;
   /** In-process seam for `STATOR_COMPILE_JOBS`. The CLI leaves it unset. */
   readonly compileJobs?: number;
+  /** `--cc` or config `cc` (plan/T35). Unset, `CC` and then `clang` decide (`cc.ts`). */
+  readonly cc?: CcChoice;
 }
 
 export { BuildError };
@@ -302,6 +315,7 @@ async function runBuild(options: BuildOptions): Promise<number> {
     return 0;
   }
 
+  const cc = await resolveCompiler(options.cc, runtime);
   if (header !== undefined) {
     if (lib !== undefined && compiled.exportSurface?.needsJsrtValue === true) {
       throw new BuildError(
@@ -322,14 +336,15 @@ async function runBuild(options: BuildOptions): Promise<number> {
     try {
       writeOutput(keptC ?? { role: 'the C file', path: cPath }, compiled.c);
       if (lib === undefined) {
-        compileObject(cPath, options.out, options.opt ?? 2, runtime);
+        compileObject(cc, cPath, options.out, options.opt ?? 2, runtime);
         return 0;
       }
       const object = join(scratch, 'unit.o');
-      compileObject(cPath, object, options.opt ?? 2, runtime);
+      compileObject(cc, cPath, object, options.opt ?? 2, runtime);
       requireLinkArchives(compiled, runtime);
+      requireLinkFlagsSupported(cc, runtime, [...compiled.linkFlags, ...(options.linkFlags ?? [])]);
       writeStaticLibrary({
-        cc: selectCC(runtime),
+        cc: cc.command,
         object,
         archives: [...libraryArchives(compiled), runtime.archive],
         symbols: compiled.exportSurface?.symbols ?? [],
@@ -366,6 +381,7 @@ async function runBuild(options: BuildOptions): Promise<number> {
       const partsDir = mkdtempSync(join(tmpdir(), 'stator-jobs-'));
       try {
         await linkExecutableParallel(
+          cc,
           compiled.c,
           partsDir,
           options.out,
@@ -380,7 +396,7 @@ async function runBuild(options: BuildOptions): Promise<number> {
         rmSync(partsDir, { recursive: true, force: true });
       }
     } else {
-      linkExecutable(cPath, options.out, opt, externFlags, compiled, runtime, compiled.flavor);
+      linkExecutable(cc, cPath, options.out, opt, externFlags, compiled, runtime, compiled.flavor);
     }
     return 0;
   } finally {
@@ -594,6 +610,7 @@ function demandCompileJobs(override: number | undefined): {
 }
 
 function linkExecutable(
+  cc: CCompiler,
   cPath: string,
   out: string,
   opt: OptLevel,
@@ -602,8 +619,9 @@ function linkExecutable(
   runtime: Runtime,
   gateFlavor: RuntimeFlavor,
 ): void {
-  withSpan('link/clang', {}, () => {
-    link(cPath, out, opt, externFlags, libs, runtime, gateFlavor);
+  const attributes = { 'cc.command': cc.command, 'cc.source': cc.source, 'cc.family': cc.family };
+  withSpan('link/cc', attributes, () => {
+    link(cc, cPath, out, opt, externFlags, libs, runtime, gateFlavor);
   });
 }
 
@@ -628,17 +646,61 @@ export function dedupLinkLibs(flags: readonly string[]): string[] {
   return kept;
 }
 
-// conda-clang 21.1.8's Darwin ASan runtime deadlocks during dyld's early malloc
-// initialization on the current macOS host. Match justfile's sanitizer fallback so the
-// generated golden binaries use the same compiler as the sanitized runtime archive. An
-// explicit compiler-path CC remains authoritative for callers testing another toolchain.
-// Exported for the `--emit=lib` consumer test, whose link must use the same compiler.
+/** The command a build without `--cc` or config `cc` runs. Exported for the `--emit=lib`
+ * consumer test, whose link must use the same compiler. */
 export function selectCC(runtime: Runtime): string {
-  return (
-    process.env['CC'] ??
-    (runtime.sanitized && process.platform === 'darwin' && existsSync('/usr/bin/clang')
-      ? '/usr/bin/clang'
-      : 'clang')
+  return choose(undefined, runtime).choice.command;
+}
+
+function choose(explicit: CcChoice | undefined, runtime: Runtime): ChosenCC {
+  return chooseCC(explicit, process.env, runtime.sanitized, ccHost());
+}
+
+function ccHost(): CcHost {
+  const darwin = process.platform === 'darwin';
+  return { darwin, systemClang: darwin && existsSync('/usr/bin/clang') };
+}
+
+function runVersion(command: string): VersionRun {
+  const result = spawnSync(command, ['--version'], { encoding: 'utf8' });
+  return {
+    status: result.status,
+    stdout: typeof result.stdout === 'string' ? result.stdout : '',
+    ...(result.error !== undefined && { error: result.error }),
+  };
+}
+
+/** The one place a build decides its C compiler: chosen, probed once, and warned about when an
+ * explicit choice skips the macOS ASan override (`cc.ts`). */
+async function resolveCompiler(
+  explicit: CcChoice | undefined,
+  runtime: Runtime,
+): Promise<CCompiler> {
+  const { choice, warning } = choose(explicit, runtime);
+  if (warning !== undefined) {
+    await emitDiagnosticLines([{ text: `stator: warning: ${warning}` }]);
+  }
+  return detectCC(choice, runVersion);
+}
+
+/** The runtime's recorded flags and the extern surface's, checked against the compiler's family
+ * before they are handed to it. */
+function requireLinkFlagsSupported(
+  cc: CCompiler,
+  runtime: Runtime,
+  externFlags: readonly string[],
+): void {
+  requireFlagsSupported(
+    cc,
+    extraLinkFlags(runtime),
+    `the runtime archive's ${join(runtime.libDir, 'link-flags.txt')}`,
+    `rebuild the runtime with this compiler (\`CC=${cc.command} pnpm run runtime\`) or use clang`,
+  );
+  requireFlagsSupported(
+    cc,
+    externFlags,
+    '--link or an @statorLink pragma',
+    'drop it there, or use clang',
   );
 }
 
@@ -778,6 +840,7 @@ async function runPool(tasks: readonly (() => Promise<void>)[], limit: number): 
 /** Partition the emitted C, compile each unit in parallel, then link the objects. The objects
  * share one header of extern declarations; the shared unit owns every file-scope definition. */
 async function linkExecutableParallel(
+  cc: CCompiler,
   c: string,
   partsDir: string,
   out: string,
@@ -793,7 +856,6 @@ async function linkExecutableParallel(
   const objects: string[] = [];
   const compileTasks: (() => Promise<void>)[] = [];
   let compileMs = 0;
-  const cc = selectCC(runtime);
   const compileArgs = [
     '-std=c11',
     ...(runtime.sanitized ? SANITIZER_FLAGS : [`-O${String(opt)}`]),
@@ -808,9 +870,9 @@ async function linkExecutableParallel(
     objects.push(objectPath);
     compileTasks.push(async () => {
       const start = performance.now();
-      const result = await runClangAsync(cc, [...compileArgs, unitPath, '-o', objectPath]);
+      const result = await runClangAsync(cc.command, [...compileArgs, unitPath, '-o', objectPath]);
       compileMs += performance.now() - start;
-      const startError = clangStartError(cc, result);
+      const startError = clangStartError(cc.command, result);
       if (startError !== undefined) {
         throw startError;
       }
@@ -829,16 +891,21 @@ async function linkExecutableParallel(
   await runPool(compileTasks, jobs);
   addStageTime('link/compile', compileMs);
   withSpan('link/ld', {}, () => {
-    link(objects, out, opt, externFlags, libs, runtime, gateFlavor);
+    link(cc, objects, out, opt, externFlags, libs, runtime, gateFlavor);
   });
 }
 
 /** Compile generated C to a relocatable object for a C consumer (`--emit-header`, plan §10
  * Task 7.2 step 1): `clang -c`, so `-o` names an object, not an executable. No archive, no
  * link flags — linking is the consumer's job once steps 3–5 emit the stubs and the init. */
-function compileObject(cPath: string, out: string, opt: OptLevel, runtime: Runtime): void {
-  const cc = selectCC(runtime);
-  const result = runClang(cc, [
+function compileObject(
+  cc: CCompiler,
+  cPath: string,
+  out: string,
+  opt: OptLevel,
+  runtime: Runtime,
+): void {
+  const result = runClang(cc.command, [
     '-std=c11',
     ...(runtime.sanitized ? SANITIZER_FLAGS : [`-O${String(opt)}`]),
     '-I',
@@ -848,7 +915,7 @@ function compileObject(cPath: string, out: string, opt: OptLevel, runtime: Runti
     '-o',
     out,
   ]);
-  const startError = clangStartError(cc, result);
+  const startError = clangStartError(cc.command, result);
   if (startError !== undefined) {
     throw startError;
   }
@@ -862,14 +929,14 @@ function compileObject(cPath: string, out: string, opt: OptLevel, runtime: Runti
   requireProduced(cc, out);
 }
 
-/** A zero exit is not proof of an output: a `CC` that is not clang (or a wrapper that swallows
- * the call) can succeed and write nothing, and `build` must not report success for a file that
- * is not there (QA audit F4). */
-function requireProduced(cc: string, out: string): void {
+/** A zero exit is not proof of an output: a wrapper that swallows the call can succeed and write
+ * nothing, and `build` must not report success for a file that is not there (QA audit F4). */
+function requireProduced(cc: CCompiler, out: string): void {
   if (!existsSync(out)) {
     throw new BuildError(
       'STA0009',
-      `C compiler "${cc}" exited 0 but wrote no "${out}" — check that CC names a working clang`,
+      `C compiler "${cc.command}" exited 0 but wrote no "${out}" — check that ` +
+        `${describeSource(cc.source)} names a working C compiler`,
     );
   }
 }
@@ -956,6 +1023,7 @@ function requireLinkArchives(libs: LinkedLibraries, runtime: Runtime): void {
 }
 
 function link(
+  cc: CCompiler,
   inputs: string | readonly string[],
   out: string,
   opt: OptLevel,
@@ -972,13 +1040,11 @@ function link(
     );
   }
   requireLinkArchives(libs, runtime);
+  requireLinkFlagsSupported(cc, runtime, externFlags);
 
-  // conda-clang 21.1.8's Darwin ASan runtime deadlocks during dyld's early malloc
-  // initialization on the current macOS host (see selectCC above).
-  const cc = selectCC(runtime);
   const args = linkArguments(inputs, out, opt, externFlags, libs, runtime);
-  const first = runClangCaptured(cc, args);
-  const startError = clangStartError(cc, first);
+  const first = runClangCaptured(cc.command, args);
+  const startError = clangStartError(cc.command, first);
   if (startError !== undefined) {
     throw startError;
   }
@@ -994,12 +1060,12 @@ function link(
   const staleSignature = isStaleLdSystemLibFailure(first.stderr);
   const retry = staleLdRetryArgs(args, first.stderr, {
     darwin: process.platform === 'darwin',
-    defaultCc: process.env['CC'] === undefined,
+    defaultCc: cc.source === 'default',
     sanitized: runtime.sanitized,
   });
   if (retry !== undefined) {
-    const second = runClangCaptured(cc, retry.args);
-    const secondStartError = clangStartError(cc, second);
+    const second = runClangCaptured(cc.command, retry.args);
+    const secondStartError = clangStartError(cc.command, second);
     if (secondStartError !== undefined) {
       throw secondStartError;
     }

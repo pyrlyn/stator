@@ -201,6 +201,7 @@ test('config "emit": "lib" resolves like --emit=lib', () => {
     emitHeader: undefined,
     unitName: undefined,
     bundler: undefined,
+    cc: undefined,
     diagnostics: undefined,
     node: undefined,
   };

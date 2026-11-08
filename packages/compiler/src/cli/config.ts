@@ -15,6 +15,7 @@ import { type Static, Type } from 'typebox';
 import { Value } from 'typebox/value';
 import { BuildError } from '../support/diagnostics.ts';
 import type { OptLevel } from './build.ts';
+import type { CcChoice } from './cc.ts';
 import { errnoCode } from './outputs.ts';
 
 export const CONFIG_FILE_NAME = 'stator.config.json';
@@ -75,6 +76,13 @@ export const ConfigSchema = Type.Object(
       nonEmpty(
         'js mode: "vite" (default; the vite-stator package), "none", or an adapter module — a ' +
           'path relative to this file when it starts with ".", else a package name (docs/BUNDLER.md).',
+      ),
+    ),
+    cc: Type.Optional(
+      nonEmpty(
+        'build: the C compiler, a name on PATH or a path (relative to this file when it starts ' +
+          'with "."); clang, Apple clang or gcc. --cc overrides it, and it overrides CC ' +
+          '(docs/TOOLCHAIN.md, C compiler). Default clang.',
       ),
     ),
     diagnostics: Type.Optional(
@@ -226,6 +234,7 @@ export interface CliOptions {
   emitHeader: string | undefined;
   unitName: string | undefined;
   bundler: string | undefined;
+  cc: string | undefined;
   diagnostics: 'text' | 'json' | undefined;
   node: boolean | undefined;
 }
@@ -241,6 +250,8 @@ export interface ResolvedOptions {
   emitHeader: string | undefined;
   unitName: string | undefined;
   bundler: string | undefined;
+  /** `--cc` or config `cc`; `CC` and the default are `build`'s to apply (`cc.ts`). */
+  cc: CcChoice | undefined;
   diagnostics: 'text' | 'json';
   node: boolean;
 }
@@ -262,6 +273,10 @@ export function resolveOptions(
   const base = file === undefined ? '' : dirname(file.path);
   const fromFile = (value: string | undefined): string | undefined =>
     value === undefined ? undefined : resolve(base, value);
+  // A relative path names a file next to the config; a bare name stays a name, found on PATH.
+  const local = (value: string | undefined): string | undefined =>
+    value?.startsWith('.') === true ? fromFile(value) : value;
+  const configCc = local(config.cc);
   return {
     entry: cli.entry ?? fromFile(config.entry),
     out: cli.out ?? fromFile(config.out),
@@ -272,10 +287,13 @@ export function resolveOptions(
     keepC: cli.keepC ?? config.keepC ?? false,
     emitHeader: cli.emitHeader ?? fromFile(config.emitHeader),
     unitName: cli.unitName ?? config.unitName,
-    // A relative module path names a file next to the config; a package name stays a name.
-    bundler:
-      cli.bundler ??
-      (config.bundler?.startsWith('.') === true ? fromFile(config.bundler) : config.bundler),
+    bundler: cli.bundler ?? local(config.bundler),
+    cc:
+      cli.cc !== undefined
+        ? { command: cli.cc, source: '--cc' }
+        : configCc === undefined
+          ? undefined
+          : { command: configCc, source: 'config' },
     diagnostics: cli.diagnostics ?? config.diagnostics ?? 'text',
     node: cli.node ?? config.node ?? false,
   };
