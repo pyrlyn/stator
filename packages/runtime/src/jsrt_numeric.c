@@ -14,9 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ============================================================================
- * ToInt32 and ToUint32 — NUMERIC.md §4.1
- * ============================================================================ */
+/* --- ToInt32 and ToUint32 — NUMERIC.md §4.1 --- */
 
 /* ToInt32: convert a double to a signed 32-bit integer using the spec algorithm.
  * This is NOT a C cast (which would be undefined behaviour out of range).
@@ -67,9 +65,7 @@ uint32_t jsrt_to_uint32(double d) {
   return (uint32_t)mod;
 }
 
-/* ============================================================================
- * ToNumber — NUMERIC.md §6.3
- * ============================================================================ */
+/* --- ToNumber — NUMERIC.md §6.3 --- */
 
 /* Convert a jsrt_value primitive to a number.
  *
@@ -116,9 +112,7 @@ double jsrt_to_number(jsrt_value v) {
   return 0.0 / 0.0; /* NaN */
 }
 
-/* ============================================================================
- * StringNumericLiteral grammar — NUMERIC.md §6.3
- * ============================================================================ */
+/* --- StringNumericLiteral grammar — NUMERIC.md §6.3 --- */
 
 /* StrWhiteSpaceChar (WhiteSpace + LineTerminator): the trim set for
  * StringNumericLiteral. This is NOT C isspace: the 0x09-0x0D range covers VT
@@ -306,9 +300,7 @@ double jsrt_string_to_number(jsrt_value s) {
   return result;
 }
 
-/* ============================================================================
- * ToBoolean — NUMERIC.md (derived)
- * ============================================================================ */
+/* --- ToBoolean — NUMERIC.md (derived) --- */
 
 /* Truthy/falsy values. False for: false, +0, -0, NaN, undefined, null, empty string.
  * True for everything else (including "0" and "false" as strings). */
@@ -340,9 +332,33 @@ bool jsrt_truthy(jsrt_value v) {
   return true;
 }
 
-/* ============================================================================
- * Loose equality (==) — NUMERIC.md §6.3
- * ============================================================================ */
+/* --- Loose equality (==) — NUMERIC.md §6.3 --- */
+
+/* The primitive kinds §7.2.14 compares across: the same kind compares strictly, a mixed pair
+ * converts one side to number. */
+typedef enum { LOOSE_NUMBER, LOOSE_STRING, LOOSE_BOOL, LOOSE_OTHER } LooseKind;
+
+static LooseKind loose_kind(jsrt_value v) {
+  if (jsrt_is_double(v) || jsrt_is(v, JSRT_TAG_INT32)) {
+    return LOOSE_NUMBER;
+  }
+  if (jsrt_is(v, JSRT_TAG_STRING)) {
+    return LOOSE_STRING;
+  }
+  if (jsrt_is(v, JSRT_TAG_BOOL)) {
+    return LOOSE_BOOL;
+  }
+  return LOOSE_OTHER;
+}
+
+/* Whether the operand of kind `self` is the one ToNumber converts against a primitive of the other
+ * kind (§7.2.14 steps 5-10): a boolean always, a string only against a number. */
+static bool converts_to_number(LooseKind self, LooseKind other) {
+  if (other == LOOSE_OTHER || self == other) {
+    return false;
+  }
+  return self == LOOSE_BOOL || (self == LOOSE_STRING && other == LOOSE_NUMBER);
+}
 
 /* Loose equality according to NUMERIC.md §6.3's table.
  *
@@ -371,43 +387,19 @@ bool jsrt_loose_equals(jsrt_value a, jsrt_value b) {
     return false;
   }
 
-  /* number OP number -> === */
-  if ((jsrt_is_double(a) || jsrt_is(a, JSRT_TAG_INT32)) &&
-      (jsrt_is_double(b) || jsrt_is(b, JSRT_TAG_INT32))) {
+  /* number, string or boolean against its own kind -> === */
+  const LooseKind ka = loose_kind(a);
+  const LooseKind kb = loose_kind(b);
+  if (ka != LOOSE_OTHER && ka == kb) {
     return jsrt_strict_equals(a, b);
   }
 
-  /* string OP string -> === */
-  if (jsrt_is(a, JSRT_TAG_STRING) && jsrt_is(b, JSRT_TAG_STRING)) {
-    return jsrt_strict_equals(a, b);
-  }
-
-  /* boolean OP boolean -> === */
-  if (jsrt_is(a, JSRT_TAG_BOOL) && jsrt_is(b, JSRT_TAG_BOOL)) {
-    return jsrt_strict_equals(a, b);
-  }
-
-  /* number OP boolean -> ToNumber(boolean), then === */
-  if ((jsrt_is_double(a) || jsrt_is(a, JSRT_TAG_INT32)) && jsrt_is(b, JSRT_TAG_BOOL)) {
+  /* a boolean against a number or string, or a string against a number -> ToNumber that side,
+   * then compare again */
+  if (converts_to_number(kb, ka)) {
     return jsrt_loose_equals(a, jsrt_number(jsrt_to_number(b)));
   }
-  if (jsrt_is(a, JSRT_TAG_BOOL) && (jsrt_is_double(b) || jsrt_is(b, JSRT_TAG_INT32))) {
-    return jsrt_loose_equals(jsrt_number(jsrt_to_number(a)), b);
-  }
-
-  /* string OP boolean -> ToNumber(boolean), then compare */
-  if (jsrt_is(a, JSRT_TAG_STRING) && jsrt_is(b, JSRT_TAG_BOOL)) {
-    return jsrt_loose_equals(a, jsrt_number(jsrt_to_number(b)));
-  }
-  if (jsrt_is(a, JSRT_TAG_BOOL) && jsrt_is(b, JSRT_TAG_STRING)) {
-    return jsrt_loose_equals(jsrt_number(jsrt_to_number(a)), b);
-  }
-
-  /* number OP string -> ToNumber(string), then === */
-  if ((jsrt_is_double(a) || jsrt_is(a, JSRT_TAG_INT32)) && jsrt_is(b, JSRT_TAG_STRING)) {
-    return jsrt_loose_equals(a, jsrt_number(jsrt_to_number(b)));
-  }
-  if (jsrt_is(a, JSRT_TAG_STRING) && (jsrt_is_double(b) || jsrt_is(b, JSRT_TAG_INT32))) {
+  if (converts_to_number(ka, kb)) {
     return jsrt_loose_equals(jsrt_number(jsrt_to_number(a)), b);
   }
 
@@ -451,9 +443,7 @@ bool jsrt_loose_equals(jsrt_value a, jsrt_value b) {
   return false;
 }
 
-/* ============================================================================
- * SameValue (Object.is) — NUMERIC.md §5.2
- * ============================================================================ */
+/* --- SameValue (Object.is) — NUMERIC.md §5.2 --- */
 
 /* Object.is (SameValue): like === but NaN === NaN is true, and -0 !== +0.
  * These are the exact two cases where it differs from ===, and it differs in

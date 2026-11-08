@@ -40,4 +40,18 @@ static inline uint32_t jsrt_relative_index(double v, uint32_t len) {
   return v >= (double)len ? len : (uint32_t)v;
 }
 
+/* An element position (charAt §22.1.3.2, at §23.1.3.1, with §23.1.3.39): ToIntegerOrInfinity with
+ * undefined as 0, counted back from `len` when negative if `relative`, then the open range
+ * [0, len) -- or -1 outside it. */
+static inline int64_t jsrt_element_index(jsrt_value v, uint32_t len, bool relative) {
+  double k = jsrt_int_or_inf(v, 0.0);
+  if (relative && k < 0.0) {
+    k += (double)len;
+  }
+  if (k < 0.0 || k >= (double)len) {
+    return -1;
+  }
+  return (int64_t)k;
+}
+
 #endif

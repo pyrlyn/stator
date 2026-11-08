@@ -12,6 +12,7 @@
 #include "jsrt.h"
 #include "jsrt_mem.h"
 #include "jsrt_value.h"
+#include "jsrt_utf.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -268,62 +269,20 @@ static PropTable as_prop_table(jsrt_value v, const char *op) {
   return (PropTable){&o->shape, &o->slots, &o->capacity};
 }
 
-/* One code point as UTF-8 at `p`. Early-return branches, not `buf[i++]`, so this is not a
- * second copy of the index-loop encoder in jsrt_regexp.c / jsrt_string.c. */
-static char *shape_utf8_put(char *p, uint32_t cp) {
-  if (cp < 0x80) {
-    *p++ = (char)cp;
-    return p;
-  }
-  if (cp < 0x800) {
-    *p++ = (char)(0xC0 | (cp >> 6));
-    *p++ = (char)(0x80 | (cp & 0x3F));
-    return p;
-  }
-  if (cp < 0x10000) {
-    *p++ = (char)(0xE0 | (cp >> 12));
-    *p++ = (char)(0x80 | ((cp >> 6) & 0x3F));
-    *p++ = (char)(0x80 | (cp & 0x3F));
-    return p;
-  }
-  *p++ = (char)(0xF0 | (cp >> 18));
-  *p++ = (char)(0x80 | ((cp >> 12) & 0x3F));
-  *p++ = (char)(0x80 | ((cp >> 6) & 0x3F));
-  *p++ = (char)(0x80 | (cp & 0x3F));
-  return p;
-}
-
 /* UTF-8 for a JS string. The caller owns the buffer. Surrogate pairs combine into one code point;
  * a lone surrogate is encoded as itself. U+0000 has no representation in a C string and aborts
  * loudly rather than truncating the key silently. Plain malloc: the buffer is bytes, not a
  * jsrt_value, and a compare-only caller frees it before anything else can collect. */
 static char *shape_key_bytes(jsrt_value name) {
-  const uint32_t len = jsrt_string_length(name);
+  const JSString *str = (const JSString *)jsrt_ptr(name);
   /* Worst case is three bytes per code unit: an astral PAIR takes four bytes for two units. */
-  char *key = (char *)malloc((size_t)len * 3 + 1);
+  char *key = (char *)malloc((size_t)str->length * 3 + 1);
   if (key == NULL) {
     jsrt_panic("out of memory: shape key");
   }
-  char *p = key;
-  for (uint32_t i = 0; i < len; i++) {
-    uint32_t cp = jsrt_string_char(name, i);
-    if (cp == 0) {
-      jsrt_panic("STA2005: a property key containing U+0000 is not yet representable");
-    }
-    if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < len) {
-      const uint16_t trail = jsrt_string_char(name, i + 1);
-      if (trail >= 0xDC00 && trail <= 0xDFFF) {
-        cp = 0x10000 + ((cp - 0xD800) << 10) + (trail - 0xDC00);
-        i++;
-      }
-    }
-    if (cp < 0x80) {
-      *p++ = (char)cp;
-    } else {
-      p = shape_utf8_put(p, cp);
-    }
+  if (jsrt_utf16_to_cstr(str->data, str->length, false, key)) {
+    jsrt_panic("STA2005: a property key containing U+0000 is not yet representable");
   }
-  *p = '\0';
   return key;
 }
 
@@ -387,6 +346,20 @@ uint32_t jsrt_closure_arity(jsrt_value v) {
   return jsrt_as_closure(v)->arity;
 }
 
+/* The entry named `key` in ONE class's own statics table whose kind is in `kinds` (a mask of
+ * `1u << kind`), or NULL. */
+static const JSRTStaticEntry *statics_entry(const JSRTClass *k, const char *key, uint32_t kinds) {
+  if (k->statics == NULL) {
+    return NULL;
+  }
+  for (const JSRTStaticEntry *e = k->statics; e->name != NULL; e++) {
+    if ((kinds & (1u << e->kind)) != 0 && strcmp(e->name, key) == 0) {
+      return e;
+    }
+  }
+  return NULL;
+}
+
 /* The statics entry for `key` on a class object (docs/VALUE.md §4.17), or NULL.
  *
  * The lookup walks the class's own descriptor and then its `parent`s -- statics are inherited in
@@ -400,25 +373,18 @@ static const JSRTStaticEntry *class_static_find(const JSRTClosure *c, const char
   if (c->klass == NULL) {
     return NULL;
   }
-  const JSRTStaticEntry *plain = NULL;
-  for (const JSRTClass *k = c->klass; k != NULL && plain == NULL; k = k->parent) {
-    if (k->statics == NULL) {
-      continue;
+  const uint32_t accessor = 1u << (for_write ? JSRT_STATIC_SETTER : JSRT_STATIC_GETTER);
+  const uint32_t plain = (1u << JSRT_STATIC_FIELD) | (1u << JSRT_STATIC_METHOD);
+  for (const JSRTClass *k = c->klass; k != NULL; k = k->parent) {
+    const JSRTStaticEntry *e = statics_entry(k, key, accessor);
+    if (e == NULL) {
+      e = statics_entry(k, key, plain);
     }
-    for (const JSRTStaticEntry *e = k->statics; e->name != NULL; e++) {
-      if (strcmp(e->name, key) != 0) {
-        continue;
-      }
-      const uint8_t wanted = for_write ? JSRT_STATIC_SETTER : JSRT_STATIC_GETTER;
-      if (e->kind == wanted) {
-        return e;
-      }
-      if (e->kind == JSRT_STATIC_FIELD || e->kind == JSRT_STATIC_METHOD) {
-        plain = e;
-      }
+    if (e != NULL) {
+      return e;
     }
   }
-  return plain;
+  return NULL;
 }
 
 /* True when `entry` is in the class's OWN statics table rather than an ancestor's. */
@@ -437,15 +403,10 @@ static bool class_static_other_half(const JSRTClosure *c, const char *key, bool 
   if (c->klass == NULL) {
     return false;
   }
-  const uint8_t other = for_write ? JSRT_STATIC_GETTER : JSRT_STATIC_SETTER;
+  const uint32_t other = 1u << (for_write ? JSRT_STATIC_GETTER : JSRT_STATIC_SETTER);
   for (const JSRTClass *k = c->klass; k != NULL; k = k->parent) {
-    if (k->statics == NULL) {
-      continue;
-    }
-    for (const JSRTStaticEntry *e = k->statics; e->name != NULL; e++) {
-      if (strcmp(e->name, key) == 0 && e->kind == other) {
-        return true;
-      }
+    if (statics_entry(k, key, other) != NULL) {
+      return true;
     }
   }
   return false;

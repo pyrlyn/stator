@@ -1,0 +1,9 @@
+# CodeQL scans only first-party source (the creator's decision, plan-notes 411). Vendored upstream
+# code is not ours to fix (AGENTS.md: runtime/vendor/ is patched only via plan-notes.md), and test
+# inputs, fixtures and harnesses deliberately hold unsafe or odd constructs.
+paths-ignore:
+  - packages/runtime/vendor
+  - packages/runtime/tests
+  - packages/tests
+  - packages/transpiler/tests
+  - packages/engine/test262

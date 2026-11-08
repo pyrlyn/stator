@@ -785,8 +785,9 @@ one people learn to ignore — which costs more than having no gate at all.
 
 ~~**Task 6.15 — No JavaScript in our own source (§0.10, plan-notes 289).**~~ ✅ **landed 2026-10-19** — evidence in [done.md](done.md) → Phase 6 Task 6.15 (plan-notes 369).
 
-**Task 6.16 — Work the clone baseline to zero (AGENTS.md golden rule 10).** `.jscpd-baseline.json`
-records 224 clones (identifier-insensitive, tests/vendor/docs excluded — 4.6% of our source, of
+~~**Task 6.16 — Work the clone baseline to zero (AGENTS.md golden rule 10).**~~ ✅ **landed
+2026-11-08** — evidence in [`plan/T30`](plan/T30/done.md). `.jscpd-baseline.json`
+recorded 224 clones (identifier-insensitive, tests/vendor/docs excluded — 4.6% of our source, of
 which 1.1% exact) as debt. Extract a shared helper per clone family at the responsible layer
 (`lower/`, `codegen/`, `runtime/src/jsrt_array_ops.c` lead the list) and shrink the baseline with
 `pnpm run dupes:baseline` in the same change. **Check:** the baseline is empty; `pnpm run dupes`
@@ -806,9 +807,10 @@ helpers across `lower/index.ts`, `frontend/generics.ts` and `runtime/src/jsrt_ar
 `SCOPE_BOUNDARY_KINDS`, `ANNOTATION_SITE_KINDS`, `opProblem`/`verifyReceiverOpShape`,
 `verifyShapeCoverage`, `char_index`/`relative_char_index`/`search_from`/`substr_range`,
 `DATE_GETTER_FIELDS`, `append_quoted_escape`, `walk_present` + `visit_*`); the baseline shrank
-**129 → 117** fingerprints. Still open: `lower/index.ts` operator maps and dispatch chains, the
-`jsrt_array_ops.c` method dispatch switch, `gate.ts` SyntaxKind case lists, and the
-`MATH_ARITY`/`COLLECTION_ARITY` data tables.
+**129 → 117** fingerprints. **Final tranche (T30)**: shared helpers across `frontend/`, `hir/`,
+`lower/`, the C runtime (`jsrt_utf.h` and per-file helpers) and two examples, kind tables spelled
+by name (`frontend/syntax-kinds.ts`), and `jscpd:ignore` markers on two shapes that cannot be
+factored; the baseline went **88 → 0** and stays in place, empty (AGENTS.md golden rule 10).
 
 ~~**Task 6.17 — Test impact: build and run only what a change reaches.**~~ ✅ **landed 2026-10-02**
 (steps 1–3 and 5; Check (a)–(e) passed) — evidence in [done.md](done.md) → Phase 6 Task 6.17
@@ -1992,4 +1994,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.89** (2026-11-06): **T14.0: the interpreter is Zig in the runtime, on stator-ts's parser, running bytecode** (plan-notes 396, `docs/INTERPRETER.md`). The creator chose the parser and the language from the spike's numbers; §11f and plan/T14.1–T14.4 follow.
 - **v4.90** (2026-11-07): **T14.1: `packages/interpreter`'s parser front** (plan-notes 401). The parse entry, the C ABI and a Test262 `language/` parse driver land in Zig on stator-ts's parser as it stands; 80.76% pass at the pin, ratcheted, and the rest is listed for stator-ts's owners.
 - **v4.91** (2026-11-07): **T66: Boehm is replaced by pyrlyn/gc as coalesced deferred reference counting** (plan-notes 407, `docs/VALUE.md` §4.12). No system GC library; each `--emit=lib` library carries its own collector; Zig moves to 0.17.1.
-- **v4.92** (2026-11-08): **T67 opens: `packages/interpreter` becomes `packages/engine`** (plan-notes 409). The interpreter is the engine's `interp` mode; a baseline JIT on pyrlyn/jit's IR is its `jit` mode; `stator-engine` runs `.js` and `.ts` files and is benchmarked against V8. T67.1 (optimizing tier), T67.2 (Wasm output), T67.3 (a Wasm runtime for JS and TS) and T67.4 (Zig source output) are carded.
+- **v4.92** (2026-11-08): **T67 opens: `packages/interpreter` becomes `packages/engine`** (plan-notes 412). The interpreter is the engine's `interp` mode; a baseline JIT on pyrlyn/jit's IR is its `jit` mode; `stator-engine` runs `.js` and `.ts` files and is benchmarked against V8. T67.1 (optimizing tier), T67.2 (Wasm output), T67.3 (a Wasm runtime for JS and TS) and T67.4 (Zig source output) are carded.

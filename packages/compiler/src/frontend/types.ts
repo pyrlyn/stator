@@ -1,4 +1,5 @@
 import * as ts from 'typescript';
+import { syntaxKindSet } from './syntax-kinds.ts';
 import { ERROR_CLASSES, errorHType } from '../hir/nodes.ts';
 import type { HField, HType } from '../hir/types.ts';
 import {
@@ -1111,6 +1112,32 @@ export function classDeclarationOf(type: ts.Type): ts.ClassDeclaration | undefin
     : undefined;
 }
 
+/** The one non-generic class every constituent in `live` is an instance of, or `undefined` for
+ * none, an `any`/`unknown` constituent (the value may be anything, so static dispatch would be
+ * unsound), a non-class, a generic, or a second class. The gate's optional-chain method rule and
+ * the lowering's static dispatch both ask it, so the two cannot disagree. */
+export function singleClassOf(live: readonly ts.Type[]): ts.ClassDeclaration | undefined {
+  let found: ts.ClassDeclaration | undefined;
+  for (const constituent of live) {
+    if ((constituent.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) {
+      return undefined;
+    }
+    const declaration = classDeclarationOf(constituent);
+    if (declaration === undefined || declaration.name === undefined) {
+      return undefined;
+    }
+    if (declaration.typeParameters !== undefined && declaration.typeParameters.length > 0) {
+      return undefined;
+    }
+    if (found === undefined) {
+      found = declaration;
+    } else if (found !== declaration) {
+      return undefined;
+    }
+  }
+  return found;
+}
+
 /** Whether a class member carries `static`. */
 export function isStaticMember(member: ts.ClassElement): boolean {
   return (
@@ -1202,10 +1229,11 @@ function privateOwnerName(
 export function symbolIteratorAccess(
   name: ts.PropertyName,
 ): ts.PropertyAccessExpression | undefined {
-  if (!ts.isComputedPropertyName(name)) {
-    return undefined;
-  }
-  const expr = name.expression;
+  return ts.isComputedPropertyName(name) ? symbolIteratorExpression(name.expression) : undefined;
+}
+
+/** `Symbol.iterator` spelled as an expression, the non-optional property read. */
+function symbolIteratorExpression(expr: ts.Expression): ts.PropertyAccessExpression | undefined {
   if (
     !ts.isPropertyAccessExpression(expr) ||
     expr.questionDotToken !== undefined ||
@@ -1217,6 +1245,14 @@ export function symbolIteratorAccess(
     return undefined;
   }
   return expr;
+}
+
+/** Whether `Symbol` in a `Symbol.iterator` read is the global one: declared only by lib files,
+ * never by a shadowing `const Symbol`. */
+function isGlobalSymbolRead(access: ts.PropertyAccessExpression, checker: ts.TypeChecker): boolean {
+  const symbol = checker.getSymbolAtLocation(access.expression);
+  const declarations = symbol?.declarations ?? [];
+  return declarations.length > 0 && declarations.every((d) => d.getSourceFile().isDeclarationFile);
 }
 
 /** The HIR method name a class member goes under.
@@ -1231,22 +1267,39 @@ export function instanceMethodName(
   member: ts.NamedDeclaration,
   checker: ts.TypeChecker,
 ): string | undefined {
-  if (member.name === undefined) {
-    return undefined;
+  const name = member.name;
+  if (name !== undefined && (ts.isStringLiteral(name) || ts.isNumericLiteral(name))) {
+    return name.text;
   }
-  if (ts.isIdentifier(member.name) || ts.isPrivateIdentifier(member.name)) {
-    return member.name.text;
-  }
-  if (ts.isStringLiteral(member.name) || ts.isNumericLiteral(member.name)) {
-    return member.name.text;
-  }
-  if (!ts.isComputedPropertyName(member.name)) {
-    return undefined;
-  }
-  if (symbolIteratorAccess(member.name) !== undefined) {
+  if (
+    name !== undefined &&
+    ts.isComputedPropertyName(name) &&
+    symbolIteratorAccess(name) !== undefined
+  ) {
     return ITERATOR_METHOD_NAME;
   }
-  return computedKeyStaticName(member.name, checker) ?? undefined;
+  return memberStaticName(member, checker);
+}
+
+/** The name a class member declares when it is an identifier, a `#private` name, or a
+ * literal-typed computed key (`[k]` with `k: "m"` -- the step-22 computed-literal rule).
+ * `undefined` for anything wider, and for string/numeric literal spellings, which keep their
+ * own verdict in the gate: this learns exactly the computed case, never a second spelling for
+ * what the member arms already refuse. */
+export function memberStaticName(
+  member: ts.NamedDeclaration,
+  checker: ts.TypeChecker,
+): string | undefined {
+  const name = member.name;
+  if (name === undefined) {
+    return undefined;
+  }
+  if (ts.isIdentifier(name) || ts.isPrivateIdentifier(name)) {
+    return name.text;
+  }
+  return ts.isComputedPropertyName(name)
+    ? (computedKeyStaticName(name, checker) ?? undefined)
+    : undefined;
 }
 
 /** True when `name` is a global `[Symbol.iterator]` computed name — the well-known method, not a
@@ -1256,12 +1309,7 @@ export function isGlobalSymbolIteratorName(
   checker: ts.TypeChecker,
 ): boolean {
   const access = symbolIteratorAccess(name);
-  if (access === undefined) {
-    return false;
-  }
-  const symbol = checker.getSymbolAtLocation(access.expression);
-  const declarations = symbol?.declarations ?? [];
-  return declarations.length > 0 && declarations.every((d) => d.getSourceFile().isDeclarationFile);
+  return access !== undefined && isGlobalSymbolRead(access, checker);
 }
 
 /** True when `arg` is a global `Symbol.iterator` element key (`u[Symbol.iterator]`) — the
@@ -1270,19 +1318,8 @@ export function isGlobalSymbolIteratorName(
  * (which answers for a computed member NAME); the gate and the lowering share this so the two
  * cannot disagree about which brackets name the protocol. */
 export function isSymbolIteratorKey(arg: ts.Expression, checker: ts.TypeChecker): boolean {
-  if (
-    !ts.isPropertyAccessExpression(arg) ||
-    arg.questionDotToken !== undefined ||
-    !ts.isIdentifier(arg.expression) ||
-    arg.expression.text !== 'Symbol' ||
-    !ts.isIdentifier(arg.name) ||
-    arg.name.text !== 'iterator'
-  ) {
-    return false;
-  }
-  const symbol = checker.getSymbolAtLocation(arg.expression);
-  const declarations = symbol?.declarations ?? [];
-  return declarations.length > 0 && declarations.every((d) => d.getSourceFile().isDeclarationFile);
+  const access = symbolIteratorExpression(arg);
+  return access !== undefined && isGlobalSymbolRead(access, checker);
 }
 
 /** An object type whose `[Symbol.iterator]()` returns an iterator (a Generator, or a boxed
@@ -2281,16 +2318,16 @@ function isAnyKeyword(typeNode: ts.TypeNode): boolean {
 }
 
 /** Nodes that can carry a type annotation on their own `type` slot. */
-const ANNOTATION_SITE_KINDS: ReadonlySet<ts.SyntaxKind> = new Set([
-  ts.SyntaxKind.VariableDeclaration,
-  ts.SyntaxKind.Parameter,
-  ts.SyntaxKind.PropertyDeclaration,
-  ts.SyntaxKind.PropertySignature,
-  ts.SyntaxKind.FunctionDeclaration,
-  ts.SyntaxKind.MethodDeclaration,
-  ts.SyntaxKind.ArrowFunction,
-  ts.SyntaxKind.FunctionExpression,
-]);
+const ANNOTATION_SITE_KINDS: ReadonlySet<ts.SyntaxKind> = syntaxKindSet(
+  'VariableDeclaration',
+  'Parameter',
+  'PropertyDeclaration',
+  'PropertySignature',
+  'FunctionDeclaration',
+  'MethodDeclaration',
+  'ArrowFunction',
+  'FunctionExpression',
+);
 
 /** `null` = this node is not a place an annotation can go. `undefined` = it is, and there is none.
  * Otherwise the annotation itself. The three-way answer is what lets the caller tell "annotated
@@ -2320,16 +2357,15 @@ function annotationSiteOf(node: ts.Node): ts.TypeNode | null | undefined {
  * Used by the gate to emit STA1001 for explicit `any` in ts mode.
  */
 export function hasExplicitAny(node: ts.Node): boolean {
-  if (ts.isVariableDeclaration(node) || ts.isParameter(node)) {
-    const typeNode = (node as ts.VariableDeclaration | ts.ParameterDeclaration).type;
-    if (typeNode && isAnyKeyword(typeNode)) {
-      return true;
-    }
-  }
-  if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
-    const typeNode = (node as ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression)
-      .type;
-    if (typeNode && isAnyKeyword(typeNode)) {
+  // A binding's annotation, or a function's return annotation.
+  if (
+    ts.isVariableDeclaration(node) ||
+    ts.isParameter(node) ||
+    ts.isFunctionDeclaration(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node)
+  ) {
+    if (node.type !== undefined && isAnyKeyword(node.type)) {
       return true;
     }
   }

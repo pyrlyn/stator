@@ -5,6 +5,8 @@ version: 1
 codeql:
   # TypeScript/JavaScript and the C runtime.
   languages: [actions, c-cpp, javascript-typescript]
+  # Vendored code and tests are out of scope (plan-notes 411).
+  config-file: .github/codeql/codeql-config.yml
 
 snyk:
   enabled: true

@@ -61,30 +61,26 @@ _Noreturn static void check_failed(jsrt_value v, const char *expected, const cha
   jsrt_panic(message);
 }
 
-jsrt_value jsrt_check_number(jsrt_value v, const char *where) {
-  if (!jsrt_is_number(v)) {
-    check_failed(v, "number", where);
+/* `v` when `ok`, the failure path otherwise: the shape of every primitive check below. */
+static jsrt_value checked(bool ok, jsrt_value v, const char *expected, const char *where) {
+  if (!ok) {
+    check_failed(v, expected, where);
   }
   return v;
+}
+
+jsrt_value jsrt_check_number(jsrt_value v, const char *where) {
+  return checked(jsrt_is_number(v), v, "number", where);
 }
 
 jsrt_value jsrt_check_string(jsrt_value v, const char *where) {
-  if (!jsrt_is(v, JSRT_TAG_STRING)) {
-    check_failed(v, "string", where);
-  }
-  return v;
+  return checked(jsrt_is(v, JSRT_TAG_STRING), v, "string", where);
 }
 
 jsrt_value jsrt_check_boolean(jsrt_value v, const char *where) {
-  if (!jsrt_is(v, JSRT_TAG_BOOL)) {
-    check_failed(v, "boolean", where);
-  }
-  return v;
+  return checked(jsrt_is(v, JSRT_TAG_BOOL), v, "boolean", where);
 }
 
 jsrt_value jsrt_check_uint8array(jsrt_value v, const char *where) {
-  if (!jsrt_is_uint8array(v)) {
-    check_failed(v, "Uint8Array", where);
-  }
-  return v;
+  return checked(jsrt_is_uint8array(v), v, "Uint8Array", where);
 }

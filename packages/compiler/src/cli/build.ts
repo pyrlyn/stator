@@ -104,7 +104,7 @@ export interface BuildOptions {
   readonly node?: boolean;
   /** In-process seam for `STATOR_COMPILE_JOBS`. The CLI leaves it unset. */
   readonly compileJobs?: number;
-  /** `--cc` or config `cc` (plan/T35). Unset, `CC` and then `clang` decide (`cc.ts`). */
+  /** `--cc` or config `cc` (plan/T35). `CC` sits between the two; unset, `clang` (`cc.ts`). */
   readonly cc?: CcChoice;
 }
 

@@ -345,6 +345,7 @@ const Writes = struct {
     unit: ?[]const u8,
     jobs: compile_jobs.Jobs,
     runtime: link.Runtime,
+    cc: link.Compiler,
 };
 
 fn writeObjectOrLibrary(x: *const Context, w: Writes, compiled: Compiled, header: Named) Error!void {
@@ -359,11 +360,12 @@ fn writeObjectOrLibrary(x: *const Context, w: Writes, compiled: Compiled, header
     defer link.removeTree(x.io, scratch);
     const c_target = w.kept_c orelse Named{ .role = "the C file", .path = fspath.join(x.a, &.{ scratch, "module.c" }) catch oom() };
     try outputs.write(x.io, x.r, c_target, compiled.c);
-    const lib = w.lib orelse return link.compileObject(h, c_target.path, w.b.out, w.b.opt, w.runtime);
+    const lib = w.lib orelse return link.compileObject(h, w.cc, c_target.path, w.b.out, w.b.opt, w.runtime);
     const object = fspath.join(x.a, &.{ scratch, "unit.o" }) catch oom();
-    try link.compileObject(h, c_target.path, object, w.b.opt, w.runtime);
+    try link.compileObject(h, w.cc, c_target.path, object, w.b.opt, w.runtime);
     const std_archive: ?[]const u8 = if (compiled.std) link.stdArchive(x.a, stdRoot(x)) else null;
     try link.requireLinkArchives(h, archivesOf(x, compiled, w.runtime));
+    try link.requireLinkFlagsSupported(h, w.cc, w.runtime, externFlags(x, compiled, w.b));
 
     var archives: std.ArrayList([]const u8) = .empty;
     if (std_archive) |archive| archives.append(x.a, archive) catch oom();
@@ -373,7 +375,7 @@ fn writeObjectOrLibrary(x: *const Context, w: Writes, compiled: Compiled, header
     libs.appendSlice(x.a, link.systemLinkFlags(x.a, x.io, w.runtime, externFlags(x, compiled, w.b))) catch oom();
     const surface = compiled.export_surface;
     try library.writeStaticLibrary(h, .{
-        .cc = link.selectCC(h, w.runtime),
+        .cc = w.cc.command,
         .object = object,
         .archives = archives.items,
         .symbols = if (surface) |s| s.symbols else &.{},
@@ -414,14 +416,23 @@ fn writeExecutable(x: *const Context, w: Writes, compiled: Compiled) Error!void 
     const line: link.LinkLine = .{ .inputs = &.{c_target.path}, .out = w.b.out, .opt = w.b.opt, .extern_flags = flags, .std_archive = std_archive, .runtime = w.runtime };
     const archives = archivesOf(x, compiled, w.runtime);
     const split = compile_jobs.shouldSplit(x.a, compiled.c, w.jobs.jobs, w.jobs.explicit) catch |err| return internalFailure(x, @errorName(err));
-    if (!split) return link.link(h, line, archives);
+    if (!split) return link.link(h, w.cc, line, archives);
     const parts = try link.makeTempDir(h, "stator-jobs-");
     defer link.removeTree(x.io, parts);
-    try link.linkParallel(h, compiled.c, parts, line, archives, w.jobs.jobs);
+    try link.linkParallel(h, w.cc, compiled.c, parts, line, archives, w.jobs.jobs);
 }
 
 fn internalFailure(x: *const Context, message: []const u8) Error {
     return x.r.fail("STA4072", "internal error: {s} — this is a compiler bug; report it with the input that triggered it", .{message});
+}
+
+/// The one place a build decides its C compiler: chosen, probed once, and warned about when an
+/// explicit choice skips the macOS ASan override (`cc.zig`).
+fn resolveCompiler(x: *const Context, explicit: ?link.Choice, runtime: link.Runtime) Error!link.Compiler {
+    const h = x.host();
+    const chosen = link.chooseCC(h, explicit, runtime);
+    if (chosen.warning) |warning| x.print(&.{.{ .text = std.fmt.allocPrint(x.a, "stator: warning: {s}", .{warning}) catch oom() }}, .stderr);
+    return link.detectCC(h, chosen.choice);
 }
 
 fn runBuild(x: *const Context, b: args.Build) Error!u8 {
@@ -458,7 +469,8 @@ fn runBuild(x: *const Context, b: args.Build) Error!u8 {
         if (header) |target| try outputs.write(x.io, x.r, target, compiled.header orelse "");
         return 0;
     }
-    const writes: Writes = .{ .b = b, .out = out, .header = header, .kept_c = kept_c, .lib = lib, .unit = unit, .jobs = jobs, .runtime = runtime };
+    const cc = try resolveCompiler(x, b.cc, runtime);
+    const writes: Writes = .{ .b = b, .out = out, .header = header, .kept_c = kept_c, .lib = lib, .unit = unit, .jobs = jobs, .runtime = runtime, .cc = cc };
     if (header) |target| {
         try writeObjectOrLibrary(x, writes, compiled, target);
     } else {

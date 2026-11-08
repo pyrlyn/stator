@@ -81,7 +81,7 @@ export const ConfigSchema = Type.Object(
     cc: Type.Optional(
       nonEmpty(
         'build: the C compiler, a name on PATH or a path (relative to this file when it starts ' +
-          'with "."); clang, Apple clang or gcc. --cc overrides it, and it overrides CC ' +
+          'with "."); clang, Apple clang or gcc. --cc and CC override it ' +
           '(docs/TOOLCHAIN.md, C compiler). Default clang.',
       ),
     ),
@@ -250,7 +250,7 @@ export interface ResolvedOptions {
   emitHeader: string | undefined;
   unitName: string | undefined;
   bundler: string | undefined;
-  /** `--cc` or config `cc`; `CC` and the default are `build`'s to apply (`cc.ts`). */
+  /** `--cc` or config `cc`; `build` puts `CC` between them and applies the default (`cc.ts`). */
   cc: CcChoice | undefined;
   diagnostics: 'text' | 'json';
   node: boolean;

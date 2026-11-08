@@ -5,20 +5,18 @@
  */
 #include "stat_shim.h"
 
+#include <stdbool.h>
 #include <sys/stat.h>
 
-double stat_size(const char *path) {
+/* The one `stat(2)` call both accessors share; -1 for a missing file. */
+static double stat_field(const char *path, bool mtime) {
   struct stat st;
   if (stat(path, &st) != 0) {
     return -1.0;
   }
-  return (double)st.st_size;
+  return mtime ? (double)st.st_mtime : (double)st.st_size;
 }
 
-double stat_mtime(const char *path) {
-  struct stat st;
-  if (stat(path, &st) != 0) {
-    return -1.0;
-  }
-  return (double)st.st_mtime;
-}
+double stat_size(const char *path) { return stat_field(path, false); }
+
+double stat_mtime(const char *path) { return stat_field(path, true); }
