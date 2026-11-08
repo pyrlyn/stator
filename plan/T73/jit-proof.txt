@@ -1,0 +1,25 @@
+Node v26.7.0 / V8 14.6.202.34-node.28, --trace-opt, separate untimed runs.
+numeric
+[completed optimizing 0x30773123dd29 <JSFunction bench (sfi = 0x1bf4b2517381)> (target TURBOFAN_JS)]
+[completed optimizing 0x30773123dd69 <JSFunction checkedBatch (sfi = 0x1bf4b25173c9)> (target TURBOFAN_JS)]
+
+objects
+[completed optimizing 0x0d3bd1a6b2d9 <JSFunction bench (sfi = 0xd3bd1a573c9)> (target TURBOFAN_JS)]
+[completed optimizing 0x0d3bd1a6b339 <JSFunction checkedBatch (sfi = 0xd3bd1a57411)> (target TURBOFAN_JS)]
+
+cycles
+[completed optimizing 0x047f5f6eb2d9 <JSFunction bench (sfi = 0x47f5f6d73b1)> (target TURBOFAN_JS) OSR]
+[completed optimizing 0x047f5f6eb2d9 <JSFunction bench (sfi = 0x47f5f6d73b1)> (target TURBOFAN_JS)]
+[completed optimizing 0x047f5f6eb339 <JSFunction checkedBatch (sfi = 0x47f5f6d73f9)> (target TURBOFAN_JS)]
+
+Stator final host, ReleaseFast, separate STATOR_JIT_TRACE=1 run: numeric
+jit: checkedBatch: compiled: 29 instructions, 2732 bytes
+jit: bench: compiled: 20 instructions, 1924 bytes
+
+Stator final host, ReleaseFast, separate STATOR_JIT_TRACE=1 run: objects
+jit: checkedBatch: compiled: 29 instructions, 2732 bytes
+jit: bench: compiled: 56 instructions, 4772 bytes
+
+Stator final host, ReleaseFast, separate STATOR_JIT_TRACE=1 run: cycles
+jit: checkedBatch: compiled: 29 instructions, 2732 bytes
+jit: bench: compiled: 46 instructions, 4404 bytes

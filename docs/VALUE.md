@@ -896,6 +896,10 @@ nothing more. A new object is *young*: it needs no `jsrt_gc_write`, and a collec
 the young objects something reachable names. The rest are freed untraced, so a short-lived object
 costs its allocation and a young garbage cycle needs no cycle collection.
 
+Dynamic slot growth uses the Zig `writeOwner` barrier to resolve the owning object once,
+log its old references if needed, and pass that owner to the replacement buffer. A static
+slot field remains its own owner marker, so roots into its buffer still pin its contents.
+
 **Roots are read, not counted.** With the world stopped, each thread's `JSRT_FRAME` chain (the
 globals frame included), pending-exception cell and handoff slot are read precisely; its native
 stack, saved registers and the image's writable segments conservatively, each word masked with

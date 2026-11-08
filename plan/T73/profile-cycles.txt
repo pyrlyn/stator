@@ -1,0 +1,44 @@
+Baseline f3f36ce5, macOS sample, 2 seconds at 1 ms.
+Sort by top of stack, same collapsed (when >= 5):
+        _tlv_get_addr  (in libdyld.dylib)        129
+        jsrt_gc.lock  (in steady-after)        92
+        jsrt_gc.findBlock  (in steady-after)        83
+        jsrt_gc.rawFree  (in steady-after)        83
+        jsrt_gc.rawAllocOrNull  (in steady-after)        82
+        jsrt_gc_write  (in steady-after)        82
+        vm.defineOwn  (in steady-after)        61
+        jsrt_gc.buffer  (in steady-after)        58
+        _platform_memset  (in libsystem_platform.dylib)        54
+        pthread_mutex_unlock  (in libsystem_pthread.dylib)        51
+        pthread_mutex_trylock  (in libsystem_pthread.dylib)        43
+        jsrt_gc.alloc  (in steady-after)        42
+        jsrt_gc.bufferBlock  (in steady-after)        39
+        jsrt_shape_reserve  (in steady-after)        38
+        jsrt_shape_transition  (in steady-after)        35
+        ???  (in <unknown binary>)  [0x100b59068]        30
+        jsrt_shape_find  (in steady-after)        27
+        jsrt_gc.ownerBlock  (in steady-after)        24
+        DYLD-STUB$$bzero  (in steady-after)        21
+        DYLD-STUB$$pthread_mutex_unlock  (in steady-after)        21
+        DYLD-STUB$$pthread_mutex_trylock  (in steady-after)        18
+        jit.helpers.define  (in steady-after)        18
+        jsrt_gc.bufferResize  (in steady-after)        15
+        jit.helpers.storeEnv  (in steady-after)        14
+        jsrt_gc.collectLocked  (in steady-after)        14
+        jsrt_gc.bufferFree  (in steady-after)        11
+        __bzero  (in libsystem_platform.dylib)        10
+        jsrt_concurrent.lock  (in steady-after)        10
+        vm.envStore  (in steady-after)        10
+        ???  (in <unknown binary>)  [0x100b582c4]        8
+        ???  (in <unknown binary>)  [0x100b58854]        8
+        jit.helpers.newObject  (in steady-after)        8
+        ???  (in <unknown binary>)  [0x100b585e8]        7
+        ???  (in <unknown binary>)  [0x100b58950]        7
+        ???  (in <unknown binary>)  [0x100b58bcc]        7
+        jsrt_dynobj_new  (in steady-after)        7
+        ???  (in <unknown binary>)  [0x100b5821c]        5
+        ???  (in <unknown binary>)  [0x100b582c8]        5
+        ???  (in <unknown binary>)  [0x100b58ab8]        5
+        ???  (in <unknown binary>)  [0x100b58d68]        5
+        ???  (in <unknown binary>)  [0x100b58eb4]        5
+

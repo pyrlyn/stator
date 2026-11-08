@@ -873,35 +873,33 @@ fn ownerBlock(addr: usize) ?*Header {
     return block;
 }
 
-/// The owner to record for a buffer whose owning field is at `field`: the collected object holding
-/// the field, or, for a static object, the field's own address -- which no block starts at, so
-/// the buffer is then scanned as a root (`pin`).
-pub fn ownerOf(field: *const anyopaque) *const anyopaque {
-    lock();
-    defer unlock();
-    if (ownerBlock(@intFromPtr(field))) |block| return objOf(block);
-    return field;
-}
-
 /// Called before a runtime function changes the references inside an existing object. `obj` may
 /// point anywhere inside the object or inside a buffer it owns, so a caller holding only an
 /// element pointer can name its owner. NULL, a static object and anything else that is not a
 /// collected object are ignored.
 pub export fn jsrt_gc_write(obj: ?*const anyopaque) void {
+    _ = writeOwner(obj orelse return);
+}
+
+/// Apply the barrier and return the buffer owner in the same lookup. For a static field,
+/// return its address: no object starts there, so its buffer is scanned as a root (`pin`).
+pub fn writeOwner(obj: *const anyopaque) *const anyopaque {
     // The common case, an object already dirty and named by its own address, without the lock.
     // Only while one thread runs: another could be growing the index this reads.
     const addr = @intFromPtr(obj);
     if (!concurrent.load(.monotonic) and addr >= prefix and isBlockStart(addr - prefix)) {
-        if (blockOf(addr).word & dirty_bit != 0) return;
+        if (blockOf(addr).word & dirty_bit != 0) return obj;
     }
     lock();
     defer unlock();
-    const block = ownerBlock(@intFromPtr(obj)) orelse return;
-    if (block.word & dirty_bit != 0) return;
+    const block = ownerBlock(addr) orelse return obj;
+    const owner = objOf(block);
+    if (block.word & dirty_bit != 0) return owner;
     block.word |= dirty_bit;
     const start = log.len;
     traceBlocks(block, logChild);
     dirty.push(.{ .block = block, .start = start, .len = log.len - start });
+    return owner;
 }
 
 pub fn write(obj: anytype) void {

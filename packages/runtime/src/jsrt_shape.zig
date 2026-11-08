@@ -191,8 +191,8 @@ export fn jsrt_shape_reserve(slots: *[*c]c.jsrt_value, capacity: *u32, offset: u
     var grown: u32 = if (capacity.* == 0) 4 else capacity.* * 2;
     while (grown <= offset) grown *= 2;
     const bytes = @as(usize, grown) * @sizeOf(c.jsrt_value);
-    gc.write(slots);
-    const fresh: [*]c.jsrt_value = @ptrCast(@alignCast(gc.bufferResize(gc.ownerOf(@ptrCast(slots)), slots.*, bytes, "dynamic object slots")));
+    const owner = gc.writeOwner(@ptrCast(slots));
+    const fresh: [*]c.jsrt_value = @ptrCast(@alignCast(gc.bufferResize(owner, slots.*, bytes, "dynamic object slots")));
     slots.* = fresh;
     capacity.* = grown;
 }
