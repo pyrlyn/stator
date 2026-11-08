@@ -117,8 +117,8 @@ and `src/vm.zig` runs it:
   spike's; a stack machine needed no register allocator, and the window is still one flat array
   the collector scans. The stack is 2^20 values per thread, taken from the page allocator rather
   than the Zig memory core, because the collector needs only the published frames (§4). A
-  suspended frame (§5) has to outlive its window, so T14.4 copies the window into a heap object
-  when it suspends.
+  suspended frame (§5) has to outlive its window, so it is copied into a heap object when it
+  suspends.
 - **Scopes per function.** A function that contains another function keeps every binding it
   declares in environments (one per scope), because a nested function may capture any of them. A
   function with no nested function keeps them in frame locals. A name resolves at compile time to
@@ -132,9 +132,8 @@ and `src/vm.zig` runs it:
   copied into an array first, so a method that writes to its receiver (`push`, `splice`, …) throws
   a `TypeError` on a non-array instead of writing to a copy.
 - **What it refuses.** A construct the compiler does not take yet is reported as unsupported
-  before anything runs: generators, async functions, `await`/`yield`, `for await` (T14.4),
-  modules and `import()`, `with`, BigInt, `using`, computed class field names, decorators,
-  `#x in o`, and `super` outside a call or a member.
+  before anything runs: modules and `import()`, `with`, BigInt, `using`, computed class field
+  names, decorators, `#x in o`, and `super` outside a call or a member.
 
 ## 3. Direct `eval`, indirect `eval`, and scopes
 
@@ -223,6 +222,35 @@ The interpreter uses the runtime's existing machinery, with no second event loop
   through the frame's `finally` handlers.
 - **`for await` and async generators** compose the two.
 
+**As built (T14.4).** `src/vm.zig`'s suspension section:
+
+- **Saving a frame.** `yield`, `await` and `gen_start` (the point after a generator's parameters
+  are bound) copy the window's used part (call values, locals, operands) into a state
+  environment, with the program counter, the operand depth and why it stopped. The state is an
+  always-dirty `JSRTEnv`, so the collector traces it without write barriers. Resuming copies the
+  window back and pushes what was sent: a `yield` pushes the value and the inject mode, which the
+  code after it dispatches on (`throw(e)` throws there, `return(v)` drops the operands and returns
+  through every `finally`); an `await` pushes the settled value or throws the rejection at the
+  `await`. The environment slot that `save_env` fills for a handler is boxed as an object, so a
+  saved copy of it keeps the environment alive.
+- **Generators** are the runtime's generator objects, with `genResume` as the resume function.
+  Their methods live on `%GeneratorPrototype%` in `src/builtins.zig`. `return` and `throw` on a
+  generator that never started are the runtime's.
+- **Async functions** start with `jsrt_async_start`, and every `await` is `jsrt_await`.
+- **Async generators** are the runtime's generator object as well. Its resume function is a stub
+  that throws, which is how the VM tells an async generator from a sync one. The request queue of
+  §27.6.3 (`next`/`return`/`throw`, each answered by a promise) lives in a control environment
+  next to the state, and `await` inside one subscribes to the promise directly.
+- **`yield*`** steps the inner iterator one op at a time (`delegate`; `async_delegate` and
+  `async_delegate_step` in an async generator, whose inner results are awaited). The result
+  object a sync `yield*` yields is a fresh one, not the inner iterator's own.
+- **`for await`** gets an async iterator record (`get_async_iterator`), which wraps a sync
+  iterator per §27.1.6. A `break`, `return` or throw out of the loop awaits the iterator's
+  `return()`.
+- **Not taken:** a thenable that is not a promise is not adopted by `await`. A promise rejected
+  with nothing awaiting it stops the program with `STA2005`, which is the runtime's rule for
+  compiled code too.
+
 ## 6. Which `not-yet` codes the interpreter takes
 
 | Code | Construct | Owner after Phase 14 |
@@ -241,7 +269,9 @@ The interpreter uses the runtime's existing machinery, with no second event loop
 body holds a construct the interpreter takes is lowered to an `Interpret` node carrying the
 function's source span, and its captured bindings cross as §3's scope descriptor. `ts` mode never
 does this. No diagnostic code is allocated by T14.0. T14.3 left the sloppy `var` case of §3 out and
-kept `STA1206` for it rather than allocating a new code.
+kept `STA1206` for it rather than allocating a new code. T14.4 has so far landed the evaluator for
+the first three rows. The compiler does not yet lower their functions to `Interpret` nodes, so
+the codes still stand and their decision tests are unchanged.
 
 ## 7. QuickJS-NG (Phase 8) after this
 
@@ -259,6 +289,11 @@ and 979,888 bytes for QuickJS-NG. The size condition holds and the pass conditio
 QuickJS-NG is not retired. 8,817 tests stop at a construct the compiler refuses. Generators and
 async functions are 15,283 of those 16,946 refused runs (a test runs once per mode), so the
 question is measured again after T14.4.
+
+**Measured at T14.4** (plan-notes 408): the interpreter passes 14,638 of the 23,726 tests, which
+is 63.3% of QuickJS-NG's 23,134. The pass condition still fails, whatever the size delta, so
+QuickJS-NG is not retired. Most of the 1,280 tests that still stop at a refused construct use
+`import()`, computed field names or BigInt.
 
 ## 8. Oracle
 

@@ -9,8 +9,8 @@ the `js`-mode code the compiler hands it. The design is in `docs/INTERPRETER.md`
 | `src/capi.zig` | The C ABI the runtime calls. Errors are left pending through `jsrt_throw_error`. |
 | `src/bytecode.zig` | The bytecode format: opcodes, inline operands, function templates. |
 | `src/compile.zig` | stator-ts's tree to bytecode, with scope analysis. A construct it does not take yet is reported as unsupported, and nothing runs. |
-| `src/vm.zig` | The machine. Values are the runtime's `jsrt_value`, and every operation is a runtime helper. |
-| `src/builtins.zig` | The global object an interpreted script runs against. |
+| `src/vm.zig` | The machine. Values are the runtime's `jsrt_value`, and every operation is a runtime helper. A generator or async function suspends by copying its window into a heap environment and resumes through the runtime's generator and promise machinery. |
+| `src/builtins.zig` | The global object an interpreted script runs against, plus the generator and async-generator prototypes. |
 | `src/interp.zig` | `runScript` and `evalScript`: parse, compile and run a script against the global object. |
 | `src/rt.zig` | The runtime's C ABI, translated from `packages/runtime/src/jsrt_c.h`. |
 | `test262/parse.zig` | Runs Test262's `test/language/` through the parse entry and ratchets the result against `test262-parse.json`. |
@@ -28,6 +28,8 @@ zig build test262-exec -Doptimize=ReleaseSafe -- [--corpus=<dir>] [--filter=<tex
 The unit tests link `../runtime/build/libjsrt.a` from `pnpm run runtime`; pass `-Druntime=<path>`
 to link another flavor. `test262-exec` links neither: it runs `build/test262-host`, which
 `pnpm run test262:interp-exec` compiles from `test262/host.ts` first (or `--host=<binary>`).
+That host links `build/lib/libjsrt_interp.a`, so after changing `src/` rebuild it with
+`just interp` first, or the run measures the old interpreter.
 
 The Test262 corpus comes from `pnpm run test262:fetch`, or from `$STATOR_TEST262` when that is
 set. A `--filter` run checks a slice, so it neither gates nor records.

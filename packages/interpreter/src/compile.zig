@@ -119,6 +119,8 @@ const Ctx = struct {
     jumps: std.ArrayList(JumpReq) = .empty,
     // forof
     iter_local: u16 = 0,
+    /// `for await`: leaving it awaits what the iterator's `return()` answered.
+    is_async: bool = false,
 };
 
 /// Where an optional chain jumps when a link is nullish, with the stack depth at that point.
@@ -187,6 +189,8 @@ const Fn = struct {
     kind: Kind,
     strict: bool,
     env_mode: bool,
+    generator: bool = false,
+    is_async: bool = false,
     code: std.ArrayList(u8) = .empty,
     strings: std.ArrayList([]const u8) = .empty,
     numbers: std.ArrayList(f64) = .empty,
@@ -232,6 +236,8 @@ const Fn = struct {
             .name = intern(name),
             .kind = fs.kind,
             .strict = fs.strict,
+            .generator = fs.generator,
+            .is_async = fs.is_async,
             .start = start,
         };
         return t;
@@ -266,7 +272,9 @@ const Fn = struct {
             .pop, .get_elem, .in, .instanceof, .add, .sub, .mul, .div, .mod, .exp, .bitand, .bitor, .bitxor, .shl, .shr, .ushr, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge, .delete_elem, .new_spread, .ret, .throw, .array_push, .array_spread, .object_spread, .set_proto, .set_field_init, .iter_close, .assert_uninit => -1,
             .set_elem, .ret_ctor, .define_elem, .run_field_init, .super_call_spread, .call_spread, .super_get_elem, .iter_close_quiet => -2,
             .swap, .insert3, .insert4, .pop_env, .clone_env, .neg, .plus, .bitnot, .not, .typeof, .inc, .dec, .to_string, .to_key, .array_hole, .get_iterator, .iter_rest, .for_in_keys, .debugger => 0,
-            .iter_value => 1,
+            .await, .delegate, .async_delegate, .async_delegate_step, .gen_start, .get_async_iterator, .async_iter_next => 0,
+            .async_close_check => -1,
+            .iter_value, .yield => 1,
             else => unreachable,
         });
     }
@@ -301,8 +309,8 @@ const Fn = struct {
         const at = fs.pc();
         try fs.operand(u32, 0);
         fs.adjust(switch (o) {
-            .jump, .iter_next => 0,
-            .jump_if_false, .jump_if_true, .jump_if_nullish, .jump_if_not_undef => -1,
+            .jump, .iter_next, .async_close_call => 0,
+            .jump_if_false, .jump_if_true, .jump_if_nullish, .jump_if_not_undef, .async_iter_step => -1,
             else => unreachable,
         });
         return at;
@@ -674,8 +682,6 @@ const Fn = struct {
     // ------------------------------------------------------------------ functions
 
     fn closure(fs: *Fn, n: *Node, f: *Func, kind_in: Kind, name: []const u8) Error!void {
-        if (f.asterisk) return fs.comp.unsupported(n, "generators (T14.4)");
-        if (n.mods.async) return fs.comp.unsupported(n, "async functions (T14.4)");
         const kind: Kind = if (f.kind == .arrow) .arrow else kind_in;
         const t = try compileFunction(fs.comp, fs.scope, n, f, kind, name, fs.strict, null);
         try fs.pushFunc(t);
@@ -714,7 +720,11 @@ const Fn = struct {
                 } else fs.patch(else_jump);
             },
             .return_stmt => |r| {
-                if (r.expr) |e| try fs.expr(e) else try fs.op(.undef);
+                if (r.expr) |e| {
+                    try fs.expr(e);
+                    // §15.6.2: an async generator's `return v` settles on what `v` settles to.
+                    if (fs.generator and fs.is_async) try fs.op(.await);
+                } else try fs.op(.undef);
                 try fs.emitReturn();
             },
             .throw_stmt => |t| {
@@ -743,8 +753,9 @@ const Fn = struct {
             .for_stmt => |f| try fs.forStmt(f),
             .for_in => |f| try fs.forIn(f.init, f.expr, f.body),
             .for_of => |f| {
-                if (f.is_await) return fs.comp.unsupported(n, "for await (T14.4)");
-                try fs.forOf(f.init, f.expr, f.body);
+                if (!f.is_await) return fs.forOf(f.init, f.expr, f.body);
+                if (!fs.is_async) return fs.comp.unsupported(n, "for await outside an async function");
+                try fs.forAwait(f.init, f.expr, f.body);
             },
             .break_stmt => |b| try fs.emitJump(if (b.label) |l| l.data.identifier else null, false, n),
             .continue_stmt => |b| try fs.emitJump(if (b.label) |l| l.data.identifier else null, true, n),
@@ -1062,7 +1073,102 @@ const Fn = struct {
 
     fn closeIter(fs: *Fn, ctx: *const Ctx) Error!void {
         try fs.op16(.load, ctx.iter_local);
-        try fs.op(.iter_close);
+        if (!ctx.is_async) return fs.op(.iter_close);
+        const none = try fs.jump(.async_close_call);
+        try fs.op(.await);
+        try fs.op(.async_close_check);
+        fs.patch(none);
+    }
+
+    /// Returns the value on top from the middle of an expression (a `return` sent to a
+    /// `yield`): whatever else the expression had pushed is dropped first, because the
+    /// `finally` blocks on the way out start from an empty operand stack.
+    fn returnFromExpr(fs: *Fn) Error!void {
+        const saved = fs.depth;
+        const tmp = fs.newLocal();
+        try fs.op16(.store, tmp);
+        try fs.byte(@backingInt(Op.reset_stack));
+        fs.depth = 0;
+        try fs.op16(.load, tmp);
+        try fs.emitReturn();
+        fs.depth = saved;
+    }
+
+    /// After a `yield` (sent value and inject mode on top): `next(v)` leaves `v`, `throw(e)`
+    /// throws `e` here, `return(v)` returns `v` through every `finally`.
+    fn resumption(fs: *Fn) Error!void {
+        const base = fs.depth;
+        try fs.op(.dup);
+        const next_ = try fs.jumpIfInt(c.JSRT_GEN_INJECT_NONE);
+        try fs.op(.dup);
+        const throw_ = try fs.jumpIfInt(c.JSRT_GEN_INJECT_THROW);
+        try fs.op(.pop);
+        // §27.6.3.8 AsyncGeneratorYield step 9: a return sent in is awaited first.
+        if (fs.is_async) try fs.op(.await);
+        try fs.returnFromExpr();
+        fs.depth = base;
+        fs.patch(throw_);
+        try fs.op(.pop);
+        try fs.op(.throw);
+        fs.depth = base;
+        fs.patch(next_);
+        try fs.op(.pop);
+    }
+
+    /// `yield* e` (§15.5.5): the delegate ops step the inner iterator; this loop yields what
+    /// it produced and feeds the resumption back in. In an async generator every inner result
+    /// is awaited, and a `return` sent in is awaited before it reaches the iterator.
+    fn yieldStar(fs: *Fn, e: *Node) Error!void {
+        const is_async = fs.is_async;
+        try fs.expr(e);
+        try fs.op(if (is_async) .get_async_iterator else .get_iterator);
+        try fs.op(.undef);
+        try fs.int(c.JSRT_GEN_INJECT_NONE);
+        const base = fs.depth;
+        const loop = fs.pc();
+        if (is_async) {
+            try fs.op(.async_delegate);
+            try fs.op(.await);
+            try fs.op(.async_delegate_step);
+        } else try fs.op(.delegate);
+        try fs.op(.dup);
+        const done = try fs.jumpIfInt(1);
+        try fs.op(.dup);
+        const ret = try fs.jumpIfInt(2);
+        var await_value: ?u32 = null;
+        if (is_async) {
+            try fs.op(.dup);
+            await_value = try fs.jumpIfInt(3);
+        }
+        try fs.op(.pop);
+        const yield_at = fs.pc();
+        try fs.op(.yield);
+        if (is_async) {
+            try fs.op(.dup);
+            const resumed = try fs.jumpIfInt(c.JSRT_GEN_INJECT_RETURN);
+            try fs.jumpTo(.jump, loop);
+            fs.patch(resumed);
+            try fs.op(.swap);
+            try fs.op(.await);
+            try fs.op(.swap);
+        }
+        try fs.jumpTo(.jump, loop);
+        if (await_value) |at| {
+            fs.depth = base;
+            fs.patch(at);
+            try fs.op(.pop);
+            try fs.op(.await);
+            try fs.jumpTo(.jump, yield_at);
+        }
+        fs.depth = base;
+        fs.patch(ret);
+        try fs.op(.pop);
+        try fs.returnFromExpr();
+        fs.depth = base;
+        fs.patch(done);
+        try fs.op(.pop);
+        try fs.op(.swap);
+        try fs.op(.pop);
     }
 
     fn popEnvs(fs: *Fn, level: u32) Error!void {
@@ -1084,7 +1190,7 @@ const Fn = struct {
             fs.adjust(-1);
             return;
         }
-        if (fs.kind.constructible()) {
+        if (fs.kind.constructible() and !fs.generator and !fs.is_async) {
             try fs.loadRaw(this_name);
             try fs.op(.ret_ctor);
         } else try fs.op(.ret);
@@ -1167,27 +1273,76 @@ const Fn = struct {
         try fs.jumpTo(.jump, top);
     }
 
-    fn forOf(fs: *Fn, init: *Node, iterable: *Node, body: *Node) Error!void {
+    /// A `for-of` or `for await` loop up to its first step: the iterator in a local of a new
+    /// context, and the environment its throw handler runs in.
+    const IterLoop = struct { head: ?*Scope, iter: u16, ci: usize, env_local: u16, top: u32 };
+
+    fn iterLoopStart(fs: *Fn, init: *Node, iterable: *Node, is_async: bool) Error!IterLoop {
         const head = try fs.loopHead(init);
         try fs.headExpr(head, iterable);
-        try fs.op(.get_iterator);
+        try fs.op(if (is_async) .get_async_iterator else .get_iterator);
         const iter = fs.newLocal();
         try fs.op16(.store, iter);
         const ci = try fs.pushCtx(.forof);
         fs.ctx.items[ci].iter_local = iter;
+        fs.ctx.items[ci].is_async = is_async;
         const env_local = fs.newLocal();
         try fs.op16(.save_env, env_local);
-        const top = fs.pc();
-        try fs.op16(.load, iter);
-        const done = try fs.jump(.iter_next);
+        return .{ .head = head, .iter = iter, .ci = ci, .env_local = env_local, .top = fs.pc() };
+    }
+
+    /// The loop's body, with the iteration's value on top, then the start of the handler a
+    /// throw out of the body lands in, with the exception on top.
+    fn iterLoopBody(fs: *Fn, l: IterLoop, init: *Node, body: *Node) Error!void {
         const body_start = fs.pc();
-        try fs.iteration(head, init, body, ci, top);
-        // A throw out of the body closes the iterator, then goes on.
-        try fs.handlers.append(fs.alloc(), .{ .start = body_start, .end = fs.pc(), .target = fs.pc(), .env_local = env_local });
+        try fs.iteration(l.head, init, body, l.ci, l.top);
+        try fs.handlerHere(body_start, l.env_local);
+    }
+
+    /// A handler for the code from `start` to here, starting here with the exception on top.
+    fn handlerHere(fs: *Fn, start: u32, env_local: u16) Error!void {
+        try fs.handlers.append(fs.alloc(), .{ .start = start, .end = fs.pc(), .target = fs.pc(), .env_local = env_local });
         fs.adjust(1);
-        try fs.op16(.load, iter);
+    }
+
+    fn forOf(fs: *Fn, init: *Node, iterable: *Node, body: *Node) Error!void {
+        const l = try fs.iterLoopStart(init, iterable, false);
+        try fs.op16(.load, l.iter);
+        const done = try fs.jump(.iter_next);
+        // A throw out of the body closes the iterator, then goes on.
+        try fs.iterLoopBody(l, init, body);
+        try fs.op16(.load, l.iter);
         try fs.op(.iter_close_quiet);
         fs.adjust(1);
+        try fs.op(.throw);
+        fs.patch(done);
+        fs.popCtx();
+    }
+
+    /// §14.7.5.6 ForIn/OfBodyEvaluation with iteratorKind async.
+    fn forAwait(fs: *Fn, init: *Node, iterable: *Node, body: *Node) Error!void {
+        const l = try fs.iterLoopStart(init, iterable, true);
+        try fs.op16(.load, l.iter);
+        try fs.op(.dup);
+        try fs.op(.async_iter_next);
+        try fs.op(.await);
+        const done = try fs.jump(.async_iter_step);
+        // A throw out of the body awaits the iterator's `return()`, then goes on; what that
+        // call or its settling throws loses to the throw in flight (§7.4.13 step 5).
+        try fs.iterLoopBody(l, init, body);
+        const exc = fs.newLocal();
+        try fs.op16(.store, exc);
+        const close_start = fs.pc();
+        try fs.op16(.load, l.iter);
+        const none = try fs.jump(.async_close_call);
+        try fs.op(.await);
+        try fs.op(.pop);
+        const closed = try fs.jump(.jump);
+        try fs.handlerHere(close_start, l.env_local);
+        try fs.op(.pop);
+        fs.patch(none);
+        fs.patch(closed);
+        try fs.op16(.load, exc);
         try fs.op(.throw);
         fs.patch(done);
         fs.popCtx();
@@ -1415,8 +1570,19 @@ const Fn = struct {
                 try fs.exprNamed(cnd.els, name);
                 fs.patch(end);
             },
-            .await_expr => return fs.comp.unsupported(n, "await (T14.4)"),
-            .yield_expr => return fs.comp.unsupported(n, "yield (T14.4)"),
+            .await_expr => |a| {
+                if (!fs.is_async) return fs.comp.unsupported(n, "await outside an async function");
+                try fs.expr(a.expr);
+                try fs.op(.await);
+            },
+            .yield_expr => |y| {
+                if (!fs.generator) return fs.comp.unsupported(n, "yield outside a generator");
+                if (y.star) return fs.yieldStar(y.expr.?);
+                if (y.expr) |e| try fs.expr(e) else try fs.op(.undef);
+                if (fs.is_async) try fs.op(.await);
+                try fs.op(.yield);
+                try fs.resumption();
+            },
             .bigint_lit => return fs.comp.unsupported(n, "BigInt"),
             .super_expr => return fs.comp.unsupported(n, "`super` outside a call or member"),
             .import_kw => return fs.comp.unsupported(n, "import()"),
@@ -2003,6 +2169,8 @@ fn compileFunction(comp: *Compiler, outer: ?*Scope, n: *Node, f: *Func, kind: Ki
         .kind = kind,
         .strict = outer_strict or hasUseStrict(body_stmts) or kind.ctor(),
         .env_mode = containsFunctionList(f.params) or (if (body) |b| containsFunction(b) else false),
+        .generator = f.asterisk,
+        .is_async = n.mods.async,
     };
     const scope = try fs.newScope(outer, true);
     if (kind != .arrow) {
@@ -2058,6 +2226,9 @@ fn compileFunction(comp: *Compiler, outer: ?*Scope, n: *Node, f: *Func, kind: Ki
         try fs.op(.ret);
     } else {
         try fs.instantiateFunctions(body_stmts);
+        // §10.2.1.4: a generator's arguments are bound (and their defaults run) by the call;
+        // the body waits for the first `next()`.
+        if (fs.generator) try fs.op(.gen_start);
         for (body_stmts) |s| try fs.stmt(s);
         try fs.op(.undef);
         try fs.emitReturn();

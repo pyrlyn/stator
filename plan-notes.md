@@ -14878,3 +14878,43 @@ growing). 817 module tests are not run: the interpreter has no module goal yet.
   classes. `this` is the caller's only in a non-arrow function that binds a receiver. `eval(...xs)`
   is indirect. There is no TDZ check for an eval reading a `let` before its declaration
   (docs/INTERPRETER.md §3).
+
+## 408. T14.4 (interpreter half): generators, async functions, async generators and `for await` in the interpreter (2026-11-08)
+
+**What landed.** `packages/interpreter` now compiles and runs generators, async functions, async
+generators, `yield`, `yield*`, `await` and `for await` (docs/INTERPRETER.md §5, "As built"). A
+suspended activation is copied into an always-dirty `JSRTEnv`, and resumes through the runtime's
+generator and async machinery (`jsrt_generator_*`, `jsrt_async_*`, `jsrt_await`). There is no
+second event loop. An async generator's request queue (§27.6.3) is the interpreter's own, in a
+control environment, because the runtime has no async-generator ABI. `Promise.resolve`,
+`Promise.reject` and `Promise.prototype.then`/`catch`/`finally` are reachable from scripts now
+(plan-notes 406's gap).
+
+**Test262** (`pnpm run test262:interp-exec`, pinned corpus, Apple M3 Max, macOS arm64):
+
+| Directory | Before (406) | After |
+| --- | ---: | ---: |
+| `statements/for-await-of` | 1 / 1,234 | 1,139 / 1,234 |
+| `expressions/async-generator` | 19 / 623 | 518 / 623 |
+| `statements/async-generator` | 7 / 301 | 256 / 301 |
+| `expressions/generators` | 10 / 290 | 232 / 290 |
+| `statements/generators` | 7 / 266 | 215 / 266 |
+| `expressions/async-function` | 8 / 93 | 54 / 93 |
+| `statements/async-function` | 7 / 74 | 42 / 74 |
+| `expressions/yield` | 3 / 63 | 56 / 63 |
+| `language/` in all | 8,160 / 23,726 | 14,638 / 23,726 |
+
+No directory passes fewer tests. Against QuickJS-NG's 23,134 (plan-notes 403) that is 63.3%, so
+docs/INTERPRETER.md §7's pass condition still fails and QuickJS-NG stays. Crashed runs went from 8
+to 24 (12 tests). The new ones are runtime panics that tests reach now that they run: STA2005 for a
+promise rejected with nothing awaiting it, STA2004 for a script that adds a property to
+`Promise.prototype`, and STA4084 for `Object.keys` on a function.
+
+**What is still open on the card.** The card also gives the interpreter `STA1201`'s residue,
+`STA1202` and `STA1214`'s `js`-mode constructs, through function-level interpretation. That means
+lowering such a function to an `Interpret` node in `packages/compiler`, which T41 is porting to
+Zig. None of it landed, so the codes, their decision tests and `explain` are unchanged.
+
+**Known gaps.** `await` does not adopt a thenable that is not a promise. A sync `yield*` yields a
+fresh result object rather than the inner one. In an async generator, a sync iterable's final
+value is not awaited.

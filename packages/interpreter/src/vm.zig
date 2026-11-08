@@ -107,6 +107,9 @@ fn callInterpreted(fe: *Env, callee: Value, this: Value, args: []const Value) Va
         throwFmt(&c.jsrt_class_type_error, "Class constructor {s} cannot be invoked without 'new'", .{std.mem.span(t.name)});
         return rt.undefined_value;
     }
+    if (t.is_async and t.generator) return startAsyncGenerator(t, fe, callee, this, args);
+    if (t.is_async) return startAsync(t, fe, callee, this, args);
+    if (t.generator) return startGenerator(t, fe, callee, this, args);
     return run(t, fe, callee, this, args, rt.undefined_value);
 }
 
@@ -119,7 +122,7 @@ pub fn call(callee: Value, this: Value, args: []const Value) Value {
 
 pub fn isConstructor(v: Value) bool {
     if (!rt.is(v, c.JSRT_TAG_CLOSURE)) return false;
-    if (isInterpreted(v)) return templateOf(fnEnv(v)).kind.constructible();
+    if (isInterpreted(v)) return templateOf(fnEnv(v)).constructible();
     const clo = closureOf(v);
     return clo.constructible or clo.klass != null or builtins.isConstructor(v);
 }
@@ -169,6 +172,10 @@ pub fn construct(callee: Value, args: []const Value, nt: Value) Value {
 pub fn getProp(obj: Value, key: [*:0]const u8, ic: ?*c.JSRTIC) Value {
     if (c.jsrt_is_error(obj) and std.mem.eql(u8, keyText(key), "constructor")) return builtins.errorConstructorOf(obj);
     if (rt.is(obj, c.JSRT_TAG_CLOSURE)) return closureGet(obj, key);
+    // The runtime's generator object keeps no properties; its methods are the prototype's.
+    if (c.jsrt_is_generator(obj)) return c.jsrt_get_prop(if (isAsyncGenerator(obj)) builtins.asyncGeneratorPrototype() else builtins.generatorPrototype(), key, null);
+    // Likewise a promise: `then` and its kin are installed on the prototype by builtins.
+    if (c.jsrt_is_promise(obj)) return c.jsrt_get_prop(c.jsrt_builtin_proto("Promise"), key, null);
     if (rt.is(obj, c.JSRT_TAG_STRING)) {
         if (builtins.stringMethod(obj, key)) |m| return m;
     }
@@ -378,6 +385,9 @@ fn instanceOf(v: Value, ctor: Value) bool {
 const rec_iter = 0;
 const rec_next = 1;
 const rec_done = 2;
+/// An async iterator record only: true when the iterator is a sync record (at `rec_iter`) seen
+/// through §27.1.6 CreateAsyncFromSyncIterator.
+const rec_wrapped = 3;
 
 fn recSlots(rec: Value) [*]Value {
     const arr: *c.JSRTArray = @ptrCast(@alignCast(c.jsrt_ptr(rec)));
@@ -388,6 +398,11 @@ const iterator_key = "__@iterator";
 
 pub fn getIterator(v: Value) Value {
     var items = [3]Value{ rt.undefined_value, rt.undefined_value, rt.false_value };
+    // A generator is driven by the runtime itself, `return()` and all.
+    if (c.jsrt_is_generator(v) and !isAsyncGenerator(v)) {
+        items[rec_iter] = v;
+        return c.jsrt_array_new(3, &items);
+    }
     const method = if (rt.isObjectLike(v)) getProp(v, iterator_key, null) else rt.undefined_value;
     if (rt.pending()) return rt.undefined_value;
     if (rt.is(method, c.JSRT_TAG_CLOSURE)) {
@@ -405,7 +420,7 @@ pub fn getIterator(v: Value) Value {
         recSlots(rec)[rec_next] = next;
         return rec;
     }
-    if (c.jsrt_is_nullish(v) or !rt.isObjectLike(v) and !rt.is(v, c.JSRT_TAG_STRING)) {
+    if (c.jsrt_is_nullish(v) or !rt.isObjectLike(v) and !rt.is(v, c.JSRT_TAG_STRING) or isAsyncGenerator(v)) {
         var buf: [128]u8 = undefined;
         throwFmt(&c.jsrt_class_type_error, "{s} is not iterable", .{describe(v, &buf)});
         return rt.undefined_value;
@@ -455,6 +470,149 @@ fn iterClose(rec: Value) void {
     if (!rt.isObjectLike(r)) throwFmt(&c.jsrt_class_type_error, "Iterator result is not an object", .{});
 }
 
+/// GetIterator(obj, async) (§7.4.3): `[Symbol.asyncIterator]`, or the sync iterator wrapped.
+fn getAsyncIterator(v: Value) Value {
+    const method = if (rt.isObjectLike(v)) getProp(v, "__@asyncIterator", null) else rt.undefined_value;
+    if (rt.pending()) return rt.undefined_value;
+    var items = [4]Value{ rt.undefined_value, rt.undefined_value, rt.false_value, rt.false_value };
+    if (c.jsrt_is_nullish(method)) {
+        items[rec_iter] = getIterator(v);
+        if (rt.pending()) return rt.undefined_value;
+        items[rec_wrapped] = rt.true_value;
+        return c.jsrt_array_new(4, &items);
+    }
+    const it = call(method, v, &.{});
+    if (rt.pending()) return rt.undefined_value;
+    if (!rt.isObjectLike(it)) {
+        throwFmt(&c.jsrt_class_type_error, "Result of the Symbol.asyncIterator method is not an object", .{});
+        return rt.undefined_value;
+    }
+    items[rec_iter] = it;
+    const rec = c.jsrt_array_new(4, &items);
+    const next = getProp(it, "next", null);
+    if (rt.pending()) return rt.undefined_value;
+    recSlots(rec)[rec_next] = next;
+    return rec;
+}
+
+/// One step of `yield*` in a sync generator (§15.5.5, steps 7.a–c): the inner iterator's
+/// `next`, `throw` or `return` with what the outer generator received. Answers 0 to yield
+/// `out`, 1 when the delegation ended with `out`, 2 when the generator returns `out`.
+fn delegateStep(rec: Value, received: Value, mode: u8, out: *Value) u8 {
+    const r = switch (delegateCall(rec, received, mode)) {
+        .result => |r| r,
+        .no_throw => {
+            iterClose(rec);
+            if (!rt.pending()) rt.throwType(no_throw_method);
+            return 0;
+        },
+        .no_return => {
+            out.* = received;
+            return 2;
+        },
+    };
+    if (rt.pending()) return 0;
+    return delegateResult(r, mode, out);
+}
+
+const no_throw_method = "The iterator does not provide a 'throw' method";
+
+/// The call half of a `yield*` step: what the inner iterator's `next`, `throw` or `return`
+/// answered, or which of the last two it lacks.
+const DelegateCall = union(enum) { result: Value, no_throw, no_return };
+
+fn delegateCall(rec: Value, received: Value, mode: u8) DelegateCall {
+    const s = recSlots(rec);
+    const it = s[rec_iter];
+    const runtime = s[rec_next] == rt.undefined_value;
+    switch (mode) {
+        c.JSRT_GEN_INJECT_NONE => return .{ .result = if (runtime) c.jsrt_iterator_next(it, received) else call(s[rec_next], it, &.{received}) },
+        // A runtime-driven iterator other than a generator has neither method.
+        c.JSRT_GEN_INJECT_THROW => if (runtime)
+            return if (c.jsrt_is_generator(it)) .{ .result = c.jsrt_generator_throw(it, received) } else .no_throw
+        else
+            return callMethodOr(it, "throw", received, .no_throw),
+        else => if (runtime)
+            return if (c.jsrt_is_generator(it)) .{ .result = c.jsrt_generator_close(it, received) } else .no_return
+        else
+            return callMethodOr(it, "return", received, .no_return),
+    }
+}
+
+/// `it[name](received)`, or `missing` when `it` has no such method.
+fn callMethodOr(it: Value, name: [*:0]const u8, received: Value, missing: DelegateCall) DelegateCall {
+    const m = getProp(it, name, null);
+    if (rt.pending()) return .{ .result = rt.undefined_value };
+    if (c.jsrt_is_nullish(m)) return missing;
+    return .{ .result = call(m, it, &.{received}) };
+}
+
+/// The result half: 0 to yield `out`, 1 when the delegation ended with `out`, 2 when the
+/// generator returns `out` (§15.5.5 steps 7.a.vi, 7.c.viii).
+fn delegateResult(r: Value, mode: u8, out: *Value) u8 {
+    if (!rt.isObjectLike(r)) {
+        _ = throwAbout(r, "Iterator result {s} is not an object");
+        return 0;
+    }
+    const done = getProp(r, "done", null);
+    if (rt.pending()) return 0;
+    out.* = getProp(r, "value", null);
+    if (rt.pending() or !c.jsrt_truthy(done)) return 0;
+    return if (mode == c.JSRT_GEN_INJECT_RETURN) 2 else 1;
+}
+
+/// `async_delegate`'s mode for a delegation that lost its iterator for want of `throw`: the
+/// closing `return()` result is awaited, then the TypeError is thrown.
+const delegate_no_throw = 3;
+/// …and for a `return` the iterator has no method for: the received value is awaited and
+/// returned (§15.5.5 step 7.c.iii).
+const delegate_no_return = 4;
+
+/// The call half of an async generator's `yield*` step, whose result the code awaits next.
+/// A sync iterable's record goes through its sync iterator (§27.1.6.1); `mode` comes back
+/// changed when a method was missing.
+fn asyncDelegateCall(rec: Value, received: Value, mode: *u8) Value {
+    const s = recSlots(rec);
+    const wrapped = s[rec_wrapped] == rt.true_value;
+    const target = if (wrapped) s[rec_iter] else rec;
+    switch (delegateCall(target, received, mode.*)) {
+        .result => |r| return r,
+        .no_return => {
+            mode.* = delegate_no_return;
+            return received;
+        },
+        .no_throw => {
+            mode.* = delegate_no_throw;
+            if (wrapped) {
+                iterClose(target);
+                return rt.undefined_value;
+            }
+            const m = getProp(s[rec_iter], "return", null);
+            if (rt.pending() or c.jsrt_is_nullish(m)) return rt.undefined_value;
+            return call(m, recSlots(rec)[rec_iter], &.{});
+        },
+    }
+}
+
+/// The settled half: like `delegateResult`, plus 3 for a sync iterable's value, which is
+/// awaited before it is yielded (§27.1.6.4 AsyncFromSyncIteratorContinuation).
+fn asyncDelegateResult(rec: Value, settled: Value, mode: u8, out: *Value) u8 {
+    switch (mode) {
+        delegate_no_throw => {
+            rt.throwType(no_throw_method);
+            return 0;
+        },
+        delegate_no_return => {
+            out.* = settled;
+            return 2;
+        },
+        else => {
+            const kind = delegateResult(settled, mode, out);
+            return if (kind == 0 and recSlots(rec)[rec_wrapped] == rt.true_value) 3 else kind;
+        },
+    }
+}
+
 pub fn arrayItems(arr: Value) []Value {
     const a: *c.JSRTArray = @ptrCast(@alignCast(c.jsrt_ptr(arr)));
     return a.elements[0..a.length];
@@ -475,7 +633,7 @@ fn makeClosure(t: *Template, scope: ?*Env) Value {
     // not a root.
     const f = c.jsrt_closure_new(&trampoline, t.arity, t.name, fe, true);
     fe.*.slots()[compile.fnenv_self] = f;
-    if (t.kind == .function) _ = c.jsrt_closure_constructible(f);
+    if (t.kind == .function and t.constructible()) _ = c.jsrt_closure_constructible(f);
     return f;
 }
 
@@ -536,10 +694,349 @@ pub fn globalClosure(t: *Template) Value {
 
 /// Runs one activation of `t`. `fe` is the closure's environment (null for a script).
 pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const Value, nt: Value) Value {
+    return exec(t, fe, .{ .call = .{ .callee = callee, .this = this_in, .argv = argv, .nt = nt } });
+}
+
+// ---------------------------------------------------------------------- suspension
+
+/// A suspended activation (docs/INTERPRETER.md §5) is an environment: its parent is the scope the
+/// code stopped in, its slots say where and how it stopped, then hold the frame's window — the
+/// three call values, the locals and the live operands.
+const st_pc = 0;
+const st_depth = 1;
+const st_stop = 2;
+const st_running = 3;
+/// The arguments of an async call, which runs from inside `jsrt_async_start`.
+const st_args = 4;
+const st_window = 5;
+
+const Stop = enum(u8) {
+    /// Made, nothing run yet (an async call).
+    call,
+    /// A generator after its parameters, before its body (§15.5.3 EvaluateBody).
+    start,
+    yield,
+    await,
+};
+
+const header = 3;
+
+fn windowSize(t: *const Template) usize {
+    return header + t.nlocals + t.max_stack;
+}
+
+/// The state the activation that suspended last saved, for its driver to take right after.
+threadlocal var suspended: ?*Env = null;
+
+fn takeSuspended() ?*Env {
+    defer suspended = null;
+    return suspended;
+}
+
+fn intOf(v: Value) usize {
+    return @intFromFloat(c.jsrt_to_number(v));
+}
+
+fn stopOf(st: *Env) Stop {
+    return @fromBackingInt(@intCast(intOf(st.slots()[st_stop])));
+}
+
+/// An environment pointer in a value slot the collector traces as a reference.
+fn boxEnv(e: ?*Env) Value {
+    return c.JSRT_BOX(c.JSRT_TAG_OBJECT, @intFromPtr(e));
+}
+
+/// A suspendable activation of `t` that has not run: an async call's.
+fn newState(t: *Template, fe: *Env, callee: Value, this: Value, args: []const Value) *Env {
+    const st = c.jsrt_env_new(fe.parent, @intCast(st_window + windowSize(t)));
+    const s = st.*.slots();
+    s[st_stop] = rt.number(@backingInt(Stop.call));
+    s[st_pc] = rt.number(0);
+    s[st_depth] = rt.number(0);
+    s[st_running] = rt.false_value;
+    s[st_window] = callee;
+    s[st_window + 1] = this;
+    s[st_args] = c.jsrt_array_new(@intCast(args.len), args.ptr);
+    return st;
+}
+
+fn templateOfState(st: *Env) *Template {
+    return templateOf(fnEnv(st.slots()[st_window]));
+}
+
+/// Runs a suspended activation on from where it stopped. `mode` is the generator's injection
+/// (`JSRT_GEN_INJECT_*`); for an `await`, THROW is a rejection.
+fn resumeState(st: *Env, sent: Value, mode: u8) Value {
+    const s = st.slots();
+    s[st_running] = rt.true_value;
+    defer st.slots()[st_running] = rt.false_value;
+    const callee = s[st_window];
+    const t = templateOfState(st);
+    if (stopOf(st) == .call) {
+        return exec(t, fnEnv(callee), .{ .call = .{ .callee = callee, .this = s[st_window + 1], .argv = arrayItems(s[st_args]), .nt = rt.undefined_value, .state = st } });
+    }
+    return exec(t, fnEnv(callee), .{ .resume_ = .{ .state = st, .sent = sent, .mode = mode } });
+}
+
+fn isRunning(st: *Env) bool {
+    return st.slots()[st_running] == rt.true_value;
+}
+
+// ---- generators
+
+/// A generator call runs the parameters, then stops at the body's `start` and hands the state to
+/// the runtime's generator object (§27.5.3.1 GeneratorStart).
+fn startGenerator(t: *Template, fe: *Env, callee: Value, this: Value, args: []const Value) Value {
+    _ = takeSuspended();
+    const r = exec(t, fe, .{ .call = .{ .callee = callee, .this = this, .argv = args, .nt = rt.undefined_value } });
+    const st = takeSuspended() orelse return r;
+    return handOff(st, c.jsrt_generator_new, &genResume);
+}
+
+/// The runtime object `make` builds around the state, which stays rooted while it allocates.
+fn handOff(st: *Env, comptime make: anytype, resume_fn: anytype) Value {
+    var root: builtins.Frame(1) = .{};
+    root.open(.{boxEnv(st)});
+    defer root.pop();
+    return make(st, resume_fn);
+}
+
+fn genResume(self: [*c]c.JSRTGenerator, sent: Value) callconv(.c) void {
+    const g: *c.JSRTGenerator = self;
+    const st: *Env = g.env;
+    const mode = g.inject;
+    g.inject = c.JSRT_GEN_INJECT_NONE;
+    if (isRunning(st)) return rt.throwType("Generator is already running");
+    g.state = 1;
+    const r = resumeState(st, sent, mode);
+    if (takeSuspended() != null) return c.jsrt_generator_yield(g, r);
+    if (rt.pending()) {
+        g.done = true;
+        g.yielded = rt.undefined_value;
+    } else c.jsrt_generator_return(g, r);
+}
+
+// ---- async functions
+
+fn startAsync(t: *Template, fe: *Env, callee: Value, this: Value, args: []const Value) Value {
+    return handOff(newState(t, fe, callee, this, args), c.jsrt_async_start, &asyncResume);
+}
+
+fn asyncResume(self: [*c]c.JSRTAsync, value: Value, rejected: bool) callconv(.c) void {
+    const a: *c.JSRTAsync = self;
+    const r = resumeState(a.env, value, if (rejected) c.JSRT_GEN_INJECT_THROW else c.JSRT_GEN_INJECT_NONE);
+    if (takeSuspended() != null) return c.jsrt_await(a, r);
+    if (rt.pending()) return c.jsrt_async_throw(a, c.jsrt_take_exception());
+    c.jsrt_async_return(a, r);
+}
+
+// ---- async generators (§27.6)
+
+/// An async generator is the runtime's generator object driven by the machine, not by the
+/// runtime's `next`: its `env` is a control environment holding the suspended activation, the
+/// queue of requests (§27.6.3.1 AsyncGeneratorRequest, three slots each: mode, value, promise)
+/// and the state.
+const ag_state = 0;
+const ag_queue = 1;
+const ag_status = 2;
+const ag_size = 3;
+
+const AgStatus = enum(u8) { start, suspended_yield, executing, awaiting_return, completed };
+
+/// What the runtime calls when compiled code drives an async generator as a sync one.
+fn agMisuse(_: [*c]c.JSRTGenerator, _: Value) callconv(.c) void {
+    rt.throwType("an async generator is not a sync iterator");
+}
+
+pub fn isAsyncGenerator(v: Value) bool {
+    return c.jsrt_is_generator(v) and genOf(v).@"resume" == &agMisuse;
+}
+
+fn genOf(v: Value) *c.JSRTGenerator {
+    return @ptrCast(@alignCast(c.jsrt_ptr(v)));
+}
+
+fn agControl(g: *c.JSRTGenerator) *Env {
+    return g.env;
+}
+
+fn agStatus(g: *c.JSRTGenerator) AgStatus {
+    return @fromBackingInt(@intCast(intOf(agControl(g).slots()[ag_status])));
+}
+
+fn agSetStatus(g: *c.JSRTGenerator, s: AgStatus) void {
+    agControl(g).slots()[ag_status] = rt.number(@backingInt(s));
+}
+
+fn agStateEnv(g: *c.JSRTGenerator) *Env {
+    return unboxPtr(Env, agControl(g).slots()[ag_state]).?;
+}
+
+fn startAsyncGenerator(t: *Template, fe: *Env, callee: Value, this: Value, args: []const Value) Value {
+    _ = takeSuspended();
+    const r = exec(t, fe, .{ .call = .{ .callee = callee, .this = this, .argv = args, .nt = rt.undefined_value } });
+    const st = takeSuspended() orelse return r;
+    var root: builtins.Frame(3) = .{};
+    root.open(.{ boxEnv(st), rt.undefined_value, rt.undefined_value });
+    defer root.pop();
+    const ctl = c.jsrt_env_new(null, ag_size);
+    root.slots[1] = boxEnv(ctl);
+    ctl.*.slots()[ag_state] = boxEnv(st);
+    ctl.*.slots()[ag_status] = rt.number(@backingInt(AgStatus.start));
+    ctl.*.slots()[ag_queue] = c.jsrt_array_new(0, null);
+    return c.jsrt_generator_new(ctl, &agMisuse);
+}
+
+/// `next`, `return` and `throw` of an async generator (§27.6.1.2–4): a promise, settled when
+/// the request reaches the head of the queue and the body answers it.
+pub fn agEnqueue(gen: Value, mode: u8, value: Value) Value {
+    const promise = c.jsrt_promise_new();
+    if (!isAsyncGenerator(gen)) {
+        var what: [128]u8 = undefined;
+        var buf: [192]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "AsyncGenerator method called on incompatible receiver {s}", .{describe(gen, &what)}) catch "incompatible receiver";
+        c.jsrt_promise_settle(promise, c.jsrt_error_new(&c.jsrt_class_type_error, rt.string(msg)), true);
+        return promise;
+    }
+    var root: builtins.Frame(1) = .{};
+    root.open(.{promise});
+    defer root.pop();
+    const g = genOf(gen);
+    const q = agControl(g).slots()[ag_queue];
+    _ = c.jsrt_array_push(q, rt.number(@floatFromInt(mode)));
+    _ = c.jsrt_array_push(q, value);
+    _ = c.jsrt_array_push(q, promise);
+    const s = agStatus(g);
+    if (s != .executing and s != .awaiting_return) agDrain(g);
+    return promise;
+}
+
+fn agQueue(g: *c.JSRTGenerator) []Value {
+    return arrayItems(agControl(g).slots()[ag_queue]);
+}
+
+/// Settles the head request's promise and takes it off the queue (§27.6.3.4
+/// AsyncGeneratorCompleteStep).
+fn agComplete(g: *c.JSRTGenerator, value: Value, done: bool, rejected: bool) void {
+    const ctl = agControl(g);
+    const promise = arrayItems(ctl.slots()[ag_queue])[2];
+    const settled = if (rejected) value else iterResult(value, done);
+    c.jsrt_promise_settle(promise, settled, rejected);
+    // A new array rather than a shifted one: the environment is the kind whose stores need no
+    // write barrier, the array is not.
+    const rest = agQueue(g)[3..];
+    ctl.slots()[ag_queue] = c.jsrt_array_new(@intCast(rest.len), rest.ptr);
+}
+
+/// Answers queued requests until one needs the body to run on or the queue is empty
+/// (§27.6.3.9 AsyncGeneratorDrainQueue, with §27.6.3.8 AsyncGeneratorResumeNext's start).
+fn agDrain(g: *c.JSRTGenerator) void {
+    while (agQueue(g).len > 0) {
+        const head = agQueue(g);
+        const mode: u8 = @intCast(intOf(head[0]));
+        const value = head[1];
+        var s = agStatus(g);
+        if (s == .start and mode != c.JSRT_GEN_INJECT_NONE) {
+            agSetStatus(g, .completed);
+            s = .completed;
+        }
+        if (s == .completed) {
+            switch (mode) {
+                c.JSRT_GEN_INJECT_NONE => agComplete(g, rt.undefined_value, true, false),
+                c.JSRT_GEN_INJECT_THROW => agComplete(g, value, true, true),
+                else => {
+                    // §27.6.3.10 AsyncGeneratorAwaitReturn.
+                    agSetStatus(g, .awaiting_return);
+                    const p = c.jsrt_promise_resolve(value);
+                    if (rt.pending()) {
+                        agSetStatus(g, .completed);
+                        agComplete(g, c.jsrt_take_exception(), true, true);
+                        continue;
+                    }
+                    c.jsrt_promise_subscribe(p, &agReturnSettled, g);
+                    return;
+                },
+            }
+            continue;
+        }
+        agSetStatus(g, .executing);
+        return agRun(g, value, mode);
+    }
+}
+
+fn agReturnSettled(state: ?*anyopaque, value: Value, rejected: bool) callconv(.c) void {
+    const g: *c.JSRTGenerator = @ptrCast(@alignCast(state.?));
+    agSetStatus(g, .completed);
+    agComplete(g, value, true, rejected);
+    agDrain(g);
+}
+
+fn agAwaitSettled(state: ?*anyopaque, value: Value, rejected: bool) callconv(.c) void {
+    const g: *c.JSRTGenerator = @ptrCast(@alignCast(state.?));
+    agRun(g, value, if (rejected) c.JSRT_GEN_INJECT_THROW else c.JSRT_GEN_INJECT_NONE);
+}
+
+/// Runs the body on and answers what it did: an `await` subscribes, a `yield` settles the head
+/// request, a completion settles it and ends the generator.
+fn agRun(g: *c.JSRTGenerator, sent: Value, mode: u8) void {
+    const st = agStateEnv(g);
+    const r = resumeState(st, sent, mode);
+    if (takeSuspended()) |at| {
+        if (stopOf(at) == .await) {
+            const p = c.jsrt_promise_resolve(r);
+            if (!rt.pending()) return c.jsrt_promise_subscribe(p, &agAwaitSettled, g);
+            // A throwing `then` getter would reject the await; resume with the error.
+            return agRun(g, c.jsrt_take_exception(), c.JSRT_GEN_INJECT_THROW);
+        }
+        agSetStatus(g, .suspended_yield);
+        agComplete(g, r, false, false);
+    } else {
+        agSetStatus(g, .completed);
+        if (rt.pending()) agComplete(g, c.jsrt_take_exception(), true, true) else agComplete(g, r, true, false);
+    }
+    agDrain(g);
+}
+
+/// `{ value, done }` (§7.4.14 CreateIteratorResultObject).
+pub fn iterResult(value: Value, done: bool) Value {
+    const o = c.jsrt_dynobj_new();
+    defineOwn(o, "value", value);
+    defineOwn(o, "done", rt.boolean(done));
+    return o;
+}
+
+// ---------------------------------------------------------------------- the machine
+
+const Entry = union(enum) {
+    call: struct { callee: Value, this: Value, argv: []const Value, nt: Value, state: ?*Env = null },
+    resume_: struct { state: *Env, sent: Value, mode: u8 },
+};
+
+/// Saves the activation into its state and marks it suspended; the caller returns `value` to
+/// the driver.
+fn suspendAt(state: *?*Env, w: []Value, nlocals: usize, depth: usize, pc: usize, env: ?*Env, stop: Stop) void {
+    const st: *Env = state.* orelse blk: {
+        const e: *Env = c.jsrt_env_new(env, @intCast(st_window + w.len));
+        e.*.slots()[st_running] = rt.false_value;
+        state.* = e;
+        break :blk e;
+    };
+    st.parent = env;
+    const s = st.slots();
+    s[st_pc] = rt.number(@floatFromInt(pc));
+    s[st_depth] = rt.number(@floatFromInt(depth));
+    s[st_stop] = rt.number(@backingInt(stop));
+    const used = header + nlocals + depth;
+    @memcpy(s[st_window..][0..used], w[0..used]);
+    @memset(s[st_window + used .. st_window + w.len], rt.undefined_value);
+    suspended = st;
+}
+
+fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
     if (stackExhausted()) return c.jsrt_stack_overflow();
     const vs = valueStack();
     const base = sp;
-    const window = 3 + t.nlocals + t.max_stack;
+    const window = windowSize(t);
     if (base + window > vs.len) {
         rt.throwRange("Maximum call stack size exceeded");
         return rt.undefined_value;
@@ -548,11 +1045,8 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
     defer sp = base;
     const w = vs[base .. base + window];
     @memset(w, rt.undefined_value);
-    w[0] = callee;
-    w[1] = this_in;
-    w[2] = nt;
-    const locals = w[3 .. 3 + t.nlocals];
-    const op_base = base + 3 + t.nlocals;
+    const locals = w[header .. header + t.nlocals];
+    const op_base = base + header + t.nlocals;
     var frame: c.JSRTFrame = .{ .prev = c.jsrt_frame_top, .count = @intCast(window), .slots = w.ptr, .env = if (fe) |e| e.parent else null };
     c.jsrt_frame_top = &frame;
     defer c.jsrt_frame_top = frame.prev;
@@ -560,6 +1054,43 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
     const code = t.code;
     var pc: usize = 0;
     var top: usize = op_base;
+    var argv: []const Value = &.{};
+    var state: ?*Env = null;
+    switch (entry) {
+        .call => |e| {
+            w[0] = e.callee;
+            w[1] = e.this;
+            w[2] = e.nt;
+            argv = e.argv;
+            state = e.state;
+        },
+        .resume_ => |r| {
+            state = r.state;
+            const s = r.state.slots();
+            const depth = intOf(s[st_depth]);
+            @memcpy(w[0 .. header + t.nlocals + depth], s[st_window..][0 .. header + t.nlocals + depth]);
+            pc = intOf(s[st_pc]);
+            top = op_base + depth;
+            frame.env = r.state.parent;
+            switch (stopOf(r.state)) {
+                .call, .start => {},
+                .yield => {
+                    push(vs, &top, r.sent);
+                    push(vs, &top, rt.number(@floatFromInt(r.mode)));
+                },
+                .await => if (r.mode == c.JSRT_GEN_INJECT_THROW) {
+                    c.jsrt_throw(r.sent);
+                    // The rejection is thrown at the `await` itself.
+                    const h = findHandler(t, pc - 1) orelse return rt.undefined_value;
+                    const exc = c.jsrt_take_exception();
+                    top = op_base;
+                    frame.env = unboxPtr(Env, locals[h.env_local]);
+                    push(vs, &top, exc);
+                    pc = h.target;
+                } else push(vs, &top, r.sent),
+            }
+        },
+    }
 
     while (true) {
         const at = pc;
@@ -660,8 +1191,9 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
             },
             .pop_env => frame.env = frame.env.*.parent,
             .clone_env => frame.env = c.jsrt_env_clone(frame.env),
+            // Boxed as a reference so a suspended activation's saved copy keeps it alive.
             .save_env => {
-                locals[next16(code, &pc)] = boxPtr(frame.env);
+                locals[next16(code, &pc)] = boxEnv(frame.env);
             },
             .const_assign => {
                 pc += 2;
@@ -957,7 +1489,7 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 vs[top - 1] = r;
             },
 
-            .get_iterator => vs[top - 1] = getIterator(vs[top - 1]),
+            .get_iterator, .get_async_iterator => vs[top - 1] = if (o == .get_iterator) getIterator(vs[top - 1]) else getAsyncIterator(vs[top - 1]),
             .iter_next => {
                 const target = next32(code, &pc);
                 var v: Value = rt.undefined_value;
@@ -1004,6 +1536,85 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 }
             },
             .debugger => {},
+
+            .gen_start => {
+                suspendAt(&state, w, t.nlocals, top - op_base, pc, frame.env, .start);
+                return rt.undefined_value;
+            },
+            .yield, .await => {
+                const v = vs[top - 1];
+                top -= 1;
+                suspendAt(&state, w, t.nlocals, top - op_base, pc, frame.env, if (o == .yield) .yield else .await);
+                return v;
+            },
+            .reset_stack => top = op_base,
+            // Both leave `rec value kind`: `delegate` from `rec received mode`, the async step
+            // from `rec mode settled`.
+            .delegate, .async_delegate_step => {
+                var v: Value = rt.undefined_value;
+                const kind = if (o == .delegate)
+                    delegateStep(vs[top - 3], vs[top - 2], @intCast(intOf(vs[top - 1])), &v)
+                else
+                    asyncDelegateResult(vs[top - 3], vs[top - 1], @intCast(intOf(vs[top - 2])), &v);
+                vs[top - 2] = v;
+                vs[top - 1] = rt.number(@floatFromInt(kind));
+            },
+            .async_delegate => {
+                var mode: u8 = @intCast(intOf(vs[top - 1]));
+                const r = asyncDelegateCall(vs[top - 3], vs[top - 2], &mode);
+                vs[top - 2] = rt.number(@floatFromInt(mode));
+                vs[top - 1] = r;
+            },
+            .async_iter_next => {
+                const s = recSlots(vs[top - 1]);
+                if (s[rec_wrapped] == rt.true_value) {
+                    var v: Value = rt.undefined_value;
+                    const more = iterStep(s[rec_iter], &v);
+                    if (!more and !rt.pending()) s[rec_done] = rt.true_value;
+                    vs[top - 1] = v;
+                } else vs[top - 1] = call(s[rec_next], s[rec_iter], &.{});
+            },
+            .async_iter_step => {
+                const target = next32(code, &pc);
+                const y = vs[top - 1];
+                const s = recSlots(vs[top - 2]);
+                top -= 2;
+                if (s[rec_wrapped] == rt.true_value) {
+                    if (s[rec_done] == rt.true_value) pc = target else push(vs, &top, y);
+                } else if (!rt.isObjectLike(y)) {
+                    _ = throwAbout(y, "Iterator result {s} is not an object");
+                } else {
+                    const done = getProp(y, "done", null);
+                    if (!rt.pending()) {
+                        if (c.jsrt_truthy(done)) {
+                            s[rec_done] = rt.true_value;
+                            pc = target;
+                        } else push(vs, &top, getProp(y, "value", null));
+                    }
+                }
+            },
+            .async_close_call => {
+                const target = next32(code, &pc);
+                const s = recSlots(vs[top - 1]);
+                if (s[rec_wrapped] == rt.true_value or s[rec_done] == rt.true_value) {
+                    if (s[rec_wrapped] == rt.true_value) iterClose(s[rec_iter]);
+                    top -= 1;
+                    if (!rt.pending()) pc = target;
+                } else {
+                    s[rec_done] = rt.true_value;
+                    const m = getProp(s[rec_iter], "return", null);
+                    if (!rt.pending()) {
+                        if (c.jsrt_is_nullish(m)) {
+                            top -= 1;
+                            pc = target;
+                        } else vs[top - 1] = call(m, s[rec_iter], &.{});
+                    }
+                }
+            },
+            .async_close_check => {
+                top -= 1;
+                if (!rt.isObjectLike(vs[top])) _ = throwAbout(vs[top], "Iterator result {s} is not an object");
+            },
         }
         if (rt.pending()) {
             const h = findHandler(t, at) orelse return rt.undefined_value;

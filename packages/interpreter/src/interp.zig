@@ -132,7 +132,7 @@ fn outOfMemory() Value {
     return rt.undefined_value;
 }
 
-fn expectRuns(src: []const u8, want: []const u8) !void {
+fn runOk(src: []const u8) !Value {
     rt.c.jsrt_init();
     const out = runScript(src, false);
     try std.testing.expect(out == .value);
@@ -143,7 +143,12 @@ fn expectRuns(src: []const u8, want: []const u8) !void {
         std.debug.print("uncaught: {s}\n", .{std.mem.span(p)});
         return error.Uncaught;
     }
-    const p = rt.c.jsrt_shape_key_ephemeral(rt.c.jsrt_to_string(out.value));
+    return out.value;
+}
+
+fn expectRuns(src: []const u8, want: []const u8) !void {
+    const v = try runOk(src);
+    const p = rt.c.jsrt_shape_key_ephemeral(rt.c.jsrt_to_string(v));
     defer std.c.free(p);
     try std.testing.expectEqualStrings(want, std.mem.span(p));
 }
@@ -226,8 +231,56 @@ test "early errors the parser leaves to the compiler" {
 
 test "unsupported constructs are reported, not run" {
     rt.c.jsrt_init();
-    const out = runScript("function* g() {}", false);
+    const out = runScript("with ({}) {}", false);
     try std.testing.expect(out == .unsupported);
+}
+
+/// Runs `setup`, drains the microtask queue, then expects `check` to evaluate to `want`.
+fn expectSettles(setup: []const u8, check: []const u8, want: []const u8) !void {
+    _ = try runOk(setup);
+    rt.c.jsrt_run_microtasks();
+    try expectRuns(check, want);
+}
+
+test "generators" {
+    try expectRuns("function* g(a) { const b = yield a; yield a + b; } const it = g(1); [it.next().value, it.next(10).value, it.next().done].join()", "1,11,true");
+    try expectRuns("function* g() { yield 1; yield 2; return 3; } [...g()].join()", "1,2");
+    try expectRuns("function* g() { try { yield 1; } finally { log += 'f'; } } var log = ''; const it = g(); it.next(); it.return(5).value + log", "5f");
+    try expectRuns("function* g() { try { yield 1; } catch (e) { yield 'c' + e; } } const it = g(); it.next(); it.throw('x').value", "cx");
+    try expectRuns("function* inner() { const x = yield 1; return x * 2; } function* outer() { const r = yield* inner(); yield r; } const it = outer(); it.next(); it.next(4).value", "8");
+    try expectRuns("function* g(a = log += 'p') { log += 'b'; } var log = ''; g(); log", "p");
+    try expectRuns("let m; try { new (function* () {})(); } catch (e) { m = e instanceof TypeError; } m", "true");
+    try expectRuns("const o = { *m() { yield this.k; }, k: 7 }; o.m().next().value", "7");
+}
+
+test "async functions" {
+    try expectSettles("var log = ''; async function f(x) { log += 'a'; const v = await x; log += v; return v + 1; } f(Promise.resolve(2)).then((r) => { log += r; }); log += 's';", "log", "as23");
+    try expectSettles("var caught; (async () => { try { await Promise.reject(new TypeError('t')); } catch (e) { caught = e instanceof TypeError; } })();", "caught", "true");
+    try expectSettles("var why; (async function () { throw 'boom'; })().catch((e) => { why = e; });", "why", "boom");
+}
+
+test "async generators and for await" {
+    try expectSettles(
+        \\var out = '';
+        \\async function* g() { yield 1; const x = yield await Promise.resolve(2); yield x; }
+        \\(async () => { for await (const v of g()) out += v; for await (const v of [Promise.resolve('a'), 'b']) out += v; })();
+    , "out", "12undefinedab");
+    try expectSettles(
+        \\var log = '';
+        \\async function* g() { try { yield 1; yield 2; } finally { log += 'f'; } }
+        \\(async () => { for await (const v of g()) { log += v; break; } })();
+    , "log", "1f");
+    try expectSettles(
+        \\var r = '';
+        \\async function* g() { yield 1; }
+        \\const it = g(); it.next().then((a) => { r += a.value + ',' + a.done; }); it.next().then((b) => { r += ';' + b.done; });
+    , "r", "1,false;true");
+    try expectSettles(
+        \\var s = '';
+        \\async function* inner() { yield 'i'; return 'r'; }
+        \\async function* outer() { const r = yield* inner(); yield r; yield* [Promise.resolve('p')]; }
+        \\(async () => { for await (const v of outer()) s += v; })();
+    , "s", "irp");
 }
 
 test "syntax errors are pending SyntaxErrors" {
