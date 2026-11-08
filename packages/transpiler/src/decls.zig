@@ -4080,6 +4080,7 @@ fn inferredThen(c: *Checker, x: *T.Cond) *Type {
     const check = instantiate(c, x.check, x.mapper);
     const ctx = relate.newInferCtx(c, x.infer_params, 0);
     ctx.conditional = true;
+    ctx.outer = x.mapper;
     if (!isGeneric(c, check) and !hasGenericTuple(c, check)) relate.inferTypes(c, ctx, check, instantiate(c, x.extends, x.mapper), 0);
     return instantiate(c, condThen(c, x), compose(c, x.mapper, ctx.mapper));
 }
@@ -4355,6 +4356,7 @@ fn condResolve(c: *Checker, root: *T.Cond, mapper: ?*Mapper, for_constraint: boo
     if (root.infer_params.len > 0) {
         const ctx = relate.newInferCtx(c, root.infer_params, 0);
         ctx.conditional = true;
+        ctx.outer = mapper;
         if (!check_deferred) relate.inferTypes(c, ctx, check, extends, 0);
         combined = compose(c, mapper, ctx.mapper);
     }

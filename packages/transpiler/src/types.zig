@@ -344,6 +344,8 @@ pub const InferCtx = struct {
     is_return: bool = false,
     /// For `infer` in a conditional type, where a generic source is exact rather than a stopgap.
     conditional: bool = false,
+    /// The conditional's own mapper: `infer U extends S` reads `S` as the alias was given it.
+    outer: ?*Mapper = null,
     /// A call in JavaScript: a parameter nothing spoke for is `any`, not `unknown`.
     any_default: bool = false,
     return_mapper: ?*Mapper = null,

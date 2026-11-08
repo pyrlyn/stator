@@ -1621,7 +1621,7 @@ pub fn getInferred(c: *Checker, ctx: *InferCtx, i: usize) *Type {
     }
     info.inferred = inferred;
     if (d.constraintOf(c, info.param)) |k0| {
-        const k = d.instantiate(c, k0, nonFixing(c, ctx));
+        const k = d.instantiate(c, if (ctx.outer) |m| d.instantiate(c, k0, m) else k0, nonFixing(c, ctx));
         if (!inferred_any or !isAssignable(c, inferred, k)) {
             // A return position only wished for a type: `T | undefined` still says `T`.
             const fitting = if (inferred_any and info.priority == Priority.return_type) fittingMembers(c, inferred, k) else c.t_never;
@@ -1858,6 +1858,10 @@ const Infer = struct {
     fn identicalMember(c: *Checker, s: *Type, t: *Type) bool {
         if (s == t or (s.regular orelse s) == t) return true;
         if (t.data == .string and s.data == .str_lit or t.data == .number and s.data == .num_lit) return true;
+        // A read of an optional property under `exactOptionalPropertyTypes` carries `missing`, which
+        // must pair off with a written `undefined` or `T | undefined` infers `T` as `X | undefined`.
+        // A `missing` target stays exact, as in tsc's `isTypeOrBaseIdenticalTo`.
+        if (s.data == .undefined and t.data == .undefined and t != c.t_missing) return true;
         // Two declarations of `{ content: undefined; error: E }` must pair off, or `undefined`
         // from the failure arm of one reaches a type parameter in the success arm of the other.
         return s.data == .obj and t.data == .obj and isIdentical(c, s, t);

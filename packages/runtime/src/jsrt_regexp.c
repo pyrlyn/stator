@@ -15,6 +15,7 @@
 
 #include "libregexp.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -64,18 +65,20 @@ void *lre_realloc(void *opaque, void *ptr, size_t size) {
  * is the right amount of machinery for the base. */
 #define LRE_STACK_BUDGET ((size_t)192 * 1024)
 
-static const char *lre_stack_base;
+/* An address, never dereferenced: kept as an integer so gcc's -Wdangling-pointer does not read
+ * the recorded stack slot as a pointer that outlives its frame. */
+static uintptr_t lre_stack_base;
 
 bool lre_check_stack_overflow(void *opaque, size_t alloca_size) {
   (void)opaque;
   const char here = 0;
-  if (lre_stack_base == NULL) {
-    lre_stack_base = &here;
+  const uintptr_t at = (uintptr_t)&here;
+  if (lre_stack_base == 0) {
+    lre_stack_base = at;
   }
-  /* Stacks grow down on every target Stator supports; a negative depth would mean this call is
+  /* Stacks grow down on every target Stator supports; a call at or above the base is
    * SHALLOWER than the first one, which is not an overflow. */
-  const ptrdiff_t used = lre_stack_base - &here;
-  return used > 0 && (size_t)used + alloca_size > LRE_STACK_BUDGET;
+  return at < lre_stack_base && (size_t)(lre_stack_base - at) + alloca_size > LRE_STACK_BUDGET;
 }
 
 /* No interruption: a compiled program has no watchdog to ask, and a regexp that runs forever is a

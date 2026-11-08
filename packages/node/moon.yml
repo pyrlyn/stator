@@ -7,7 +7,7 @@ language: 'typescript'
 # programs that import them. Tools are called directly, never through pnpm (plan-notes 204).
 tasks:
   typecheck:
-    script: './node_modules/.bin/tsc --noEmit -p packages/node/tsconfig.json'
+    script: 'node scripts/typecheck.ts packages/node'
     toolchain: 'system'
     options:
       runFromWorkspaceRoot: true

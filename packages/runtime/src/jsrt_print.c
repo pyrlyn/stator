@@ -114,9 +114,10 @@ static void format_double(double d, char *buf, size_t buflen, bool negative_zero
     return;
   }
   if (d < 0.0) {
-    char rest[64];
-    format_positive(-d, rest, sizeof rest);
-    snprintf(buf, buflen, "-%s", rest);
+    /* The sign goes straight into buf rather than through a copy: "-%s" over an equally sized
+     * scratch buffer is a truncation gcc's -Wformat-truncation cannot rule out. */
+    buf[0] = '-';
+    format_positive(-d, buf + 1, buflen - 1);
     return;
   }
   format_positive(d, buf, buflen);
