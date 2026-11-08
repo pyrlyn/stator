@@ -7,13 +7,12 @@ Steps 1 to 3 landed in plan-notes 386:
 
 This change adds the goldens step 4 asks for:
 - `packages/tests/golden/ts/generics_block_homed.ts`.
-- Its js-mode twin `packages/tests/golden/js/generics_block_homed/main.ts`.
+- `packages/tests/golden/js/generics_block_homed/` (`main.ts` plus an untyped `lib.js`), the js-mode fixture. A `.js` file cannot spell a type parameter, so the js-mode generic is a `.ts` file mixed with untyped JavaScript. Its arguments reach the homes as Unknown.
 
-They cover:
-- Two block `const` homes under one name, at `number` and `string`.
-- One block `const` called at two types.
-- A module `let` with a single write.
-- A `const` inside an `if` block.
+Together they cover:
+- Two block `const` homes under one name, at `number` and `string`, and one called at several types.
+- A module `let` with a single write, also passed to an untyped higher-order function.
+- A `const` inside an `if` block and inside a `for-of` body.
 
 ## Check
 
