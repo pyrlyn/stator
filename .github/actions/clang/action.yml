@@ -20,3 +20,9 @@ runs:
         set -euo pipefail
         mise bin-paths conda:clang >> "$GITHUB_PATH"
         mise which clang --tool conda:clang
+    # The pinned clang links against its own sysroot; LIBRARY_PATH is searched after it, so a
+    # distro library (-lsqlite3) is found while libc still comes from the sysroot (plan-notes 410).
+    - name: Let it link distro libraries
+      if: runner.os == 'Linux'
+      shell: bash
+      run: echo "LIBRARY_PATH=/usr/lib/$(uname -m)-linux-gnu" >> "$GITHUB_ENV"

@@ -253,6 +253,14 @@ commands do, so that `clang` is the pinned one statorc links with. CI installs i
 `conda:llvm`, cached by `jdx/mise-action` per OS, arch and `mise.toml`) and puts it first on PATH;
 Linux jobs keep the distro `llvm` only for `llvm-symbolizer`, which the conda clang lacks there.
 
+**Distro libraries on Linux.** The pinned clang compiles and links against its own sysroot, not
+`/usr/include` and `/usr/lib/<triple>`, so a library from the distro (`apt install
+libsqlite3-dev` for `-lsqlite3`) is not found by default. Set
+`LIBRARY_PATH=/usr/lib/$(uname -m)-linux-gnu`: clang searches it after its sysroot, so libc still
+comes from the sysroot and only the missing library from the distro. A `-L/usr/lib/<triple>` link
+flag also finds it, but ahead of the sysroot, so the distro libc is linked instead. CI's
+`.github/actions/clang` sets that `LIBRARY_PATH` on Linux (plan-notes 410).
+
 ## Environment variables and `.env`
 
 `stator build` and `stator explain` read these from the environment:

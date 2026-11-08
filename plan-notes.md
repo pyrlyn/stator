@@ -14975,6 +14975,14 @@ why the apt `llvm` stays. The Linux runtime is built without ThinLTO ("the linke
 archives"), as it already was in CI, where the `runtime (linux/x64)` job used to record Ubuntu clang
 18.1.3: the version this decision stops CI from testing with.
 
+**Distro libraries on Linux.** The pinned clang searches its own sysroot
+(`aarch64-conda-linux-gnu/sysroot/{lib,usr/lib}`), not `/usr/lib/<triple>`, so the `ffi` jobs'
+`-lsqlite3` from `libsqlite3-dev` failed to link (`cannot find -lsqlite3`, PR #288's first run).
+In an ubuntu:24.04 container, `LIBRARY_PATH=/usr/lib/aarch64-linux-gnu` linked it and `-Wl,-t`
+showed libc still taken from the conda sysroot, while `-L/usr/lib/aarch64-linux-gnu` linked the
+distro `libc.so` ahead of it. `.github/actions/clang` therefore exports that `LIBRARY_PATH` on
+Linux, and docs/TOOLCHAIN.md tells users the same; statorc adds no search path of its own.
+
 **CI cost.** The conda install is about 1.3 GB unpacked on Linux (`conda-clang` 1.1 GB,
 `conda-llvm` 211 MB); `mise-action` caches it, so a warm job pays a cache restore instead.
 

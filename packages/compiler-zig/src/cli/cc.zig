@@ -1,6 +1,7 @@
 //! The C compiler a build runs (`src/cli/cc.ts`, plan/T35): one resolver, one `--version` probe,
-//! one flag table. Precedence: `--cc` > `CC` > config `cc` > `clang` (plan-notes 409). Every
-//! failure is `STA0022`, naming the value, where it came from and how to choose another.
+//! one flag table. Precedence: `--cc` > `CC` > config `cc` > the default (plan-notes 409), which
+//! is the clang mise pins, never whichever `clang` PATH finds first (plan-notes 410). Every failure
+//! is `STA0022`, naming the value, where it came from and how to choose another.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const js_text = @import("jstext");
@@ -44,11 +45,20 @@ pub const Family = enum {
 
 pub const Compiler = struct { command: []const u8, source: Source, family: Family };
 
-pub const default_cc = "clang";
+/// mise.toml's `conda:clang` pin. statorc runs outside a Stator checkout too, where mise.toml is
+/// not there to read, so the version lives here and `cc.test.ts` fails when the two drift.
+pub const pinned_clang_tool = "conda:clang@21.1.8";
 
-const fix = "choose another with --cc=<name|path>, config \"cc\" or CC (unset all three for the default clang)";
+/// The default on Windows, where mise.toml pins no clang: the `clang` on PATH.
+pub const windows_default_cc = "clang";
 
-pub const HostFacts = struct { darwin: bool, system_clang: bool };
+/// The arguments that ask mise for the pinned clang's absolute path.
+pub const pinned_clang_query = [_][]const u8{ "which", "clang", "--tool", pinned_clang_tool };
+
+const choose_another = "choose another with --cc=<name|path>, config \"cc\" or CC";
+const fix = choose_another ++ " (unset all three for the default clang)";
+
+pub const HostFacts = struct { darwin: bool, windows: bool, system_clang: bool };
 
 pub const Chosen = struct { choice: Choice, warning: ?[]const u8 = null };
 
@@ -57,11 +67,17 @@ pub const Chosen = struct { choice: Choice, warning: ?[]const u8 = null };
 /// conda-clang 21.1.8's Darwin ASan runtime deadlocks during dyld's early malloc initialization,
 /// so a sanitized build on macOS defaults to `/usr/bin/clang`, as the runtime justfile does. An
 /// explicit choice is never second-guessed: it may be the toolchain under test.
-pub fn choose(a: Allocator, explicit: ?Choice, env_cc: ?[]const u8, sanitized: bool, host: HostFacts) Chosen {
+///
+/// `pinned.path()` gives the pinned clang's path, or fails; it is called only when the default is
+/// the pinned clang, so an explicit choice never needs mise.
+pub fn choose(a: Allocator, explicit: ?Choice, env_cc: ?[]const u8, sanitized: bool, host: HostFacts, pinned: anytype) Error!Chosen {
     const from_env: ?Choice = if (env_cc) |v| (if (v.len == 0) null else .{ .command = v, .source = .env }) else null;
     const picked: ?Choice = if (explicit != null and explicit.?.source == .flag) explicit else from_env orelse explicit;
     const overridden = sanitized and host.darwin and host.system_clang;
-    const choice = picked orelse return .{ .choice = .{ .command = if (overridden) "/usr/bin/clang" else default_cc, .source = .default } };
+    const choice = picked orelse {
+        const command = if (overridden) "/usr/bin/clang" else if (host.windows) windows_default_cc else try pinned.path();
+        return .{ .choice = .{ .command = command, .source = .default } };
+    };
     if (!overridden) return .{ .choice = choice };
     return .{
         .choice = choice,
@@ -156,8 +172,41 @@ pub fn classify(version: []const u8) ?Family {
 pub const VersionRun = union(enum) {
     not_found,
     start_failed: []const u8,
-    exited: struct { code: ?u32, stdout: []const u8 },
+    exited: struct { code: ?u32, stdout: []const u8, stderr: []const u8 = "" },
 };
+
+/// The pinned clang's path from a `mise which` run (made by the caller), or STA0022 when mise is
+/// missing or the tool is not installed. No fallback to another clang: a build that silently used
+/// a different compiler would not be the build the project tested.
+pub fn pinnedClang(a: Allocator, r: *Reporter, run: VersionRun) Error![]const u8 {
+    const why = switch (run) {
+        .not_found => "mise is not on PATH",
+        .start_failed => |message| miseFailed(a, message),
+        .exited => |e| why: {
+            const path = js_text.trim(e.stdout);
+            if (e.code != null and e.code.? == 0 and path.len != 0) return path;
+            break :why miseFailed(a, miseError(e.stderr) orelse exitText(a, e.code));
+        },
+    };
+    return r.fail("STA0022", "the default C compiler, mise's pinned LLVM clang (" ++ pinned_clang_tool ++ "), is unavailable: {s} — run `mise install` in the Stator checkout, or " ++ choose_another, .{why});
+}
+
+fn miseFailed(a: Allocator, reason: []const u8) []const u8 {
+    return std.fmt.allocPrint(a, "`mise {s} {s} {s} {s}` failed ({s})", .{ pinned_clang_query[0], pinned_clang_query[1], pinned_clang_query[2], pinned_clang_query[3], reason }) catch oom();
+}
+
+/// mise's own reason, e.g. `conda:clang@21.1.8 is not installed`: its first ERROR line, since
+/// update notices and hints come on stderr too.
+fn miseError(stderr: []const u8) ?[]const u8 {
+    const marker = "ERROR ";
+    var lines = std.mem.splitScalar(u8, stderr, '\n');
+    while (lines.next()) |line| if (std.mem.indexOf(u8, line, marker)) |i| return js_text.trim(line[i + marker.len ..]);
+    return null;
+}
+
+fn exitText(a: Allocator, code: ?u32) []const u8 {
+    return if (code) |c| std.fmt.allocPrint(a, "exit {d}", .{c}) catch oom() else "exit signal";
+}
 
 /// Classifies a probe's result, or refuses the choice.
 pub fn judge(a: Allocator, r: *Reporter, choice: Choice, run: VersionRun) Error!Compiler {
@@ -194,8 +243,23 @@ pub fn requireFlagsSupported(r: *Reporter, cc: Compiler, flags: []const []const 
 }
 
 const testing = std.testing;
-const linux: HostFacts = .{ .darwin = false, .system_clang = false };
-const mac: HostFacts = .{ .darwin = true, .system_clang = true };
+const linux: HostFacts = .{ .darwin = false, .windows = false, .system_clang = false };
+const mac: HostFacts = .{ .darwin = true, .windows = false, .system_clang = true };
+const windows: HostFacts = .{ .darwin = false, .windows = true, .system_clang = false };
+const mise_clang = "/mise/installs/conda-clang/21.1.8/.mise-bins/clang";
+
+const Pinned = struct {
+    fn path(_: Pinned) Error![]const u8 {
+        return mise_clang;
+    }
+};
+
+/// A default that must not ask mise: an explicit choice, Windows or the macOS ASan override.
+const Unreachable = struct {
+    fn path(_: Unreachable) Error![]const u8 {
+        unreachable;
+    }
+};
 
 test "--cc beats CC, CC beats config cc and the default, empty CC is unset" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -203,24 +267,46 @@ test "--cc beats CC, CC beats config cc and the default, empty CC is unset" {
     const a = arena.allocator();
     const flag: Choice = .{ .command = "gcc-14", .source = .flag };
     const config: Choice = .{ .command = "gcc-13", .source = .config };
-    try testing.expectEqualDeep(flag, choose(a, flag, "cc", false, linux).choice);
-    try testing.expectEqualDeep(Choice{ .command = "cc", .source = .env }, choose(a, config, "cc", false, linux).choice);
-    try testing.expectEqualDeep(config, choose(a, config, "", false, linux).choice);
-    try testing.expectEqualDeep(config, choose(a, config, null, false, linux).choice);
-    try testing.expectEqualDeep(Choice{ .command = "clang", .source = .default }, choose(a, null, "", false, linux).choice);
+    try testing.expectEqualDeep(flag, (try choose(a, flag, "cc", false, linux, Unreachable{})).choice);
+    try testing.expectEqualDeep(Choice{ .command = "cc", .source = .env }, (try choose(a, config, "cc", false, linux, Unreachable{})).choice);
+    try testing.expectEqualDeep(config, (try choose(a, config, "", false, linux, Unreachable{})).choice);
+    try testing.expectEqualDeep(config, (try choose(a, config, null, false, linux, Unreachable{})).choice);
+    try testing.expectEqualDeep(Choice{ .command = mise_clang, .source = .default }, (try choose(a, null, "", false, linux, Pinned{})).choice);
+}
+
+test "the default is mise's clang, PATH's clang on Windows" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try testing.expectEqualStrings(mise_clang, (try choose(a, null, null, false, mac, Pinned{})).choice.command);
+    try testing.expectEqualStrings("clang", (try choose(a, null, null, false, windows, Unreachable{})).choice.command);
+    try testing.expectEqualStrings("clang", (try choose(a, null, null, true, windows, Unreachable{})).choice.command);
 }
 
 test "the macOS ASan override applies to the default only; an explicit choice warns" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try testing.expectEqualDeep(Chosen{ .choice = .{ .command = "/usr/bin/clang", .source = .default } }, choose(a, null, null, true, mac));
-    try testing.expectEqualStrings("clang", choose(a, null, null, true, linux).choice.command);
-    try testing.expectEqualStrings("clang", choose(a, null, null, false, mac).choice.command);
-    const explicit = choose(a, null, "clang", true, mac);
+    try testing.expectEqualDeep(Chosen{ .choice = .{ .command = "/usr/bin/clang", .source = .default } }, try choose(a, null, null, true, mac, Unreachable{}));
+    try testing.expectEqualStrings(mise_clang, (try choose(a, null, null, true, linux, Pinned{})).choice.command);
+    const explicit = try choose(a, null, "clang", true, mac, Unreachable{});
     try testing.expectEqualStrings("clang", explicit.choice.command);
     try testing.expectEqualStrings("C compiler \"clang\" (from CC) is used under the ASan runtime instead of /usr/bin/clang; conda clang 21.1.8 deadlocks there at startup", explicit.warning.?);
-    try testing.expect(choose(a, null, "clang", false, mac).warning == null);
+    try testing.expect((try choose(a, null, "clang", false, mac, Unreachable{})).warning == null);
+}
+
+test "the pinned clang is mise's answer, or STA0022 naming why" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var r: Reporter = .{ .a = a };
+    try testing.expectEqualStrings(mise_clang, try pinnedClang(a, &r, .{ .exited = .{ .code = 0, .stdout = mise_clang ++ "\n" } }));
+    const unavailable = "the default C compiler, mise's pinned LLVM clang (conda:clang@21.1.8), is unavailable: ";
+    const remedy = " — run `mise install` in the Stator checkout, or choose another with --cc=<name|path>, config \"cc\" or CC";
+    try expectRefusal(pinnedClang(a, &r, .not_found), &r, unavailable ++ "mise is not on PATH" ++ remedy);
+    try expectRefusal(pinnedClang(a, &r, .{ .exited = .{ .code = 1, .stdout = "", .stderr = "mise WARN  update available\nmise ERROR conda:clang@21.1.8 is not installed\nmise ERROR Run with --verbose\n" } }), &r, unavailable ++ "`mise which clang --tool conda:clang@21.1.8` failed (conda:clang@21.1.8 is not installed)" ++ remedy);
+    try expectRefusal(pinnedClang(a, &r, .{ .exited = .{ .code = 0, .stdout = "\n" } }), &r, unavailable ++ "`mise which clang --tool conda:clang@21.1.8` failed (exit 0)" ++ remedy);
+    try expectRefusal(pinnedClang(a, &r, .{ .start_failed = "spawnSync mise EACCES" }), &r, unavailable ++ "`mise which clang --tool conda:clang@21.1.8` failed (spawnSync mise EACCES)" ++ remedy);
 }
 
 test "--version banners classify into clang, apple-clang and gcc" {

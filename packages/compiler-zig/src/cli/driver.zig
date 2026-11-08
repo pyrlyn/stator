@@ -430,7 +430,7 @@ fn internalFailure(x: *const Context, message: []const u8) Error {
 /// explicit choice skips the macOS ASan override (`cc.zig`).
 fn resolveCompiler(x: *const Context, explicit: ?link.Choice, runtime: link.Runtime) Error!link.Compiler {
     const h = x.host();
-    const chosen = link.chooseCC(h, explicit, runtime);
+    const chosen = try link.chooseCC(h, explicit, runtime);
     if (chosen.warning) |warning| x.print(&.{.{ .text = std.fmt.allocPrint(x.a, "stator: warning: {s}", .{warning}) catch oom() }}, .stderr);
     return link.detectCC(h, chosen.choice);
 }
