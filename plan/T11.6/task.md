@@ -2,8 +2,8 @@
 status: in progress
 priority: P1
 complexity: 4
-readiness: 80%
-agent: Claude Code / opus-5-5
+readiness: 88%
+agent: Claude Code / claude-opus-5-5
 ---
 
 # T11.6. `packages/node`: the N1 wrappers
@@ -41,9 +41,13 @@ stays open. **`os`, `perf_hooks` and timers slice** (plan-notes 394, 395): `node
 `performance` 16/69, `node:timers` 6/7, and the globals `performance` and the six timer functions
 under `--node`; slice N1 30/37. Two compiler bugs fixed on the way: the inliner shared nodes with its
 callee, and receiver calls guessed `this` from the argument count. The task stays open: N1 is not
-100%. **Next**, in the order `tsc` needs them: `Buffer.from`/`toString` (then `readFileSync` without
-an encoding answers a `Buffer`), `crypto.createHash`, `hrtime.bigint`; `path.win32` is its own slice
-(13 of T11.7's `path` tests need it).
+100%. **`Buffer` slice** (plan-notes 400, after T11.6a): `node:buffer` 12/130 — `Buffer` as a
+strict TypeScript class over `Uint8Array`, the global `Buffer` under `--node`, and `readFileSync`
+without an encoding answering a `Buffer`; four compiler bugs fixed on the way. **`crypto` slice**
+(plan-notes 402): `node:crypto` 6/148 — `createHash`, `Hash` (`update`, `copy`, `digest`) and `hash`
+over `std/hash` (SHA-256, SHA-1, MD5), and `require('crypto')` as `tsc` loads it; slice N1 33/37.
+**Next**, in the order `tsc` needs them: `hrtime.bigint`; `path.win32` is its own slice (13 of
+T11.7's `path` tests need it).
 
 **Check:** `tsc --version` and `tsc -p` on a small fixture project, compiled by Stator, print
 byte-for-byte what `node _tsc.js` prints on Node 26.7.0; `docs/NODE.md` slice N1 at 100%.

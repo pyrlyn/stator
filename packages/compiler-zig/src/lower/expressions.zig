@@ -371,9 +371,9 @@ fn lowerPropertyAccess(l: *Lower, node: *Node, b: *Scope) E!?Expression {
     const name = members.propertyText(node);
     if (c.eql(name, "value")) if (try lowerOutGet(l, x.expr, node, b)) |read| return read;
     if (gt.staticMemberOf(l.g, node, null)) |found| if (gt.classDisplayName(found.owner) != null) {
-        if (members.isAccessorMember(found.member)) return try members.staticAccessorCall(l, .get, members.hirClassName(l, found.owner), name, &.{}, typeAt(l, node, b), l.span(node), node, b);
+        if (members.isAccessorMember(found.member)) return try members.staticAccessorCall(l, .get, found.owner, name, &.{}, typeAt(l, node, b), l.span(node), node, b);
         const static_name = members.staticName(l, members.hirClassName(l, found.owner), name);
-        const t = b.get(static_name) orelse return l.internal(node, "STA4066", l.fmt("static '{s}' read before its class declaration was lowered", .{static_name}));
+        const t = members.staticBindingType(l, static_name, found.owner, b) orelse return l.internal(node, "STA4066", l.fmt("static '{s}' read before its class declaration was lowered", .{static_name}));
         return l.ident(t, l.span(node), static_name);
     };
     if (gate_globals.isGlobalMath(l.g, x.expr)) if (gate_globals.mathConstant(name)) |value| return l.number(l.span(node), value);

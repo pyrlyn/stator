@@ -17,6 +17,28 @@
     "strictEqual": ["ts/node_assert.ts", "js/node_assert.js"],
     "throws": ["ts/node_assert.ts", "js/node_assert.js"]
   },
+  "buffer": {
+    "Buffer": ["ts/node_buffer.ts", "js/node_buffer.js"],
+    "Buffer.alloc": ["ts/node_buffer.ts"],
+    "Buffer.byteLength": ["ts/node_buffer.ts", "js/node_buffer.js"],
+    "Buffer.concat": ["ts/node_buffer.ts", "js/node_buffer.js"],
+    "Buffer.copyBytesFrom": ["ts/node_buffer.ts"],
+    "Buffer.from": ["ts/node_buffer.ts", "js/node_buffer.js"],
+    "Buffer.isBuffer": ["ts/node_buffer.ts", "js/node_buffer.js"],
+    "Buffer.isEncoding": ["ts/node_buffer.ts"],
+    "Buffer.prototype.equals": ["ts/node_buffer.ts"],
+    "Buffer.prototype.slice": ["ts/node_buffer.ts"],
+    "Buffer.prototype.subarray": ["ts/node_buffer.ts"],
+    "Buffer.prototype.toString": ["ts/node_buffer.ts", "js/node_buffer.js"]
+  },
+  "crypto": {
+    "Hash": ["ts/node_crypto.ts"],
+    "Hash.prototype.copy": ["ts/node_crypto.ts"],
+    "Hash.prototype.digest": ["ts/node_crypto.ts"],
+    "Hash.prototype.update": ["ts/node_crypto.ts"],
+    "createHash": ["ts/node_crypto.ts", "js/node_crypto.js"],
+    "hash": ["ts/node_crypto.ts", "js/node_crypto.js"]
+  },
   "fs": {
     "Dirent.prototype.isDirectory": ["ts/node_fs.ts"],
     "Dirent.prototype.isFile": ["ts/node_fs.ts"],

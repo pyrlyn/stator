@@ -4,7 +4,6 @@
 // error (`system-error.ts`): the same code,
 // syscall, path and message the pinned Node v26.7.0 gives. Gaps, each a subset or `std` limit:
 // - a path is a `string` (no `Buffer` or `URL`), and a flag is a string (no `O_*` number);
-// - `readFileSync` without an encoding answers a `Uint8Array` until `Buffer` lands (T11.6);
 // - `readdirSync` answers names in byte order, where Node answers the OS's order;
 // - a `Dirent` follows symbolic links, so `isSymbolicLink()` is always false;
 // - `Stats` carries `size`, `mtimeMs` and `mtime` only, in whole milliseconds;
@@ -25,6 +24,7 @@ import {
   utimes,
   write,
 } from 'std/fs';
+import { Buffer } from './buffer.ts';
 import { decodeBytes, encodeText, invalidEncoding, normalizeEncoding } from './encoding.ts';
 import { stdCode, SystemError } from './system-error.ts';
 import { basename, dirname, join, resolve } from '../path.ts';
@@ -136,12 +136,9 @@ export function existsSync(path: string): boolean {
   return exists(path);
 }
 
-export function readFileSync(path: string): Uint8Array;
+export function readFileSync(path: string): Buffer;
 export function readFileSync(path: string, options: string | EncodingOptions): string;
-export function readFileSync(
-  path: string,
-  options?: string | EncodingOptions,
-): string | Uint8Array {
+export function readFileSync(path: string, options?: string | EncodingOptions): string | Buffer {
   const encoding = encodingOf(options);
   let bytes: Uint8Array;
   try {
@@ -152,7 +149,7 @@ export function readFileSync(
       ? new SystemError(code, 'read', undefined)
       : new SystemError(code, 'open', path);
   }
-  return encoding === undefined ? bytes : decodeBytes(bytes, encoding);
+  return encoding === undefined ? Buffer.copyBytesFrom(bytes) : decodeBytes(bytes, encoding);
 }
 
 export function writeFileSync(
