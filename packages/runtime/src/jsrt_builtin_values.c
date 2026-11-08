@@ -299,7 +299,7 @@ jsrt_value jsrt_function_call_method(jsrt_value fn, bool apply) {
 
 /* A bound function is a plain closure over this env (docs/VALUE.md §4.16): the one representation
  * `bind` may add, so `typeof`, `call`, `apply` and a second `bind` need no case of their own.
- * The interpreter builds its bound functions here too (packages/interpreter/src/builtins.zig
+ * The interpreter builds its bound functions here too (packages/engine/src/builtins.zig
  * `fnBind`), so compiled and interpreted code see through each other's. */
 enum { BOUND_TARGET = 0, BOUND_THIS = 1, BOUND_ARGS = 2, BOUND_SLOTS = 3 };
 

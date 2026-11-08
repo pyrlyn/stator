@@ -1252,7 +1252,7 @@ bound arguments as an array in slot 2 — driven by ONE shared runtime thunk (`b
 `jsrt_call_with_this` with slot 1. It is an env, which is where captured values already live
 (§4.3), never a second closure struct: `typeof`, `call`, `apply` and a second `bind` need no case
 of their own. **Landed with plan/T34.** The card reserved two slots; the bound arguments needed the
-third. The interpreter's `bind` (`packages/interpreter/src/builtins.zig`) calls this one, so a
+third. The interpreter's `bind` (`packages/engine/src/builtins.zig`) calls this one, so a
 bound function is the same value whichever tier made it. `new` on a bound function constructs the target with the bound arguments
 first (§10.4.1.2, `jsrt_bound_construct`), and `instanceof` asks the target. `name` is
 `"bound " + name` and `length` is `max(0, length - bound arguments)`. Two limits: `bind` on a class
