@@ -11,6 +11,14 @@
     "verdict": "dynamic",
     "codes": {}
   },
+  "packages/node/src/buffer.ts": {
+    "verdict": "dynamic",
+    "codes": {}
+  },
+  "packages/node/src/crypto.ts": {
+    "verdict": "dynamic",
+    "codes": {}
+  },
   "packages/node/src/fs.ts": {
     "verdict": "dynamic",
     "codes": {}

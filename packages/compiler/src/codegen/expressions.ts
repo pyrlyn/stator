@@ -635,7 +635,9 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
           expr.span,
         );
       }
-      const withReceiver = `jsrt_call_at(${method}, ${String(1 + expr.args.length)}, &${emitter.slotAt(base)}, ${loc})`;
+      // Named, never guessed from argc: a call that omits an optional parameter would otherwise
+      // shift `this` into the arguments (plan-notes 395, 400).
+      const withReceiver = receiverCall(method, emitter.slotAt(base), expr.args.length);
       const withoutReceiver = `jsrt_call_at(${method}, ${String(expr.args.length)}, ${argv}, ${loc})`;
       return emitter.finishStatement(
         [],
@@ -1857,9 +1859,9 @@ export function emitUpdate(emitter: Emitter, expr: UpdateExpr): string {
       break;
     }
     case 'accessor-place': {
-      // Two contiguous slots hold argv: the receiver, then the set value. The get runs
-      // `jsrt_call(callee, 1, &base)` and the set `jsrt_call(callee, 2, &base)` — the same
-      // ABI `method-call` uses, with the fold's answer as the setter's argument. A set-only
+      // Two contiguous slots hold argv: the receiver, then the set value. Both halves go through
+      // `receiverCall`, the ABI `method-call` uses: the getter with no argument, the setter with
+      // the fold's answer. A set-only
       // property answers `undefined` for the missing half (the compound forms' rule).
       const base = emitter.indexSlots.get(expr);
       if (base === undefined) {
@@ -1880,12 +1882,11 @@ export function emitUpdate(emitter: Emitter, expr: UpdateExpr): string {
             ? `jsrt_method(${receiver}, ${place.setSlot})`
             : accessorCallee(emitter, place, 'set')
           : undefined;
-      read =
-        getCallee === undefined ? 'JSRT_UNDEFINED' : `jsrt_call(${getCallee}, 1, &${receiver})`;
+      read = getCallee === undefined ? 'JSRT_UNDEFINED' : receiverCall(getCallee, receiver, 0);
       write = (value: string) =>
         setCallee === undefined
           ? `(${arg} = ${value})`
-          : `(${arg} = ${value}, jsrt_call(${setCallee}, 2, &${receiver}))`;
+          : `(${arg} = ${value}, ${receiverCall(setCallee, receiver, 1)})`;
       break;
     }
   }

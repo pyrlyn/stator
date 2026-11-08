@@ -65,11 +65,28 @@ Options measured (the creator chose (d), 2026-11-06):
   parser is written, and a gap is fixed in stator-ts with a regression test (AGENTS.md golden
   rule 5). 7–12 ms for 640 KB, and 66 KB in `ReleaseSmall`.
 
-The interpreter imports `parser.zig` as a Zig module. It parses `eval` code as a script and
-`new Function` bodies as a function body, the way ECMA-262 §19.2.1 and §20.2.1.1.1 require. Early
-errors become a `SyntaxError` thrown at run time. The check is the error's TYPE (Test262 negative
-tests ask exactly that); its message follows Node's text where stator-ts has the same diagnostic,
-and golden fixtures print `e.name`, never the message, until T14.1 settles message parity.
+The interpreter imports `parser.zig` as a Zig module of its own, because stator-ts's `lib.zig`
+does not export it (`packages/interpreter/src/parse.zig`, T14.1). `parse` reads `eval` code with
+the Script goal (ECMA-262 §19.2.1), or a module. `parseFunction` builds CreateDynamicFunction's
+source text (§20.2.1.1.1), `<prefix> anonymous(<params>\n) {\n<body>\n}`, and parses it once. It
+keeps the tree only when it is that one function with its parameters and its body where the text
+put them: a piece that closes its own bracket early (`a) {}; f(b`) moves one of them, which is
+what parsing the two pieces separately catches.
+
+Early errors become a `SyntaxError` thrown at run time through `jsrt_throw_error`
+(`jsrt_interp_parse_script` in `src/capi.zig`). The check is the error's TYPE, which is exactly
+what Test262 negative tests ask. The message is stator-ts's diagnostic text, which is tsc's
+wording. Module syntax under the Script goal is the exception and uses Node's text. Golden
+fixtures print `e.name`, never the message, because message parity with Node is not settled.
+
+**Parse rate** (plan-notes 401). `pnpm run test262:interp-parse` runs Test262's `test/language/`
+through `parse` in every mode a test's flags ask for. At the pin it passes 19,162 of 23,726 tests
+(80.76%), at about 190 MiB/s. The counts are ratcheted per directory in
+`packages/interpreter/test262-parse.json`. The rest is stator-ts's to close:
+
+- 3,444 tests parse but must not. These are early errors stator-ts reports in its binder or
+  checker, or not at all.
+- 1,120 tests are rejected though valid. These are syntax it does not read.
 
 ## 2. Execution model: bytecode, in Zig
 
@@ -90,6 +107,34 @@ the stator-ts AST to bytecode and runs that.
   GC of its own: it calls the C ABI compiled dynamic code calls (`jsrt_get_prop` with a per-site
   inline cache, `jsrt_call_at`, `jsrt_op_add`, …). An instruction that touches a property owns an
   IC slot in its function's IC table, the same `JSRTIC` compiled code uses.
+
+**As built (T14.2).** `src/compile.zig` turns stator-ts's tree into `src/bytecode.zig`'s format,
+and `src/vm.zig` runs it:
+
+- **A stack machine, not registers.** Each call owns a window of one thread-local value stack:
+  three call values, the locals, then the operand stack. Every operand a statement pushes is gone
+  by the next statement, so a jump never rebalances the stack. The register file above was the
+  spike's; a stack machine needed no register allocator, and the window is still one flat array
+  the collector scans. The stack is 2^20 values per thread, taken from the page allocator rather
+  than the Zig memory core, because the collector needs only the published frames (§4). A
+  suspended frame (§5) has to outlive its window, so T14.4 copies the window into a heap object
+  when it suspends.
+- **Scopes per function.** A function that contains another function keeps every binding it
+  declares in environments (one per scope), because a nested function may capture any of them. A
+  function with no nested function keeps them in frame locals. A name resolves at compile time to
+  a local, an environment slot some hops out, or the global object.
+- **Property ICs.** A named get or set owns a `JSRTIC` in its template's table, as above.
+- **Globals.** `src/builtins.zig` builds the global object. Where the runtime already has a
+  builtin (Map, Date, JSON, Math) the global names it. The rest are Zig natives over the
+  runtime's helpers: the error constructors, `Object`'s reflection, `Symbol`, `Function.prototype`'s
+  `call`/`apply`/`bind`. `Array.prototype` and `String.prototype` hold forwarders to the runtime's
+  method tables, so `Array.prototype.map.call(arrayLike, f)` works. An array-like receiver is
+  copied into an array first, so a method that writes to its receiver (`push`, `splice`, …) throws
+  a `TypeError` on a non-array instead of writing to a copy.
+- **What it refuses.** A construct the compiler does not take yet is reported as unsupported
+  before anything runs: generators, async functions, `await`/`yield`, `for await` (T14.4),
+  modules and `import()` (T14.3), `with`, BigInt, `using`, computed class field names, decorators,
+  `#x in o`, and `super` outside a call or a member.
 
 ## 3. Direct `eval`, indirect `eval`, and scopes
 
@@ -129,10 +174,11 @@ the stator-ts AST to bytecode and runs that.
   to the innermost handler in its own handler table or returns to its caller with the exception
   still pending. Compiled frames pop through their own pads (`JSRT_FRAME` discipline unchanged),
   and no frame of either kind is skipped.
-- **GC roots.** Interpreter frames (register files, the operand stack, the scope chain) are
-  allocated from the GC heap through the Zig memory core (`jsrt_mem`), so the collector traces
-  them; a frame pointer on the native stack is scanned like any other. Bytecode and IC tables are
-  GC-allocated and reachable from the function template.
+- **GC roots.** Each interpreted call publishes its window of the value stack (§2, as built) as a
+  `JSRTFrame`, so the collector traces locals and operands exactly like a compiled function's
+  `JSRT_FRAME`. Environments are GC objects reachable from the closures that capture them.
+  Function templates, bytecode and IC tables live as long as the process. Nothing frees a
+  compiled `eval` string's template yet; T14.3 decides that when `eval` reaches compiled code.
 - **`this`, `new.target`, `arguments`.** `this` is the receiver slot of the call convention
   (`has_receiver`), `undefined` in strict code without one. `new.target` is passed by the construct
   path (`jsrt_construct` → the trampoline's construct entry) and is `undefined` on a plain call.
@@ -182,6 +228,14 @@ QuickJS-NG passes on the same slice and the binary delta of a program with one `
 otherwise it stays behind `--interpreter=stator|quickjs`, defaulting to `stator`. Either answer
 goes to plan-notes with both numbers.
 
+**Measured at T14.2** (plan-notes 403): QuickJS-NG v0.16.2 passes 23,134 of the 23,726 tests in
+`test/language/` at the pin. The interpreter passes 8,105, which is 35.0% of that. The binary
+delta of a program with one `eval` is 394,832 bytes for the interpreter (`ReleaseSmall`, stripped)
+and 979,888 bytes for QuickJS-NG. The size condition holds and the pass condition does not, so
+QuickJS-NG is not retired. 8,817 tests stop at a construct the compiler refuses. Generators and
+async functions are 15,283 of those 16,946 refused runs (a test runs once per mode), so the
+question is measured again after T14.4.
+
 ## 8. Oracle
 
 - **Test262** (Task 6.1, `packages/tests/test262/pin.json`): a second runner mode runs each test
@@ -189,6 +243,11 @@ goes to plan-notes with both numbers.
   entry point directly; after T14.3 it is a compiled `js` program that hands the test source to an
   indirect `eval`, so every test executes in the interpreter and the harness's `$262` helpers are
   compiled code. The pass rate is a column of its own in the Task 6.3 dashboard.
+  `pnpm run test262:interp-exec` (`test262/exec.zig`) runs each test in a child process of its
+  own, once in each mode its flags ask for, with a 10 s timeout. It ratchets the pass counts per
+  directory in `packages/interpreter/test262-exec.json`, and `bench:record` sums that file into
+  the dashboard. The driver needs `libjsrt.a` from `pnpm run runtime`. Module tests are not run
+  before T14.3, and they count as failures.
 - **Differential fuzzing** (Task 6.2): the fuzzer's programs also run as `eval` strings, against
   the pinned Node.
 - **Golden fixtures** (`packages/tests/golden/js/eval_*`): byte-for-byte against Node.
@@ -197,7 +256,7 @@ goes to plan-notes with both numbers.
 
 | Package | Holds | Must not |
 | --- | --- | --- |
-| `packages/interpreter` (new, Zig) | the bytecode compiler, the VM, the entry points the runtime calls (`eval`, the `Function` constructor, the trampoline); built into `libjsrt_interp.a`; imports stator-ts's `parser.zig` | hold its own value model, object model or GC |
+| `packages/interpreter` (Zig) | the parser front (`src/parse.zig`, T14.1); the entry points the runtime calls (`src/capi.zig`: `eval`, the `Function` constructor, the trampoline); the bytecode format, compiler and VM (`src/bytecode.zig`, `src/compile.zig`, `src/vm.zig`, T14.2); the global object (`src/builtins.zig`); the Test262 parse and execution drivers (`test262/parse.zig`, `test262/exec.zig`). It is built into `libjsrt_interp.a` and imports stator-ts's `parser.zig` | hold its own value model, object model or GC |
 | `packages/transpiler` (stator-ts) | the parser | know the interpreter exists |
 | `packages/compiler` (and plan/T41's Zig port) | the `Interpret` HIR node, the eval-visible cells and scope descriptors of §3, and linking `libjsrt_interp.a` only when an `Interpret` node exists | interpret anything at compile time |
 | `packages/runtime` | the C ABI the VM calls | grow a second dispatch path |

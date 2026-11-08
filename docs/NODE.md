@@ -18,21 +18,21 @@ for the module and expected to pass under Stator, from
 `packages/tests/node-suite/expectations.json`, which `pnpm run test:node-suite` holds to the
 truth (plan.md §11c T11.7).
 
-**Total: 110 / 2370 members covered (5%) across 58 modules.**
-**Slice N1 (`tsc`): 30 / 37 (81%).**
-**Node tests: 0 / 17 selected files pass.**
+**Total: 128 / 2370 members covered (5%) across 58 modules.**
+**Slice N1 (`tsc`): 33 / 37 (89%).**
+**Node tests: 2 / 17 selected files pass.**
 
 | Module | Covered | Members | % | Corpus uses | tsc members | Node tests |
 | --- | --- | --- | --- | --- | --- | --- |
 | [`node:assert`](#nodeassert) | 10 | 40 | 25% | 19 | 0 |  |
 | [`node:assert/strict`](#nodeassertstrict) | 0 | 40 | 0% | 0 | 0 |  |
 | [`node:async_hooks`](#nodeasync_hooks) | 0 | 13 | 0% | 2 | 0 |  |
-| [`node:buffer`](#nodebuffer) | 0 | 130 | 0% | 274 | 2 |  |
+| [`node:buffer`](#nodebuffer) | 12 | 130 | 9% | 274 | 2 |  |
 | [`node:child_process`](#nodechild_process) | 0 | 12 | 0% | 17 | 0 |  |
 | [`node:cluster`](#nodecluster) | 0 | 19 | 0% | 0 | 0 |  |
 | [`node:console`](#nodeconsole) | 0 | 44 | 0% | 3 | 0 |  |
 | [`node:constants`](#nodeconstants) | 0 | 237 | 0% | 0 | 0 |  |
-| [`node:crypto`](#nodecrypto) | 0 | 148 | 0% | 17 | 1 |  |
+| [`node:crypto`](#nodecrypto) | 6 | 148 | 4% | 17 | 1 |  |
 | [`node:dgram`](#nodedgram) | 0 | 29 | 0% | 0 | 0 |  |
 | [`node:diagnostics_channel`](#nodediagnostics_channel) | 0 | 21 | 0% | 0 | 0 |  |
 | [`node:dns`](#nodedns) | 0 | 65 | 0% | 1 | 0 |  |
@@ -50,7 +50,7 @@ truth (plan.md §11c T11.7).
 | [`node:net`](#nodenet) | 0 | 79 | 0% | 6 | 0 |  |
 | [`node:os`](#nodeos) | 14 | 23 | 61% | 43 | 2 |  |
 | [`node:path`](#nodepath) | 14 | 16 | 88% | 402 | 3 | 0 / 13 |
-| [`node:path/posix`](#nodepathposix) | 14 | 16 | 88% | 0 | 0 | 0 / 2 |
+| [`node:path/posix`](#nodepathposix) | 14 | 16 | 88% | 0 | 0 | 2 / 2 |
 | [`node:path/win32`](#nodepathwin32) | 0 | 16 | 0% | 2 | 0 | 0 / 2 |
 | [`node:perf_hooks`](#nodeperf_hooks) | 16 | 69 | 23% | 61 | 1 |  |
 | [`node:process`](#nodeprocess) | 17 | 68 | 25% | 822 | 10 |  |
@@ -207,7 +207,7 @@ truth (plan.md §11c T11.7).
 
 ### node:buffer
 
-<details><summary><code>node:buffer</code> — 0 / 130 (0%)</summary>
+<details><summary><code>node:buffer</code> — 12 / 130 (9%)</summary>
 
 | Member | Kind | Covered | Corpus | tsc |
 | --- | --- | --- | --- | --- |
@@ -220,17 +220,17 @@ truth (plan.md §11c T11.7).
 | `Blob.prototype.text` | method | — |  |  |
 | `Blob.prototype.textStream` | method | — |  |  |
 | `Blob.prototype.type` | accessor | — |  |  |
-| `Buffer` | class | — | 155 | ✓ |
-| `Buffer.alloc` | static | — | 14 |  |
+| `Buffer` | class | ✅ | 155 | ✓ |
+| `Buffer.alloc` | static | ✅ | 14 |  |
 | `Buffer.allocUnsafe` | static | — | 15 |  |
 | `Buffer.allocUnsafeSlow` | static | — |  |  |
-| `Buffer.byteLength` | static | — | 20 |  |
+| `Buffer.byteLength` | static | ✅ | 20 |  |
 | `Buffer.compare` | static | — |  |  |
-| `Buffer.concat` | static | — |  |  |
-| `Buffer.copyBytesFrom` | static | — |  |  |
-| `Buffer.from` | static | — | 63 | ✓ |
-| `Buffer.isBuffer` | static | — | 6 |  |
-| `Buffer.isEncoding` | static | — |  |  |
+| `Buffer.concat` | static | ✅ |  |  |
+| `Buffer.copyBytesFrom` | static | ✅ |  |  |
+| `Buffer.from` | static | ✅ | 63 | ✓ |
+| `Buffer.isBuffer` | static | ✅ | 6 |  |
+| `Buffer.isEncoding` | static | ✅ |  |  |
 | `Buffer.of` | static | — |  |  |
 | `Buffer.poolSize` | static | — |  |  |
 | `Buffer.prototype.asciiSlice` | method | — |  |  |
@@ -241,7 +241,7 @@ truth (plan.md §11c T11.7).
 | `Buffer.prototype.base64urlWrite` | method | — |  |  |
 | `Buffer.prototype.compare` | method | — |  |  |
 | `Buffer.prototype.copy` | method | — |  |  |
-| `Buffer.prototype.equals` | method | — |  |  |
+| `Buffer.prototype.equals` | method | ✅ |  |  |
 | `Buffer.prototype.fill` | method | — |  |  |
 | `Buffer.prototype.hexSlice` | method | — |  |  |
 | `Buffer.prototype.hexWrite` | method | — |  |  |
@@ -284,14 +284,14 @@ truth (plan.md §11c T11.7).
 | `Buffer.prototype.readUint8` | method | — |  |  |
 | `Buffer.prototype.readUintBE` | method | — |  |  |
 | `Buffer.prototype.readUintLE` | method | — |  |  |
-| `Buffer.prototype.slice` | method | — |  |  |
-| `Buffer.prototype.subarray` | method | — |  |  |
+| `Buffer.prototype.slice` | method | ✅ |  |  |
+| `Buffer.prototype.subarray` | method | ✅ |  |  |
 | `Buffer.prototype.swap16` | method | — |  |  |
 | `Buffer.prototype.swap32` | method | — |  |  |
 | `Buffer.prototype.swap64` | method | — |  |  |
 | `Buffer.prototype.toJSON` | method | — |  |  |
 | `Buffer.prototype.toLocaleString` | method | — |  |  |
-| `Buffer.prototype.toString` | method | — |  |  |
+| `Buffer.prototype.toString` | method | ✅ |  |  |
 | `Buffer.prototype.ucs2Slice` | method | — |  |  |
 | `Buffer.prototype.ucs2Write` | method | — |  |  |
 | `Buffer.prototype.utf8Slice` | method | — |  |  |
@@ -694,7 +694,7 @@ truth (plan.md §11c T11.7).
 
 ### node:crypto
 
-<details><summary><code>node:crypto</code> — 0 / 148 (0%)</summary>
+<details><summary><code>node:crypto</code> — 6 / 148 (4%)</summary>
 
 | Member | Kind | Covered | Corpus | tsc |
 | --- | --- | --- | --- | --- |
@@ -741,10 +741,10 @@ truth (plan.md §11c T11.7).
 | `ECDH.prototype.getPublicKey` | method | — |  |  |
 | `ECDH.prototype.setPrivateKey` | method | — |  |  |
 | `ECDH.prototype.setPublicKey` | method | — |  |  |
-| `Hash` | class | — |  |  |
-| `Hash.prototype.copy` | method | — |  |  |
-| `Hash.prototype.digest` | method | — |  |  |
-| `Hash.prototype.update` | method | — |  |  |
+| `Hash` | class | ✅ |  |  |
+| `Hash.prototype.copy` | method | ✅ |  |  |
+| `Hash.prototype.digest` | method | ✅ |  |  |
+| `Hash.prototype.update` | method | ✅ |  |  |
 | `Hmac` | class | — |  |  |
 | `Hmac.prototype.digest` | method | — |  |  |
 | `Hmac.prototype.update` | method | — |  |  |
@@ -798,7 +798,7 @@ truth (plan.md §11c T11.7).
 | `createDiffieHellman` | function | — |  |  |
 | `createDiffieHellmanGroup` | function | — |  |  |
 | `createECDH` | function | — |  |  |
-| `createHash` | function | — | 5 | ✓ |
+| `createHash` | function | ✅ | 5 | ✓ |
 | `createHmac` | function | — |  |  |
 | `createPrivateKey` | function | — |  |  |
 | `createPublicKey` | function | — |  |  |
@@ -821,7 +821,7 @@ truth (plan.md §11c T11.7).
 | `getFips` | function | — |  |  |
 | `getHashes` | function | — |  |  |
 | `getRandomValues` | getter | — | 1 |  |
-| `hash` | function | — | 2 |  |
+| `hash` | function | ✅ | 2 |  |
 | `hkdf` | function | — |  |  |
 | `hkdfSync` | function | — |  |  |
 | `pbkdf2` | function | — |  |  |

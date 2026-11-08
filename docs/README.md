@@ -11,7 +11,7 @@ How stator is specified. [`plan.md`](../plan.md) is the spec and the authority, 
 | [CONFIG.md](CONFIG.md) | `stator.config.json`: every CLI option in one validated file — keys, precedence, discovery |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | D2 gallery: pipeline, `stator build`, packages, value boxing |
 | [MODES.md](MODES.md) | `--mode=ts` vs `--mode=js`: file acceptance, diagnostics, mixed-graph boundaries |
-| [INTERPRETER.md](INTERPRETER.md) | Phase 14 design: the `js`-mode interpreter for `eval` and `new Function` — Zig in the runtime, stator-ts's parser, bytecode; measured spike |
+| [INTERPRETER.md](INTERPRETER.md) | Phase 14 design: the `js`-mode interpreter for `eval` and `new Function` — Zig in the runtime, stator-ts's parser, bytecode; measured spike; Test262 pass rate and the QuickJS-NG comparison |
 | [BUNDLER.md](BUNDLER.md) | Phase 12 design: js-mode dependency bundling contract, adapter API, measured spike |
 | [SUBSET.md](SUBSET.md) | Feature × mode matrix (`static` / `dynamic` / `error` / `not-yet`) |
 | [DIAGNOSTICS.md](DIAGNOSTICS.md) | Sole allocator of `STA` codes — never allocate a code anywhere else |

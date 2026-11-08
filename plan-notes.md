@@ -14505,3 +14505,258 @@ messages.
 **For T41.** These are TypeScript compiler changes (gate, types, lowering, codegen). The Zig port
 in `packages/compiler-zig` has to follow them, or `test:zigdiff` will report the T27 fixtures as
 different.
+
+## 400. T11.6: `Buffer` is a strict TypeScript class over `Uint8Array`, and four compiler bugs it found (2026-11-07)
+
+**What landed.** `packages/node/src/internal/buffer.ts` declares `class Buffer extends Uint8Array`
+(plan/T11.6a, note 398) with `from`, `alloc`, `isBuffer`, `isEncoding`, `byteLength`, `concat`,
+`copyBytesFrom` and the instance's `toString`, `equals`, `slice` and `subarray`, each checked
+against Node v26.7.0 `lib/buffer.js` (argument clamping order, `ERR_UNKNOWN_ENCODING`,
+`ERR_OUT_OF_RANGE` with Node's numeric separators). `node:buffer` exports it by name, and under
+`--node` a free `Buffer` is that import (`NODE_GLOBALS`). `fs.readFileSync` without an encoding
+answers a `Buffer`, so `tsc`'s `readFile` (byte-order-mark sniffing over `buffer[i]`, then
+`buffer.toString("utf16le", 2)`) runs unchanged. `docs/NODE.md`: `node:buffer` 12/130.
+
+**No namespace.** Every use of `Buffer` calls a static, and a static called through a class object
+is `STA1214` (note 399), so `node:buffer` has no default export and `require('buffer')` does not
+land. The named import and the global are the class itself, which compile to the erased statics.
+Since note 399 a namespace can hold a class, and that exposes a gate gap where the two notes meet:
+reading a static *method* of a `Uint8Array` subclass through a class object (`const W = m.V;
+W.make()`) is not refused and lowering fails with `STA4067`, where an ordinary class gets the
+`STA1214` refusal. It reproduces on `origin/main` without `Buffer`; the gate fix is a follow-up.
+
+**Static side.** TypeScript holds a subclass's static `from` to `Uint8Array.from` (TS2417). Generic
+overloads are `STA1214`, so `from` has three non-generic overloads; the third exists only to keep
+the static side compatible and is a gap, as are the `ArrayBuffer` and object forms.
+
+**Compiler bugs fixed on the way** (each in `packages/compiler` and `packages/compiler-zig`):
+
+1. *A static of a class imported from another module was invisible* (`STA4066`): the lowering
+   looked the static's binding up in the reading module's scope. `staticBindingType` reads the
+   declaring module's scope as well, since a static's HIR name is the same in every module. Golden
+   `ts/module_statics` (field, `+=`, `++`, a private static accessor, an inherited static, a view
+   class's static).
+2. *A method a `Uint8Array` subclass declares lost to the `TYPED_OPS` row* for calls: `b.slice(…)`
+   ran `Uint8Array`'s copy, not `Buffer`'s shared view. The call path now skips the row when the
+   member is the user class's (`isUserClassMember`, the gate's own rule).
+3. *A method value read off a view class* (`const f = b.equals`) was `STA4049`: the read tested
+   `kind === 'object'`, not `classLayoutOf`.
+4. *A dynamic method call with fewer arguments than parameters lost `this`*, for every class:
+   `o.m(a)` on an untyped `o` still chose the call shape from `argc == arity + 1`, the guess note
+   395 removed from typed calls. The `dyn-method-call` and `field-call` paths now name their
+   receiver (`receiverCall`). `js/class_call_arity` gains the untyped case.
+
+**zigdiff.** `golden/ts/node_buffer.ts` is `different` in the lower stage, at its baseline of 11:
+in `Buffer.concat([new Uint8Array(…), Buffer.from('de')])` the TypeScript frontend maps the
+literal's element union (`Uint8Array<ArrayBuffer> | Buffer`, which `tsc` does not reduce) to
+`unknown`, while the Zig port, on `packages/transpiler`'s checker, reduces it to `Buffer`. Both
+lower and run the same; the checker difference belongs to the transpiler, like note 398's `this[i]`.
+
+**Follow-up, not fixed.** A receiver typed as base `Uint8Array` that holds a `Buffer` dispatches
+statically to `Uint8Array`'s member, where Node dispatches to the override (`slice` copies instead
+of sharing). Fixing it means a class check at every `TYPED_OPS` call whose receiver may be a
+subclass; it waits for a program that needs it. Listed in `docs/SUBSET.md`.
+
+## 401. T14.1: the interpreter's parse entry on Test262 `language/`; parse speed and `libjsrt_interp.a` (2026-11-07)
+
+**What landed.** `packages/interpreter/` (Zig 0.17.0). `src/parse.zig` is the parse entry from
+docs/INTERPRETER.md §1. `src/capi.zig` is `jsrt_interp_parse_script`, which throws `SyntaxError`
+through `jsrt_throw_error`. `test262/parse.zig` is the Test262 driver. stator-ts's `lib.zig` does
+not export `parser.zig`, so the package roots a module of its own at that file, and the tree types
+are named through `parser.parse`'s signature. `packages/transpiler` is unchanged.
+
+**Rate.** Test262 is at the pin (`packages/tests/test262/pin.json`, `771005236e88`). The driver
+reads every `test/language/**/*.js` that is not a `_FIXTURE`, in each mode Test262's
+INTERPRETING.md asks for. A `negative: phase: parse` test must answer a `SyntaxError`, and every
+other test must parse.
+
+| | Value |
+| --- | --- |
+| Tests | 23,726 (40,694 parses: both modes unless a flag picks one) |
+| Pass | 19,162 (80.76%), ratcheted per directory in `packages/interpreter/test262-parse.json` |
+| Parse speed, `ReleaseFast`, Apple M3 Max | 188–194 MiB/s over 73.41 MiB (3 runs; parse calls only, arena reset per test) |
+| `libjsrt_interp.a`, `ReleaseFast` | 3,152,688 B; 562,888 B after `strip -S` (`__TEXT` 423,458 B) |
+| `libjsrt_interp.a`, `ReleaseSmall` / `ReleaseSafe` | 323,280 B / 3,553,464 B |
+
+**What fails is stator-ts's.** It is coordinated with that package's owners and is not fixed in
+this change.
+
+1. **3,444 early errors not reported** (2,951 sloppy, 320 strict, 173 module). The largest groups,
+   by directory unless the line says otherwise:
+   - `class` (1,092): strict-mode `yield`, escaped keywords, rest-parameter trailing comma, private
+     names.
+   - Destructuring (516 tests carry the `destructuring-binding` tag, overlapping the groups here):
+     rest not last, rest with an initializer.
+   - Invalid assignment targets (`expressions/assignmenttargettype`, 198).
+   - RegExp pattern early errors (`literals/regexp`, 173): modifiers, group names.
+   - Redeclarations (`block-scope/syntax`, 102).
+   - `"use strict"` with non-simple parameters.
+
+   tsc reports many of these from its binder (`checkStrictModeIdentifier`, redeclarations) or its
+   checker. stator-ts's binder would answer part of them, but the interpreter reaches it only once
+   `lib.zig` exports the parser along with the binder it already exports.
+2. **779 identifiers rejected** (`Invalid character.`). The cause is a Unicode escape or a non-ASCII
+   character at an identifier's start: in private names (`#\u{6F}`, `#℘`, ZWNJ/ZWJ inside one),
+   and in `identifiers/start-unicode-*-class-escaped`.
+3. **232 proposal tests rejected**: `import defer` (142) and source-phase `import source` (90).
+   `import.defer(…)` and `import.source(…)` also set `is_module` the way `import.meta` does, so the
+   Script goal rejects them with the `import.meta` message.
+4. **75 top-level `await` tests rejected** under the module goal (`module-code/top-level-await`).
+   The parser has no goal flag, so a module that neither imports nor exports reads `await` as an
+   identifier.
+5. **34 other rejects**:
+   - an escaped identifier part (15)
+   - class bodies (8)
+   - U+2028 / U+2029 between tokens or in a comment (4)
+   - hashbang comments (3)
+   - `using` / `await using` (2)
+   - import attributes (1)
+   - a no-break space (1)
+
+TypeScript-only syntax in JavaScript source (a type annotation, `as`, `enum`) still parses: neither
+stator-ts nor the interpreter rejects it, and Test262 does not test it.
+
+## 402. T11.6: `node:crypto` digests over `std/hash` (2026-11-07)
+
+**What landed.** `packages/node/src/internal/crypto.ts` gives `createHash`, the `Hash` class
+(`update`, `copy`, `digest`) and the one-shot `hash`, each checked against Node v26.7.0
+`lib/internal/crypto/hash.js`: `update` chains and reads a string in its input encoding (UTF-8
+when absent or unknown), `digest` answers a `Buffer` without an encoding or with an unknown one
+and text otherwise, a finished hash throws `ERR_CRYPTO_HASH_FINALIZED` from `digest`, `update` and
+`copy`, and `hash` defaults to hex and throws `ERR_INVALID_ARG_VALUE` for an unknown output
+encoding. `node:crypto` has a namespace default export, and `require('crypto')` answers it, which
+is how `tsc` loads it (`sys.createSHA256Hash`). `docs/NODE.md`: `node:crypto` 6/148, slice N1
+33/37.
+
+**One-shot backing.** `std/hash` computes a digest over a whole input, so `update` keeps copies of
+its input and `digest` hashes their concatenation once. The answer is the same; the cost is the
+buffered input, which for `tsc` is one file's text. A streaming `std/hash` is not needed until a
+caller hashes more than it can hold.
+
+**Algorithms.** `std/hash` has SHA-256, SHA-1 and MD5, so those are the algorithms, under the
+spellings OpenSSL reads case-insensitively (`sha-256`, `sha2-256`, `RSA-SHA256`, …). Any other
+throws Node's own "Digest method not supported", where Node would hash with OpenSSL (`sha512`,
+`sha384`, …). Adding one is a `std/hash` digest plus a case in `digestName`.
+
+**Gaps.** Arguments are not type-checked (`ERR_INVALID_ARG_TYPE`), as `node:timers` documents for
+its own; `DataView` input and the `options` of `createHash` and `copy` are not landed;
+`x instanceof crypto.Hash` through the namespace is `STA1214` in `ts` mode ("instanceof against
+anything but a class name"), while the named `Hash` works.
+
+## 403. T14.2: the interpreter on Test262 `language/`, and the QuickJS-NG comparison of docs/INTERPRETER.md §7 (2026-11-07)
+
+**What landed.** In `packages/interpreter/`:
+
+- `src/bytecode.zig`, `src/compile.zig` and `src/vm.zig` are the bytecode compiler and VM of
+  docs/INTERPRETER.md §2.
+- `src/builtins.zig` is the global object.
+- `test262/exec.zig` is the execution driver. It shares its metadata, mode, corpus and ratchet
+  code with the parse driver through `test262/common.zig`.
+
+`bench:record` reads `test262-exec.json` into a new dashboard column, "Test262 language/
+(interpreter)".
+
+**Plan contradiction.** T14.2's card says interpreter frames come from the Zig memory core (§4).
+They come from one thread-local stack of 2^20 values, allocated by the page allocator. Each call
+publishes its window as a `JSRTFrame`, which is all the collector needs to trace it. The heap
+frame §5 needs for a suspended generator is T14.4's: it copies the window into a heap object when
+the generator suspends. docs/INTERPRETER.md §2 ("As built") and §4 now say so.
+
+**Rate.** At the pin (`packages/tests/test262/pin.json`, `771005236e88`), 8,105 of 23,726 tests
+pass (34.16%). A test passes only if it passes in every mode its flags ask for. Each test runs in
+its own child process with a 10 s timeout. The run had no timeouts and 8 crashes. The 817 module
+tests are not run before T14.3 and count as failures.
+
+8,817 tests hold a construct the compiler refuses. The driver counts these per run, and a test
+runs once in each mode its flags ask for:
+
+| Construct | Runs |
+| --- | ---: |
+| generators | 13,010 |
+| async functions | 2,273 |
+| `import()` | 495 |
+| computed class field names | 408 |
+| BigInt | 338 |
+| `with` | 258 |
+| other | 164 |
+
+The 8 crashes are runtime panics, not interpreter faults:
+
+- `STA2005` for a property key containing U+0000, in two class-field early-error tests.
+- `STA2005` for an invalid named-group regular expression literal.
+- `STA2004` when a regular expression object grows a property.
+
+**QuickJS-NG v0.16.2** is built from its release tarball (CMake `Release`, `-O3`, Apple clang
+21.0.0). Its `run-test262` ran over the same `test/language/` with `mode=all`, `async=yes`,
+`module=yes`, its own `[features]` list, and no `[exclude]` entries. It reports
+`47/43566 errors, 553 skipped`, so it passes 23,726 − 553 skipped − 39 failing files = 23,134
+tests (97.51%).
+
+The interpreter passes **35.0%** of what QuickJS-NG passes. §7 requires at least 95%.
+
+**Binary delta of one `eval`,** stripped, on an Apple M3 Max, macOS arm64:
+
+| Engine | Smaller program | Same program with one `eval` | Delta |
+| --- | ---: | ---: | ---: |
+| Interpreter, `ReleaseSmall` | 277,368 B | 672,200 B | **+394,832 B** |
+| Interpreter, `ReleaseFast` | 277,368 B | 836,152 B | +558,784 B |
+| QuickJS-NG, `clang -O2` | 33,496 B | 1,013,384 B | **+979,888 B** |
+
+- For the interpreter, both programs are Zig programs linking `libjsrt.a`. The smaller one prints
+  `String(undefined)`. The other runs `interp.runScript("1 + 2")` and prints `3`.
+- For QuickJS-NG, the smaller program is an empty C `main`. The other does
+  `JS_NewRuntime` → `JS_NewContext` → `JS_Eval("1 + 2")` → `JS_ToCString`.
+
+The interpreter's delta is smaller.
+
+**Decision under §7.** The size condition holds and the pass condition does not, so QuickJS-NG is
+not retired. No `--interpreter` flag is added by T14.2: neither engine is reachable from compiled
+code before T14.3. Generators and async functions are 15,283 of the 16,946 refused runs, so §7 is
+measured again after T14.4.
+
+## 404. T11.7: untyped reads and writes run class accessors; two `path` tests pass (2026-11-07)
+
+**The bug.** A class instance reached through an untyped binding (`let k; k = new K()`, a
+`require` result, a CommonJS `module.exports`) has no layout at the use site, so `k.x` and
+`k.x = v` are the dynamic read and write. Before this change neither looked at the class's
+accessor halves: `jsrt_get_prop` found the plain method `x` or nothing and answered `undefined`
+for `get x`, and `jsrt_set_prop` added an own field `x` beside the setter, which never ran. The
+lowering made the write worse: a checker that narrows `k` to `K` by control flow sent the write
+down the fixed-slot path, which has no slot for an accessor.
+
+**The fix.** `packages/runtime/src/jsrt_shape.c`: the fixed-object method lookup is now
+`fixed_member_get(obj, half, key)`, which finds `x`, `get x` or `set x` in the class method table
+and in the hidden `#method:` field slots of capturing methods, walking the parent chain as before.
+A read that misses fields, methods and the RegExp members calls the `get x` half with the object
+as `this`; a write that misses the fields calls `set x`, and a getter with no setter throws
+strict code's `TypeError` ("Cannot set property x of #<K> which has only a getter"), since a
+compiled module is strict. `src/lower/index.ts` (mirrored in `compiler-zig/src/lower/assign.zig`)
+sends a write whose receiver the checker types as an object owning an accessor named `x` to the
+dynamic write, as it already did for a private accessor. Typed sites are unchanged: they call the
+halves directly. Golden `tests/golden/js/class_accessor_untyped`.
+
+**Node tests.** `test-path-posix-exists.js` and `test-path-posix-relative-on-windows.js` pass and
+are flipped (`pnpm run test:node-suite`: 17 selected at v26.7.0, 2 passed, 13 expected-fail,
+2 skipped; `docs/NODE.md`: "Node tests: 2 / 17 selected files pass"). The 13 `fail` reasons were
+stale (`node:process` and `__commonJSMin` have landed) and now name where each file stops first:
+`path.win32` (basename, isabsolute, normalize, zero-length-strings, win32-exists); the bundled
+CommonJS helpers `__toESM`/`__copyProps`, which need `Object.defineProperty` and
+`Object.getOwnPropertyDescriptor` on a dynamic object (T12.3 over T11.4), then `path.win32`
+(dirname, makelong, parse-format, test-path); `JSON.stringify` of a maybe-undefined value
+(Phase 5, extname) or as a value (join, relative); and `for-of` destructuring (Phase 6), then
+`path.matchesGlob` (glob). `path.win32` is the blocker most files share.
+
+## 405. The shared CI moved to `pyrlyn-archive/ci-old`; `pipeline.yml` calls it there (2026-11-08)
+
+**Evidence.** Every `pipeline.yml` run since 2026-11-06 failed at startup, on `main` and on every pull
+request, so the required `pipeline / gate` check never reported and nothing could merge. The run
+page says: `error parsing called workflow ".github/workflows/pipeline.yml" ->
+"pyrlyn/ci/.github/workflows/ci.yml@main": workflow was not found`. `gh api repos/pyrlyn/ci` answers
+with `full_name: pyrlyn-archive/ci-old`: the repository was moved, and GitHub redirects the API,
+`git` and composite actions (the `macos-runner` job kept passing) but not reusable-workflow
+references. No new `ci` repository exists under `pyrlyn`.
+
+**Change.** Every `pyrlyn/ci` reference under `.github/` (`pipeline.yml`, `ci.yml`,
+`dependabot.yml`, `sync-docs.yml`, `infra.yml`, `jactionlint.yaml`) and in `docs/TOOLCHAIN.md` and
+`docs/sonarcloud-setup.md` now names `pyrlyn-archive/ci-old`, still at `@main` (notes 361, 362, 375).
+Historical notes and `done.md` keep the old name.

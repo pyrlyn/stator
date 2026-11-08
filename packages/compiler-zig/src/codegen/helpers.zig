@@ -196,9 +196,8 @@ pub fn indexGetCall(arena: Allocator, target: *const HType, object: []const u8, 
 /// Only an array whose element is Unknown may be made sparse: a typed element has no value that
 /// could stand for a hole.
 /// A call whose receiver sits in the rooted slot `receiver`, its `arg_count` arguments in the
-/// slots after it: a method call or a constructor. Never `jsrt_call` over the whole run: that one
-/// guesses the receiver from `argc == arity + 1`, so a call that omits an optional parameter or
-/// passes an extra one shifted `this` into the arguments (plan-notes 395).
+/// slots after it: a method call, a constructor or an accessor. Never `jsrt_call` over the whole
+/// run: that one takes no receiver, so `this` would become the first argument (plan-notes 395).
 pub fn receiverCall(arena: Allocator, callee: []const u8, receiver: []const u8, arg_count: usize) Allocator.Error![]const u8 {
     return std.fmt.allocPrint(arena, "jsrt_call_with_this({s}, {s}, {d}, &{s} + 1)", .{ callee, receiver, arg_count, receiver });
 }
