@@ -1607,7 +1607,7 @@ supply throughput numbers; GC event durations alone are not evidence of beating 
 
 ---
 
-### T70. Interpreter performance above QuickJS across the benchmark set → [`plan/T70`](plan/T70/task.md)
+### T70. Interpreter performance above QuickJS and PrimJS across the benchmark set → [`plan/T70`](plan/T70/task.md)
 
 ## 12. Make it better — the optimization ladder (post-MVP, in this order)
 

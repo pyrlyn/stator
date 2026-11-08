@@ -19,6 +19,9 @@ import { onPath } from '../support/on-path.ts';
 import { timedRun } from '../support/timed-run.ts';
 import { engineBinary, REPO } from './binary.ts';
 
+const primjs = process.env['PRIMJS'];
+const requireFaster = process.argv.includes('--require-faster');
+if (requireFaster && !primjs) throw new Error('--require-faster requires PRIMJS');
 const runs = Number(process.env['BENCH_RUNS'] ?? 7);
 if (!Number.isSafeInteger(runs) || runs < 5) throw new Error('BENCH_RUNS must be at least 5');
 const qjs = process.env['QJS'] ?? 'qjs';
@@ -34,7 +37,6 @@ const engine = join(snapshot, process.platform === 'win32' ? 'stator-engine.exe'
 copyFileSync(selectedEngine, engine);
 const engineSha256 = createHash('sha256').update(readFileSync(engine)).digest('hex');
 const baseline = process.env['STATOR_ENGINE_BASELINE'];
-const primjs = process.env['PRIMJS'];
 const tools = [
   { name: 'interp', command: engine, args: ['run', '--mode=interp', '--lang=js'] },
   { name: 'quickjs', command: qjs, args: ['--script'] },
@@ -88,7 +90,9 @@ const rows = readdirSync(sourceDir)
     );
     return {
       name,
-      faster: (measurements[0]?.p75Ms ?? Infinity) < (measurements[1]?.p25Ms ?? 0),
+      faster: measurements
+        .filter((m) => m.tool === 'quickjs' || m.tool === 'primjs')
+        .every((m) => (measurements[0]?.p75Ms ?? Infinity) < m.p25Ms),
       sha256: createHash('sha256').update(readFileSync(file)).digest('hex'),
       stdout: expected.stdout,
       measurements,
@@ -97,7 +101,7 @@ const rows = readdirSync(sourceDir)
 const report = {
   timestamp: new Date().toISOString(),
   revision: execFileSync(git, ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim(),
-  diff: execFileSync(git, ['diff', '--', 'packages/engine', 'packages/runtime'], {
+  diff: execFileSync(git, ['diff', 'HEAD', '--', 'packages/engine', 'packages/runtime'], {
     cwd: REPO,
     encoding: 'utf8',
   }),
@@ -134,7 +138,7 @@ const losses = rows.filter((row) => !row.faster).map((row) => row.name);
 process.stdout.write(
   `Faster with non-overlapping interquartile ranges: ${rows.length - losses.length}/${rows.length}\n`,
 );
-if (process.argv.includes('--require-faster') && losses.length > 0) {
-  process.stderr.write(`QuickJS target unmet: ${losses.join(', ')}\n`);
+if (requireFaster && losses.length > 0) {
+  process.stderr.write(`QuickJS/PrimJS target unmet: ${losses.join(', ')}\n`);
   process.exitCode = 1;
 }

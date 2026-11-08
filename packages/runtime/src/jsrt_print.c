@@ -2143,8 +2143,8 @@ static void json_value(JSRTBuf *out, jsrt_value v, const JSONAncestor *chain, bo
     jsrt_buf_puts(out, v == JSRT_TRUE ? "true" : "false");
     return;
   }
-  if (jsrt_is_double(v)) {
-    double d = jsrt_to_double(v);
+  if (jsrt_is_number(v)) {
+    double d = jsrt_number_value(v);
     if (isnan(d) || isinf(d)) {
       jsrt_buf_puts(out, "null"); /* §25.5.2.2: non-finite serializes as null */
       return;

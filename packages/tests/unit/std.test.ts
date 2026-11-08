@@ -355,6 +355,40 @@ test('std/thread publishes captured results, errors and main callbacks', NATIVE_
   assert.equal(result.stdout, 'true\ntrue\nmicrotask\n15\nanswer\n9\nworker failed\n');
 });
 
+test(
+  'string append buffers stay immutable across the first worker and concurrent forks',
+  NATIVE_ONLY,
+  () => {
+    const result = buildAndRun(`
+    import { spawn } from 'std/thread';
+    let prefix = '';
+    for (let i = 0; i < 100; i++) prefix += 'ab';
+    const saved = prefix;
+    function work(suffix: string): string {
+      let text = saved;
+      for (let i = 0; i < 4000; i++) text += suffix;
+      return text;
+    }
+    const a = spawn(() => work('x'));
+    const b = spawn(() => work('y'));
+    const c = spawn(() => work('z'));
+    const mainText = work('m');
+    async function main(): Promise<void> {
+      const x = await a.join();
+      const y = await b.join();
+      const z = await c.join();
+      console.log(saved === 'ab'.repeat(100));
+      console.log(x === saved + 'x'.repeat(4000), y === saved + 'y'.repeat(4000));
+      console.log(z === saved + 'z'.repeat(4000), mainText === saved + 'm'.repeat(4000));
+      console.log(work('q') === saved + 'q'.repeat(4000));
+    }
+    main();
+  `);
+    assert.equal(result.status, 0, result.stderr.toString());
+    assert.equal(result.stdout, 'true\ntrue true\ntrue true\ntrue\n');
+  },
+);
+
 test('std/sync mutex contention and condition predicates publish shared state', NATIVE_ONLY, () => {
   const result = buildAndRun(`
     import { spawn } from 'std/thread';

@@ -15129,6 +15129,14 @@ took 209.88 s, versus 60.28 s without flags (automatic workers). Both exited 0 a
 compared byte-for-byte with `cmp`. These are single samples on a shared workstation; the
 whole `ci` duration was not benchmarked.
 
+## T70. Require both interpreter competitors (2026-11-08)
+
+The creator directs T70 to continue after PR #293 and beat both QuickJS and PrimJS on every
+committed workload. Previously `plan/T70/task.md` and `packages/tests/engine/quickjs.ts` required
+only QuickJS and treated PrimJS as an optional measured comparator. The card and plan now make
+both mandatory for the completion gate. Preserve the seven input programs and the existing
+non-overlapping-interquartile criterion, interpreter-only execution and pinned Node oracle.
+
 ## T74. Separate startup and compilation, then order baseline IR blocks (2026-11-08)
 
 The creator requests all three performance axes (startup, JIT compilation, warmed execution),
