@@ -496,7 +496,9 @@ jsrt_value jsrt_date_from_components(jsrt_value year, jsrt_value month, jsrt_val
 static void write_iso(char *out, size_t n, double t) {
   const double day = floor_div(t, MS_PER_DAY);
   const Civil c = civil_from_days(day);
-  char year[10];
+  /* Sign, ten digits and the terminator: any int fits, so gcc's -Wformat-truncation can prove
+   * the snprintf below safe. Real years need seven (the range ends at +275760). */
+  char year[12];
   if (c.year >= 0 && c.year <= 9999) {
     snprintf(year, sizeof year, "%04d", (int)c.year);
   } else {
