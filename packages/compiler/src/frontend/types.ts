@@ -345,6 +345,10 @@ function classTypeToHType(type: ts.Type, checker: ts.TypeChecker, depth: number)
   // each, and it must take the BASE's slot -- one slot, at the base's index -- which falls out of
   // "first claim wins" and does not fall out of any ranking of the merged list.
   const chain = ancestry(declaration, checker); // root ancestor first, this class last
+  // A `Uint8Array` subclass has no slots: its storage is the view's, and the lib members the
+  // checker lists for it are the view's own, so only the members user classes declare are kept
+  // (plan/T11.6a). The static side maps here too, as it does for every class.
+  const view = extendsUint8Array(declaration, checker);
   // A generic base's members arrive with its parameters unbound (`value: T | undefined` for
   // `Box`), so the layout grounds each ancestor's properties in THIS declaration's context
   // (`value: number | undefined` for `class Sub extends Box<number>`). Ordinary chains ground
@@ -375,7 +379,7 @@ function classTypeToHType(type: ts.Type, checker: ts.TypeChecker, depth: number)
         ? privateOwnerName(property, at, chain, ancestor)
         : undefined;
       const name = owner === undefined ? rawName : privateSlotName(owner, rawName);
-      if (at === undefined || claimed.has(name)) {
+      if (at === undefined || claimed.has(name) || (view && at.getSourceFile().isDeclarationFile)) {
         continue;
       }
       claimed.add(name);
@@ -435,20 +439,55 @@ function classTypeToHType(type: ts.Type, checker: ts.TypeChecker, depth: number)
       }
     }
   }
-  // Nearest ancestor first, which is the order `hTypeAssignable` and `instanceof` read it in.
-  // A generic ancestor names its tuple (`Box<number>`), not the declaration: the descriptor
-  // that owns the inherited members IS the specialization, and every receiver check reads
-  // these names. An incomplete tuple (a refused program's) keeps the source name, exactly as
-  // before, so this stays total where the gate still refuses.
-  const bases = chain
-    .slice(0, -1)
-    .reverse()
-    // Bases stay declarations, except through `extends C` on a bound expression (plan.md §8
-    // step 12(d)), which names its descriptor by binding. An unbound base has no descriptor
-    // and answers `''`, filtered below like an incomplete tuple.
-    .map((c) => baseDescriptorName(c, declaration, checker))
-    .filter((n) => n !== '');
-  return hObject(className, fields, methods, bases);
+  const bases = chainBaseNames(chain, declaration, checker);
+  // The gate admits no instance field on a view class, so `fields` is empty here.
+  return view
+    ? { kind: 'uint8array', subclass: { name: className, bases, methods } }
+    : hObject(className, fields, methods, bases);
+}
+
+/** The descriptor names of `chain`'s ancestors (root first, `declaration` last), nearest first,
+ * which is the order `hTypeAssignable` and `instanceof` read them in. A generic ancestor names its
+ * tuple (`Box<number>`), not the declaration: the descriptor that owns the inherited members IS
+ * the specialization, and every receiver check reads these names. An incomplete tuple (a refused
+ * program's) keeps the source name, so this stays total where the gate still refuses. */
+function chainBaseNames(
+  chain: readonly (ts.ClassDeclaration | ts.ClassExpression)[],
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  checker: ts.TypeChecker,
+): string[] {
+  return (
+    chain
+      .slice(0, -1)
+      .reverse()
+      // Bases stay declarations, except through `extends C` on a bound expression (plan.md §8
+      // step 12(d)), which names its descriptor by binding. An unbound base has no descriptor
+      // and answers `''`, filtered below like an incomplete tuple.
+      .map((c) => baseDescriptorName(c, declaration, checker))
+      .filter((n) => n !== '')
+  );
+}
+
+/** Whether the root of `declaration`'s chain extends the global `Uint8Array` (plan/T11.6a): such
+ * a class's instances are views, laid out by the runtime rather than by a slot list. */
+export function extendsUint8Array(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  checker: ts.TypeChecker,
+): boolean {
+  const root = ancestry(declaration, checker)[0];
+  const clause = root?.heritageClauses?.find((h) => h.token === ts.SyntaxKind.ExtendsKeyword);
+  const expression = clause?.types[0]?.expression;
+  return expression !== undefined && isGlobalNamed(expression, checker, 'Uint8Array');
+}
+
+/** Whether `node` is the bare identifier `name` bound only by declaration files: the global, not a
+ * user binding that shadows it. */
+export function isGlobalNamed(node: ts.Expression, checker: ts.TypeChecker, name: string): boolean {
+  if (!ts.isIdentifier(node) || node.text !== name) {
+    return false;
+  }
+  const declarations = checker.getSymbolAtLocation(node)?.declarations ?? [];
+  return declarations.length > 0 && declarations.every((d) => d.getSourceFile().isDeclarationFile);
 }
 
 /** `null` means "not an object literal's shape" — the caller falls through to Unknown.
@@ -1611,6 +1650,24 @@ export function classLikeOf(type: ts.Type): ts.ClassDeclaration | ts.ClassExpres
     : undefined;
 }
 
+/** Whether every constituent of `type` is a class CONSTRUCTOR type (`typeof K`): exactly one
+ * construct signature, whose result is a named class's instance. A built-in constructor
+ * interface (`typeof TypeError`) is not one -- its value has no class object in this subset (the
+ * error constructors are runtime entries, not descriptors) -- and neither is a plain function,
+ * which constructs nothing the checker can name (TS7009 asks for `new` on one). */
+export function classConstructorTypeOf(type: ts.Type): boolean {
+  const kinds = type.isUnion() ? type.types : [type];
+  return kinds.every((constituent) => {
+    const signatures = constituent.getConstructSignatures();
+    const signature = signatures.length === 1 ? signatures[0] : undefined;
+    if (signature === undefined) {
+      return false;
+    }
+    const like = classLikeOf(signature.getReturnType());
+    return like !== undefined && classDisplayName(like) !== undefined;
+  });
+}
+
 /** Whether `node` uses a `const K = C` alias: it resolves to a class, but is not the class's
  * own name. The gate accepts exactly the uses that erase and refuses the rest; the capture
  * analysis skips these references, since an erased name needs no environment slot.
@@ -1647,42 +1704,56 @@ export function staticMemberOf(
       member: ts.ClassElement;
     }
   | undefined {
-  // `this.x` / `super.x` inside a STATIC context name a static of the class (or its base),
-  // the same binding `C.x` reads (plan.md §8 step 12(d)). The receiver is the class object,
-  // which this subset does not build -- so the access erases to the declaration, exactly as
-  // a bound class expression's in-place use does. An INSTANCE context's `this` is the
-  // receiver parameter and takes the ordinary member path below.
+  const declaration = staticReceiverClass(access, checker);
+  return declaration === undefined
+    ? undefined
+    : staticMemberIn(declaration, access.name.text, wantMethod, checker);
+}
+
+/** The class a static access starts its walk from: the class a name, alias or bound class
+ * expression spells, or -- inside a STATIC context -- `this`'s class and `super`'s base (plan.md
+ * §8 step 12(d)). Those erase to the declaration, exactly as a bound class expression's in-place
+ * use does. An INSTANCE context's `this` is the receiver parameter, and a static method a
+ * subclass can reach reads through the class it was called on: neither resolves here. */
+function staticReceiverClass(
+  access: ts.PropertyAccessExpression,
+  checker: ts.TypeChecker,
+): ts.ClassDeclaration | ts.ClassExpression | undefined {
   if (access.expression.kind === ts.SyntaxKind.ThisKeyword) {
-    const owner = staticThisClass(access);
-    return owner === undefined
-      ? undefined
-      : staticMemberIn(owner, access.name.text, wantMethod, checker);
+    return staticThisTakesReceiver(access, checker) ? undefined : staticThisClass(access);
   }
   if (access.expression.kind === ts.SyntaxKind.SuperKeyword) {
-    const owner = staticSuperClass(access, checker);
-    return owner === undefined
-      ? undefined
-      : staticMemberIn(owner, access.name.text, wantMethod, checker);
+    return staticSuperClass(access, checker);
   }
   if (!ts.isIdentifier(access.expression)) {
     return undefined;
   }
   // A class alias names the same declaration its target does: `K.sm` on `const K = C` is the
-  // one binding `C.sm`, so the direct check below keeps its exact shape and the alias resolves
-  // beside it. A class expression's binding names the expression the same way (`C.sm` on
-  // `const C = class …`), through `classExpressionTarget` (or the inner name). Anything
+  // one binding `C.sm`. A class expression's binding names the expression the same way (`C.sm`
+  // on `const C = class …`), through `classExpressionTarget` (or the inner name). Anything
   // else -- including the binding's own formation -- resolves nowhere.
   const direct = checker.getSymbolAtLocation(access.expression)?.valueDeclaration;
-  const declaration =
-    direct !== undefined && ts.isClassDeclaration(direct)
-      ? direct
-      : (classExpressionTarget(access.expression, checker) ??
+  return direct !== undefined && ts.isClassDeclaration(direct)
+    ? direct
+    : (classExpressionTarget(access.expression, checker) ??
         innerClassExpression(access.expression, checker) ??
         aliasedClassDeclaration(access.expression, checker));
-  if (declaration === undefined) {
-    return undefined;
+}
+
+/** Whether writing `access` would assign a static FIELD a base class declared through a subclass
+ * (`D.count = 1` on `class D extends C`): JavaScript then creates D's own property and leaves
+ * `C.count` alone, which one shared binding per static cannot express. */
+export function isInheritedStaticFieldWrite(
+  access: ts.PropertyAccessExpression,
+  checker: ts.TypeChecker,
+): boolean {
+  if (access.expression.kind === ts.SyntaxKind.SuperKeyword) {
+    return false;
   }
-  return staticMemberIn(declaration, access.name.text, wantMethod, checker);
+  const start = staticReceiverClass(access, checker);
+  const found =
+    start === undefined ? undefined : staticMemberIn(start, access.name.text, undefined, checker);
+  return found !== undefined && found.owner !== start && ts.isPropertyDeclaration(found.member);
 }
 
 /** The static `name` of `declaration`, walking the chain -- statics are inherited, so `D.count`
@@ -1722,14 +1793,23 @@ function staticMemberIn(
 
 /** The class whose statics `this.x` names inside a STATIC context: the enclosing class body's
  * owner. `undefined` outside one, or in an INSTANCE context where `this` is the receiver
- * parameter and takes the ordinary member path. Bare `this` in a static is the class object,
- * which stays refused (plan.md §8 step 12(d)). */
+ * parameter and takes the ordinary member path. */
 export function staticThisClass(
-  access: ts.PropertyAccessExpression,
+  node: ts.Node,
 ): ts.ClassDeclaration | ts.ClassExpression | undefined {
-  for (let n: ts.Node | undefined = access.parent; n !== undefined; n = n.parent) {
+  return staticThisContext(node)?.owner;
+}
+
+/** The static context `node` sits in: the class, and whether a static METHOD or ACCESSOR (rather
+ * than a field initializer or a static block) owns its `this`. Only the latter can run with a
+ * subclass as `this` (`T.m()` on `class T extends S`). */
+function staticThisContext(
+  node: ts.Node,
+): { owner: ts.ClassDeclaration | ts.ClassExpression; inMethod: boolean } | undefined {
+  let inMethod = false;
+  for (let n: ts.Node | undefined = node.parent; n !== undefined; n = n.parent) {
     if (ts.isClassDeclaration(n) || ts.isClassExpression(n)) {
-      return n;
+      return { owner: n, inMethod };
     }
     // An instance member's `this` is the receiver, not the class object — stop here.
     // A static member continues the walk: its `this` is the class being defined.
@@ -1743,6 +1823,7 @@ export function staticThisClass(
       if (!isStaticMember(n)) {
         return undefined;
       }
+      inMethod = !ts.isPropertyDeclaration(n);
       continue;
     }
     if (ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n)) {
@@ -1750,6 +1831,118 @@ export function staticThisClass(
     }
   }
   return undefined;
+}
+
+/** Whether a function owns a `this` that needs binding (a plain function's dynamic receiver, a
+ * static method's reached-through class): some `this` in its subtree whose nearest non-arrow
+ * function is this node. Arrows pass the read through (they own nothing), so
+ * the walk descends through them; any other nested function owns its subtree, so the walk prunes
+ * it — a `this` in there resolves inward, never here. A `this` with no function owner at all
+ * (module top level, or an arrow in a field initializer, whose owner is the class) is not ours.
+ * Structural, never modal: in ts mode the gate already refused nothing here — the checker owns
+ * that refusal (STA0012) — and the lowering supports the construct either way. */
+export function readsOwnThis(
+  node: ts.FunctionDeclaration | ts.FunctionExpression | ts.MethodDeclaration,
+): boolean {
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) {
+      return;
+    }
+    if (n.kind === ts.SyntaxKind.ThisKeyword) {
+      for (let c: ts.Node | undefined = n.parent; c !== undefined; c = c.parent) {
+        if (ts.isArrowFunction(c)) {
+          continue;
+        }
+        if (
+          ts.isFunctionDeclaration(c) ||
+          ts.isFunctionExpression(c) ||
+          ts.isMethodDeclaration(c) ||
+          ts.isConstructorDeclaration(c) ||
+          ts.isGetAccessorDeclaration(c) ||
+          ts.isSetAccessorDeclaration(c)
+        ) {
+          if (c === node) {
+            found = true;
+          }
+          break;
+        }
+        if (
+          ts.isSourceFile(c) ||
+          ts.isClassDeclaration(c) ||
+          ts.isClassExpression(c) ||
+          ts.isPropertyDeclaration(c)
+        ) {
+          break;
+        }
+      }
+      return;
+    }
+    // A nested non-arrow function owns its subtree (see above); an arrow does not, so only the
+    // arrow case recurses. The node itself is the sought owner, never a reason to prune.
+    if (
+      n !== node &&
+      (ts.isFunctionDeclaration(n) ||
+        ts.isFunctionExpression(n) ||
+        ts.isMethodDeclaration(n) ||
+        ts.isConstructorDeclaration(n) ||
+        ts.isGetAccessorDeclaration(n) ||
+        ts.isSetAccessorDeclaration(n))
+    ) {
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  // Entering through `visit` rather than a second `ts.forEachChild` keeps the self-compilation
+  // ratchet flat: each `ts.forEachChild` is one STA1214 there (generic function as a value).
+  visit(node);
+  return found;
+}
+
+/** Classes some class in the program extends, per checker: one program's answer, recorded by the
+ * gate and the lowering before either asks (`noteSubclassedClasses`). */
+const subclassedByChecker = new WeakMap<
+  ts.TypeChecker,
+  ReadonlySet<ts.ClassDeclaration | ts.ClassExpression>
+>();
+
+/** Record which classes the program's `files` extend, for `staticThisTakesReceiver`. The first
+ * record per checker stands, so the gate (which sees every file) and the lowering after it agree. */
+export function noteSubclassedClasses(
+  files: readonly ts.SourceFile[],
+  checker: ts.TypeChecker,
+): void {
+  if (subclassedByChecker.has(checker)) {
+    return;
+  }
+  const bases = new Set<ts.ClassDeclaration | ts.ClassExpression>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      const base = baseClassOf(node, checker);
+      if (base !== undefined) {
+        bases.add(base);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  // A source file is no class, so `visit` only descends from it (see `readsOwnThis`).
+  for (const file of files) {
+    visit(file);
+  }
+  subclassedByChecker.set(checker, bases);
+}
+
+/** Whether `this` at `node` is the class a static method or accessor was REACHED through (plan.md
+ * T27 step 4): the method's class has a subclass, so `T.m()` and `S.m()` see different `this`.
+ * Otherwise `this` is the defining class and erases to its static bindings. A program nobody
+ * recorded answers "reachable", the path that is right either way. */
+export function staticThisTakesReceiver(node: ts.Node, checker: ts.TypeChecker): boolean {
+  const context = staticThisContext(node);
+  return (
+    context !== undefined &&
+    context.inMethod &&
+    (subclassedByChecker.get(checker)?.has(context.owner) ?? true)
+  );
 }
 
 /** The class whose statics `super.x` names inside a static context: the base of the enclosing

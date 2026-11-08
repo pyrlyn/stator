@@ -72,9 +72,22 @@ for (const ts of programs()) {
     process.stderr.write(`[${name}] build\n`);
     run(process.execPath, [CLI, 'build', ts, '-o', exe], ccEnv);
     process.stderr.write(`[${name}] samply record @ ${RATE} Hz\n`);
-    run(SAMPLY, ['record', '--save-only', '--unstable-presymbolicate', '-r', RATE, '-o', raw, exe], process.env, dir);
+    run(
+      SAMPLY,
+      ['record', '--save-only', '--unstable-presymbolicate', '-r', RATE, '-o', raw, exe],
+      process.env,
+      dir,
+    );
     const summary = join(dir, 'summary.txt');
-    run(PYTHON, [join(HERE, 'to_speedscope.py'), raw, join(dir, 'profile.speedscope.json'), '--summary', summary, '--top', TOP]);
+    run(PYTHON, [
+      join(HERE, 'to_speedscope.py'),
+      raw,
+      join(dir, 'profile.speedscope.json'),
+      '--summary',
+      summary,
+      '--top',
+      TOP,
+    ]);
     index.push(`## ${name}\n\n\`\`\`\n${readFileSync(summary, 'utf8')}\`\`\`\n`);
   } catch (e) {
     failed++;

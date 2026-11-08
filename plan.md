@@ -1112,9 +1112,9 @@ Steps (detailed 2026-09-01; plan-notes 131):
 
 Gate: real users blocked on untyped npm dependencies or `eval`. Do not build speculatively.
 
-**See also Phase 14 (§11f):** an interpreter in strict TypeScript is the creator-directed first
-fallback for `eval` and `new Function`. T14.0 §7 decides whether this phase is still needed
-after it.
+**See also Phase 14 (§11f):** an interpreter in Zig, in the runtime, is the creator-directed first
+fallback for `eval` and `new Function`. `docs/INTERPRETER.md` §7 states the rule, and T14.2's
+Test262 numbers decide whether this phase is still needed after it.
 
 - Embed **QuickJS-NG** in the runtime (scriptc `--dynamic` / Perry-eval model): `eval`, `new Function`, `Proxy`, and stubborn untyped modules run interpreted; a marshaling layer converts `jsrt_value` ↔ `JSValue` at the boundary (objects proxied by handle, not deep-copied).
 - justfile feature flag so pure-static builds are unchanged. **`ts` mode is untouched: `eval` stays `STA1101`, permanently.**
@@ -1416,6 +1416,8 @@ gains each package in the change that creates it.
 
 ### T11.6. `packages/node`: the N1 wrappers → [`plan/T11.6`](plan/T11.6/task.md)
 
+### ~~T11.6a. `packages/compiler`: a class that extends `Uint8Array`~~ → [`plan/T11.6a`](plan/T11.6a/done.md)
+
 ### T11.7. Node's own test suite, synced and run through vitest → [`plan/T11.7`](plan/T11.7/task.md)
 
 **Deferred — N2 (not a card yet).** `std/loop` written in Zig (the creator chose an own loop
@@ -1520,43 +1522,44 @@ already provides the primitive, the Web API wraps it rather than duplicating it.
 
 ---
 
-## 11f. Phase 14 — A JavaScript interpreter in strict TypeScript: `js` mode's second fallback — **[D5]**
+## 11f. Phase 14 — A JavaScript interpreter in the runtime: `js` mode's second fallback — **[D5]**
 
-Creator's direction (2026-10-02, plan-notes 300). Write a QuickJS-class JavaScript interpreter as
-a **separate package in strict TypeScript**, compiled by Stator, and use it as an additional
-fallback in `js` mode. It runs what compiled code cannot: `eval`, `new Function`, and later the
-constructs that are `not-yet` today (`STA1206` and the rest of `STA12xx` that T14.0 assigns to
-it).
+Creator's direction (2026-10-02, plan-notes 300; language and parser settled 2026-11-06, plan-notes
+396). Write a QuickJS-class JavaScript interpreter **in Zig, in the runtime**, on **stator-ts's
+parser**, and use it as an additional fallback in `js` mode. It runs what compiled code cannot:
+`eval`, `new Function`, and later the constructs that are `not-yet` today (`STA1206` and the rest
+of `STA12xx` that `docs/INTERPRETER.md` §6 assigns to it). The design is `docs/INTERPRETER.md`.
 
 **Where it sits.** Fallbacks are tried in this order: compiled static code, then compiled dynamic
 code (NaN-boxed values, shapes, ICs), then this interpreter. Phase 8's vendored QuickJS-NG stays
-the other option behind its own gate. T14.0 measures whether it is still needed once this
-interpreter runs Test262, and records the answer in plan-notes. The phase is not sequenced after
-the Phase 8 gate (§15.1 exception, as Phases 9–13), because the creator directed it.
+the other option behind its own gate until T14.2's Test262 numbers decide it
+(`docs/INTERPRETER.md` §7). The phase is not sequenced after the Phase 8 gate (§15.1 exception, as
+Phases 9–13), because the creator directed it.
 
 **What does not change.** `ts` mode is untouched: `eval` stays `STA1101` and `new Function` stays
 `STA1103`, permanently. A binary that never reaches the interpreter must not link it: size is
 byte-identical to before, and every `ts`-mode binary too (Phase 8's Check, kept). The mode stays
 above the gate (§0.8). The frontend marks a construct "interpret", the HIR carries an
-`Interpret` node, and the emitter links the package only when such a node exists.
+`Interpret` node, and the emitter links `libjsrt_interp.a` only when such a node exists. §0.3
+holds: the interpreter writes no parser, it uses stator-ts's (plan/T41).
 
 **Why our own interpreter, not only QuickJS-NG.** It runs on the runtime's own `jsrt_value`, so
 interpreted and compiled code share objects, shapes and the GC, with no `jsrt_value` ↔ `JSValue`
-marshaling layer (the largest item in Phase 8, step 2). It is strict TS, so §0.9 and §0.10 hold and
-one toolchain builds it. Its speed is what Stator's `ts`-mode codegen makes of it, so it doubles as
-a large benchmark of the compiler.
+marshaling layer (the largest item in Phase 8, step 2). It is Zig on the Zig memory core (golden
+rule 9, §11a), and it compiles to bytecode (the spike: 2.9× faster than a tree walker).
 
 | Package | Holds | Must not |
 | --- | --- | --- |
-| `packages/interpreter` (new) | the parser front (T14.1), the evaluator over runtime values, and the entry points the runtime calls (`eval`, `Function` constructor), in **strict TypeScript** compiled by Stator in `ts` mode | hold its own value model, object model or GC — values are `jsrt_value`, objects are runtime objects, memory is the Zig core (§11a) |
-| `packages/compiler` | the `Interpret` HIR node, scope materialization for direct `eval`, and linking the package on demand | interpret anything at compile time |
+| `packages/interpreter` (new, Zig) | the bytecode compiler and VM, and the entry points the runtime calls (`eval`, the `Function` constructor, the call trampoline), built into `libjsrt_interp.a`; imports stator-ts's `parser.zig` | hold its own value model, object model or GC — values are `jsrt_value`, objects are runtime objects, memory is the Zig core (§11a) |
+| `packages/transpiler` (stator-ts) | the parser; gaps the interpreter meets are fixed here, with a regression test | know the interpreter exists |
+| `packages/compiler` (and plan/T41's Zig port) | the `Interpret` HIR node, the eval-visible cells and scope descriptors for direct `eval`, and linking the library on demand | interpret anything at compile time |
 | `packages/runtime` | the C ABI the interpreter calls (property access, calls, allocation, exceptions, promise jobs) — mostly what compiled dynamic code already calls | grow a second dispatch path: the interpreter goes through the same ICs and helpers |
 
-### T14.0. Design: the interpreter → [`plan/T14.0`](plan/T14.0/task.md)
+### ~~T14.0. Design: the interpreter~~ → [`plan/T14.0/done.md`](plan/T14.0/done.md)
 
-### T14.1. `packages/interpreter`: the parser front → [`plan/T14.1`](plan/T14.1/task.md)
+### ~~T14.1. `packages/interpreter`: the parser front~~ → [`plan/T14.1/done.md`](plan/T14.1/done.md)
 
-### T14.2. `packages/interpreter`: the core evaluator → [`plan/T14.2`](plan/T14.2/task.md)
+### ~~T14.2. `packages/interpreter`: the core evaluator~~ → [`plan/T14.2/done.md`](plan/T14.2/done.md)
 
 ### T14.3. Wiring: `eval`, `new Function`, and the `Interpret` node → [`plan/T14.3`](plan/T14.3/task.md)
 
@@ -1738,7 +1741,7 @@ ms/line flat, golden byte-for-byte, full gate green.
 | `--node` (Phase 11) | typed arrays, `packages/std` + `packages/node`, CommonJS, sync `tsc` (N1) | T11.1–T11.6; the largest item is T11.4 (js-mode coverage, not Node). N2 deferred, N3 not planned (plan-notes 289) |
 | Bundler front end (Phase 12) | `statorc/api`, `BundlerAdapter`, `packages/vite-stator`; packages + CommonJS bundled into one vendor module, project stays Stator's graph | T12.0–T12.2 landed (plan-notes 296, 320, 321, `docs/BUNDLER.md`); T12.3 |
 | Web API (Phase 13) | `packages/webapi` (DOM + CSS, strict TS, render API) + `packages/renderer-clay` (default renderer) | T13.0 design first; T13.1–T13.5 (coverage in generated `docs/WEBAPI.md`); other Web APIs low priority (plan-notes 298, 299) |
-| JS interpreter (Phase 14) | `packages/interpreter` in strict TS: `eval`, `new Function` and other `not-yet` constructs in `js` mode, on the runtime's own values | T14.0 design first; T14.1–T14.4 (plan-notes 300) |
+| JS interpreter (Phase 14) | `packages/interpreter` in Zig on stator-ts's parser: `eval`, `new Function` and other `not-yet` constructs in `js` mode, on the runtime's own values (`docs/INTERPRETER.md`) | T14.0–T14.2 done; T14.3–T14.4 (plan-notes 300, 396, 401, 403) |
 | Optimization ladder §12 rows 1–5 | competitive perf story | +3–5 months |
 | Conformance long tail | Porffor is at ~61% Test262 after years with a funded lead | years — the moat, budget honestly |
 
@@ -1978,3 +1981,5 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.86** (2026-10-24): **T33 lands: Ryū is vendored and `shortest_digits()` uses it** (plan-notes 385). `packages/runtime/vendor/ryu/` pins `v2.0` (`72e18e8…`) through `update.ts`; `d2s_buffered` replaces the `%.*e` round-trip search. `test:runtime` and 475 goldens stay byte-for-byte against the pinned Node. §12 loses the Ryū rung — the directed card landed the swap without a bench before/after, which plan-notes 385 records.
 - **v4.87** (2026-10-25): **T11.6: `node:process` follow-up slice** (plan-notes 390). The members `tsc` reads (`argv`, `cwd`, `env`, `execArgv`, `exit`, `memoryUsage`, `nextTick`, `pid`, `platform`, `stdout`) plus `argv0`, `execPath`, `exitCode`, `arch`, `ppid` and `stderr`. A free `process` under `--node` is rewritten to `import process from "node:process"`. `std/env.names()` lists libc's `environ`. A js-mode spread into `unknown` or rest `unknown[]` is accepted. Slice N1 is 25 / 37 (68%). The Check stays open.
 - **v4.88** (2026-11-02): **T41 opens: the compiler moves to Zig on stator-ts** (plan-notes 393). `packages/compiler` stays on `typescript` 6.0.3 as the oracle; Zig goes to 0.17.0 project-wide; `test:typediff` measures stator-ts against the checker.
+- **v4.89** (2026-11-06): **T14.0: the interpreter is Zig in the runtime, on stator-ts's parser, running bytecode** (plan-notes 396, `docs/INTERPRETER.md`). The creator chose the parser and the language from the spike's numbers; §11f and plan/T14.1–T14.4 follow.
+- **v4.90** (2026-11-07): **T14.1: `packages/interpreter`'s parser front** (plan-notes 401). The parse entry, the C ABI and a Test262 `language/` parse driver land in Zig on stator-ts's parser as it stands; 80.76% pass at the pin, ratcheted, and the rest is listed for stator-ts's owners.

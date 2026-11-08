@@ -408,7 +408,12 @@ pub fn emitExpression(e: *Emitter, expr: Expression) Error![]const u8 {
             const info = nodes.GLOBAL_CALLS.get(x.name);
             return emitNamedCall(e, x, "global-call", info.@"fn", info.throws or helpers.argsConvert(x.args));
         },
-        .typed_op => |x| return emitNamedCall(e, x, "typed-op", nodes.TYPED_OPS.get(x.op).@"fn", true),
+        .typed_op => |x| {
+            const view_class = x.view_class orelse return emitNamedCall(e, x, "typed-op", nodes.TYPED_OPS.get(x.op).@"fn", true);
+            var op = try sequenceCallOperands(e, x, "typed-op");
+            const call = try e.fmt("jsrt_uint8array_new_class({s}, {s})", .{ try classDescriptor(e, view_class), op.operands });
+            return e.finishOp(&op.parts, op.base, call, x.span, op.flushed, true);
+        },
         .object_static => |x| {
             const name = try e.fmt("jsrt_object_{s}", .{try literals.snakeCase(e.arena, @tagName(x.method))});
             return emitNamedCall(e, x, "object-static", name, true);
@@ -465,9 +470,8 @@ pub fn emitExpression(e: *Emitter, expr: Expression) Error![]const u8 {
                 const target = try e.emitExpression(x.target);
                 return e.fmt("jsrt_bool(jsrt_instanceof_builtin({s}, {s}))", .{ target, try literals.cNameLiteral(e.arena, x.class_name) });
             }
-            _ = try e.classAt(x.class_name);
-            const id = e.class_ids.get(x.class_name).?;
-            return e.fmt("jsrt_bool(jsrt_instanceof({s}, &_jsrt_class_{d}))", .{ try e.emitExpression(x.target), id });
+            const descriptor = try classDescriptor(e, x.class_name);
+            return e.fmt("jsrt_bool(jsrt_instanceof({s}, {s}))", .{ try e.emitExpression(x.target), descriptor });
         },
         .new_value => |x| {
             var call = try beginSlotCall(e, x, x.target, x.args, "new-value");
@@ -491,7 +495,9 @@ fn finishReceiverCall(e: *Emitter, base: usize, method: []const u8, count: usize
     const receiver = try e.slotAt(base);
     const argv = try argvAt(e, base, count);
     const loc = try e.callLocation(span);
-    const with_receiver = try e.fmt("jsrt_call_at({s}, {d}, &{s}, {s})", .{ method, 1 + count, receiver, loc });
+    // Named, never guessed from argc: a call that omits an optional parameter would otherwise
+    // shift `this` into the arguments (plan-notes 395, 400).
+    const with_receiver = try helpers.receiverCall(e.arena, method, receiver, count);
     const without_receiver = try e.fmt("jsrt_call_at({s}, {d}, {s}, {s})", .{ method, count, argv, loc });
     var none: Parts = .empty;
     const call = try e.fmt("{s} = (jsrt_is({s}, JSRT_TAG_CLOSURE) && jsrt_as_closure({s})->has_receiver) ? {s} : {s}", .{ receiver, method, method, with_receiver, without_receiver });
@@ -861,12 +867,20 @@ pub fn methodIdOrNull(e: *Emitter, entry: nodes.VtableEntry) Error!?usize {
 }
 
 pub fn baseDescriptor(e: *Emitter, class: *const nodes.ClassDeclaration, id: usize) Error![]const u8 {
-    const base = class.base orelse return "NULL";
+    // A view class's root parents the builtin's descriptor, so the walk `instanceof` and method
+    // lookup do reaches it: that is what makes a subclass instance a `Uint8Array` to the runtime.
+    const base = class.base orelse return if (class.view == true) "&jsrt_class_uint8array" else "NULL";
     const base_id = e.class_ids.get(base);
     if (base_id == null or base_id.? >= id) {
         return e.fail("class {s} is emitted before its base {s}", .{ class.name, base });
     }
     return e.fmt("&_jsrt_class_{d}", .{base_id.?});
+}
+
+/// `&_jsrt_class_N` for a class by name; `classAt` checks that counting registered it.
+pub fn classDescriptor(e: *Emitter, name: []const u8) Error![]const u8 {
+    _ = try e.classAt(name);
+    return e.fmt("&_jsrt_class_{d}", .{e.class_ids.get(name).?});
 }
 
 pub fn classAt(e: *Emitter, name: []const u8) Error!*const nodes.ClassDeclaration {
@@ -1041,7 +1055,7 @@ const UpdateAccess = union(enum) {
             .index => |w| helpers.indexGetCall(e.arena, w.target_type, w.target, w.index),
             .field => |w| e.fmt("jsrt_object_get({s}, {d})", .{ w.target, w.slot }),
             .dyn => |w| e.fmt("jsrt_get_prop({s}, {s}, &{s})", .{ w.target, w.name, w.ic }),
-            .accessor => |w| if (w.get_callee) |callee| e.fmt("jsrt_call({s}, 1, &{s})", .{ callee, w.receiver }) else "JSRT_UNDEFINED",
+            .accessor => |w| if (w.get_callee) |callee| helpers.receiverCall(e.arena, callee, w.receiver, 0) else "JSRT_UNDEFINED",
         };
     }
 
@@ -1052,7 +1066,7 @@ const UpdateAccess = union(enum) {
             .field => |w| e.fmt("jsrt_object_set({s}, {d}, {s})", .{ w.target, w.slot, value }),
             .dyn => |w| e.fmt("jsrt_set_prop({s}, {s}, {s}, &{s})", .{ w.target, w.name, value, w.ic }),
             .accessor => |w| if (w.set_callee) |callee|
-                e.fmt("({s} = {s}, jsrt_call({s}, 2, &{s}))", .{ w.arg, value, callee, w.receiver })
+                e.fmt("({s} = {s}, {s})", .{ w.arg, value, try helpers.receiverCall(e.arena, callee, w.receiver, 1) })
             else
                 e.fmt("({s} = {s})", .{ w.arg, value }),
         };

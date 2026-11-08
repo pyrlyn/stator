@@ -9,7 +9,7 @@ Every task with a T-id lives in `plan/<id>/`: `task.md` is the card (front matte
 **Stator** is an ahead-of-time compiler that turns TypeScript/JavaScript into native binaries, in two modes:
 
 - **`ts` mode (default):** strict, statically compiled TypeScript. `.ts` files only. `any` is a compile error; dynamic escape hatches (`eval`, `new Function`, `Proxy`, prototype mutation, `var`, `arguments`) are compile errors — `eval` permanently, by design. Typed code compiles to unboxed machine values; that's where the speed comes from.
-- **`js` mode:** JavaScript, or JS + TS mixed, in one module graph. Untyped code is never rejected — it compiles via a dynamic representation (NaN-boxed tagged values, shape tables, inline caches). `eval` is "not yet" until the Phase-8 interpreter tier.
+- **`js` mode:** JavaScript, or JS + TS mixed, in one module graph. Untyped code is never rejected — it compiles via a dynamic representation (NaN-boxed tagged values, shape tables, inline caches). `eval` and `new Function` are "not yet" until the Phase-14 interpreter (`docs/INTERPRETER.md`).
 
 One pipeline; mode is a policy layer (file acceptance + diagnostic table + typing of unresolved code). Nothing below the frontend gate knows the mode existed.
 
@@ -31,7 +31,7 @@ If `src/` does not exist yet, the project is pre-Phase-1: the only files may be 
 7. **The human is the only author.** No agent adds a `Co-Authored-By` trailer, a "Generated with …" line or itself as author to a commit, merge or PR — whatever its harness defaults to.
 
 8. **Docs stay in lockstep with the tree.** After any change that affects user-visible behavior, the public CLI, subset verdicts, diagnostics, toolchain, architecture diagrams, or examples: update the matching documentation in the **same** change (`README.md` and/or `docs/*`, plus example READMEs when those examples change). Do not leave docs describing a previous pipeline, flag set, or subset matrix. Spec authority for open work remains `plan.md`; operational docs in `docs/` must not contradict what the tree ships.
-9. **Zig for memory and cross-platform code; no JavaScript in our source** (creator's direction 2026-10-02, plan-notes 289; plan §0.5 and §0.10). New runtime code that manages memory or must be cross-platform — typed-array storage, the `std` backings, the event loop, OS abstraction — is Zig. C stays for the ABI headers generated code includes, generated code, vendored code, and existing C until a card ports it. The compiler, runtime, `std`, the `node:*` wrappers, harnesses, oracle shims and scripts are strict TypeScript, C or Zig — never `.js`/`.mjs`/`.cjs`. The only JS files are `js`-mode test inputs and examples, vendored upstream code, generated output, and browser-loaded assets under `site/public/`. `scripts/check-js-sources.ts` enforces that set inside `pnpm run ci` (plan.md Task 6.15).
+9. **Zig for memory and cross-platform code; no JavaScript in our source** (creator's direction 2026-10-02, plan-notes 289; plan §0.5 and §0.10). New runtime code that manages memory or must be cross-platform — typed-array storage, the `std` backings, the event loop, OS abstraction — is Zig. C stays for the ABI headers generated code includes, generated code, vendored code, and existing C until a card ports it. The compiler, runtime, `std`, the `node:*` wrappers, harnesses, oracle shims and scripts are strict TypeScript, C or Zig — never `.js`/`.mjs`/`.cjs`. The only JS files are `js`-mode test inputs and examples, vendored upstream code, generated output, browser-loaded assets under `site/public/`, and stator-ts's checker fixtures plus the test harness it embeds (`packages/transpiler/src/harness.mjs`; plan-notes 397). `scripts/check-js-sources.ts` enforces that set inside `pnpm run ci` (plan.md Task 6.15).
 10. **Reuse first.** Before writing a function, look for one that already does it and reuse or extend it; a second copy is a bug even when `dupes` misses it. `pnpm run dupes` (jscpd, AI reporter, identifier-insensitive) scans our source — tests, vendored code and docs excluded — against `.jscpd-baseline.json` and fails on **any** new clone. Removing a clone? Shrink the baseline in the same change with `pnpm run dupes:baseline`; never grow it to get a change through.
 11. **`docs/NODE.md` stays in sync.** It is generated (`pnpm run docs:node`) from the pinned Node and `packages/tests/golden/node_coverage.json`. Every change that adds, proves or removes a `node:*` member regenerates it in the same change; `pnpm run ci` fails when it is stale.
 
@@ -83,6 +83,11 @@ packages/transpiler/ stator-ts: TypeScript parser, binder, checker and JS emitte
                    `stator_ts` module by path dependency (plan/T62); its own AGENTS.md
 packages/jstext/   Zig: JavaScript text semantics over WTF-8 (Number::toString, `\s`, UTF-16 length and
                    order, JSON.stringify of a string), shared by transpiler and compiler-zig (plan/T62)
+packages/interpreter/ Zig: the Phase-14 interpreter (docs/INTERPRETER.md) → libjsrt_interp.a; src/parse.zig
+                   (stator-ts's parser as `eval` and `new Function` read source), src/capi.zig (the C ABI),
+                   src/compile.zig + src/vm.zig (bytecode compiler and VM), src/builtins.zig (globals),
+                   test262/parse.zig + test262/exec.zig (Test262 language/ parse and execution drivers,
+                   ratcheted in test262-parse.json and test262-exec.json)
 examples/vite/     `vite build` → native binary through vite-stator (a workspace package)
 ```
 
@@ -140,6 +145,9 @@ pnpm run test:runtime           # the runtime's own print corpus vs Node, byte-f
 pnpm run test:asan              # golden fixtures with runtime + generated C under ASan/UBSan
 pnpm run test:leak              # 10M-object loop; RSS must plateau (skips without Boehm)
 pnpm run test262                # Test262 slice against packages/tests/test262/pin.json (not part of `ci`)
+pnpm run interp:test            # the interpreter's Zig tests (packages/interpreter; not part of `ci`)
+pnpm run test262:interp-parse   # Test262 language/ through the interpreter's parse entry, ratcheted (not part of `ci`)
+pnpm run test262:interp-exec    # Test262 language/ run by the interpreter, ratcheted; needs `pnpm run runtime` (not part of `ci`)
 pnpm run test:node-suite        # Node's own tests (packages/tests/node-suite/pin.json) through vitest, ratcheted (not part of `ci`)
 pnpm run differential           # fuzzer vs Node (failures land in packages/tests/differential/failures/)
 pnpm run bench:record           # refresh packages/tests/bench/baseline.json (valid for this machine only)

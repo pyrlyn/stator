@@ -4,9 +4,9 @@ Maintainer guide for the SonarCloud analysis and the scanner configuration in
 `sonar-project.properties`.
 
 The analysis is not a workflow in this repository. `.github/workflows/pipeline.yml` calls
-`pyrlyn/ci/.github/workflows/ci.yml@main`, and that workflow's `sonarcloud` job reads
+`pyrlyn-archive/ci-old/.github/workflows/ci.yml@main`, and that workflow's `sonarcloud` job reads
 `.github/infra.yml`. The check name is `pipeline / sonarcloud / sonarcloud`. Callers reference
-pyrlyn/ci as `@main`; a SHA pin fails the shared `no-pinned-ci` check (plan-notes 361).
+pyrlyn-archive/ci-old as `@main`; a SHA pin fails the shared `no-pinned-ci` check (plan-notes 361).
 
 The `sonar.organization` / `sonar.projectKey` values (`listepo` / `listepo_stator`) are
 **placeholders** until they match the SonarCloud UI after you import the project.
@@ -26,7 +26,7 @@ GitHub account) on first import.
 
 ## 2. Turn Automatic Analysis off
 
-This project is analyzed by CI (pyrlyn/ci's `sonarcloud` job runs
+This project is analyzed by CI (pyrlyn-archive/ci-old's `sonarcloud` job runs
 `SonarSource/sonarqube-scan-action`), so SonarCloud's **Automatic Analysis** must be
 **off**. With both enabled, the CI scan fails with an error about Automatic Analysis
 being enabled.
@@ -59,7 +59,7 @@ is in section 5.
 `pipeline.yml` starts on a pull request to `main` (`opened`, `synchronize`, `reopened`,
 `ready_for_review`), on a push to `main`, on a Monday schedule, and on
 **Actions → pipeline → Run workflow**. The SonarCloud job itself runs only for `push`,
-`pull_request` and `workflow_dispatch` (pyrlyn/ci's default `sonarcloud.events`), so the
+`pull_request` and `workflow_dispatch` (pyrlyn-archive/ci-old's default `sonarcloud.events`), so the
 Monday schedule does not scan. A draft pull request skips every pipeline job, this one
 included, until it is marked ready. Pull request decoration needs the SonarCloud GitHub
 App, which the import in step 1 installs.
@@ -116,8 +116,8 @@ token into the repository.
 
 ## References
 
-- Caller: `.github/workflows/pipeline.yml` (`pyrlyn/ci/.github/workflows/ci.yml@main`)
+- Caller: `.github/workflows/pipeline.yml` (`pyrlyn-archive/ci-old/.github/workflows/ci.yml@main`)
 - Job config: `.github/infra.yml` (`sonarcloud`)
 - Scanner configuration: `sonar-project.properties`
-- Shared workflow: [pyrlyn/ci `docs/reusable-workflows.md`](https://github.com/pyrlyn/ci/blob/main/docs/reusable-workflows.md) (`sonarcloud.yml`)
+- Shared workflow: [pyrlyn-archive/ci-old `docs/reusable-workflows.md`](https://github.com/pyrlyn-archive/ci-old/blob/main/docs/reusable-workflows.md) (`sonarcloud.yml`)
 - [SonarQube Cloud documentation](https://docs.sonarsource.com/sonarqube-cloud/)

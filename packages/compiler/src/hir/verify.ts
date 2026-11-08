@@ -57,6 +57,7 @@ import {
 } from './nodes.ts';
 import type { HType } from './types.ts';
 import {
+  classLayoutOf,
   fieldSlot,
   H_BOOLEAN,
   H_NUMBER,
@@ -395,9 +396,10 @@ function checkSpreadArguments(expr: CallExpr | DynMethodCall, problems: VerifyPr
 }
 
 function checkMethodReceiver(expr: MethodCall | MethodValue, problems: VerifyProblem[]): void {
+  const layout = classLayoutOf(expr.target.type);
   if (
-    expr.target.type.kind !== 'object' ||
-    (expr.target.type.name !== expr.className && !expr.target.type.bases.includes(expr.className))
+    layout === undefined ||
+    (layout.name !== expr.className && !layout.bases.includes(expr.className))
   ) {
     problems.push({
       kind: expr.kind,
@@ -405,7 +407,7 @@ function checkMethodReceiver(expr: MethodCall | MethodValue, problems: VerifyPro
       code: 'STA4047',
       message: `receiver has type '${hTypeName(expr.target.type)}', not ${expr.className}`,
     });
-  } else if (methodOf(expr.target.type, expr.method) === undefined) {
+  } else if (methodOf(layout, expr.method) === undefined) {
     problems.push({
       kind: expr.kind,
       span: expr.span,
@@ -414,7 +416,7 @@ function checkMethodReceiver(expr: MethodCall | MethodValue, problems: VerifyPro
     });
   } else if (
     expr.dispatch === 'virtual' &&
-    expr.target.type.methods.findIndex((m) => m.name === expr.method) !== expr.slot
+    layout.methods.findIndex((m) => m.name === expr.method) !== expr.slot
   ) {
     // The slot is what a virtual call INDEXES, and it is resolved against the receiver's
     // static type. Checking it against that type's own method list is the same check a field
@@ -424,7 +426,7 @@ function checkMethodReceiver(expr: MethodCall | MethodValue, problems: VerifyPro
       kind: expr.kind,
       span: expr.span,
       code: 'STA4047',
-      message: `method '${expr.method}' is at slot ${String(expr.target.type.methods.findIndex((m) => m.name === expr.method))}, not ${String(expr.slot)}`,
+      message: `method '${expr.method}' is at slot ${String(layout.methods.findIndex((m) => m.name === expr.method))}, not ${String(expr.slot)}`,
     });
   }
 }
@@ -703,7 +705,7 @@ function verifyStatement(
       const members = [...(stmt.ctor === undefined ? [] : [stmt.ctor]), ...stmt.methods];
       for (const member of members) {
         const receiver = member.fn.params[0]?.type;
-        if (receiver === undefined || receiver.kind !== 'object' || receiver.name !== stmt.name) {
+        if (receiver === undefined || classLayoutOf(receiver)?.name !== stmt.name) {
           problems.push({
             kind: 'class-declaration',
             span: member.fn.span,
@@ -1363,7 +1365,12 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
                 : kind === 'bytes'
                   ? H_UINT8ARRAY
                   : undefined;
-        if (want !== undefined && !hTypeEquals(arg.type, want)) {
+        // A `bytes` slot takes any view, a subclass instance's included (plan/T11.6a): the
+        // callee reads the layout, which the class tag does not change.
+        if (
+          want !== undefined &&
+          !(kind === 'bytes' ? hTypeAssignable(arg.type, want) : hTypeEquals(arg.type, want))
+        ) {
           problems.push({
             kind: 'extern-call',
             span: expr.span,
@@ -2161,9 +2168,15 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
           ? `${expr.op} on a receiver of type '${receiver === undefined ? 'nothing' : hTypeName(receiver.type)}'`
           : expr.args.length !== count
             ? `${expr.op} takes ${String(count)} operands, not ${String(expr.args.length)}`
-            : !hTypeEquals(expr.type, typedResultType(want.result))
-              ? `${expr.op} results in '${hTypeName(expr.type)}', not '${hTypeName(typedResultType(want.result))}'`
-              : undefined;
+            : expr.viewClass !== undefined
+              ? expr.op !== 'new Uint8Array' ||
+                expr.type.kind !== 'uint8array' ||
+                expr.type.subclass?.name !== expr.viewClass
+                ? `${expr.op} stamped ${expr.viewClass} results in '${hTypeName(expr.type)}'`
+                : undefined
+              : !hTypeEquals(expr.type, typedResultType(want.result))
+                ? `${expr.op} results in '${hTypeName(expr.type)}', not '${hTypeName(typedResultType(want.result))}'`
+                : undefined;
       if (problem !== undefined) {
         problems.push({ kind: 'typed-op', span: expr.span, code: 'STA4101', message: problem });
       }

@@ -1249,8 +1249,19 @@ static inline bool jsrt_is_arraybuffer(jsrt_value v) {
   return jsrt_is(v, JSRT_TAG_OBJECT) && ((const JSRTObject *)jsrt_ptr(v))->cls == &jsrt_class_arraybuffer;
 }
 
+/* A class extending `Uint8Array` (plan/T11.6a) stamps its own descriptor on the view, whose parent
+ * chain ends at the builtin's, so the view test walks the chain rather than comparing once. */
+static inline bool jsrt_class_is_uint8array(const JSRTClass *cls) {
+  for (; cls != NULL; cls = cls->parent) {
+    if (cls == &jsrt_class_uint8array) {
+      return true;
+    }
+  }
+  return false;
+}
+
 static inline bool jsrt_is_uint8array(jsrt_value v) {
-  return jsrt_is(v, JSRT_TAG_OBJECT) && ((const JSRTObject *)jsrt_ptr(v))->cls == &jsrt_class_uint8array;
+  return jsrt_is(v, JSRT_TAG_OBJECT) && jsrt_class_is_uint8array(((const JSRTObject *)jsrt_ptr(v))->cls);
 }
 
 /* A view's bytes and length, as an extern `Uint8Array` parameter passes them (docs/FFI.md §2):
@@ -1280,6 +1291,10 @@ jsrt_value jsrt_arraybuffer_slice(jsrt_value buffer, jsrt_value start, jsrt_valu
  * iterable is drained first, and anything else is read as an array-like. `offset`/`length` are
  * ignored unless `x` is a buffer. Absent arguments arrive as `undefined`. */
 jsrt_value jsrt_uint8array_new(jsrt_value source, jsrt_value offset, jsrt_value length);
+/* `new Sub(...)` for a class extending `Uint8Array` (plan/T11.6a): the same forms, the view
+ * stamped with `cls`. `subarray` and `slice` copy the receiver's class (species). */
+jsrt_value jsrt_uint8array_new_class(const JSRTClass *cls, jsrt_value source, jsrt_value offset,
+                                     jsrt_value length);
 jsrt_value jsrt_uint8array_length(jsrt_value array);
 jsrt_value jsrt_uint8array_byte_length(jsrt_value array);
 jsrt_value jsrt_uint8array_byte_offset(jsrt_value array);
@@ -1549,7 +1564,8 @@ typedef struct JSRTClosure {
   uint32_t arity;   /* declared parameters, i.e. Function.prototype.length -- never counts `this` */
   const char *name; /* "" for an anonymous function */
   JSRTEnv *env;     /* NULL when the function captures nothing */
-  bool has_receiver; /* parameter zero is `this`; `jsrt_call` shifts when the caller omits it */
+  bool has_receiver; /* parameter zero is `this`: `jsrt_call` fills it with `undefined`,
+                        `jsrt_call_with_this` with the caller's receiver */
   const struct JSRTClass *klass;      /* NULL unless this is a class object */
   /* A `function` declaration or expression -- not an arrow, a method, an async function or a
    * generator, none of which JavaScript constructs. `new` builds through it (`jsrt_construct`),
@@ -1623,7 +1639,10 @@ jsrt_value jsrt_args_rest(uint32_t argc, const jsrt_value *argv, uint32_t from);
  *
  * A class object is a closure, but calling one without `new` is Node's catchable TypeError
  * (`Class constructor K cannot be invoked without 'new'`), never its constructor body: `fn` is
- * reached only through `jsrt_construct` below (docs/VALUE.md §4.17). */
+ * reached only through `jsrt_construct` below (docs/VALUE.md §4.17).
+ *
+ * argv holds no receiver: a closure that declares one gets `undefined` in slot zero and every
+ * argument after it. A call with a receiver is jsrt_call_with_this (plan-notes 395). */
 jsrt_value jsrt_call(jsrt_value callee, uint32_t argc, const jsrt_value *argv);
 /* Same as jsrt_call, with a `file:line` baked in so a non-function callee names the site
  * (STA2006). `loc` may be NULL, which keeps the unlocated TypeError for builtin-internal calls. */
@@ -1632,9 +1651,9 @@ jsrt_value jsrt_call_at(jsrt_value callee, uint32_t argc, const jsrt_value *argv
  * method call's receiver, passed to a closure that declares one, or NULL for a plain call. */
 jsrt_value jsrt_call_spread_at(jsrt_value callee, const jsrt_value *receiver, jsrt_value args,
                                const char *loc);
-/* A call the RUNTIME makes with a known `this` (ToPrimitive calling `toString`): a closure that
- * declares a receiver gets `receiver` in slot zero whatever its arity, anything else is
- * jsrt_call's call -- a class object's TypeError included. */
+/* A call with a known `this` (a method call, an accessor, ToPrimitive calling `toString`): a
+ * closure that declares a receiver gets `receiver` in slot zero whatever its arity, anything else
+ * is jsrt_call's call -- a class object's TypeError included. */
 jsrt_value jsrt_call_with_this(jsrt_value callee, jsrt_value receiver, uint32_t argc,
                                const jsrt_value *argv);
 

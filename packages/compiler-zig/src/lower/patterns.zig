@@ -24,6 +24,9 @@ pub fn lengthRead(l: *Lower, operand: Expression, span: Span) Expression {
     return switch (operand.getType().*) {
         .array => l.ex(.array_length, .{ .type = c.H_NUMBER, .span = span, .operand = operand }),
         .@"fn" => l.ex(.function_length, .{ .type = c.H_NUMBER, .span = span, .operand = operand }),
+        // A dynamic read lost the operand's static type; guessing "string" asserted on arrays, so
+        // the name resolves at run time (lower/index.ts lengthRead).
+        .unknown => l.ex(.dyn_field_access, .{ .type = c.hUnknown(false), .span = span, .target = operand, .field = "length" }),
         else => l.ex(.string_length, .{ .type = c.H_NUMBER, .span = span, .operand = operand }),
     };
 }

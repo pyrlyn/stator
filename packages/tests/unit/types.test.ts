@@ -7,14 +7,18 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'vitest';
 import {
+  classLayoutOf,
   H_BOOLEAN,
   H_NULL,
   H_NUMBER,
   H_STRING,
+  H_UINT8ARRAY,
   H_UNDEFINED,
   hArray,
   hFunction,
+  type HType,
   hTypeAssignable,
+  hTypeConversionRunsUserCode,
   hTypeEquals,
   hTypeName,
   hUnknown,
@@ -88,4 +92,31 @@ test('unknown[] is assignable to unknown[] even when fromImplicitAny disagrees',
   assert.equal(hTypeEquals(hoisted, literal), false);
   assert.equal(hTypeAssignable(literal, hoisted), true);
   assert.equal(hTypeAssignable(hoisted, literal), true);
+});
+
+test('a Uint8Array subclass is a view to every Uint8Array rule and a class to its own', () => {
+  // plan/T11.6a: the instance keeps kind `uint8array`, so a plain view slot accepts it; the
+  // subclass tag is what equality, naming and the class layout read.
+  const bytes: HType = { kind: 'uint8array', subclass: { name: 'Bytes', bases: [], methods: [] } };
+  const tagged: HType = {
+    kind: 'uint8array',
+    subclass: { name: 'Tagged', bases: ['Bytes'], methods: [] },
+  };
+  assert.equal(hTypeAssignable(bytes, H_UINT8ARRAY), true);
+  assert.equal(hTypeAssignable(tagged, bytes), true);
+  assert.equal(hTypeAssignable(bytes, tagged), false);
+  assert.equal(hTypeAssignable(H_UINT8ARRAY, bytes), false);
+  assert.equal(hTypeEquals(bytes, H_UINT8ARRAY), false);
+  assert.equal(hTypeName(tagged), 'Tagged');
+  assert.equal(hTypeName(H_UINT8ARRAY), 'Uint8Array');
+  assert.equal(hTypeConversionRunsUserCode(bytes), true);
+  assert.equal(hTypeConversionRunsUserCode(H_UINT8ARRAY), false);
+  assert.deepEqual(classLayoutOf(tagged), {
+    kind: 'object',
+    name: 'Tagged',
+    fields: [],
+    methods: [],
+    bases: ['Bytes'],
+  });
+  assert.equal(classLayoutOf(H_UINT8ARRAY), undefined);
 });

@@ -387,7 +387,9 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
       const call =
         expr.spread === true
           ? `jsrt_call_spread_at(${emitter.slotAt(base)}, NULL, ${emitter.slotAt(base + 1)}, ${loc})`
-          : `jsrt_call_at(${emitter.slotAt(base)}, ${expr.args.length}, ${argv}, ${loc})`;
+          : expr.withReceiver === true
+            ? receiverCall(emitter.slotAt(base), emitter.slotAt(base + 1), expr.args.length - 1)
+            : `jsrt_call_at(${emitter.slotAt(base)}, ${expr.args.length}, ${argv}, ${loc})`;
       return emitter.finishStatement(
         parts,
         `${emitter.slotAt(base)} = ${call}`,
@@ -633,7 +635,9 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
           expr.span,
         );
       }
-      const withReceiver = `jsrt_call_at(${method}, ${String(1 + expr.args.length)}, &${emitter.slotAt(base)}, ${loc})`;
+      // Named, never guessed from argc: a call that omits an optional parameter would otherwise
+      // shift `this` into the arguments (plan-notes 395, 400).
+      const withReceiver = receiverCall(method, emitter.slotAt(base), expr.args.length);
       const withoutReceiver = `jsrt_call_at(${method}, ${String(expr.args.length)}, ${argv}, ${loc})`;
       return emitter.finishStatement(
         [],
@@ -1238,7 +1242,10 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
         return `${name}(${operands})`;
       }
       const { base, parts, flushed, operands } = sequenceCallOperands(emitter, expr, expr.span);
-      const opCall = `${name}(${operands})`;
+      const opCall =
+        expr.kind === 'typed-op' && expr.viewClass !== undefined
+          ? `jsrt_uint8array_new_class(${classDescriptor(emitter, expr.viewClass)}, ${operands})`
+          : `${name}(${operands})`;
       // Every typed op can throw: a RangeError for a length or bound, or the TypeError a lying
       // receiver gets (golden rule 4) -- so each one is a statement with its pending check.
       return emitter.finishOp(
@@ -1339,9 +1346,7 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
       if (expr.builtin === true) {
         return `jsrt_bool(jsrt_instanceof_builtin(${emitter.emitExpression(expr.target)}, ${cNameLiteral(expr.className)}))`;
       }
-      emitter.classAt(expr.className);
-      const id = String(emitter.classIds.get(expr.className));
-      return `jsrt_bool(jsrt_instanceof(${emitter.emitExpression(expr.target)}, &_jsrt_class_${id}))`;
+      return `jsrt_bool(jsrt_instanceof(${emitter.emitExpression(expr.target)}, ${classDescriptor(emitter, expr.className)}))`;
     }
 
     // `new v(...)` where `v` is a class object or a constructible function: allocation and the
@@ -1527,7 +1532,9 @@ export function methodIdOrNull(emitter: Emitter, entry: VtableEntry): number | n
 
 export function baseDescriptor(emitter: Emitter, cls: ClassDeclaration, id: number): string {
   if (cls.base === undefined) {
-    return 'NULL';
+    // The parent walk `instanceof` and method lookup do then reaches the builtin's descriptor,
+    // which is what makes a subclass instance a `Uint8Array` everywhere the runtime asks.
+    return cls.view === true ? '&jsrt_class_uint8array' : 'NULL';
   }
   const baseId = emitter.classIds.get(cls.base);
   if (baseId === undefined || baseId >= id) {
@@ -1538,6 +1545,12 @@ export function baseDescriptor(emitter: Emitter, cls: ClassDeclaration, id: numb
 
 /* The declaration a class name refers to. A miss means counting and emission disagree about
  * which classes exist, which is an emitter bug rather than anything the program did. */
+
+/** `&_jsrt_class_N` for a class by name; `classAt` checks that counting registered it. */
+export function classDescriptor(emitter: Emitter, name: string): string {
+  emitter.classAt(name);
+  return `&_jsrt_class_${String(emitter.classIds.get(name))}`;
+}
 
 export function classAt(emitter: Emitter, name: string): ClassDeclaration {
   const id = emitter.classIds.get(name);
@@ -1846,9 +1859,9 @@ export function emitUpdate(emitter: Emitter, expr: UpdateExpr): string {
       break;
     }
     case 'accessor-place': {
-      // Two contiguous slots hold argv: the receiver, then the set value. The get runs
-      // `jsrt_call(callee, 1, &base)` and the set `jsrt_call(callee, 2, &base)` — the same
-      // ABI `method-call` uses, with the fold's answer as the setter's argument. A set-only
+      // Two contiguous slots hold argv: the receiver, then the set value. Both halves go through
+      // `receiverCall`, the ABI `method-call` uses: the getter with no argument, the setter with
+      // the fold's answer. A set-only
       // property answers `undefined` for the missing half (the compound forms' rule).
       const base = emitter.indexSlots.get(expr);
       if (base === undefined) {
@@ -1869,12 +1882,11 @@ export function emitUpdate(emitter: Emitter, expr: UpdateExpr): string {
             ? `jsrt_method(${receiver}, ${place.setSlot})`
             : accessorCallee(emitter, place, 'set')
           : undefined;
-      read =
-        getCallee === undefined ? 'JSRT_UNDEFINED' : `jsrt_call(${getCallee}, 1, &${receiver})`;
+      read = getCallee === undefined ? 'JSRT_UNDEFINED' : receiverCall(getCallee, receiver, 0);
       write = (value: string) =>
         setCallee === undefined
           ? `(${arg} = ${value})`
-          : `(${arg} = ${value}, jsrt_call(${setCallee}, 2, &${receiver}))`;
+          : `(${arg} = ${value}, ${receiverCall(setCallee, receiver, 1)})`;
       break;
     }
   }

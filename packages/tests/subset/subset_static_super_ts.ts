@@ -1,10 +1,9 @@
 // @mode: ts
-// @verdict: not-yet
-// @code: STA1214
+// @verdict: static
 // SUBSET.md: Static methods and static class members
-// `super.m()` in a static is lexically bound to the base, so the CALL erases — but the
-// base method's own `this` is still the reached-through class object (`B.m()` sees `B`,
-// `D.m()` sees `D`), which needs the class object (subset_static_this_*).
+// `super.m()` in a static is lexically bound to the base, so the CALL erases; the base
+// method's `this` is still the reached-through class (`B.m()` sees `B`, `D.m()` sees `D`),
+// which the call passes as the receiver (plan.md T27 step 4).
 
 class B {
   static id = 'B';

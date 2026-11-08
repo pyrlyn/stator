@@ -168,8 +168,8 @@ pub fn userConversion(l: *Lower, node: *Node, value: Expression, method: []const
 }
 
 fn methodCallAtSlot(l: *Lower, node: *Node, target: Expression, class_name: []const u8, method: []const u8, slot: i32, dispatch: N.Dispatch, args: []const Expression, b: *Scope) E!Expression {
-    const t = target.getType();
-    const signature: ?*const HType = if (t.* == .object and slot >= 0 and slot < t.object.methods.len) t.object.methods[@intCast(slot)].type else null;
+    const layout = H.classLayoutOf(target.getType());
+    const signature: ?*const HType = if (layout != null and slot >= 0 and slot < layout.?.methods.len) layout.?.methods[@intCast(slot)].type else null;
     return l.ex(.method_call, .{ .type = typeAt(l, node, b), .span = l.span(node), .target = target, .class_name = class_name, .method = method, .slot = slot, .dispatch = dispatch, .args = boundary.checkCallArgs(l, signature, args, node) });
 }
 
@@ -181,7 +181,7 @@ fn lowerClassMethodCall(l: *Lower, obj: *Node, prop_name: []const u8, priv_name:
     if (!via_super and at.data == .prop_access and gt.isUndeclaredMemberRead(l.g, at)) return null;
     const target = if (via_super) try members.receiverIdentifier(l, obj, b) else try lowerExpression(l, obj, b);
     const t = target.getType();
-    if (t.* != .object) return l.internal(at, "STA4049", "receiver is not an object");
+    const layout = H.classLayoutOf(t) orelse return l.internal(at, "STA4049", "receiver is not an object");
     const args = try lowerArguments(l, node.data.call.args, b, node);
     if (priv_name != null and !via_super) {
         const priv = members.privateUse(l, priv_name.?) orelse return l.internal(at, "STA4067", l.fmt("private '{s}' names no class the gate accepted", .{priv_name.?.data.private_name}));
@@ -193,7 +193,7 @@ fn lowerClassMethodCall(l: *Lower, obj: *Node, prop_name: []const u8, priv_name:
     if (members.declaringClassName(l, obj, prop_name, b)) |owner| {
         const slot = members.methodSlot(t, prop_name);
         if (slot < 0) return missingMethodSlot(l, at, prop_name, target);
-        const dispatch: N.Dispatch = if (!via_super and members.isOverridden(l, t.object.name, prop_name)) .virtual else .direct;
+        const dispatch: N.Dispatch = if (!via_super and members.isOverridden(l, layout.name, prop_name)) .virtual else .direct;
         return try methodCallAtSlot(l, node, target, owner, prop_name, slot, dispatch, args, b);
     }
     if (l.g.property(l.g.typeAt(obj), prop_name) == null) return nonFunctionCall(l, node, at, target, args);
@@ -241,8 +241,9 @@ pub fn lowerClassMemberRead(l: *Lower, target: Expression, field: []const u8, re
     if (members.namespaceObjectField(l, target, field, b)) |member| return l.ident(member.type, span, member.name);
     const t = target.getType();
     if (members.declaringClassName(l, receiver, field, b)) |method_owner| {
-        if (t.* != .object) return l.internal(node, "STA4049", "receiver is not an object");
-        return methodValue(l, node, target, t, field, method_owner, members.isOverridden(l, t.object.name, field), b);
+        // A `Uint8Array` subclass instance has a class layout too (plan/T11.6a).
+        const layout = H.classLayoutOf(t) orelse return l.internal(node, "STA4049", "receiver is not an object");
+        return methodValue(l, node, target, t, field, method_owner, members.isOverridden(l, layout.name, field), b);
     }
     if (members.accessorOwner(l, receiver, field, b)) |owner| {
         return members.accessorCall(l, .get, owner, target, field, &.{}, typeAt(l, node, b), span, node);
@@ -428,7 +429,16 @@ pub fn lowerNew(l: *Lower, node: *Node, b: *Scope) E!Expression {
         return l.ex(.error_new, .{ .type = N.errorHType(ctor), .span = span, .ctor = ctor, .arg = arg });
     }
     if (t.* == .uint8array or t.* == .arraybuffer) {
-        return typedOpNode(l, if (t.* == .uint8array) .@"new Uint8Array" else .@"new ArrayBuffer", null, args, span);
+        const op = typedOpNode(l, if (t.* == .uint8array) .@"new Uint8Array" else .@"new ArrayBuffer", null, args, span);
+        // A subclass has no constructor of its own (the gate's rule), so its `new` IS the builtin
+        // one with the class stamped on the view.
+        if (t.* == .uint8array) if (t.uint8array.subclass) |subclass| {
+            var stamped = op.typed_op.*;
+            stamped.type = t;
+            stamped.view_class = subclass.name;
+            return .{ .typed_op = l.create(stamped) };
+        };
+        return op;
     }
     if (t.* == .date) {
         if (args.len >= 2) return l.ex(.date_components, .{ .type = t, .span = span, .args = padToArity(l, args, 7, span) });
@@ -597,7 +607,9 @@ fn lowerMemberCall(l: *Lower, node: *Node, e: *Node, b: *Scope) E!?Expression {
         const shape = N.DATE_OPS.get(op);
         return l.ex(.date_op, .{ .type = if (shape.result == .number) H_NUMBER else H_STRING, .span = p.span, .op = op, .target = p.target, .args = padToArity(l, p.args, shape.arity, p.span) });
     };
-    if (receiver_type.* == .uint8array or receiver_type.* == .arraybuffer) {
+    // A method a `Uint8Array` subclass declares is the class's (Node's `Buffer.slice` shares memory
+    // where the row copies), the gate's rule (plan/T11.6a).
+    if ((receiver_type.* == .uint8array or receiver_type.* == .arraybuffer) and !gate_globals.isUserClassMember(g, e)) {
         const typed: N.TypedReceiver = if (receiver_type.* == .uint8array) .uint8array else .arraybuffer;
         if (N.typedMember(typed, name)) |op| if (N.TYPED_OPS.get(op).form == .call) {
             const p = try lowerReceiverCall(l, obj, node, b);

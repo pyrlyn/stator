@@ -127,7 +127,7 @@ bool jsrt_is_fixed_object(jsrt_value v) {
   return cls != &jsrt_class_promise && cls != &jsrt_class_date && cls != &jsrt_class_map &&
          cls != &jsrt_class_set && cls != &jsrt_class_weakmap && cls != &jsrt_class_weakset &&
          cls != &jsrt_class_regexp && cls != &jsrt_class_iterator &&
-         cls != &jsrt_class_generator && cls != &jsrt_class_uint8array &&
+         cls != &jsrt_class_generator && !jsrt_class_is_uint8array(cls) &&
          cls != &jsrt_class_arraybuffer && cls != &jsrt_class_accessor;
 }
 
@@ -166,14 +166,23 @@ static int32_t fixed_slot(jsrt_value obj, const char *key) {
  * Sets `*found` true on a hit and answers the closure; otherwise sets it false and answers
  * `undefined`. A NULL table entry (a capturing method with no one constant form) is skipped,
  * leaving the hidden slot -- which carries the construction-site environment -- as the hit.
- * Accessors (`get x`) are not methods under `x` and never match here. */
-static jsrt_value fixed_method_get(jsrt_value obj, const char *key, bool *found) {
+ * Accessors (`get x`) are not methods under `x` and never match here; `fixed_accessor_get` asks
+ * for them by their own name. */
+static bool spells(const char *name, const char *half, const char *key) {
+  const size_t n = strlen(half);
+  return strncmp(name, half, n) == 0 && strcmp(name + n, key) == 0;
+}
+
+/* The member `half` + `key` names: `half` is "" for a method, or "get " / "set " for an accessor
+ * half, the name no source can spell under which a class declares it (docs/SUBSET.md, rung 6b). */
+static jsrt_value fixed_member_get(jsrt_value obj, const char *half, const char *key,
+                                   bool *found) {
   JSRTObject *o = jsrt_as_object(obj);
   const JSRTClass *cls = o->cls;
   if (cls->fields != NULL) {
     for (uint32_t i = 0; i < cls->field_count; i++) {
       const char *name = cls->fields[i];
-      if (name != NULL && strncmp(name, "#method:", 8) == 0 && strcmp(name + 8, key) == 0) {
+      if (name != NULL && strncmp(name, "#method:", 8) == 0 && spells(name + 8, half, key)) {
         *found = true;
         return o->fields[i];
       }
@@ -183,7 +192,7 @@ static jsrt_value fixed_method_get(jsrt_value obj, const char *key, bool *found)
     for (uint32_t i = 0; i < cls->method_count; i++) {
       const char *name = cls->method_names[i];
       const JSRTClosure *entry = cls->methods[i];
-      if (name != NULL && entry != NULL && (name == key || strcmp(name, key) == 0)) {
+      if (name != NULL && entry != NULL && ((half[0] == '\0' && name == key) || spells(name, half, key))) {
         *found = true;
         return jsrt_closure(entry);
       }
@@ -191,6 +200,38 @@ static jsrt_value fixed_method_get(jsrt_value obj, const char *key, bool *found)
   }
   *found = false;
   return JSRT_UNDEFINED;
+}
+
+static jsrt_value fixed_method_get(jsrt_value obj, const char *key, bool *found) {
+  return fixed_member_get(obj, "", key, found);
+}
+
+/* An untyped `o.x` on a class instance runs the getter a typed read calls (the class's `get x`);
+ * `*found` is false when the class declares none. */
+static jsrt_value fixed_accessor_get(jsrt_value obj, const char *key, bool *found) {
+  const jsrt_value getter = fixed_member_get(obj, "get ", key, found);
+  return *found ? jsrt_call_with_this(getter, obj, 0, NULL) : JSRT_UNDEFINED;
+}
+
+/* An untyped `o.x = v` on a class instance: the class's `set x` runs, and a getter with no setter
+ * throws as strict code does (every compiled module is strict). False when the class declares
+ * neither half, so the write lands as an own property. */
+static bool fixed_accessor_set(jsrt_value obj, const char *key, jsrt_value value) {
+  bool found = false;
+  const jsrt_value setter = fixed_member_get(obj, "set ", key, &found);
+  if (found) {
+    (void)jsrt_call_with_this(setter, obj, 1, &value);
+    return true;
+  }
+  (void)fixed_member_get(obj, "get ", key, &found);
+  if (!found) {
+    return false;
+  }
+  char msg[256];
+  snprintf(msg, sizeof msg, "Cannot set property %s of #<%s> which has only a getter", key,
+           jsrt_as_object(obj)->cls->name);
+  jsrt_throw_error(&jsrt_class_type_error, msg);
+  return true;
 }
 
 static bool fixed_set(jsrt_value obj, const char *key, jsrt_value value) {
@@ -315,7 +356,7 @@ static jsrt_value accessor_read(jsrt_value slot, jsrt_value recv) {
     return slot;
   }
   const JSRTAccessorCell *cell = (const JSRTAccessorCell *)jsrt_ptr(slot);
-  return cell->get == JSRT_UNDEFINED ? JSRT_UNDEFINED : jsrt_call(cell->get, 1, &recv);
+  return cell->get == JSRT_UNDEFINED ? JSRT_UNDEFINED : jsrt_call_with_this(cell->get, recv, 0, NULL);
 }
 
 /* Answers whether the write was an accessor's, so the caller knows not to store. A setter-less
@@ -333,8 +374,7 @@ static bool accessor_write(jsrt_value slot, const char *key, jsrt_value recv, js
     jsrt_throw_error(&jsrt_class_type_error, msg);
     return true;
   }
-  jsrt_value args[2] = {recv, value};
-  jsrt_call(cell->set, 2, args);
+  jsrt_call_with_this(cell->set, recv, 1, &value);
   return true;
 }
 
@@ -349,7 +389,7 @@ uint32_t jsrt_closure_arity(jsrt_value v) {
 /* The statics entry for `key` on a class object (docs/VALUE.md §4.17), or NULL.
  *
  * The lookup walks the class's own descriptor and then its `parent`s -- statics are inherited in
- * JavaScript, and the gate refuses a static override, so one name is one binding per chain. Own
+ * JavaScript, and a subclass's own static (`static override v`) shadows its base's. Own
  * statics shadow the Function fallbacks exactly like own properties shadow a prototype (a
  * `static name = 5` hides the class's own name in JavaScript), which is why the table is asked
  * first. A name's getter wins a read and its setter wins a write; a same-named FIELD/METHOD is
@@ -378,6 +418,16 @@ static const JSRTStaticEntry *class_static_find(const JSRTClosure *c, const char
     }
   }
   return plain;
+}
+
+/* True when `entry` is in the class's OWN statics table rather than an ancestor's. */
+static bool class_static_is_own(const JSRTClosure *c, const JSRTStaticEntry *entry) {
+  for (const JSRTStaticEntry *e = c->klass->statics; e != NULL && e->name != NULL; e++) {
+    if (e == entry) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /* True when some accessor half declares `key` with no matching half for this direction -- a
@@ -538,7 +588,7 @@ jsrt_value jsrt_get_prop(jsrt_value obj, const char *key, JSRTIC *ic) {
     const JSRTStaticEntry *entry = class_static_find(c, key, false);
     if (entry != NULL) {
       if (entry->kind == JSRT_STATIC_GETTER) {
-        return jsrt_call(*entry->slot, 1, &obj);
+        return jsrt_call_with_this(*entry->slot, obj, 0, NULL);
       }
       return *entry->slot;
     }
@@ -563,10 +613,15 @@ jsrt_value jsrt_get_prop(jsrt_value obj, const char *key, JSRTIC *ic) {
     return JSRT_UNDEFINED;
   }
   /* ArrayBuffer and Uint8Array have no shape: their data properties, index keys and methods are
-   * answered by the layout itself (jsrt_typed.zig), and a key neither class has reads undefined. */
+   * answered by the layout itself (jsrt_typed.zig), and a key neither class has reads undefined.
+   * A subclass's methods (plan/T11.6a) come first, as its prototype sits before the builtin's;
+   * the builtin descriptors list no methods, so for them the lookup always misses. */
   if (jsrt_is_uint8array(obj) || jsrt_is_arraybuffer(obj)) {
-    jsrt_value out = JSRT_UNDEFINED;
-    (void)jsrt_typed_get_prop(obj, key, &out);
+    bool found = false;
+    jsrt_value out = fixed_method_get(obj, key, &found);
+    if (!found) {
+      (void)jsrt_typed_get_prop(obj, key, &out);
+    }
     return out;
   }
   if (!has_prop_table(obj)) {
@@ -585,7 +640,8 @@ jsrt_value jsrt_get_prop(jsrt_value obj, const char *key, JSRTIC *ic) {
       if (found || jsrt_regexp_property(obj, key, &method)) {
         return method;
       }
-      return JSRT_UNDEFINED;
+      const jsrt_value got = fixed_accessor_get(obj, key, &found);
+      return found ? got : JSRT_UNDEFINED;
     }
     if (jsrt_is(obj, JSRT_TAG_STRING)) {
       if (strcmp(key, "length") == 0) {
@@ -736,12 +792,17 @@ bool jsrt_user_get(jsrt_value obj, const char *key, jsrt_value *out, const char 
     const JSRTStaticEntry *entry = class_static_find(c, key, false);
     if (entry != NULL) {
       found = true;
-      value = entry->kind == JSRT_STATIC_GETTER ? jsrt_call(*entry->slot, 1, &obj) : *entry->slot;
+      value = entry->kind == JSRT_STATIC_GETTER ? jsrt_call_with_this(*entry->slot, obj, 0, NULL)
+                                                  : *entry->slot;
     } else if (c->klass == NULL) {
       found = function_own_get(obj, key, &value);
     }
-  } else if (jsrt_is_uint8array(obj) || jsrt_is_arraybuffer(obj)) {
+  } else if (jsrt_is_arraybuffer(obj)) {
     found = false; /* no shape: every key is the layout's own, and none is a user method */
+  } else if (jsrt_is_uint8array(obj)) {
+    /* Only a subclass's methods (plan/T11.6a) are user members. A view declares no fields and is
+     * not a fixed object, so fixed_user_get reads nothing but the method table. */
+    found = fixed_user_get(obj, key, &value, &where, &sure);
   } else if (!has_prop_table(obj)) {
     found = jsrt_is(obj, JSRT_TAG_OBJECT) && fixed_user_get(obj, key, &value, &where, &sure);
   } else {
@@ -939,9 +1000,15 @@ static void store_prop(jsrt_value obj, const char *key, jsrt_value value, JSRTIC
     const JSRTStaticEntry *entry = class_static_find(c, key, true);
     if (entry != NULL) {
       if (entry->kind == JSRT_STATIC_SETTER) {
-        jsrt_value args[2] = {obj, value};
-        (void)jsrt_call(*entry->slot, 2, args);
+        /* A static accessor takes no receiver today, so `jsrt_call_with_this` drops `obj`
+         * rather than letting it land in the setter's value parameter. */
+        (void)jsrt_call_with_this(*entry->slot, obj, 1, &value);
         return;
+      }
+      /* A field an ANCESTOR declares, written through a subclass, becomes the subclass's own
+       * property in JavaScript and leaves the ancestor's alone: that is growth too. */
+      if (!class_static_is_own(c, entry)) {
+        jsrt_panic("STA2004: a class object cannot grow a new static; planned for Phase 8");
       }
       *entry->slot = value;
       return;
@@ -985,6 +1052,9 @@ static void store_prop(jsrt_value obj, const char *key, jsrt_value value, JSRTIC
   if (!has_prop_table(obj)) {
     if (jsrt_is(obj, JSRT_TAG_OBJECT)) {
       if (fixed_set(obj, key, value)) {
+        return;
+      }
+      if (jsrt_is_fixed_object(obj) && fixed_accessor_set(obj, key, value)) {
         return;
       }
       /* Growth (docs/VALUE.md §4.24): a name the class never declared lands in the overflow

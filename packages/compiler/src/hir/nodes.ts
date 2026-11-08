@@ -1245,6 +1245,10 @@ export interface CallExpr extends Node {
   /** `f(a, ...xs)` (plan.md §11c T11.4 step 5): `args` is ONE array holding every argument,
    * spreads expanded, and the call passes its elements (`jsrt_call_spread_at`). */
   readonly spread?: true;
+  /** `args[0]` is the `this` of a `has_receiver` callee, not its first parameter: a static method
+   * that reads `this`, called with the class it was reached through (docs/VALUE.md §4.26). The
+   * call passes it through `jsrt_call_with_this`, never as one argument among the rest. */
+  readonly withReceiver?: true;
 }
 
 /** One C-ABI slot of an extern signature (docs/FFI.md §2): the TS type a parameter or return
@@ -1908,6 +1912,9 @@ export interface TypedOp extends Node {
   readonly kind: 'typed-op';
   readonly op: TypedOperation;
   readonly args: readonly Expression[];
+  /** `new Sub(...)` for a class extending `Uint8Array` (plan/T11.6a): the class the view is
+   * stamped with. Only on `new Uint8Array`, and then `type` is that class's view type. */
+  readonly viewClass?: string;
 }
 
 /** `Number.prototype`'s landed methods (plan-notes 310): one runtime function each, the receiver
@@ -2251,6 +2258,10 @@ export interface DynFieldAssignment extends Node {
 export interface ClassMethod {
   readonly name: string;
   readonly fn: FunctionExpr;
+  /** The constructor JavaScript supplies for a class that writes none: `constructor() {}`, or
+   * `constructor(...args) { super(...args) }` in a derived class. Either declares no parameter,
+   * so the class object's `.length` is 0 whatever `fn` forwards. */
+  readonly implicit?: true;
 }
 
 /** `class C { … }`.
@@ -2269,6 +2280,10 @@ export interface ClassDeclaration extends Node {
    * inherited ones (base-first, which is what makes a derived instance readable as a base one), so
    * this is not needed for layout -- it is needed for `instanceof`, which asks about the chain. */
   readonly base?: string;
+  /** The chain's root extends `Uint8Array` (plan/T11.6a): instances are views, built by the
+   * typed `new`, so the class has no fields and no constructor, and the root's descriptor names
+   * `jsrt_class_uint8array` as its parent. */
+  readonly view?: true;
   readonly fields: readonly Parameter[];
   readonly ctor?: ClassMethod;
   readonly methods: readonly ClassMethod[];

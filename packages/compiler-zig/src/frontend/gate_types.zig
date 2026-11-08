@@ -7,6 +7,7 @@ const api = @import("gate_api.zig");
 const hir = @import("../hir/root.zig");
 const node_field = @import("../support/node_field.zig");
 const ast_walk = @import("../support/ast_walk.zig");
+const globals = @import("gate_globals.zig");
 const H = hir.types;
 const nodes = hir.nodes;
 const HType = H.HType;
@@ -226,6 +227,10 @@ fn classTypeToHType(g: *Gate, t: *Type, depth: u32) ?*const HType {
     var fields: std.ArrayList(HField) = .empty;
     var methods: std.ArrayList(HField) = .empty;
     const chain = ancestry(g, declaration);
+    // A `Uint8Array` subclass has no slots: its storage is the view's, and the lib members the
+    // checker lists for it are the view's own, so only the members user classes declare are kept
+    // (plan/T11.6a). The static side maps here too, as it does for every class.
+    const view = extendsUint8Array(g, declaration);
     var heritage = heritageSubstitution(g, declaration, chain);
     var claimed: std.StringHashMapUnmanaged(void) = .empty;
     for (chain) |ancestor| {
@@ -236,7 +241,7 @@ fn classTypeToHType(g: *Gate, t: *Type, depth: u32) ?*const HType {
             const raw = hirPropertyName(prop.name);
             const owner = if (std.mem.startsWith(u8, raw, "#")) privateOwnerName(prop, at, chain, ancestor) else null;
             const name = if (owner) |o| privateSlotName(g, o, raw) else raw;
-            if (at == null or claimed.contains(name)) continue;
+            if (at == null or claimed.contains(name) or (view and g.inDeclarationFile(at.?))) continue;
             claimed.put(g.a, name, {}) catch oom();
             const member_decls = api.propDeclarations(prop);
             const owner_decl = if (at.?.parent != null and api.isClassDeclaration(at.?.parent.?)) at.?.parent.? else ancestor;
@@ -278,16 +283,33 @@ fn classTypeToHType(g: *Gate, t: *Type, depth: u32) ?*const HType {
             }
         }
     }
+    const bases = chainBaseNames(g, chain, declaration);
+    // The gate admits no instance field on a view class, so `fields` is empty here.
+    if (view) return H.hViewClass(g.a, .{ .name = class_name, .fields = &.{}, .methods = methods.items, .bases = bases }) catch oom();
+    return H.hObject(g.a, class_name, fields.items, methods.items, bases, null) catch oom();
+}
+
+/// The descriptor names of `chain`'s ancestors (root first, `declaration` last), nearest first,
+/// which is the order `hTypeAssignable` and `instanceof` read them in. An unbound base answers
+/// `""` and is left out, so this stays total where the gate still refuses.
+fn chainBaseNames(g: *Gate, chain: []*Node, declaration: *Node) []const []const u8 {
     var bases: std.ArrayList([]const u8) = .empty;
-    if (chain.len > 1) {
-        var i = chain.len - 1;
-        while (i > 0) {
-            i -= 1;
-            const name = baseDescriptorName(g, chain[i], declaration);
-            if (name.len > 0) bases.append(g.a, name) catch oom();
-        }
+    var i = chain.len;
+    while (i > 1) {
+        i -= 1;
+        const name = baseDescriptorName(g, chain[i - 1], declaration);
+        if (name.len > 0) bases.append(g.a, name) catch oom();
     }
-    return H.hObject(g.a, class_name, fields.items, methods.items, bases.items, null) catch oom();
+    return bases.items;
+}
+
+/// Whether the root of `declaration`'s chain extends the global `Uint8Array` (plan/T11.6a): such a
+/// class's instances are views, laid out by the runtime rather than by a slot list.
+pub fn extendsUint8Array(g: *Gate, declaration: *Node) bool {
+    const chain = ancestry(g, declaration);
+    if (chain.len == 0) return false;
+    const expression = extendsExpression(chain[0]) orelse return false;
+    return globals.isGlobalNamed(g, expression, "Uint8Array");
 }
 
 fn moduleNamespaceToHType(g: *Gate, t: *Type, depth: u32) ?*const HType {

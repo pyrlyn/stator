@@ -41,6 +41,7 @@ import {
   globalFunctionOf,
   globalTypeofOf,
   isGlobalArray,
+  isUserClassMember,
 } from '../frontend/gate.ts';
 import { numberConstant } from '../frontend/gate.ts';
 import type { GlobalFunction } from '../frontend/gate.ts';
@@ -88,6 +89,7 @@ import type {
   CallExpr,
   ClassDeclaration,
   ClassMethod,
+  ClassValue,
   CollectionNew,
   CollectionOp,
   CollectionOperation,
@@ -97,6 +99,7 @@ import type {
   NumberOperation,
   DateStatic,
   Declaration,
+  StaticProp,
   DynEntry,
   DynFieldAccess,
   DynMethodCall,
@@ -160,6 +163,7 @@ import {
   errorHType,
   externKindHType,
   forOfElementType,
+  GLOBAL_CALLS,
   isAccessorEntry,
   isComputedEntry,
   isSetOperation,
@@ -172,12 +176,11 @@ import {
   typedMember,
   typedResultType,
 } from '../hir/nodes.ts';
-import { GLOBAL_CALLS } from '../hir/nodes.ts';
-import type { HField, HObject, HType } from '../hir/types.ts';
 import {
   accessorName,
   accessorProperty,
   callableFieldSlot,
+  classLayoutOf,
   fieldSlot,
   H_BOOLEAN,
   H_NUMBER,
@@ -185,9 +188,12 @@ import {
   H_STRING,
   H_UNDEFINED,
   hArray,
+  hasPlaceholderField,
   hasTypeParam,
   hFunction,
+  type HField,
   hObject,
+  type HObject,
   hIterator,
   hPromise,
   hTypeAssignable,
@@ -195,6 +201,7 @@ import {
   hTypeEquals,
   hTypeHasUnknown,
   hTypeName,
+  type HType,
   hUnknown,
   objectFieldsPrefix,
 } from '../hir/types.ts';
@@ -497,6 +504,7 @@ export function lowerProgram(
   }
   files.slice(0, -1).forEach((file, ordinal) => dependencyOrdinals.set(file, ordinal));
   programModules = files;
+  frontendTypes.noteSubclassedClasses(files, checker);
   let current = entry;
   // Every module is a scope of its own under the shared root (plan.md §11c T11.5a): a module sees
   // its own top-level names and its imports, never another module's. All of them share the
@@ -834,7 +842,7 @@ function lowerStatement(
 
   if (ts.isThrowStatement(node)) {
     const value = lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
-    if (!value) {
+    if (value === null) {
       return null;
     }
     return {
@@ -1744,6 +1752,25 @@ function collectDynamicReturnsPass(
  * declaration list itself inside a `for` header, where there is no statement wrapping it. Passing
  * it in rather than synthesising a VariableStatement matters: a factory-made node has no source
  * position, and asking one for its start is a hard failure inside the TypeScript API. */
+
+/** `new` through a VALUE (`jsrt_construct`): a function value, or a class value whose
+ * descriptor is only known at run time. */
+function lowerNewValue(
+  node: ts.NewExpression,
+  type: HType,
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  bindings: Scope,
+  diagnostics: Diagnostic[],
+): NewValue | null {
+  const target = lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
+  const args = lowerArguments(node.arguments, sourceFile, checker, bindings, diagnostics);
+  if (target === null || args === null) {
+    return null;
+  }
+  const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
+  return { kind: 'new-value', type, span, target, args };
+}
 
 /** `x.length` on a value that answers it without a shape: an array, a function, or (anything
  * else the gate let through) a string. The three are different nodes because they become
@@ -3136,6 +3163,68 @@ function staticName(className: string, member: string): string {
   return `${className}.${member}`;
 }
 
+/** The type of the static binding `name` (a `staticName`) that class `owner` declares. A static
+ * is bound in its class's module scope, so a module that imports the class finds it there: the
+ * HIR name is the same in every module (a static is `set`, never renamed), and only the lookup
+ * needs the declaring module. */
+function staticBindingType(name: string, owner: ts.Node, bindings: Scope): HType | undefined {
+  return bindings.get(name) ?? moduleScopes.get(owner.getSourceFile())?.get(name);
+}
+
+/** Whether `access` reads a member through a class OBJECT rather than a class name: the
+ * receiver's type is a class's static side, and no spelling resolves it to one declaration
+ * (`k.count` on `k: typeof C`, `this.v` in a static method). A name, an alias and a bound class
+ * expression keep their erased static bindings. */
+function isClassValueReceiver(
+  access: ts.PropertyAccessExpression,
+  checker: ts.TypeChecker,
+): boolean {
+  return (
+    frontendTypes.classConstructorTypeOf(checker.getTypeAtLocation(access.expression)) &&
+    namedClassOperand(access.expression, checker) === undefined &&
+    frontendTypes.staticMemberOf(access, checker, undefined) === undefined
+  );
+}
+
+/** The class a `new` callee or an `instanceof` right operand NAMES, so its descriptor is known
+ * at compile time. A class alias names the same descriptor its target does (`const K = C`), and
+ * a bound class expression names its own (`const C = class …`; plan.md §8 step 12(d)). The
+ * declaration, not the reference, carries the name: `import { C as D }` spells the reference `D`.
+ * Undefined for a class reached only through a value (`k: typeof C`). */
+function namedClassOperand(
+  expression: ts.Expression,
+  checker: ts.TypeChecker,
+): ts.ClassDeclaration | ts.ClassExpression | undefined {
+  // The checker answers a static context's `this` with the class symbol, but `this` holds
+  // whichever class the call went through.
+  if (expression.kind === ts.SyntaxKind.ThisKeyword) {
+    return undefined;
+  }
+  const direct = checker.getSymbolAtLocation(expression)?.valueDeclaration;
+  if (direct !== undefined && (ts.isClassDeclaration(direct) || ts.isClassExpression(direct))) {
+    return direct;
+  }
+  return classObjectOwner(expression, checker);
+}
+/** One row of a class object's statics table (docs/VALUE.md §4.26), under the name JavaScript
+ * spells. A `#private` static has no such name and a runtime-computed key has no static one, so
+ * neither is reachable through a class value and neither gets a row. */
+function addStaticProp(
+  rows: StaticProp[],
+  member: ts.ClassElement,
+  binding: string,
+  kind: StaticProp['kind'],
+  checker: ts.TypeChecker,
+): void {
+  if (member.name === undefined || ts.isPrivateIdentifier(member.name)) {
+    return;
+  }
+  const name = frontendTypes.staticPropertyName(member.name, checker);
+  if (name !== null) {
+    rows.push({ name, binding, kind });
+  }
+}
+
 /** The HIR name of a class declaration: the alpha-renamed binding when the declaration shadows a
  * visible one (plan.md §8 step 23), otherwise the source name it was declared under.
  *
@@ -3449,7 +3538,13 @@ function identifierAssignment(
     );
     return null;
   }
-  const binding = bindings.get(target);
+  const staticOwner = ts.isPropertyAccessExpression(targetNode)
+    ? frontendTypes.staticMemberOf(targetNode, checker, false)?.owner
+    : undefined;
+  const binding =
+    staticOwner === undefined
+      ? bindings.get(target)
+      : staticBindingType(target, staticOwner, bindings);
   if (!binding) {
     diagnostics.push(
       lowerDiagnostic(
@@ -3639,7 +3734,7 @@ function memberAssignment(
     (ts.isGetAccessorDeclaration(staticFound.member) ||
       ts.isSetAccessorDeclaration(staticFound.member))
       ? {
-          owner: hirClassName(staticFound.owner),
+          owner: staticFound.owner,
           property: targetNode.name.text,
           halves: staticAccessorHalves(staticFound.owner, targetNode.name.text, checker),
         }
@@ -3877,8 +3972,11 @@ function memberAssignment(
     return null;
   } else if (
     privateWriteIsAccessor(targetNode, checker) ||
-    accessorOwner(targetNode.expression, targetNode.name.text, checker, bindings, sourceFile) !==
-      undefined
+    // An untyped receiver the checker narrows to a class by control flow (`let k; k = new K()`)
+    // has no layout to call the setter through; its write is the dynamic one, which runs it.
+    (target.type.kind === 'object' &&
+      accessorOwner(targetNode.expression, targetNode.name.text, checker, bindings, sourceFile) !==
+        undefined)
   ) {
     // `o.x = v` RUNS the setter. The gate refused the compound forms, so `current` is never read
     // here -- it is built anyway so the two halves of a place stay one shape.
@@ -4825,7 +4923,8 @@ function lowerClassMethodCall(
   if (target === null) {
     return null;
   }
-  if (target.type.kind !== 'object') {
+  const layout = classLayoutOf(target.type);
+  if (layout === undefined) {
     diagnostics.push(
       lowerDiagnostic(at, sourceFile, 'STA4049', 'internal', 'receiver is not an object'),
     );
@@ -4855,7 +4954,7 @@ function lowerClassMethodCall(
   }
   if (callPriv !== undefined) {
     const privateOwner = mangleClassName(callPriv.owner, obj, checker, bindings);
-    const privateSlot = target.type.methods.findIndex((m) => m.name === callPriv.property);
+    const privateSlot = layout.methods.findIndex((m) => m.name === callPriv.property);
     if (privateOwner === null || privateSlot < 0) {
       return missingMethodSlot(at, sourceFile, diagnostics, callPriv.property, target);
     }
@@ -4877,7 +4976,7 @@ function lowerClassMethodCall(
     // The slot is resolved against the receiver's STATIC type and read from its DYNAMIC one,
     // which is sound for the same reason a field slot is: a subclass's method table begins
     // with its base's, in the base's order.
-    const slot = target.type.methods.findIndex((m) => m.name === propName);
+    const slot = layout.methods.findIndex((m) => m.name === propName);
     if (slot < 0) {
       return missingMethodSlot(at, sourceFile, diagnostics, propName, target);
     }
@@ -4892,7 +4991,7 @@ function lowerClassMethodCall(
       owner,
       propName,
       slot,
-      !viaSuper && isOverridden(target.type.name, propName, checker) ? 'virtual' : 'direct',
+      !viaSuper && isOverridden(layout.name, propName, checker) ? 'virtual' : 'direct',
       args,
     );
   }
@@ -5073,14 +5172,16 @@ function lowerClassMemberRead(
   // An accessor is not a slot: reading `o.x` RUNS the getter, which is what the property means.
   const methodOwner = declaringClassName(receiver, field, checker, bindings, sourceFile);
   if (methodOwner !== null) {
-    if (target.type.kind !== 'object') {
+    // A `Uint8Array` subclass instance has a class layout too (plan/T11.6a).
+    const layout = classLayoutOf(target.type);
+    if (layout === undefined) {
       diagnostics.push(
         lowerDiagnostic(node, sourceFile, 'STA4049', 'internal', 'receiver is not an object'),
       );
       return null;
     }
-    return methodValue(node, target, target.type, field, methodOwner, {
-      virtual: isOverridden(target.type.name, field, checker),
+    return methodValue(node, target, layout, field, methodOwner, {
+      virtual: isOverridden(layout.name, field, checker),
       sourceFile,
       checker,
       bindings,
@@ -5174,6 +5275,28 @@ function lowerOutGet(
   };
 }
 
+/** `o.name` read by NAME through the shape table with a per-site cache (docs/VALUE.md §4.10).
+ * Its result is Unknown: no layout holds the program to what the name holds. */
+function lowerDynamicRead(
+  node: ts.PropertyAccessExpression,
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  bindings: Scope,
+  diagnostics: Diagnostic[],
+): DynFieldAccess | null {
+  const target = lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
+  if (target === null) {
+    return null;
+  }
+  return {
+    kind: 'dyn-field-access',
+    type: hUnknown(false),
+    span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
+    target,
+    field: node.name.text,
+  };
+}
+
 function lowerExpression(
   node: ts.Expression,
   sourceFile: ts.SourceFile,
@@ -5210,17 +5333,7 @@ function lowerExpression(
     isSelfBoundCallApply(node) &&
     typeAt(node.expression, checker, bindings).kind === 'array'
   ) {
-    const target = lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
-    if (target === null) {
-      return null;
-    }
-    return {
-      kind: 'dyn-field-access',
-      type: hUnknown(false),
-      span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
-      target,
-      field: node.name.text,
-    };
+    return lowerDynamicRead(node, sourceFile, checker, bindings, diagnostics);
   }
   const builtin = builtinValueOf(node, checker);
   if (builtin !== undefined) {
@@ -5437,7 +5550,7 @@ function lowerExpression(
         // which binding the class never emitted.
         return staticAccessorCall(
           'get',
-          hirClassName(found.owner),
+          found.owner,
           node.name.text,
           [],
           typeAt(node, checker, bindings),
@@ -5449,7 +5562,7 @@ function lowerExpression(
         );
       }
       const name = staticName(hirClassName(found.owner), node.name.text);
-      const type = bindings.get(name);
+      const type = staticBindingType(name, found.owner, bindings);
       if (type === undefined) {
         diagnostics.push(
           lowerDiagnostic(
@@ -5520,6 +5633,23 @@ function lowerExpression(
         value: display === DEFAULT_EXPORT_BINDING ? 'default' : display,
       };
     }
+  }
+  // `k.count`, `k.name` on a class object no spelling names (`k: typeof C` holds a subclass as
+  // well): the closure answers through its own descriptor's statics at run time (docs/VALUE.md
+  // §4.26), so the read is the shape-table one and the check settles it as the declared type.
+  if (ts.isPropertyAccessExpression(node) && isClassValueReceiver(node, checker)) {
+    const target = lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
+    if (target === null) {
+      return null;
+    }
+    const read: DynFieldAccess = {
+      kind: 'dyn-field-access',
+      type: hUnknown(false),
+      span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
+      target,
+      field: node.name.text,
+    };
+    return maybeBoundary(read, typeAt(node, checker, bindings), node, sourceFile);
   }
 
   // `c?.m` on a nullable single-class receiver: the static twin of the dynamic read below.
@@ -5592,17 +5722,7 @@ function lowerExpression(
       frontendTypes.isFunctionValueMember(node.expression, node.name.text, checker) ||
       frontendTypes.isUndeclaredMemberRead(node, checker))
   ) {
-    const target = lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
-    if (target === null) {
-      return null;
-    }
-    return {
-      kind: 'dyn-field-access',
-      type: hUnknown(false),
-      span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
-      target,
-      field: node.name.text,
-    };
+    return lowerDynamicRead(node, sourceFile, checker, bindings, diagnostics);
   }
 
   // `super.m` as a value: the base's method as an unbound closure -- the value twin of the
@@ -5861,6 +5981,12 @@ function lowerExpression(
   // parameter list starts with that parameter. There is no `this` node in the HIR because there
   // is nothing left for one to mean.
   if (node.kind === ts.SyntaxKind.ThisKeyword) {
+    // A bare `this` in a static method no subclass reaches is the defining class's one object.
+    const self =
+      bindings.get(RECEIVER) === undefined ? frontendTypes.staticThisClass(node) : undefined;
+    if (self !== undefined) {
+      return classValueNode(self, node, sourceFile, checker);
+    }
     return receiverIdentifier(node, sourceFile, bindings, diagnostics);
   }
 
@@ -6489,19 +6615,7 @@ function lowerExpression(
     // (`jsrt_construct`), and the result is a dynamic object whatever the checker infers from F's
     // body (plan-notes 310).
     if (frontendTypes.isFunctionValueCallee(node.expression, checker)) {
-      const target = lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
-      const args = lowerArguments(node.arguments, sourceFile, checker, bindings, diagnostics);
-      if (target === null || args === null) {
-        return null;
-      }
-      const created: NewValue = {
-        kind: 'new-value',
-        type: hUnknown(false),
-        span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
-        target,
-        args,
-      };
-      return created;
+      return lowerNewValue(node, hUnknown(false), sourceFile, checker, bindings, diagnostics);
     }
     const type = typeAt(node, checker, bindings);
     // `new RegExp(p, f)` and `new Array(n)` are the calls without `new` (§22.2.4.1, §23.1.1.1);
@@ -6548,14 +6662,20 @@ function lowerExpression(
     // The gate admitted only the global constructors, so the result type names the row.
     if (type.kind === 'uint8array' || type.kind === 'arraybuffer') {
       const args = lowerArguments(node.arguments, sourceFile, checker, bindings, diagnostics);
-      return args === null
-        ? null
-        : typedOpNode(
-            type.kind === 'uint8array' ? 'new Uint8Array' : 'new ArrayBuffer',
-            undefined,
-            args,
-            makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
-          );
+      if (args === null) {
+        return null;
+      }
+      const op = typedOpNode(
+        type.kind === 'uint8array' ? 'new Uint8Array' : 'new ArrayBuffer',
+        undefined,
+        args,
+        makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
+      );
+      // A subclass has no constructor of its own (the gate's rule), so its `new` IS the builtin
+      // one with the class stamped on the view.
+      return type.kind === 'uint8array' && type.subclass !== undefined
+        ? { ...op, type, viewClass: type.subclass.name }
+        : op;
     }
     // A Date is allocated too, but unlike a collection it takes an ARGUMENT: the one-argument form
     // is the only one the gate let through, and `jsrt_date_from_value` discriminates its three
@@ -6615,6 +6735,15 @@ function lowerExpression(
         return null;
       }
       return { kind: 'promise-construct', type, span, executor };
+    }
+    // `new k(...)` on `k: typeof C` builds whichever class `k` holds, a subclass included, so
+    // the descriptor is the value's; the checker's `C` instance type stays true of the result.
+    if (
+      type.kind === 'object' &&
+      namedClassOperand(node.expression, checker) === undefined &&
+      frontendTypes.classConstructorTypeOf(checker.getTypeAtLocation(node.expression))
+    ) {
+      return lowerNewValue(node, type, sourceFile, checker, bindings, diagnostics);
     }
     if (type.kind !== 'object') {
       diagnostics.push(
@@ -6695,6 +6824,13 @@ function lowerExpression(
     const canonical = canonicalValueReference(node, sourceFile, checker, bindings, diagnostics);
     if (canonical !== undefined) {
       return canonical;
+    }
+    // A class spelling read as a VALUE is its one class object (docs/VALUE.md §4.26). In-place
+    // spellings (`new C`, `C.static`, `C.name`, `typeof C`) never reach here: their parents
+    // lower them first, and the gate admitted this use only for a class with one constant.
+    const classOwner = classObjectOwner(node, checker);
+    if (classOwner !== undefined) {
+      return classValueNode(classOwner, node, sourceFile, checker);
     }
     if (!binding) {
       // Two different failures wear the same shape here, and telling them apart is the whole point.
@@ -6936,9 +7072,16 @@ function lowerExpression(
       };
       return test;
     }
+    const declaration = namedClassOperand(node.right, checker);
     // Against an ordinary function or an untyped value, the prototype question is the VALUE's,
-    // answered at run time (`jsrt_instanceof_ctor`, plan-notes 310).
-    if (frontendTypes.isFunctionValueCallee(node.right, checker)) {
+    // answered at run time (`jsrt_instanceof_ctor`, plan-notes 310). A class object reached
+    // through a value (`o instanceof k` on `k: typeof C`) has no name to compare descriptors by
+    // either, so the runtime walks the prototype chain against what `k` holds.
+    if (
+      frontendTypes.isFunctionValueCallee(node.right, checker) ||
+      (declaration === undefined &&
+        frontendTypes.classConstructorTypeOf(checker.getTypeAtLocation(node.right)))
+    ) {
       const ctor = lowerExpression(node.right, sourceFile, checker, bindings, diagnostics);
       if (ctor === null) {
         return null;
@@ -6952,19 +7095,6 @@ function lowerExpression(
       };
       return test;
     }
-    const direct = checker.getSymbolAtLocation(node.right)?.valueDeclaration;
-    // A class alias names the same descriptor its target does: `o instanceof K` on
-    // `const K = C` is the pointer comparison against `C`, so the direct check keeps its exact
-    // shape and the alias resolves beside it. A bound class expression names its own
-    // descriptor the same way (`o instanceof C` on `const C = class …`; plan.md §8 step 12(d)).
-    const declaration =
-      direct !== undefined && (ts.isClassDeclaration(direct) || ts.isClassExpression(direct))
-        ? direct
-        : ts.isIdentifier(node.right)
-          ? (frontendTypes.aliasedClassDeclaration(node.right, checker) ??
-            frontendTypes.classExpressionTarget(node.right, checker) ??
-            frontendTypes.innerClassExpression(node.right, checker))
-          : undefined;
     if (declaration === undefined || classDisplayName(declaration) === undefined) {
       diagnostics.push(
         lowerDiagnostic(
@@ -7430,9 +7560,12 @@ function lowerExpression(
 
       // The landed Uint8Array / ArrayBuffer METHODS (plan.md T11.1), padded to the row's arity --
       // every one reads an omitted bound as `undefined`, the spec's own default. Unknown
-      // receivers take the dynamic path (the 2454 rule above).
+      // receivers take the dynamic path (the 2454 rule above). A method a `Uint8Array` subclass
+      // declares is the class's (Node's `Buffer.slice` shares memory where the row copies), the
+      // gate's rule (plan/T11.6a).
       const typedOp =
-        receiverType.kind === 'uint8array' || receiverType.kind === 'arraybuffer'
+        (receiverType.kind === 'uint8array' || receiverType.kind === 'arraybuffer') &&
+        !isUserClassMember(expr, checker)
           ? typedMember(receiverType.kind, propName)
           : undefined;
       if (typedOp !== undefined && TYPED_OPS[typedOp].form === 'call') {
@@ -7865,12 +7998,31 @@ function lowerExpression(
     if (callee.type.kind !== 'fn' && callee.type.kind !== 'unknown') {
       return nonFunctionCall(node, expr, callee, args, sourceFile);
     }
+    // A static method a subclass can reach takes the class it was reached through as argument 0.
+    const staticReceiver = staticCallReceiver(expr, sourceFile, checker, bindings, diagnostics);
+    if (staticReceiver === null) {
+      return null;
+    }
+    const type = typeAt(node, checker, bindings);
+    const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
+    if (staticReceiver === undefined || callee.type.kind !== 'fn') {
+      const call: CallExpr = {
+        kind: 'call',
+        type,
+        span,
+        callee,
+        args: checkCallArgs(callee.type, args, node, sourceFile, checker),
+      };
+      return call;
+    }
+    const withThis = hFunction(callee.type.params.slice(1), callee.type.ret);
     const call: CallExpr = {
       kind: 'call',
-      type: typeAt(node, checker, bindings),
-      span: makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile),
+      type,
+      span,
       callee,
-      args: checkCallArgs(callee.type, args, node, sourceFile, checker),
+      args: [staticReceiver, ...checkCallArgs(withThis, args, node, sourceFile, checker)],
+      withReceiver: true,
     };
     return call;
   }
@@ -7927,26 +8079,19 @@ function lowerDynMethodCall(
   // every closure, and the result is whatever `f` returns, read as Unknown.
   const callApply =
     (expr.name.text === 'call' || expr.name.text === 'apply') && isPlainFunctionValue(obj, checker);
+  // `k.make()` on a class object: the static method loads through the descriptor's statics.
+  const classValue = isClassValueReceiver(expr, checker);
   // A declared field that is not callable by its type (`unknownFn: null`, later a function):
   // the gate admitted the call in js mode, and the dynamic read finds the field by name.
-  const fieldValue =
-    slot === undefined &&
-    receiver.kind === 'object' &&
-    receiver.namespace !== true &&
-    receiver.fields.some(
-      (field) =>
-        field.name === expr.name.text &&
-        (field.type.kind === 'null' ||
-          field.type.kind === 'undefined' ||
-          field.type.kind === 'unknown'),
-    );
+  const fieldValue = slot === undefined && hasPlaceholderField(receiver, expr.name.text);
   if (
     receiver.kind !== 'unknown' &&
     slot === undefined &&
     !functionMember &&
     !grown &&
     !callApply &&
-    !fieldValue
+    !fieldValue &&
+    !classValue
   ) {
     return undefined;
   }
@@ -7959,7 +8104,7 @@ function lowerDynMethodCall(
     return null;
   }
   const type =
-    functionMember || grown || callApply || fieldValue
+    functionMember || grown || callApply || fieldValue || classValue
       ? hUnknown(false)
       : typeAt(node, checker, bindings);
   const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
@@ -8707,65 +8852,65 @@ function hasExplicitThisParam(node: FunctionLike): boolean {
   return first !== undefined && ts.isIdentifier(first.name) && first.name.text === 'this';
 }
 
-/** Whether a plain function owns a `this` that needs binding: some `this` in its subtree whose
- * nearest non-arrow function is this node. Arrows pass the read through (they own nothing), so
- * the walk descends through them; any other nested function owns its subtree, so the walk prunes
- * it — a `this` in there resolves inward, never here. A `this` with no function owner at all
- * (module top level, or an arrow in a field initializer, whose owner is the class) is not ours.
- * Structural, never modal: in ts mode the gate already refused nothing here — the checker owns
- * that refusal (STA0012) — and the lowering supports the construct either way. */
-function functionNeedsDynamicThis(node: ts.FunctionDeclaration | ts.FunctionExpression): boolean {
-  let found = false;
-  const visit = (n: ts.Node): void => {
-    if (found) {
-      return;
-    }
-    if (n.kind === ts.SyntaxKind.ThisKeyword) {
-      for (let c: ts.Node | undefined = n.parent; c !== undefined; c = c.parent) {
-        if (ts.isArrowFunction(c)) {
-          continue;
-        }
-        if (
-          ts.isFunctionDeclaration(c) ||
-          ts.isFunctionExpression(c) ||
-          ts.isMethodDeclaration(c) ||
-          ts.isConstructorDeclaration(c) ||
-          ts.isGetAccessorDeclaration(c) ||
-          ts.isSetAccessorDeclaration(c)
-        ) {
-          if (c === node) {
-            found = true;
-          }
-          break;
-        }
-        if (
-          ts.isSourceFile(c) ||
-          ts.isClassDeclaration(c) ||
-          ts.isClassExpression(c) ||
-          ts.isPropertyDeclaration(c)
-        ) {
-          break;
-        }
-      }
-      return;
-    }
-    // A nested non-arrow function owns its subtree (see above); an arrow does not, so only the
-    // arrow case recurses. The node itself is the sought owner, never a reason to prune.
-    if (
-      n !== node &&
-      (ts.isFunctionDeclaration(n) ||
-        ts.isFunctionExpression(n) ||
-        ts.isMethodDeclaration(n) ||
-        ts.isConstructorDeclaration(n) ||
-        ts.isGetAccessorDeclaration(n) ||
-        ts.isSetAccessorDeclaration(n))
-    ) {
-      return;
-    }
-    ts.forEachChild(n, visit);
+/** The class object of `owner` where `at` evaluates it (docs/VALUE.md §4.26): one per class, so
+ * the node names the class and the emitter points at its file-scope object. */
+function classValueNode(
+  owner: ts.ClassDeclaration | ts.ClassExpression,
+  at: ts.Expression,
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+): ClassValue {
+  return {
+    kind: 'class-value',
+    type: frontendTypes.tsTypeToHType(checker.getTypeAtLocation(at), checker),
+    span: makeSpan(at.getStart(sourceFile), at.getWidth(sourceFile), sourceFile),
+    className: hirClassName(owner),
   };
-  ts.forEachChild(node, visit);
-  return found;
+}
+
+/** Whether a static method binds `this` as parameter zero: it reads `this`, and a subclass can
+ * reach it, so `this` is the class the call went through rather than the defining one. */
+function staticMethodTakesReceiver(member: ts.MethodDeclaration, checker: ts.TypeChecker): boolean {
+  return (
+    member.body !== undefined &&
+    frontendTypes.readsOwnThis(member) &&
+    frontendTypes.staticThisTakesReceiver(member.body, checker)
+  );
+}
+
+/** The class object a call of a receiver-taking static method passes as parameter zero: the
+ * class it was reached through (`T` in `T.m()`), the current `this` for `super.m()`, and the
+ * defining class for an erased `this.m()`. `undefined` when the callee takes no receiver. */
+function staticCallReceiver(
+  callee: ts.Expression,
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  bindings: Scope,
+  diagnostics: Diagnostic[],
+): Expression | null | undefined {
+  if (!ts.isPropertyAccessExpression(callee)) {
+    return undefined;
+  }
+  const found = frontendTypes.staticMemberOf(callee, checker, true);
+  if (
+    found === undefined ||
+    !ts.isMethodDeclaration(found.member) ||
+    !staticMethodTakesReceiver(found.member, checker)
+  ) {
+    return undefined;
+  }
+  const receiver = callee.expression;
+  if (receiver.kind === ts.SyntaxKind.SuperKeyword || receiver.kind === ts.SyntaxKind.ThisKeyword) {
+    if (bindings.get(RECEIVER) !== undefined) {
+      return receiverIdentifier(receiver, sourceFile, bindings, diagnostics);
+    }
+    const self = frontendTypes.staticThisClass(callee);
+    if (self === undefined) {
+      return undefined;
+    }
+    return classValueNode(self, receiver, sourceFile, checker);
+  }
+  return lowerExpression(receiver, sourceFile, checker, bindings, diagnostics);
 }
 
 function lowerFunction(
@@ -8794,9 +8939,8 @@ function lowerFunction(
     // site passes its receiver or nothing, and `jsrt_call` shifts a bare call's arguments so slot
     // zero reads `undefined` (docs/VALUE.md §4.16 `has_receiver` — reused, not reinvented; emitted
     // modules are always strict ESM, so `undefined` is the honest answer, never the sloppy
-    // global). Only functions that need it pay for it: an unconditional receiver would make
-    // `f(1, 2)` on `function f(a)` look like a receiver call (argc meets the shifted width) and
-    // bind `this = 1, a = 2`. Arrows never own one — they capture the enclosing receiver through
+    // global). Only functions that need it pay for it: the shift copies argv on every bare call.
+    // Arrows never own one — they capture the enclosing receiver through
     // the environment, which the capture analysis already records against plain functions.
     const isPlainFunction = ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node);
     let effectiveReceiver = receiver;
@@ -8804,7 +8948,7 @@ function lowerFunction(
       effectiveReceiver === undefined &&
       isPlainFunction &&
       !hasExplicitThisParam(node) &&
-      functionNeedsDynamicThis(node)
+      frontendTypes.readsOwnThis(node)
     ) {
       effectiveReceiver = hUnknown(false);
     }
@@ -9419,7 +9563,7 @@ function lowerPrivateRead(
  * stays refused at the gate. */
 function staticAccessorCall(
   kind: 'get' | 'set',
-  owner: string,
+  owner: ts.ClassDeclaration | ts.ClassExpression,
   property: string,
   args: readonly Expression[],
   type: HType,
@@ -9429,8 +9573,8 @@ function staticAccessorCall(
   bindings: Scope,
   diagnostics: Diagnostic[],
 ): CallExpr | null {
-  const name = staticName(owner, accessorName(kind, property));
-  const fnType = bindings.get(name);
+  const name = staticName(hirClassName(owner), accessorName(kind, property));
+  const fnType = staticBindingType(name, owner, bindings);
   if (fnType === undefined) {
     diagnostics.push(
       lowerDiagnostic(
@@ -9659,7 +9803,7 @@ function isClassInstance(node: ts.Expression, checker: ts.TypeChecker, bindings:
   ) {
     return false;
   }
-  return typeAt(node, checker, bindings).kind === 'object';
+  return classLayoutOf(typeAt(node, checker, bindings)) !== undefined;
 }
 
 /** An object layout with its member types substituted: same name, bases, and slot order —
@@ -9892,8 +10036,12 @@ function lowerClass(
       self = symbol === undefined ? undefined : checker.getDeclaredTypeOfSymbol(symbol);
     }
   }
-  const type = self === undefined ? undefined : frontendTypes.tsTypeToHType(self, checker);
-  if (displayName === undefined || type === undefined || type.kind !== 'object') {
+  const instanceType = self === undefined ? undefined : frontendTypes.tsTypeToHType(self, checker);
+  // A `Uint8Array` subclass lays out no slots: its instances are views (plan/T11.6a), and the
+  // layout below is only what its methods and descriptor are built against.
+  const isView = instanceType?.kind === 'uint8array';
+  const type = instanceType === undefined ? undefined : classLayoutOf(instanceType);
+  if (displayName === undefined || type === undefined) {
     diagnostics.push(
       lowerDiagnostic(
         node,
@@ -9957,6 +10105,14 @@ function lowerClass(
     }
     return { ...type, name: selfName, bases: type.bases.map(renameBase) };
   })();
+  // What `this` is inside a member: the layout, or for a view class the view typed by its class,
+  // so `this[i]` and `this.length` take the typed paths.
+  const receiverType: HType = isView
+    ? {
+        kind: 'uint8array',
+        subclass: { name: layout.name, bases: layout.bases, methods: layout.methods },
+      }
+    : layout;
 
   // The slot list comes from the TYPE, not from a second walk of the members: HObject.fields is
   // what every FieldAccess slot was resolved against, so re-deriving the order here would be a
@@ -10092,6 +10248,9 @@ function lowerClass(
   // before every tuple at the declaration site, so a tuple's method bodies still read bound
   // statics.
   const statics: Declaration[] = [];
+  // The class object's table (docs/VALUE.md §4.26). A generic class has no one class object --
+  // the gate refuses it as a value -- so its carrier and its tuples carry no rows.
+  const staticProps: StaticProp[] = [];
   if (spec !== undefined && !spec.staticsOnly) {
     staticNodes.length = 0;
     staticAccessors.length = 0;
@@ -10136,9 +10295,17 @@ function lowerClass(
     const at = makeSpan(member.getStart(sourceFile), member.getWidth(sourceFile), sourceFile);
     let value: Expression | null;
     if (ts.isMethodDeclaration(member)) {
-      // No receiver: a static method is an ordinary function that happens to be written inside a
-      // class. `this` inside one is refused at the gate, which is what makes that true.
-      value = lowerFunction(member, sourceFile, checker, bindings, diagnostics);
+      // A static method is an ordinary function written inside a class. Its `this` erases to the
+      // class's statics unless a subclass can reach it; then `this` is the class the call passes
+      // as parameter zero, read dynamically like a plain function's (plan.md T27 step 4).
+      value = lowerFunction(
+        member,
+        sourceFile,
+        checker,
+        bindings,
+        diagnostics,
+        staticMethodTakesReceiver(member, checker) ? hUnknown(false) : undefined,
+      );
     } else if (member.initializer === undefined || !firstRunFields.has(member)) {
       // A declared-but-uninitialized static reads `undefined`, exactly as a field slot does —
       // and so does a field whose run sits past a static block: its slot is `undefined` until
@@ -10153,6 +10320,13 @@ function lowerClass(
     const declared = ts.isMethodDeclaration(member)
       ? value.type
       : typeAt(member, checker, bindings);
+    addStaticProp(
+      staticProps,
+      member,
+      name,
+      ts.isMethodDeclaration(member) ? 'method' : 'field',
+      checker,
+    );
     statics.push({
       kind: 'declaration',
       type: declared,
@@ -10185,6 +10359,7 @@ function lowerClass(
       value.params.map((p) => p.type),
       H_UNDEFINED,
     );
+    addStaticProp(staticProps, member, name, half, checker);
     statics.push({
       kind: 'declaration',
       type: fnType,
@@ -10201,7 +10376,7 @@ function lowerClass(
 
   const methods: ClassMethod[] = [];
   for (const method of methodNodes) {
-    const fn = lowerFunction(method, sourceFile, checker, bindings, diagnostics, layout);
+    const fn = lowerFunction(method, sourceFile, checker, bindings, diagnostics, receiverType);
     if (fn === null) {
       return null;
     }
@@ -10251,10 +10426,12 @@ function lowerClass(
           : baseDecl.name?.text;
   let ctor: ClassMethod | undefined;
   // The carrier builds no constructor: it is never constructed, and its body would lower a
-  // type parameter no substitution binds.
+  // type parameter no substitution binds. Nor does a view class: the gate admits no constructor
+  // in its chain, so constructing one is building the view (`new` lowers to the typed op).
   if (
     (ctorNode !== undefined || initializers.length > 0 || base !== undefined) &&
-    spec?.staticsOnly !== true
+    spec?.staticsOnly !== true &&
+    !isView
   ) {
     // A field-initializer arrow reads the constructor's receiver through the class's capture
     // entry (see `enclosingThisOwner`): an explicit constructor already carries it in its own
@@ -10302,6 +10479,7 @@ function lowerClass(
           ],
         },
       },
+      ...(ctorNode === undefined ? { implicit: true as const } : {}),
     };
   }
 
@@ -10357,11 +10535,12 @@ function lowerClass(
     span,
     name: selfName,
     ...(base !== undefined && { base }),
+    ...(isView && { view: true as const }),
     fields,
     ...(ctor !== undefined && { ctor }),
     methods,
     statics,
-    staticProps: [],
+    staticProps: spec === undefined ? staticProps : [],
     vtable,
   };
 
@@ -10746,7 +10925,7 @@ function methodCallAtSlot(
   dispatch: 'direct' | 'virtual',
   args: Expression[],
 ): MethodCall {
-  const methods = target.type.kind === 'object' ? target.type.methods : [];
+  const methods = classLayoutOf(target.type)?.methods ?? [];
   return {
     kind: 'method-call',
     type: typeAt(node, checker, bindings),
