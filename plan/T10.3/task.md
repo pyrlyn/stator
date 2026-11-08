@@ -1,9 +1,9 @@
 ---
-status: todo
+status: in progress
 priority: P1
 complexity: 4
-readiness: 0%
-agent:
+readiness: 100%
+agent: Claude Code / claude-opus-5-5
 ---
 
 # T10.3. Threaded / parallel host compiler
@@ -31,3 +31,6 @@ Steps:
 byte-identical emitted C for the fixture; CI green. **Met 2026-10-23** (plan-notes 374) except
 the step-5 CI smoke, which **landed 2026-10-24** (plan-notes 381) — CI green on the job itself
 is observable after merge.
+
+Execution plan (closing): confirm the `compile jobs smoke` job is green on `main`, rerun
+`compile-jobs.test.ts` under `STATOR_COMPILE_JOBS=2` locally, and write `done.md`.
