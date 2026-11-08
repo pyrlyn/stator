@@ -14932,3 +14932,17 @@ file names. A project `.env` still may not set `CC` (docs/TOOLCHAIN.md, "Environ
 **Where.** `chooseCC` in `packages/compiler/src/cli/cc.ts` lets `CC` pass a `config` choice but
 never a `--cc` one; `packages/tests/unit/cc.test.ts` pins both. docs/TOOLCHAIN.md, docs/CONFIG.md
 and the schema's `cc` description state the order.
+
+## 411. CodeQL skips vendored code and tests (2026-11-08)
+
+**Decision (creator).** CodeQL analyzes first-party source only. `.github/codeql/codeql-config.yml`
+(wired through `codeql.config-file` in `.github/infra.yml`, which pyrlyn-archive/ci-old's
+`codeql.yml` passes to `github/codeql-action/init`) ignores:
+
+- `packages/runtime/vendor` — QuickJS-NG's libregexp, fdlibm and Ryū, patched only via this file;
+- `packages/runtime/tests`, `packages/tests`, `packages/transpiler/tests` and
+  `packages/interpreter/test262` — test inputs, fixtures and harnesses, which hold unsafe or odd
+  constructs on purpose.
+
+Alerts on those paths stop being reported on the next analysis of `main`; nothing is dismissed by
+hand. The C analysis runs with `build-mode: none`, where `paths-ignore` applies.
