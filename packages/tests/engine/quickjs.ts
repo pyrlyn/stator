@@ -15,12 +15,17 @@ import {
 import { arch, cpus, platform, release, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { nodePath } from '../support/node-path.ts';
+import { onPath } from '../support/on-path.ts';
 import { timedRun } from '../support/timed-run.ts';
 import { engineBinary, REPO } from './binary.ts';
 
 const runs = Number(process.env['BENCH_RUNS'] ?? 7);
 if (!Number.isSafeInteger(runs) || runs < 5) throw new Error('BENCH_RUNS must be at least 5');
 const qjs = process.env['QJS'] ?? 'qjs';
+const exe = process.platform === 'win32' ? '.exe' : '';
+const git = onPath(`git${exe}`);
+const zig = onPath(`zig${exe}`);
+if (git === undefined || zig === undefined) throw new Error('git and zig are required on PATH');
 const selectedEngine = engineBinary('ReleaseFast');
 // A concurrent build must not replace the executable halfway through the comparison.
 const snapshot = mkdtempSync(join(tmpdir(), 'stator-quickjs-'));
@@ -91,8 +96,8 @@ const rows = readdirSync(sourceDir)
   });
 const report = {
   timestamp: new Date().toISOString(),
-  revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim(),
-  diff: execFileSync('git', ['diff', '--', 'packages/engine', 'packages/runtime'], {
+  revision: execFileSync(git, ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim(),
+  diff: execFileSync(git, ['diff', '--', 'packages/engine', 'packages/runtime'], {
     cwd: REPO,
     encoding: 'utf8',
   }),
@@ -111,7 +116,7 @@ const report = {
             encoding: 'utf8',
           }).stderr,
         },
-  zig: execFileSync('zig', ['version'], { encoding: 'utf8' }).trim(),
+  zig: execFileSync(zig, ['version'], { encoding: 'utf8' }).trim(),
   build: 'ReleaseFast',
   metric: 'wall milliseconds including startup, one warmup, rotating order',
   runs,
