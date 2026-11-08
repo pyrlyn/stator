@@ -4,6 +4,16 @@ The interpreter has been optimized and a reproducible comparison with QuickJS an
 has been added. This is a progress record, not a closing report: the requested win on every
 workload has not been established.
 
+## Integration with main
+
+Before publication this patch was rebased onto `ec60a284` (T67.1 and T69). The JIT's direct-call
+stack context, inline property/global caches and plain-call return path are preserved. Its
+dead-store analysis now recognizes the local reads in the new combined instructions, with
+regression coverage for both operands of a local/local operation and a local/immediate operation.
+The recorded measurements below describe the pre-integration executable identified by their
+hashes; they are not substituted with numbers from the newer main branch. Integration checks
+are repeated on the PR head before merge.
+
 ## Implementation
 
 - Labeled opcode dispatch, specialized numeric operations and exception checks only where an

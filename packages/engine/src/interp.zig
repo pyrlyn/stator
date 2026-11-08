@@ -427,6 +427,9 @@ test "local immediate operators preserve coercion, TDZ and exceptional completio
 }
 
 test "fused local reads preserve operand order and argument initialization" {
+    // The JIT's dead-store pass must see both fused operands as reads of initialized locals.
+    try expectRuns("function f() { let a = 2; let b = 3; return a + b; } f()", "5");
+    try expectRuns("function f() { let a = 2; return a + 1; } f()", "3");
     try expectRuns("function f(a, b) { return [a + b, a - b, a < b, a <= b].join(); } f('2', 3)", "23,-1,true,true");
     try expectRuns("function f() { let x; try { x = a + b; } catch (e) { return e instanceof ReferenceError; } let a, b; } f()", "true");
     try expectRuns("function f(a, b = 3, c) { return [a, b, c].join(); } f(1) + ';' + f(1, 2, 4)", "1,3,;1,2,4");
