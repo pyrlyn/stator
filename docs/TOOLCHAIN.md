@@ -197,14 +197,14 @@ milliseconds). It is also not a `.env` key.
 (plan/T35, `packages/compiler/src/cli/cc.ts`). Highest first:
 
 1. `--cc=<name|path>` on the command line;
-2. `"cc"` in `stator.config.json` (a value starting with `.` resolves against the file's
-   directory; docs/CONFIG.md);
-3. `CC` from the real environment (an empty `CC` is unset; a project `.env` may not set it,
+2. `CC` from the real environment (an empty `CC` is unset; a project `.env` may not set it,
    below);
+3. `"cc"` in `stator.config.json` (a value starting with `.` resolves against the file's
+   directory; docs/CONFIG.md);
 4. `clang`, the pinned LLVM 21.1.8 from `mise install`.
 
-The config file sits above `CC` because `CC` is often set for a whole shell or CI image, while
-the file names the compiler the project was built and tested with. A config file can already make
+`CC` sits above the config file, the order every other setting follows (docs/CONFIG.md): whoever
+runs the build overrides what the project file names (plan-notes 409). A config file can already make
 the build run another program through `link` (`-B<dir>`), so `cc` widens nothing a project file
 could not reach; `.env` stays excluded because it is read implicitly from the current directory.
 
@@ -247,7 +247,7 @@ Windows is out of scope.
 | `STATOR_OPT` | clang `-O` level (above) | yes |
 | `STATOR_RUNTIME` | runtime flavor: `asan` or `intl` archive, and the builtins the gate admits | yes |
 | `STATOR_OTEL` | turns tracing on (plan-notes 187) | yes |
-| `CC` | the C compiler Stator runs, below `--cc` and config `cc` (C compiler, above). Empty is unset | **no** |
+| `CC` | the C compiler Stator runs, below `--cc` and above config `cc` (C compiler, above). Empty is unset | **no** |
 | `STATOR_COMPILE_JOBS` | how many clang processes compile the generated C (plan.md §11b T10.3). `1` is one translation unit and one clang line; unset splits a large enough program across the host's cores; an explicit value above 1 splits whenever there are two functions. An invalid value is `STA0021` | **no** |
 | `STATOR_COMPILE_TIMING` | set to anything to print one `stator: timing …` line of per-span wall times on stderr (T10.3's measurement; does not change the output) | **no** |
 | `STATOR_RUNTIME_ROOT` (and `STATOR_STD_ROOT`, `STATOR_NODE_ROOT`) | where the runtime headers and archives live | **no** |

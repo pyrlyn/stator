@@ -14919,6 +14919,20 @@ Zig. None of it landed, so the codes, their decision tests and `explain` are unc
 fresh result object rather than the inner one. In an async generator, a sync iterable's final
 value is not awaited.
 
+## 409. T35: `CC` overrides config `cc` (2026-11-08)
+
+**Decision (creator).** The C compiler follows the order every other setting follows: `--cc` >
+`CC` > config `cc` > `clang`. T35 had put the config above `CC`, on the argument that `CC` is often
+set for a whole shell or CI image while the file names the compiler the project was tested with.
+The creator chose the general rule instead: whoever runs the build overrides what the project
+file names. A project `.env` still may not set `CC` (docs/TOOLCHAIN.md, "Environment variables and
+`.env`"); the creator also confirmed that config `cc` may choose the compiler at all, since `link`
+(`-B<dir>`) could already make a build run another program.
+
+**Where.** `chooseCC` in `packages/compiler/src/cli/cc.ts` lets `CC` pass a `config` choice but
+never a `--cc` one; `packages/tests/unit/cc.test.ts` pins both. docs/TOOLCHAIN.md, docs/CONFIG.md
+and the schema's `cc` description state the order.
+
 ## 411. CodeQL skips vendored code and tests (2026-11-08)
 
 **Decision (creator).** CodeQL analyzes first-party source only. `.github/codeql/codeql-config.yml`
