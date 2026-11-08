@@ -9,6 +9,7 @@ pub const env_file = @import("env_file.zig");
 pub const outputs = @import("outputs.zig");
 pub const compile_jobs = @import("compile_jobs.zig");
 pub const toolchain = @import("toolchain.zig");
+pub const cc = @import("cc.zig");
 pub const link = @import("link.zig");
 pub const library = @import("library.zig");
 
