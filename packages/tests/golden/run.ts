@@ -32,6 +32,7 @@ import {
   parseShardArgs,
   pool,
   readOnlyList,
+  runnerShardCount,
   runProcess,
   shardSlice,
   workerBaseArgs,
@@ -276,7 +277,8 @@ async function main(): Promise<void> {
 
   // `--shards=N`: fan out to N workers of this same runner and merge by fixture index. The merge
   // passes `shard: undefined`, so the printed report is the serial one, byte for byte.
-  if (args.shards !== undefined) {
+  const shards = runnerShardCount(args, filtered.length);
+  if (shards !== undefined) {
     const script = process.argv[1];
     if (script === undefined) {
       throw new Error('cannot fan out: no script path in process.argv');
@@ -286,12 +288,13 @@ async function main(): Promise<void> {
       await fanOutWorkers({
         script,
         baseArgs: [...workerBaseArgs(args), ...(BUNDLER_NONE ? ['--bundler=none'] : [])],
-        shards: args.shards,
+        shards,
         dir,
+        ...(args.shards === undefined ? { sharedJobs: true } : {}),
       });
       const results = mergeShardFiles({
         dir,
-        shards: args.shards,
+        shards,
         keys: filtered.map((fixture) => fixtureKey(fixture)),
         decode: decodeFailure,
       });

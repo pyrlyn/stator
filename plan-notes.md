@@ -15103,3 +15103,28 @@ ring used a computed-key store, which this baseline JIT rejected (`to_key`), sil
 back to the interpreter. A separate trace run now proves `bench` and `checkedBatch` compiled
 before any result can be published. The cycle kernel uses a global root instead; unsupported
 bytecode coverage is not claimed. Results and commands are recorded with T69.
+
+
+## T72. Use existing process sharding for full local tests (2026-11-08)
+
+Creator-directed full local test optimization. `packages/tests/support/parallel.ts` already
+implements `--shards=N` and validates every merged fixture index, but unflagged subset and
+golden runs keep CPU-bound compiler work in one Node process. On this 16-core, 64 GiB host
+(Node 26.7.0), the unchanged complete subset corpus took 59.84 s without flags and 15.88 s
+with `--shards=4`; both printed `1041 fixtures — 1010 passed, 31 expected-fail, 0 failed`.
+Commands: `/usr/bin/time -p node packages/tests/subset/run.ts` and the same command with
+`--shards=4`, at local main `2232663d` (the subset, support and compiler sources match the
+T72 base `ec60a284`). These are single local samples, not a CI or whole-gate speed claim.
+
+Reuse that runner for full runs, capped at four processes, available CPU parallelism and
+one process per 2 GiB total RAM. Automatic workers share the existing subprocess pool budget.
+Keep explicit shard flags, serial debugging, focused runs and impact recording compatible;
+no fixture or comparison changes. The normative rule is in plan.md's Phase 6 T72 entry and
+the invocation details are in docs/TOOLCHAIN.md.
+
+The implemented automatic mode took 13.11 s for the same subset report. On T72's worktree,
+`node packages/tests/golden/run.ts --filter=` (all fixtures, original in-process execution)
+took 209.88 s, versus 60.28 s without flags (automatic workers). Both exited 0 and printed
+`525 fixtures — 525 passed, 0 failed`, with the same two ICU-only skips. stdout and stderr
+compared byte-for-byte with `cmp`. These are single samples on a shared workstation; the
+whole `ci` duration was not benchmarked.
