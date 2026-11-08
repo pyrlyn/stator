@@ -14982,6 +14982,10 @@ In an ubuntu:24.04 container, `LIBRARY_PATH=/usr/lib/aarch64-linux-gnu` linked i
 showed libc still taken from the conda sysroot, while `-L/usr/lib/aarch64-linux-gnu` linked the
 distro `libc.so` ahead of it. `.github/actions/clang` therefore exports that `LIBRARY_PATH` on
 Linux, and docs/TOOLCHAIN.md tells users the same; statorc adds no search path of its own.
+Headers likewise: with `libicu-dev` installed, `#include <unicode/ucol.h>` was not found
+(`pkg-config --cflags icu-uc` is empty, since `/usr/include` is a system directory to it), and
+`-idirafter /usr/include` compiled, linked and ran an ICU collator, so the `runtime-intl` recipe
+adds that flag on Linux. CI does not build `runtime-intl` while `SKIP_CI_TESTS` is set.
 
 **CI cost.** The conda install is about 1.3 GB unpacked on Linux (`conda-clang` 1.1 GB,
 `conda-llvm` 211 MB); `mise-action` caches it, so a warm job pays a cache restore instead.

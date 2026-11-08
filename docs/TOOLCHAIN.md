@@ -259,7 +259,9 @@ libsqlite3-dev` for `-lsqlite3`) is not found by default. Set
 `LIBRARY_PATH=/usr/lib/$(uname -m)-linux-gnu`: clang searches it after its sysroot, so libc still
 comes from the sysroot and only the missing library from the distro. A `-L/usr/lib/<triple>` link
 flag also finds it, but ahead of the sysroot, so the distro libc is linked instead. CI's
-`.github/actions/clang` sets that `LIBRARY_PATH` on Linux (plan-notes 410).
+`.github/actions/clang` sets that `LIBRARY_PATH` on Linux (plan-notes 410). Headers are the same
+story: `/usr/include` is not searched, so the `runtime-intl` recipe adds `-idirafter /usr/include`
+on Linux for ICU's headers, after the sysroot's own.
 
 ## Environment variables and `.env`
 
