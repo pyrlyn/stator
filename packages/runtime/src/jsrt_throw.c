@@ -36,6 +36,10 @@ bool jsrt_pending(void) {
   return pending_flag;
 }
 
+const volatile bool *jsrt_pending_flag(void) {
+  return &pending_flag;
+}
+
 jsrt_value jsrt_take_exception(void) {
   /* Clear the cell as well as the flag: a taken exception the cell kept alive would be a leak
    * under a real collector, invisible under this one. */
