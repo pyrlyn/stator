@@ -128,6 +128,57 @@ trimming and direct calls above took `fib.ts` from 11.2 to 2.9 times V8's time a
 `objects-churn` from 15.3 to 10.7; a profile of `loop.js` now spends all its time inside generated code, so the rest of
 that gap is the operand stack in memory and the tag checks, which the optimizing tier removes.
 
+### 4.1. Warmed V8 comparison (T69)
+
+```sh
+pnpm run runtime
+node packages/tests/engine/steady.ts --rounds=3
+```
+
+This is separate from `engine:bench`, which includes process startup. It builds the
+benchmark-only `stator-steady` host in ReleaseFast (`zig build steady`), reusing the engine and
+runtime. `STATOR_STEADY` may name a prebuilt host. The host adds a monotonic `__benchNow`
+clock only to the benchmark process; the production CLI and its globals are unchanged.
+
+The TypeScript kernels in `packages/tests/engine/scripts/steady/` are stripped once and run
+as the same JavaScript in both engines. Each process warms the same functions for at least
+1000 ms, then records fifteen batches of at least 100 ms. Sixteen varying seeds per batch
+prevent a constant-input comparison. Every call is checked against the pinned Node's result;
+an oracle failure, mismatch, missing sample or nonpositive duration fails the run. The driver,
+checks and function-call overhead are included in both engines' measured intervals. The fixed
+warmup is recorded, not a proof that every workload has reached a stable optimization tier.
+
+The harness alternates engine order between independent processes. It reports the median of
+each process's median microseconds per call; all samples, warmup durations, process wall time,
+peak RSS, source and binary hashes, commit/dirty state, versions, arguments, CPU, OS and load
+averages are saved under `packages/tests/engine/results/steady-*/`. `JIT / V8 > 1` means
+Stator is slower. Peak RSS includes startup, warmup and code pages; it is not live heap size.
+No claim about all JavaScript follows from these three kernels.
+
+GC tracing (`docs/VALUE.md` §4.12) runs in a separate Stator process, with the same warmup and
+measurement driver. Only pauses between its measured-phase markers contribute to the reported
+count and p99; raw pauses and post-collection live bytes are retained. This run also proves
+that `bench` and `checkedBatch` compiled, rejecting silent interpreter fallback. Another
+separate Node process observes `gc` entries through `node:perf_hooks`, filtering entries to the
+measured interval by their timestamps and recording their kinds. See Node's
+[PerformanceEntry API](https://nodejs.org/api/perf_hooks.html#class-performanceentry), checked
+2026-11-08. Raw durations and measured call counts are retained for both engines.
+
+Trace timings never supply the throughput comparison. V8's event durations and Stator's full
+collection latency have different instrumentation boundaries; their p99 values alone are not
+proof of a faster collector. Neither reports all background GC CPU work. Zero observed
+collections is not evidence of zero GC cost. The allocation kernels must actually trigger
+collections in the measured phase in both engines; numeric kernels need not allocate. The
+object kernel keeps the previous array live across calls; the cycle kernel publishes each
+cycle to a global binding, keeping the latest reachable across calls. These test escaping
+allocations. Computed-key stores are outside this initial corpus: the baseline JIT rejects
+their `to_key` opcode. The compilation proof prevents silently timing that fallback as native
+execution; the current three kernels do not establish broader bytecode coverage.
+
+The first three-round baseline and its raw data are recorded in
+[`plan/T69/report.md`](../plan/T69/report.md). It does not beat warmed V8 on any of the three
+kernels; it is a starting measurement for T67.1, not evidence that the performance goal is met.
+
 ## 5. The CLI
 
 ```text

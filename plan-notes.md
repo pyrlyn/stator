@@ -15076,3 +15076,30 @@ code from the interpreter twice, whatever its depth.
 **Measured** (`docs/ENGINE.md` §4): `fib.ts` from 11.2 to 2.9 times V8's time, `closures.js` from
 4.4 to 2.6, `objects-churn` from 15.3 to 10.7. `loop.js` now runs wholly in generated code at 5.5 times
 V8, so the remaining gap is the baseline design itself: the optimizing tier is the next step.
+
+## T69. Warmed JIT comparisons and full collection timing (2026-11-08)
+
+**Direction.** The creator requests dynamic JavaScript JIT + GC faster than warmed V8. T67.1
+remains owned by its Claude session; the creator considered a transfer and then explicitly
+left that session in charge. T69 owns the independent measurement, not a second JIT.
+
+**Evidence.** At `6fc97a20`, `packages/tests/engine/bench.ts` times spawn to exit, best of N;
+it cannot isolate warmed execution. `packages/runtime/src/jsrt_gc_host.zig:rt_gc_note_pause`
+discards its argument, and `jsrt_gc.zig:collectLocked` also scans roots, reconciles counts and
+reclaims young objects outside pyrlyn/gc's cycle-collector call. These repository sources were
+checked 2026-11-08. Neither the cold benchmark nor that callback measures the requested quantity.
+
+**Change.** Keep the cold benchmark and add `packages/tests/engine/steady.ts`, with the contract
+in `docs/ENGINE.md` §4.1. Reuse the pinned Node, `timedRun`, `engineBinary`, the VM, runtime and
+`rt_nanos`; no new dependency, parser, value model or collector. A benchmark-only executable
+provides the clock; the production CLI has no new flag or global. Opt-in `JSRT_GC_TRACE` times
+the entire collection and writes after resuming threads, as documented in `docs/VALUE.md`.
+Node's `perf_hooks` GC events are captured in a separate process too. Instrumented timings do
+not enter the throughput table; raw records retain the different measurement boundaries.
+
+**Corpus correction.** A temporary-cycle kernel permits allocation elimination and is not a
+collector comparison. The recorded corpus publishes objects across calls. Its first cyclic
+ring used a computed-key store, which this baseline JIT rejected (`to_key`), silently falling
+back to the interpreter. A separate trace run now proves `bench` and `checkedBatch` compiled
+before any result can be published. The cycle kernel uses a global root instead; unsupported
+bytecode coverage is not claimed. Results and commands are recorded with T69.

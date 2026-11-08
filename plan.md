@@ -1581,6 +1581,13 @@ rule 9, §11a), and it compiles to bytecode (the spike: 2.9× faster than a tree
 
 ### T67.4. `stator-engine build --target=zig`: JavaScript and TypeScript to Zig source → [`plan/T67.4`](plan/T67.4/task.md)
 
+### ~~T69. Compare the JIT with warmed V8 and measure full GC pauses~~ → [`plan/T69`](plan/T69/done.md)
+
+The warmed comparison (creator direction, 2026-11-08) excludes process startup and uses the same
+JavaScript kernels, checked results and monotonic-clock driver in each engine. Its contract is
+`docs/ENGINE.md` §4.1. Cold process measurements remain separate. Instrumented GC runs never
+supply throughput numbers; GC event durations alone are not evidence of beating V8's GC.
+
 ---
 
 ## 12. Make it better — the optimization ladder (post-MVP, in this order)
