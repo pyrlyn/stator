@@ -1559,7 +1559,7 @@ rule 9, §11a), and it compiles to bytecode (the spike: 2.9× faster than a tree
 
 ### ~~T14.1. `packages/interpreter`: the parser front~~ → [`plan/T14.1/done.md`](plan/T14.1/done.md)
 
-### T14.2. `packages/interpreter`: the core evaluator → [`plan/T14.2`](plan/T14.2/task.md)
+### ~~T14.2. `packages/interpreter`: the core evaluator~~ → [`plan/T14.2/done.md`](plan/T14.2/done.md)
 
 ### T14.3. Wiring: `eval`, `new Function`, and the `Interpret` node → [`plan/T14.3`](plan/T14.3/task.md)
 
@@ -1741,7 +1741,7 @@ ms/line flat, golden byte-for-byte, full gate green.
 | `--node` (Phase 11) | typed arrays, `packages/std` + `packages/node`, CommonJS, sync `tsc` (N1) | T11.1–T11.6; the largest item is T11.4 (js-mode coverage, not Node). N2 deferred, N3 not planned (plan-notes 289) |
 | Bundler front end (Phase 12) | `statorc/api`, `BundlerAdapter`, `packages/vite-stator`; packages + CommonJS bundled into one vendor module, project stays Stator's graph | T12.0–T12.2 landed (plan-notes 296, 320, 321, `docs/BUNDLER.md`); T12.3 |
 | Web API (Phase 13) | `packages/webapi` (DOM + CSS, strict TS, render API) + `packages/renderer-clay` (default renderer) | T13.0 design first; T13.1–T13.5 (coverage in generated `docs/WEBAPI.md`); other Web APIs low priority (plan-notes 298, 299) |
-| JS interpreter (Phase 14) | `packages/interpreter` in Zig on stator-ts's parser: `eval`, `new Function` and other `not-yet` constructs in `js` mode, on the runtime's own values (`docs/INTERPRETER.md`) | T14.0 and T14.1 done; T14.2–T14.4 (plan-notes 300, 396, 401) |
+| JS interpreter (Phase 14) | `packages/interpreter` in Zig on stator-ts's parser: `eval`, `new Function` and other `not-yet` constructs in `js` mode, on the runtime's own values (`docs/INTERPRETER.md`) | T14.0–T14.2 done; T14.3–T14.4 (plan-notes 300, 396, 401, 403) |
 | Optimization ladder §12 rows 1–5 | competitive perf story | +3–5 months |
 | Conformance long tail | Porffor is at ~61% Test262 after years with a funded lead | years — the moat, budget honestly |
 
