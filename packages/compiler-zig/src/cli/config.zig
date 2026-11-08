@@ -10,6 +10,7 @@ const Reporter = failure.Reporter;
 const Error = failure.Error;
 const oom = failure.oom;
 const js_text = @import("jstext");
+const c_compiler = @import("cc.zig");
 
 pub const file_name = "stator.config.json";
 
@@ -28,6 +29,7 @@ pub const Config = struct {
     emit_header: ?[]const u8 = null,
     unit_name: ?[]const u8 = null,
     bundler: ?[]const u8 = null,
+    cc: ?[]const u8 = null,
     diagnostics: ?DiagnosticsFormat = null,
     node: ?bool = null,
 };
@@ -51,6 +53,8 @@ pub const Resolved = struct {
     emit_header: ?[]const u8,
     unit_name: ?[]const u8,
     bundler: ?[]const u8,
+    /// `--cc` or config `cc`; the build puts `CC` between them and applies the default (`cc.zig`).
+    cc: ?c_compiler.Choice,
     diagnostics: DiagnosticsFormat,
     node: bool,
 };
@@ -497,6 +501,7 @@ const rules = [_]struct { key: []const u8, rule: Rule }{
     .{ .key = "emitHeader", .rule = .non_empty },
     .{ .key = "unitName", .rule = .non_empty },
     .{ .key = "bundler", .rule = .non_empty },
+    .{ .key = "cc", .rule = .non_empty },
     .{ .key = "diagnostics", .rule = .diagnostics },
     .{ .key = "node", .rule = .boolean },
 };
@@ -610,6 +615,7 @@ fn validate(a: Allocator, r: *Reporter, value: Value, path: []const u8) Error!Co
         if (std.mem.eql(u8, m.key, "emitHeader")) c.emit_header = v.string;
         if (std.mem.eql(u8, m.key, "unitName")) c.unit_name = v.string;
         if (std.mem.eql(u8, m.key, "bundler")) c.bundler = v.string;
+        if (std.mem.eql(u8, m.key, "cc")) c.cc = v.string;
         if (std.mem.eql(u8, m.key, "diagnostics")) c.diagnostics = enumOf(DiagnosticsFormat, v.string);
         if (std.mem.eql(u8, m.key, "node")) c.node = v.boolean;
         if (std.mem.eql(u8, m.key, "link")) {
@@ -663,8 +669,18 @@ pub fn resolveOptions(a: Allocator, cli: CliOptions, env_opt: ?u2, file: ?Loaded
         for (entries) |entry| link.appendSlice(a, splitFlags(a, entry)) catch oom();
     }
     link.appendSlice(a, cli.link orelse &.{}) catch oom();
-    const bundler = cli.bundler orelse if (c.bundler) |b|
-        (if (b[0] == '.') fromFile(a, base, b) else b)
+    // A relative path names a file next to the config; a bare name stays a name, found on PATH.
+    const local = struct {
+        fn apply(alloc: Allocator, dir: []const u8, value: ?[]const u8) ?[]const u8 {
+            const v = value orelse return null;
+            return if (v[0] == '.') fromFile(alloc, dir, v) else v;
+        }
+    }.apply;
+    const bundler = cli.bundler orelse local(a, base, c.bundler);
+    const cc: ?c_compiler.Choice = if (cli.cc) |command|
+        .{ .command = command, .source = .flag }
+    else if (local(a, base, c.cc)) |command|
+        .{ .command = command, .source = .config }
     else
         null;
     return .{
@@ -678,6 +694,7 @@ pub fn resolveOptions(a: Allocator, cli: CliOptions, env_opt: ?u2, file: ?Loaded
         .emit_header = cli.emit_header orelse fromFile(a, base, c.emit_header),
         .unit_name = cli.unit_name orelse c.unit_name,
         .bundler = bundler,
+        .cc = cc,
         .diagnostics = cli.diagnostics orelse c.diagnostics orelse .text,
         .node = cli.node orelse c.node orelse false,
     };
@@ -718,4 +735,19 @@ test "precedence: command line, environment, file, default" {
     try std.testing.expectEqualStrings("/p/src/a.ts", o.entry.?);
     try std.testing.expectEqualStrings("/p/x.ts", o.bundler.?);
     try std.testing.expectEqual(@as(usize, 3), o.link.len);
+}
+
+test "--cc beats config \"cc\"; a relative config path resolves next to the file" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const file: Loaded = .{ .path = "/proj/stator.config.json", .config = .{ .cc = "./tools/cc" } };
+    try std.testing.expectEqualDeep(c_compiler.Choice{ .command = "gcc", .source = .flag }, resolveOptions(a, .{ .cc = "gcc" }, null, file).cc.?);
+    try std.testing.expectEqualDeep(c_compiler.Choice{ .command = "/proj/tools/cc", .source = .config }, resolveOptions(a, .{}, null, file).cc.?);
+    const named: Loaded = .{ .path = file.path, .config = .{ .cc = "gcc-14" } };
+    try std.testing.expectEqualDeep(c_compiler.Choice{ .command = "gcc-14", .source = .config }, resolveOptions(a, .{}, null, named).cc.?);
+    try std.testing.expect(resolveOptions(a, .{}, null, null).cc == null);
+    var r: Reporter = .{ .a = a };
+    try std.testing.expectError(error.Failed, parseConfig(a, &r, "{\"cc\":\"\"}", "c.json"));
+    try std.testing.expectEqualStrings("c.json: does not match the schema: /cc: must not have fewer than 1 characters", r.failure.?.message);
 }

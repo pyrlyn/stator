@@ -1,8 +1,8 @@
 /** The C compiler a build runs (plan/T35): one resolver, one `--version` probe, one flag table.
  *
- * Precedence: `--cc` > config `cc` > `CC` > `clang`. The config beats `CC`, unlike `STATOR_OPT`,
- * because `CC` is often set for the whole shell or CI image, while the config names the compiler
- * this project was built and tested with. Every failure is `STA0022`, naming the value, where it
+ * Precedence: `--cc` > `CC` > config `cc` > `clang`, the order `STATOR_OPT` and `opt` already
+ * follow: whoever runs the build overrides what the project file names (creator's decision,
+ * plan-notes 409). Every failure is `STA0022`, naming the value, where it
  * came from and how to choose another. The host facts and the `--version` run come in from
  * `build.ts`, so this module stays free of process and file-system access.
  */
@@ -64,8 +64,11 @@ export function chooseCC(
 ): ChosenCC {
   const fromEnv = env['CC'];
   const choice: CcChoice | undefined =
-    explicit ??
-    (fromEnv !== undefined && fromEnv !== '' ? { command: fromEnv, source: 'CC' } : undefined);
+    explicit?.source === '--cc'
+      ? explicit
+      : fromEnv !== undefined && fromEnv !== ''
+        ? { command: fromEnv, source: 'CC' }
+        : explicit;
   const overridden = sanitized && host.darwin && host.systemClang;
   if (choice === undefined) {
     return {

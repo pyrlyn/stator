@@ -9,6 +9,9 @@ const fspath = std.fs.path;
 const compile_jobs = @import("compile_jobs.zig");
 const failure = @import("failure.zig");
 const toolchain = @import("toolchain.zig");
+const c_compiler = @import("cc.zig");
+pub const Compiler = c_compiler.Compiler;
+pub const Choice = c_compiler.Choice;
 const support = @import("../support/root.zig");
 const Reporter = failure.Reporter;
 const Error = failure.Error;
@@ -117,10 +120,32 @@ pub fn systemLinkFlags(a: Allocator, io: Io, runtime: Runtime, extern_flags: []c
     return dedupLinkLibs(a, all);
 }
 
-pub fn selectCC(h: Host, runtime: Runtime) []const u8 {
-    if (h.env.get("CC")) |cc| return cc;
-    if (runtime.sanitized() and builtin.os.tag == .macos and exists(h.io, "/usr/bin/clang")) return "/usr/bin/clang";
-    return "clang";
+/// `explicit` is `--cc` or config `cc`; `CC` and the default are decided here (`cc.zig`).
+pub fn chooseCC(h: Host, explicit: ?c_compiler.Choice, runtime: Runtime) c_compiler.Chosen {
+    const darwin = builtin.os.tag == .macos;
+    const facts: c_compiler.HostFacts = .{ .darwin = darwin, .system_clang = darwin and exists(h.io, "/usr/bin/clang") };
+    return c_compiler.choose(h.a, explicit, h.env.get("CC"), runtime.sanitized(), facts);
+}
+
+/// Runs `<cc> --version` and classifies it, or refuses the choice with STA0022.
+pub fn detectCC(h: Host, choice: c_compiler.Choice) Error!Compiler {
+    const run: c_compiler.VersionRun = if (runCaptured(h.a, h.io, h.env, &.{ choice.command, "--version" })) |result|
+        .{ .exited = .{ .code = if (result.term == .exited) result.term.exited else null, .stdout = result.stdout } }
+    else |err| switch (err) {
+        error.FileNotFound => .not_found,
+        else => .{ .start_failed = std.fmt.allocPrint(h.a, "spawnSync {s} {s}", .{ choice.command, errnoName(err) }) catch oom() },
+    };
+    return c_compiler.judge(h.a, h.r, choice, run);
+}
+
+/// The runtime's recorded flags and the extern surface's, checked against the compiler's family
+/// before they are handed to it.
+pub fn requireLinkFlagsSupported(h: Host, cc: Compiler, runtime: Runtime, extern_flags: []const []const u8) Error!void {
+    const a = h.a;
+    const recorded = std.fmt.allocPrint(a, "the runtime archive's {s}", .{join(a, &.{ runtime.lib_dir, "link-flags.txt" })}) catch oom();
+    const rebuild = std.fmt.allocPrint(a, "rebuild the runtime with this compiler (`CC={s} pnpm run runtime`) or use clang", .{cc.command}) catch oom();
+    try c_compiler.requireFlagsSupported(h.r, cc, extraLinkFlags(a, h.io, runtime), recorded, rebuild);
+    try c_compiler.requireFlagsSupported(h.r, cc, extern_flags, "--link or an @statorLink pragma", "drop it there, or use clang");
 }
 
 fn optimization(a: Allocator, opt: u8, runtime: Runtime) []const []const u8 {
@@ -217,19 +242,19 @@ fn withProgram(a: Allocator, program: []const u8, args: []const []const u8) []co
     return argv;
 }
 
-/// A zero exit is not proof of an output: a `CC` that is not clang can succeed and write nothing.
-fn requireProduced(h: Host, cc: []const u8, out: []const u8) Error!void {
-    if (!exists(h.io, out)) return h.r.fail("STA0009", "C compiler \"{s}\" exited 0 but wrote no \"{s}\" — check that CC names a working clang", .{ cc, out });
+/// A zero exit is not proof of an output: a wrapper that swallows the call can succeed and write
+/// nothing.
+fn requireProduced(h: Host, cc: Compiler, out: []const u8) Error!void {
+    if (!exists(h.io, out)) return h.r.fail("STA0009", "C compiler \"{s}\" exited 0 but wrote no \"{s}\" — check that {s} names a working C compiler", .{ cc.command, out, cc.source.describe() });
 }
 
-pub fn compileObject(h: Host, c_path: []const u8, out: []const u8, opt: u8, runtime: Runtime) Error!void {
+pub fn compileObject(h: Host, cc: Compiler, c_path: []const u8, out: []const u8, opt: u8, runtime: Runtime) Error!void {
     const a = h.a;
-    const cc = selectCC(h, runtime);
     var args: std.ArrayList([]const u8) = .empty;
     args.append(a, "-std=c11") catch oom();
     args.appendSlice(a, optimization(a, opt, runtime)) catch oom();
     args.appendSlice(a, &.{ "-I", runtime.include, "-c", c_path, "-o", out }) catch oom();
-    const term = try runInherited(h, cc, args.items);
+    const term = try runInherited(h, cc.command, args.items);
     if (!succeeded(term)) return h.r.fail("STA0009", "C compiler failed (exit {s}) — this is a compiler bug; keep the C with `--keep-c` and report it", .{exitText(a, term)});
     try requireProduced(h, cc, out);
 }
@@ -269,20 +294,20 @@ fn linkFailure(h: Host, extern_flags: []const []const u8, term: Exit, hint: ?[]c
 }
 
 /// Captured, so the failure can be classified before anything is printed; replayed on failure.
-pub fn link(h: Host, l: LinkLine, archives: Archives) Error!void {
+pub fn link(h: Host, cc: Compiler, l: LinkLine, archives: Archives) Error!void {
     try requireLinkArchives(h, archives);
+    try requireLinkFlagsSupported(h, cc, l.runtime, l.extern_flags);
     const a = h.a;
-    const cc = selectCC(h, l.runtime);
     const args = linkArguments(a, h.io, l);
-    const first = runCaptured(a, h.io, h.env, withProgram(a, cc, args)) catch |err| return startFailure(h, cc, err);
+    const first = runCaptured(a, h.io, h.env, withProgram(a, cc.command, args)) catch |err| return startFailure(h, cc.command, err);
     if (succeeded(first.term)) return requireProduced(h, cc, l.out);
 
     // A stale bundled linker against a newer Xcode SDK fails every Darwin link, even `int main`.
     const stale = toolchain.isStaleLdSystemLibFailure(first.stderr);
-    const retryable = stale and builtin.os.tag == .macos and h.env.get("CC") == null and !l.runtime.sanitized();
+    const retryable = stale and builtin.os.tag == .macos and cc.source == .default and !l.runtime.sanitized();
     if (retryable) if (toolchain.findFallbackSdk(a, h.io, toolchain.clt_sdk_root)) |sysroot| {
         const retry = std.mem.concat(a, []const u8, &.{ args, &.{ "-isysroot", sysroot } }) catch oom();
-        const second = runCaptured(a, h.io, h.env, withProgram(a, cc, retry)) catch |err| return startFailure(h, cc, err);
+        const second = runCaptured(a, h.io, h.env, withProgram(a, cc.command, retry)) catch |err| return startFailure(h, cc.command, err);
         if (succeeded(second.term)) return requireProduced(h, cc, l.out);
         h.stderr(second.stdout);
         h.stderr(second.stderr);
@@ -304,7 +329,7 @@ const UnitResult = union(enum) {
 
 const Pool = struct {
     h: Host,
-    cc: []const u8,
+    cc: Compiler,
     prefix: []const []const u8,
     units: []const compile_jobs.Unit,
     paths: []const []const u8,
@@ -329,7 +354,7 @@ const Pool = struct {
     }
 
     fn compile(p: *Pool, a: Allocator, i: usize) UnitResult {
-        const argv = std.mem.concat(a, []const u8, &.{ &.{p.cc}, p.prefix, &.{ p.paths[i], "-o", p.objects[i] } }) catch oom();
+        const argv = std.mem.concat(a, []const u8, &.{ &.{p.cc.command}, p.prefix, &.{ p.paths[i], "-o", p.objects[i] } }) catch oom();
         const result = runCaptured(a, p.h.io, p.h.env, argv) catch |err| return .{ .start_failed = err };
         if (!succeeded(result.term)) {
             p.h.stderr(result.stdout);
@@ -342,7 +367,7 @@ const Pool = struct {
 
 /// Workers finish what they started before the first failure is reported: no clang child is left
 /// behind, and no later unit starts.
-pub fn linkParallel(h: Host, c: []const u8, parts_dir: []const u8, l: LinkLine, archives: Archives, jobs: usize) Error!void {
+pub fn linkParallel(h: Host, cc: Compiler, c: []const u8, parts_dir: []const u8, l: LinkLine, archives: Archives, jobs: usize) Error!void {
     const a = h.a;
     const parts = compile_jobs.partition(a, c, jobs) catch |err| switch (err) {
         error.Unclosed => return h.r.fail("STA4072", "internal error: the emitted C has an unclosed definition — this is a compiler bug; report it with the input that triggered it", .{}),
@@ -363,7 +388,6 @@ pub fn linkParallel(h: Host, c: []const u8, parts_dir: []const u8, l: LinkLine, 
 
     const results = a.alloc(UnitResult, parts.units.len) catch oom();
     @memset(results, .pending);
-    const cc = selectCC(h, l.runtime);
     var pool: Pool = .{
         .h = h,
         .cc = cc,
@@ -387,14 +411,14 @@ pub fn linkParallel(h: Host, c: []const u8, parts_dir: []const u8, l: LinkLine, 
 
     const failed = pool.first_failure.load(.acquire);
     if (failed != parts.units.len) switch (results[failed]) {
-        .start_failed => |err| return startFailure(h, cc, err),
+        .start_failed => |err| return startFailure(h, cc.command, err),
         .exited => |term| return h.r.fail("STA0009", "C compiler failed (exit {s} on {s}) — this is a compiler bug; keep the C with `--keep-c` and report it", .{ exitText(a, term), parts.units[failed].name }),
         .missing => return requireProduced(h, cc, objects[failed]),
         .pending, .ok => unreachable,
     };
     var linked = l;
     linked.inputs = objects;
-    return link(h, linked, archives);
+    return link(h, cc, linked, archives);
 }
 
 /// A scratch file is ours, in a directory we just made, so failing to write it is no user error.

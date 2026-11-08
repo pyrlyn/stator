@@ -18,7 +18,7 @@ bytecode, and a CLI, `stator-engine`.
   modes plus the CLI contract, and the V8 benchmark.
 - **Found and fixed**: stator-ts misread `a < 1, b >= 1` as type arguments (regression line in its
   parser test); `analyze.zig` leaked on rejected templates; the engine lacked `console` and
-  `String.fromCharCode` (plan-notes 409).
+  `String.fromCharCode` (plan-notes 412).
 
 The work is the `T67:` commits on the `t67-engine` branch, squash-merged by its pull request.
 
