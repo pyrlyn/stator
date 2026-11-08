@@ -6,6 +6,11 @@ import { arch, cpus, loadavg, platform, release } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { nodePath } from '../../packages/tests/support/node-path.ts';
+import { onPath } from '../../packages/tests/support/on-path.ts';
+const suffix = process.platform === 'win32' ? '.exe' : '';
+const git = onPath(`git${suffix}`);
+const zig = onPath(`zig${suffix}`);
+if (!git || !zig) throw new Error('git and zig must be installed');
 const [before, after, source] = process.argv.slice(2);
 if (!before || !after || !source || process.argv.length !== 5)
   throw new Error('usage: compare.ts BASELINE CHANGED GENERATED_CORPUS');
@@ -18,10 +23,10 @@ const metadata = {
   os: release(),
   node: process.version,
   v8: process.versions.v8,
-  zig: execFileSync('zig', ['version'], { encoding: 'utf8' }).trim(),
-  commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+  zig: execFileSync(resolve(zig), ['version'], { encoding: 'utf8' }).trim(),
+  commit: execFileSync(resolve(git), ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   runtimeDiffSha256: createHash('sha256')
-    .update(execFileSync('git', ['diff', '--', 'packages/runtime']))
+    .update(execFileSync(resolve(git), ['diff', '--', 'packages/runtime']))
     .digest('hex'),
   build: 'steady: ReleaseFast; runtime: C -O2, Zig ReleaseSafe, no LTO',
   beforeSha256: sha256(before),
