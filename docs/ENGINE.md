@@ -200,6 +200,14 @@ change is within variation; no object or collector improvement is claimed. Stato
 slower than V8 on all three kernels. Method, limitations and raw samples are in
 [`plan/T71/report.md`](../plan/T71/report.md).
 
+T73 combines the slot-growth write barrier and buffer-owner lookup. Five interleaved
+processes on the same machine measured objects at 249.129 → 234.009 us (**6.07% less time**)
+and cycles at 172.566 → 156.619 us (**9.24% less time**), with nonoverlapping process ranges.
+Numeric was essentially unchanged (169.918 → 170.309 us). V8 took 4.597, 5.449 and 22.431 us
+respectively, so this remains an incremental improvement. Both engines' JIT compilation is
+verified separately. [The T73 progress report](../plan/T73/progress.md) includes the shared
+machine's load, raw samples, rejected experiments and correctness checks; its V8 target stays open.
+
 ### Comparing the interpreter with QuickJS
 
 Install QuickJS separately, then run after `pnpm run runtime`:

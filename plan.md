@@ -1597,6 +1597,8 @@ supply throughput numbers; GC event durations alone are not evidence of beating 
 
 ### ~~T71. Measure V8 and optimize a hot JavaScript engine path~~ → [`plan/T71`](plan/T71/done.md)
 
+### T73. Make warmed Stator JIT faster than V8 on the established corpus → [`plan/T73`](plan/T73/task.md)
+
 ---
 
 ### T70. Interpreter performance above QuickJS across the benchmark set → [`plan/T70`](plan/T70/task.md)

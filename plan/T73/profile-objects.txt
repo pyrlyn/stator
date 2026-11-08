@@ -1,0 +1,55 @@
+Baseline f3f36ce5, macOS sample, 2 seconds at 1 ms.
+Sort by top of stack, same collapsed (when >= 5):
+        _platform_strcmp$VARIANT$Base  (in libsystem_platform.dylib)        131
+        jsrt_gc.rawFree  (in steady-after)        104
+        _tlv_get_addr  (in libdyld.dylib)        90
+        _platform_memset  (in libsystem_platform.dylib)        88
+        jsrt_gc.lock  (in steady-after)        86
+        jsrt_gc_write  (in steady-after)        60
+        jsrt_gc.rawAllocOrNull  (in steady-after)        55
+        jsrt_gc.alloc  (in steady-after)        54
+        jsrt_get_prop  (in steady-after)        37
+        jsrt_array_method  (in steady-after)        34
+        DYLD-STUB$$_platform_strcmp  (in libsystem_platform.dylib)        32
+        jsrt_gc.findBlock  (in steady-after)        32
+        DYLD-STUB$$strcmp  (in steady-after)        28
+        jsrt_shape_find  (in steady-after)        22
+        pthread_mutex_trylock  (in libsystem_pthread.dylib)        22
+        ???  (in <unknown binary>)  [0x10438c6c8]        21
+        vm.getProp  (in steady-after)        21
+        jsrt_gc.buffer  (in steady-after)        19
+        pthread_mutex_unlock  (in libsystem_pthread.dylib)        19
+        vm.defineOwn  (in steady-after)        18
+        DYLD-STUB$$bzero  (in steady-after)        13
+        DYLD-STUB$$pthread_mutex_trylock  (in steady-after)        13
+        __bzero  (in libsystem_platform.dylib)        13
+        jsrt_gc.Callbacks(jsrt_c.struct_JSRTDynObject,(function 'traceDynobj'),(function 'finalizeDynobj')).traceC  (in steady-after)        13
+        jsrt_gc.collectLocked  (in steady-after)        13
+        vm.getElem  (in steady-after)        13
+        array_method_call  (in steady-after)        11
+        jit.helpers.define  (in steady-after)        11
+        jsrt_gc.bufferBlock  (in steady-after)        11
+        jsrt_shape_reserve  (in steady-after)        11
+        ???  (in <unknown binary>)  [0x10438d14c]        10
+        array_store  (in steady-after)        10
+        ???  (in <unknown binary>)  [0x10438cd04]        9
+        jit.helpers.call  (in steady-after)        9
+        jit.helpers.getProp  (in steady-after)        9
+        ???  (in <unknown binary>)  [0x10438ceb0]        7
+        DYLD-STUB$$pthread_mutex_unlock  (in steady-after)        7
+        _platform_memset_pattern16  (in libsystem_platform.dylib)        7
+        jsrt_call_with_this  (in steady-after)        7
+        jsrt_env_new  (in steady-after)        7
+        jsrt_gc.bufferFree  (in steady-after)        7
+        jsrt_shape_transition  (in steady-after)        7
+        DYLD-STUB$$strlen  (in steady-after)        6
+        jsrt_builtin_member  (in steady-after)        6
+        jsrt_gc.Callbacks(jsrt_c.struct_JSRTDynObject,(function 'traceDynobj'),(function 'finalizeDynobj')).finalizeC  (in steady-after)        6
+        mem.eql__func_285  (in steady-after)        6
+        ???  (in <unknown binary>)  [0x10438c83c]        5
+        ???  (in <unknown binary>)  [0x10438ce94]        5
+        ???  (in <unknown binary>)  [0x10438d158]        5
+        ???  (in <unknown binary>)  [0x10438d1a0]        5
+        jsrt_closure_new  (in steady-after)        5
+        jsrt_gc.ownerBlock  (in steady-after)        5
+

@@ -7,8 +7,10 @@
 
 #include "jsrt.h"
 #include "jsrt_value.h"
+#include "../src/jsrt_mem.h"
 
 #include <stdio.h>
+#include <string.h>
 
 enum { N = 8 };
 enum { USER_N = 16 };
@@ -173,10 +175,50 @@ static int test_adopt(void) {
   return 0;
 }
 
+/* Growth must preserve children across collection and keep static slot tables rooted
+ * even though their owning field is outside the collected heap. */
+static int test_shape_growth(void) {
+  static jsrt_value *static_slots;
+  static uint32_t static_capacity;
+  JSRT_FRAME(2);
+  JSRT_LOCAL(0) = jsrt_dynobj_new();
+  jsrt_gc_stress(1);
+  for (uint32_t i = 0; i < 40; i++) {
+    char key[24];
+    snprintf(key, sizeof key, "field%u", i);
+    const char *interned = jsrt_shape_key(jsrt_string_from_utf8(key, (uint32_t)strlen(key)));
+    JSRT_LOCAL(1) = jsrt_dynobj_new();
+    jsrt_set_prop(JSRT_LOCAL(1), "value", jsrt_number((double)i), NULL);
+    jsrt_set_prop(JSRT_LOCAL(0), interned, JSRT_LOCAL(1), NULL);
+    JSRT_LOCAL(1) = JSRT_UNDEFINED;
+    /* Every capacity boundary is reached with a previously collected owner. */
+    jsrt_gc_collect();
+  }
+  for (uint32_t i = 0; i < 40; i++) {
+    char key[24];
+    snprintf(key, sizeof key, "field%u", i);
+    const jsrt_value child = jsrt_get_prop(JSRT_LOCAL(0), key, NULL);
+    if (jsrt_get_prop(child, "value", NULL) != jsrt_number((double)i)) {
+      return fail("grown object lost a child");
+    }
+  }
+  jsrt_shape_reserve(&static_slots, &static_capacity, 0);
+  static_slots[0] = jsrt_string_from_utf8("static slots", 12);
+  jsrt_shape_reserve(&static_slots, &static_capacity, 32);
+  jsrt_gc_collect();
+  const bool retained = jsrt_strict_equals(static_slots[0], jsrt_string_from_utf8("static slots", 12));
+  jsrt_gc_buffer_free(static_slots);
+  static_slots = NULL;
+  static_capacity = 0;
+  jsrt_gc_stress(0);
+  JSRT_FRAME_POP();
+  return retained ? 0 : fail("grown static slots lost a child");
+}
+
 int main(void) {
   jsrt_init();
   if (test_compare() != 0 || test_loose() != 0 || test_sort_default() != 0 || test_sort_user() != 0 ||
-      test_adopt() != 0) {
+      test_adopt() != 0 || test_shape_growth() != 0) {
     return 1;
   }
   printf("roots ok\n");
