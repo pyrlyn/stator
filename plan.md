@@ -1359,7 +1359,7 @@ step remains). `pnpm run ci` green.
 
 ### ~~T10.2a. Reuse OS workers for asynchronous filesystem operations~~ → [`plan/T10.2a`](plan/T10.2a/done.md)
 
-### T10.3. Threaded / parallel host compiler → [`plan/T10.3`](plan/T10.3/task.md)
+### ~~T10.3. Threaded / parallel host compiler~~ → [`plan/T10.3`](plan/T10.3/done.md)
 
 ---
 
