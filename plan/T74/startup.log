@@ -1,0 +1,31 @@
+measuring cold, width 0
+measuring cold, width 8
+measuring compile, width 8
+measuring cold, width 64
+measuring compile, width 64
+Cold: process spawn through exit, including the time wrapper; warm filesystem caches, fresh processes.
+Compile: sum over 24 identical function bodies; parsing, execution and trace I/O excluded.
+Stator: analysis + IR lowering + backend + executable publication, excluding cleanup.
+V8: synchronous tier-specific trace durations, rounded to microseconds. Forced tiers are diagnostic runs, not default V8 startup policy.
+Sparkplug and TurboFan produce different code quality; these totals alone do not prove a better JIT.
+
+| phase | body width | engine/tier | median ms | p25 ms | p75 ms |
+|---|---:|---|---:|---:|---:|
+| cold | 0 | Node | 32.507 | 32.112 | 32.950 |
+| cold | 0 | Stator before | 6.005 | 5.859 | 6.131 |
+| cold | 0 | Stator | 6.034 | 5.710 | 6.074 |
+| cold | 8 | Node | 33.031 | 32.654 | 33.348 |
+| cold | 8 | Stator before | 9.475 | 9.309 | 9.566 |
+| cold | 8 | Stator | 9.385 | 9.175 | 9.438 |
+| compile | 8 | V8 Sparkplug | 0.200 | 0.199 | 0.210 |
+| compile | 8 | V8 TurboFan | 4.934 | 4.783 | 5.187 |
+| compile | 8 | Stator before | 2.661 | 2.656 | 2.702 |
+| compile | 8 | Stator | 2.618 | 2.554 | 2.631 |
+| cold | 64 | Node | 35.519 | 34.903 | 35.676 |
+| cold | 64 | Stator before | 48.204 | 48.080 | 48.514 |
+| cold | 64 | Stator | 40.052 | 39.703 | 40.356 |
+| compile | 64 | V8 Sparkplug | 0.974 | 0.947 | 0.998 |
+| compile | 64 | V8 TurboFan | 23.942 | 23.872 | 24.102 |
+| compile | 64 | Stator before | 40.153 | 39.917 | 40.490 |
+| compile | 64 | Stator | 31.786 | 31.712 | 31.978 |
+Results: /Users/listepo/GitHub/listepo/apps/_worktrees/stator-t74/packages/tests/engine/results/startup-2026-11-08T20-36-37-139Z

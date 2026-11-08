@@ -11,6 +11,8 @@ const bc = @import("../bytecode.zig");
 const analyze = @import("analyze.zig");
 const lower = @import("lower.zig");
 const helpers = @import("helpers.zig");
+const Timing = @import("timing.zig").Timing;
+const layout = @import("layout.zig");
 const Value = rt.Value;
 const Template = bc.Template;
 
@@ -67,8 +69,13 @@ pub fn enter(native: Native, t: *Template, fe: ?*c.JSRTEnv, w: [*]Value, argv: [
 
 fn compile(t: *Template) !?Native {
     if (host == void) return null;
+    var timing = Timing.start(traceEnabled());
+    var success = false;
+    defer timing.report(std.mem.span(t.name), success);
     const gpa = std.heap.c_allocator;
-    const plan = switch (try analyze.analyze(gpa, t)) {
+    const analysis = try analyze.analyze(gpa, t);
+    timing.mark(0);
+    const plan = switch (analysis) {
         .plan => |p| p,
         .reject => |why| {
             switch (why) {
@@ -83,11 +90,16 @@ fn compile(t: *Template) !?Native {
     var f = pj.ir.Func.init(gpa);
     defer f.deinit();
     try lower.lower(&f, t, plan);
+    try layout.orderAcyclic(&f);
+    timing.mark(1);
     var cb = pj.CodeBuffer.init(gpa);
     defer cb.deinit();
     _ = try host.compile(gpa, &f, &cb, .{});
+    timing.mark(2);
     // Templates are immortal, so their code is never released.
     const fun = try pj.JitRuntime.add(&cb);
+    timing.mark(3);
+    success = true;
     trace(t, "compiled: {d} instructions, {d} bytes", .{ plan.insns.len, cb.code().len });
     return fun.ptr(Native);
 }
@@ -96,16 +108,20 @@ var trace_on: ?bool = null;
 
 /// `STATOR_JIT_TRACE=1` prints what the JIT did with each template, for tuning and benchmarks.
 fn trace(t: *const Template, comptime fmt: []const u8, args: anytype) void {
-    const on = trace_on orelse blk: {
+    if (!traceEnabled()) return;
+    std.debug.print("jit: {s}: " ++ fmt ++ "\n", .{std.mem.span(t.name)} ++ args);
+}
+
+fn traceEnabled() bool {
+    return trace_on orelse blk: {
         const v = std.c.getenv("STATOR_JIT_TRACE");
         const b = v != null and v.?[0] != 0 and v.?[0] != '0';
         trace_on = b;
         break :blk b;
     };
-    if (!on) return;
-    std.debug.print("jit: {s}: " ++ fmt ++ "\n", .{std.mem.span(t.name)} ++ args);
 }
 
 test {
     _ = analyze;
+    _ = layout;
 }
