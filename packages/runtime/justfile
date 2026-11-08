@@ -156,6 +156,10 @@ _runtime flavor:
           echo '  Debian: apt install libicu-dev' >&2
           exit 1
         fi
+        # pkg-config leaves out /usr/include as a system directory, but the pinned clang's system
+        # directories are its own sysroot's; -idirafter keeps the sysroot's libc headers first
+        # (plan-notes 410).
+        if [[ "$(uname -s)" == Linux ]]; then ICU_CFLAGS="${ICU_CFLAGS} -idirafter /usr/include"; fi
         DIR=build-intl
         # -DUCHAR_TYPE=uint16_t is ICU's own supported way to say UChar is the embedder's 16-bit
         # unit: JSString already holds uint16_t*, so the strings pass through without a copy.

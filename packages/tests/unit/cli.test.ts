@@ -935,6 +935,27 @@ test(
   },
 );
 
+test(
+  'the default clang without mise on PATH: STA0022 naming mise and the fix, no fallback (T35)',
+  NATIVE_ONLY,
+  async () => {
+    const empty = mkdtempSync(join(tmpdir(), 'stator-no-mise-'));
+    try {
+      const stderr = await refusedCompiler({
+        CC: undefined,
+        STATOR_RUNTIME: undefined,
+        PATH: empty,
+      });
+      assert.match(
+        stderr,
+        /the default C compiler, mise's pinned LLVM clang \(conda:clang@[\d.]+\), is unavailable: mise is not on PATH — run `mise install`/,
+      );
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  },
+);
+
 test('an unknown --version banner is refused: STA0022 quoting it (T35)', NATIVE_ONLY, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'stator-cc-'));
   try {

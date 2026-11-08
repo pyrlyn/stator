@@ -121,21 +121,40 @@ pub fn systemLinkFlags(a: Allocator, io: Io, runtime: Runtime, extern_flags: []c
 }
 
 /// `explicit` is `--cc` or config `cc`; `CC` and the default are decided here (`cc.zig`).
-pub fn chooseCC(h: Host, explicit: ?c_compiler.Choice, runtime: Runtime) c_compiler.Chosen {
+pub fn chooseCC(h: Host, explicit: ?c_compiler.Choice, runtime: Runtime) Error!c_compiler.Chosen {
     const darwin = builtin.os.tag == .macos;
-    const facts: c_compiler.HostFacts = .{ .darwin = darwin, .system_clang = darwin and exists(h.io, "/usr/bin/clang") };
-    return c_compiler.choose(h.a, explicit, h.env.get("CC"), runtime.sanitized(), facts);
+    const facts: c_compiler.HostFacts = .{ .darwin = darwin, .windows = builtin.os.tag == .windows, .system_clang = darwin and exists(h.io, "/usr/bin/clang") };
+    return c_compiler.choose(h.a, explicit, h.env.get("CC"), runtime.sanitized(), facts, MiseClang{ .h = h });
+}
+
+/// One `mise which` per process: Test262 builds thousands of programs in one. A failure is not
+/// kept, so a `mise install` mid-run is picked up by the next build. The path outlives the build's
+/// arena, so it is copied to the page allocator.
+var pinned_clang_path: ?[]const u8 = null;
+
+const MiseClang = struct {
+    h: Host,
+
+    pub fn path(m: MiseClang) Error![]const u8 {
+        if (pinned_clang_path) |known| return known;
+        const found = try c_compiler.pinnedClang(m.h.a, m.h.r, probe(m.h, "mise", &c_compiler.pinned_clang_query));
+        pinned_clang_path = std.heap.page_allocator.dupe(u8, found) catch oom();
+        return pinned_clang_path.?;
+    }
+};
+
+/// Runs `<program> <args>` with output captured, as `spawnSync` reports it to `cc.ts`.
+fn probe(h: Host, program: []const u8, args: []const []const u8) c_compiler.VersionRun {
+    const result = runCaptured(h.a, h.io, h.env, withProgram(h.a, program, args)) catch |err| return switch (err) {
+        error.FileNotFound => .not_found,
+        else => .{ .start_failed = std.fmt.allocPrint(h.a, "spawnSync {s} {s}", .{ program, errnoName(err) }) catch oom() },
+    };
+    return .{ .exited = .{ .code = if (result.term == .exited) result.term.exited else null, .stdout = result.stdout, .stderr = result.stderr } };
 }
 
 /// Runs `<cc> --version` and classifies it, or refuses the choice with STA0022.
 pub fn detectCC(h: Host, choice: c_compiler.Choice) Error!Compiler {
-    const run: c_compiler.VersionRun = if (runCaptured(h.a, h.io, h.env, &.{ choice.command, "--version" })) |result|
-        .{ .exited = .{ .code = if (result.term == .exited) result.term.exited else null, .stdout = result.stdout } }
-    else |err| switch (err) {
-        error.FileNotFound => .not_found,
-        else => .{ .start_failed = std.fmt.allocPrint(h.a, "spawnSync {s} {s}", .{ choice.command, errnoName(err) }) catch oom() },
-    };
-    return c_compiler.judge(h.a, h.r, choice, run);
+    return c_compiler.judge(h.a, h.r, choice, probe(h, choice.command, &.{"--version"}));
 }
 
 /// The runtime's recorded flags and the extern surface's, checked against the compiler's family

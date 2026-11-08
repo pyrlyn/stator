@@ -1,10 +1,11 @@
 /** The C compiler a build runs (plan/T35): one resolver, one `--version` probe, one flag table.
  *
- * Precedence: `--cc` > `CC` > config `cc` > `clang`, the order `STATOR_OPT` and `opt` already
+ * Precedence: `--cc` > `CC` > config `cc` > the default, the order `STATOR_OPT` and `opt` already
  * follow: whoever runs the build overrides what the project file names (creator's decision,
- * plan-notes 409). Every failure is `STA0022`, naming the value, where it
- * came from and how to choose another. The host facts and the `--version` run come in from
- * `build.ts`, so this module stays free of process and file-system access.
+ * plan-notes 409). The default is the clang mise pins, never whichever `clang` PATH finds first
+ * (plan-notes 410). Every failure is `STA0022`, naming the value, where it came from and how to
+ * choose another. The host facts and every process run come in from `build.ts`, so this module
+ * stays free of process and file-system access.
  */
 
 import { BuildError } from '../support/diagnostics.ts';
@@ -22,10 +23,53 @@ export interface CCompiler extends CcChoice {
   readonly family: CcFamily;
 }
 
-export const DEFAULT_CC = 'clang';
+/** mise.toml's `conda:clang` pin. statorc runs outside a Stator checkout too, where mise.toml is
+ * not there to read, so the version lives here and a unit test fails when the two drift. */
+export const PINNED_CLANG_TOOL = 'conda:clang@21.1.8';
 
-const FIX =
-  'choose another with --cc=<name|path>, config "cc" or CC (unset all three for the default clang)';
+/** The default on Windows, where mise.toml pins no clang: the `clang` on PATH. */
+export const WINDOWS_DEFAULT_CC = 'clang';
+
+const CHOOSE = 'choose another with --cc=<name|path>, config "cc" or CC';
+const FIX = `${CHOOSE} (unset all three for the default clang)`;
+
+/** The arguments that ask mise for the pinned clang's absolute path. */
+export const PINNED_CLANG_QUERY: readonly string[] = [
+  'which',
+  'clang',
+  '--tool',
+  PINNED_CLANG_TOOL,
+];
+
+/** The pinned clang's path from `mise which` (run by the caller), or STA0022 when mise is missing
+ * or the tool is not installed. No fallback to another clang: a build that silently used a
+ * different compiler would not be the build the project tested. */
+export function pinnedClang(run: (command: string, args: readonly string[]) => VersionRun): string {
+  const result = run('mise', PINNED_CLANG_QUERY);
+  const path = result.stdout.trim();
+  if (result.error === undefined && result.status === 0 && path !== '') {
+    return path;
+  }
+  const why =
+    errorCode(result.error) === 'ENOENT'
+      ? 'mise is not on PATH'
+      : `\`mise ${PINNED_CLANG_QUERY.join(' ')}\` failed (${miseError(result)})`;
+  throw new BuildError(
+    'STA0022',
+    `the default C compiler, mise's pinned LLVM clang (${PINNED_CLANG_TOOL}), is unavailable: ${why} ` +
+      `— run \`mise install\` in the Stator checkout, or ${CHOOSE}`,
+  );
+}
+
+/** mise's own reason, e.g. `conda:clang@21.1.8 is not installed`: its first ERROR line, since
+ * update notices and hints come on stderr too. */
+function miseError(result: VersionRun): string {
+  const marker = 'ERROR ';
+  const line = (result.stderr ?? '').split('\n').find((text) => text.includes(marker));
+  return line === undefined
+    ? exitText(result)
+    : line.slice(line.indexOf(marker) + marker.length).trim();
+}
 
 /** How a diagnostic names where the value came from. */
 export function describeSource(source: CcSource): string {
@@ -43,12 +87,22 @@ export function describeSource(source: CcSource): string {
 
 export interface CcHost {
   readonly darwin: boolean;
+  readonly windows: boolean;
   readonly systemClang: boolean;
+  /** The pinned clang's path; called only when the default is the pinned clang. */
+  readonly pinnedClang: () => string;
 }
 
 export interface ChosenCC {
   readonly choice: CcChoice;
   readonly warning?: string;
+}
+
+function defaultCC(host: CcHost, overridden: boolean): string {
+  if (overridden) {
+    return '/usr/bin/clang';
+  }
+  return host.windows ? WINDOWS_DEFAULT_CC : host.pinnedClang();
 }
 
 /** The resolved choice, and a warning when an explicit choice skips the ASan override.
@@ -71,9 +125,7 @@ export function chooseCC(
         : explicit;
   const overridden = sanitized && host.darwin && host.systemClang;
   if (choice === undefined) {
-    return {
-      choice: { command: overridden ? '/usr/bin/clang' : DEFAULT_CC, source: 'default' },
-    };
+    return { choice: { command: defaultCC(host, overridden), source: 'default' } };
   }
   if (!overridden) {
     return { choice };
@@ -104,11 +156,18 @@ export function classifyCompiler(version: string): CcFamily | undefined {
 export interface VersionRun {
   readonly status: number | null;
   readonly stdout: string;
+  readonly stderr?: string;
   readonly error?: unknown;
 }
 
 function errorCode(error: unknown): unknown {
   return typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
+}
+
+function exitText(result: VersionRun): string {
+  return result.error instanceof Error
+    ? result.error.message
+    : `exit ${String(result.status ?? 'signal')}`;
 }
 
 /** One probe per command per process: a build's compile, link and prelink all ask. */
@@ -130,11 +189,7 @@ export function detectCC(choice: CcChoice, run: (command: string) => VersionRun)
     );
   }
   if (result.error !== undefined || result.status !== 0) {
-    const why =
-      result.error instanceof Error
-        ? result.error.message
-        : `exit ${String(result.status ?? 'signal')}`;
-    throw new BuildError('STA0022', `${named} failed \`--version\` (${why}) — ${FIX}`);
+    throw new BuildError('STA0022', `${named} failed \`--version\` (${exitText(result)}) — ${FIX}`);
   }
   const family = classifyCompiler(result.stdout);
   if (family === undefined) {

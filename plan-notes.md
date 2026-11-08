@@ -14933,6 +14933,63 @@ file names. A project `.env` still may not set `CC` (docs/TOOLCHAIN.md, "Environ
 never a `--cc` one; `packages/tests/unit/cc.test.ts` pins both. docs/TOOLCHAIN.md, docs/CONFIG.md
 and the schema's `cc` description state the order.
 
+## 410. T35: the default C compiler is the clang mise pins (2026-11-08)
+
+**Decision (creator).** With no `--cc`, `CC` or config `cc`, `stator build` uses the clang
+`mise.toml` pins (`conda:clang` 21.1.8), not whichever `clang` is first on PATH. When it cannot be
+found the build fails with `STA0022`; it never falls back to another clang, because a build on a
+different compiler is not the build the project tested. Windows, where `mise.toml` pins no clang,
+keeps the `clang` on PATH. The macOS ASan default stays `/usr/bin/clang` (conda clang's Darwin ASan
+runtime deadlocks), and applies only when nothing was chosen.
+
+**Mechanism.** `build.ts` runs `mise which clang --tool conda:clang@21.1.8` once per process
+(about 35 ms on the creator's Mac, from any directory) and uses the absolute path it prints. mise
+missing (`ENOENT`) or the tool not installed (non-zero exit; the reason is mise's first `ERROR`
+line) is `STA0022`, naming the default, the pin and the fix. `chooseCC` in `cli/cc.ts` stays
+pure: the lookup reaches it as a host callback, called only when the default is that clang. The
+version is the constant `PINNED_CLANG_TOOL` in `cli/cc.ts`, not read from `mise.toml`: statorc
+also runs outside a Stator checkout, where there is no `mise.toml` to read. A unit test fails when
+the constant and the pin drift. The ASan gate hashes the compiler `selectCC` returns, so its skip
+key names the compiler stage 3 links with.
+
+**The justfiles.** They keep `cc := env("CC", "clang")`, resolved through PATH. Under
+`mise exec --` (AGENTS.md's commands) or `mise activate`, that `clang` is the pinned one. In CI,
+`.github/actions/clang` installs `conda:clang` and `conda:llvm` with `jdx/mise-action` (v5.2.5,
+the pin `static` already used; versions from `mise.toml`, cached per OS, arch and `mise.toml`) and
+puts `mise bin-paths conda:clang` first on PATH. Every job that builds or links C runs it:
+`frontend` (all Unix legs), `runtime`, `asan`, `intl`, `ffi` and their macOS twins, `compile jobs
+smoke`, `impact map`, `impact select`, Test262 (only when tests run), and nightly. `gcc goldens`
+keeps `CC=gcc`. The distro `clang` is no longer installed; the distro `llvm` stays on Linux only
+for `llvm-symbolizer`, which the conda clang lacks there.
+
+**Linux ASan evidence.** conda clang 21.1.8 on Linux ships compiler-rt's ASan and UBSan runtimes
+(`lib/clang/21/lib/linux/libclang_rt.asan-aarch64.{a,so}`), so the sanitized Linux path needs no
+override. Checked in an `ubuntu:24.04` arm64 container on Colima with only `mise install`ed
+tools, the apt `llvm` (symbolizer) and `gcc`/`libc6-dev` (crt files and headers):
+`pnpm run runtime`, then `STATOR_ASAN_FORCE=1 pnpm run test:asan` (the ASan runtime and its print
+corpus, the ASan `--emit=lib` check, the std worker tests, and 525 of 525 golden fixtures under
+ASan/UBSan), then `pnpm run test:golden` (525 of 525), all on statorc's default, which resolved to
+`.../conda-clang/21.1.8/.mise-bins/clang`. A heap overflow and a signed overflow in a toy program
+were both reported; without `llvm-symbolizer` on PATH the ASan frames are bare addresses, which is
+why the apt `llvm` stays. The Linux runtime is built without ThinLTO ("the linker cannot read bitcode
+archives"), as it already was in CI, where the `runtime (linux/x64)` job used to record Ubuntu clang
+18.1.3: the version this decision stops CI from testing with.
+
+**Distro libraries on Linux.** The pinned clang searches its own sysroot
+(`aarch64-conda-linux-gnu/sysroot/{lib,usr/lib}`), not `/usr/lib/<triple>`, so the `ffi` jobs'
+`-lsqlite3` from `libsqlite3-dev` failed to link (`cannot find -lsqlite3`, PR #288's first run).
+In an ubuntu:24.04 container, `LIBRARY_PATH=/usr/lib/aarch64-linux-gnu` linked it and `-Wl,-t`
+showed libc still taken from the conda sysroot, while `-L/usr/lib/aarch64-linux-gnu` linked the
+distro `libc.so` ahead of it. `.github/actions/clang` therefore exports that `LIBRARY_PATH` on
+Linux, and docs/TOOLCHAIN.md tells users the same; statorc adds no search path of its own.
+Headers likewise: with `libicu-dev` installed, `#include <unicode/ucol.h>` was not found
+(`pkg-config --cflags icu-uc` is empty, since `/usr/include` is a system directory to it), and
+`-idirafter /usr/include` compiled, linked and ran an ICU collator, so the `runtime-intl` recipe
+adds that flag on Linux. CI does not build `runtime-intl` while `SKIP_CI_TESTS` is set.
+
+**CI cost.** The conda install is about 1.3 GB unpacked on Linux (`conda-clang` 1.1 GB,
+`conda-llvm` 211 MB); `mise-action` caches it, so a warm job pays a cache restore instead.
+
 ## 411. CodeQL skips vendored code and tests (2026-11-08)
 
 **Decision (creator).** CodeQL analyzes first-party source only. `.github/codeql/codeql-config.yml`
