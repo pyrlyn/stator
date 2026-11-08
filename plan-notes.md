@@ -14977,3 +14977,17 @@ archives"), as it already was in CI, where the `runtime (linux/x64)` job used to
 
 **CI cost.** The conda install is about 1.3 GB unpacked on Linux (`conda-clang` 1.1 GB,
 `conda-llvm` 211 MB); `mise-action` caches it, so a warm job pays a cache restore instead.
+
+## 411. CodeQL skips vendored code and tests (2026-11-08)
+
+**Decision (creator).** CodeQL analyzes first-party source only. `.github/codeql/codeql-config.yml`
+(wired through `codeql.config-file` in `.github/infra.yml`, which pyrlyn-archive/ci-old's
+`codeql.yml` passes to `github/codeql-action/init`) ignores:
+
+- `packages/runtime/vendor` — QuickJS-NG's libregexp, fdlibm and Ryū, patched only via this file;
+- `packages/runtime/tests`, `packages/tests`, `packages/transpiler/tests` and
+  `packages/interpreter/test262` — test inputs, fixtures and harnesses, which hold unsafe or odd
+  constructs on purpose.
+
+Alerts on those paths stop being reported on the next analysis of `main`; nothing is dismissed by
+hand. The C analysis runs with `build-mode: none`, where `paths-ignore` applies.
