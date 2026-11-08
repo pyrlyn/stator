@@ -1,5 +1,5 @@
 //! The `host` module pyrlyn/gc's collectors import: the symbols `kxgc.h` says the runtime provides
-//! (plan-notes 404). pyrlyn's own `src/host.zig` is a stand-in for its tests; Stator builds the
+//! (plan-notes 405). pyrlyn's own `src/host.zig` is a stand-in for its tests; Stator builds the
 //! collector against this file instead, so a collector failure reads as a runtime panic.
 
 const std = @import("std");

@@ -25,7 +25,7 @@ trial deletion; `epoch` adds deferred RC on a background thread). It needs:
 The replacement lands as one change. Until it is complete the runtime is allowed to be broken on
 the task branch; `main` only receives the finished replacement.
 
-Stator uses it as deferred reference counting (plan-notes 404): counts cover heap-to-heap
+Stator uses it as deferred reference counting (plan-notes 405): counts cover heap-to-heap
 references only, frames, globals and native stacks are roots read at collection, a zero-count
 table holds objects no heap reference names, and pyrlyn/gc's trial deletion reclaims cycles.
 
@@ -40,7 +40,7 @@ bench recordings and their analysis under `packages/tests/bench/memory/` and `do
 
 ## Execution plan
 
-1. **Design**: plan-notes 404. `docs/VALUE.md` §4 and §4.12 are rewritten in step 9.
+1. **Design**: plan-notes 405. `docs/VALUE.md` §4 and §4.12 are rewritten in step 9.
 2. **Toolchain**: Zig 0.16.0 → 0.17.1 in `mise.toml`, CI, `AGENTS.md`, `docs/TOOLCHAIN.md`,
    `toolchain.md`; port the runtime and std Zig sources.
 3. **Dependency**: `packages/runtime/build.zig` + `build.zig.zon` pin an exact pyrlyn/gc commit;
