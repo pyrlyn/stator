@@ -10,6 +10,7 @@
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { onPath } from '../packages/tests/support/on-path.ts';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const projects = [
@@ -22,25 +23,31 @@ const projects = [
 const transpiler = join(root, 'packages', 'transpiler');
 
 function buildStatorTs(): string {
+  const exe = process.platform === 'win32' ? '.exe' : '';
+  // An absolute path, so the binary run is the one this lookup found, not whatever spawn resolves.
+  const zig = onPath(`zig${exe}`);
+  if (zig === undefined) {
+    return buildFailed('zig not found on PATH');
+  }
   // ReleaseSafe: a checker bug must stop the gate with a panic, not pass it with a wrong answer.
-  const built = spawnSync('zig', ['build', '-Doptimize=ReleaseSafe'], {
+  const built = spawnSync(zig, ['build', '-Doptimize=ReleaseSafe'], {
     cwd: transpiler,
     stdio: 'inherit',
   });
   if (built.error !== undefined || built.status !== 0) {
-    const why = built.error === undefined ? `exit ${String(built.status)}` : built.error.message;
-    console.error(`typecheck: building stator-ts failed (${why})`);
-    console.error(
-      'typecheck: fix: `mise install` provides Zig, or set STATOR_TS to a built stator-ts',
+    return buildFailed(
+      built.error === undefined ? `exit ${String(built.status)}` : built.error.message,
     );
-    process.exit(1);
   }
-  return join(
-    transpiler,
-    'zig-out',
-    'bin',
-    process.platform === 'win32' ? 'stator-ts.exe' : 'stator-ts',
+  return join(transpiler, 'zig-out', 'bin', `stator-ts${exe}`);
+}
+
+function buildFailed(why: string): never {
+  console.error(`typecheck: building stator-ts failed (${why})`);
+  console.error(
+    'typecheck: fix: `mise install` provides Zig, or set STATOR_TS to a built stator-ts',
   );
+  process.exit(1);
 }
 
 const preset = process.env['STATOR_TS'];
