@@ -14918,3 +14918,17 @@ Zig. None of it landed, so the codes, their decision tests and `explain` are unc
 **Known gaps.** `await` does not adopt a thenable that is not a promise. A sync `yield*` yields a
 fresh result object rather than the inner one. In an async generator, a sync iterable's final
 value is not awaited.
+
+## 411. CodeQL skips vendored code and tests (2026-11-08)
+
+**Decision (creator).** CodeQL analyzes first-party source only. `.github/codeql/codeql-config.yml`
+(wired through `codeql.config-file` in `.github/infra.yml`, which pyrlyn-archive/ci-old's
+`codeql.yml` passes to `github/codeql-action/init`) ignores:
+
+- `packages/runtime/vendor` — QuickJS-NG's libregexp, fdlibm and Ryū, patched only via this file;
+- `packages/runtime/tests`, `packages/tests`, `packages/transpiler/tests` and
+  `packages/interpreter/test262` — test inputs, fixtures and harnesses, which hold unsafe or odd
+  constructs on purpose.
+
+Alerts on those paths stop being reported on the next analysis of `main`; nothing is dismissed by
+hand. The C analysis runs with `build-mode: none`, where `paths-ignore` applies.
