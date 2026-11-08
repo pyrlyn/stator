@@ -11,7 +11,7 @@ Pins below are the ones in `mise.toml` and the package manifests. `docs/TOOLCHAI
 | moon | mise (`npm:@moonrepo/cli`, 2.5.4) | Task graph over the pnpm workspace | https://github.com/moonrepo/moon |
 | just | mise (`mise.toml`, 1.58.0) | Builds `libjsrt.a` and `libjsrt_std.a` | https://github.com/casey/just |
 | clang, llvm | mise (`conda:clang` and `conda:llvm`, 21.1.8, Linux and macOS) | Compiles the runtime and the emitted C | https://github.com/llvm/llvm-project |
-| zig | mise (`mise.toml`, 0.17.1, Linux and macOS) | Memory core in `libjsrt.a`, the `std/*` backings and the interpreter (`libjsrt_interp.a`) | https://github.com/ziglang/zig |
+| zig | mise (`mise.toml`, 0.17.1, Linux and macOS; CI installs it on Windows too) | Memory core in `libjsrt.a`, the `std/*` backings, the interpreter (`libjsrt_interp.a`) and stator-ts, which `pnpm run typecheck` builds and runs (plan/T65) | https://github.com/ziglang/zig |
 | jactionlint | mise (`mise.toml` pins `github:jdx/jactionlint` 2.0.2) | Lint the workflows and composite actions (`static analysis` job, the pre-push hook and `mise x -- jactionlint`) | https://github.com/jdx/jactionlint |
 | hk | mise (`mise.toml` pins 2.5.0) | Runs jactionlint as a pre-push hook (`hk.pkl`) | https://github.com/jdx/hk |
 | shellcheck | mise (`mise.toml` pins 0.11.0; CI uses the runner image's copy) | Checks `run:` scripts inside jactionlint | https://github.com/koalaman/shellcheck |
@@ -20,7 +20,7 @@ Pins below are the ones in `mise.toml` and the package manifests. `docs/TOOLCHAI
 
 | Package | Where | Source | Why here |
 | --- | --- | --- | --- |
-| typescript 6.0.3 | `packages/compiler` dependency; devDependency of the other TypeScript packages and the root | https://www.npmjs.com/package/typescript | In-process parse and check; pinned to 6.0.3, not the 7.x Go port |
+| typescript 6.0.3 | `packages/compiler` dependency; devDependency of the other TypeScript packages and the root | https://www.npmjs.com/package/typescript | In-process parse and check; `pnpm run build`; its `lib.*.d.ts` are what stator-ts reads for `pnpm run typecheck`; pinned to 6.0.3, not the 7.x Go port |
 | typebox 1.3.36 | `packages/compiler` | https://www.npmjs.com/package/typebox | `stator.config.json` schema and validation |
 | jsonc-parser 3.3.1 | `packages/compiler` | https://www.npmjs.com/package/jsonc-parser | Locates a syntax error in `stator.config.json` |
 | dotenv 18.0.6 | `packages/compiler` | https://www.npmjs.com/package/dotenv | Loads the project `.env` for the CLI |

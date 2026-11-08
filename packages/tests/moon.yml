@@ -14,7 +14,7 @@ dependsOn:
 
 tasks:
   typecheck:
-    script: './node_modules/.bin/tsc --noEmit -p packages/tests/tsconfig.json'
+    script: 'node scripts/typecheck.ts packages/tests'
     toolchain: 'system'
     options:
       runFromWorkspaceRoot: true

@@ -26,7 +26,7 @@ concurrency:
 # CI wants the opposite: every step that does not feed another should run at the same time. So the
 # chain is decomposed here, and this map is what says nothing was dropped in the process:
 #
-#   typecheck   -> static (once) + frontend (every platform)
+#   typecheck   -> static (once) + frontend (every platform); builds stator-ts first (plan/T65)
 #   lint        -> static
 #   dupes       -> static
 #   check-js-sources -> static

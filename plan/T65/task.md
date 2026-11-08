@@ -1,9 +1,9 @@
 ---
-status: todo
+status: in progress
 priority: P2
 complexity: 3
-readiness: 0%
-agent:
+readiness: 100%
+agent: Claude Code / claude-opus-5-5
 ---
 
 # T65. Type-check the repository with stator-ts instead of `tsc`
@@ -20,3 +20,14 @@ and a planted type error fails the gate the way `tsc` does.
 
 Check: `pnpm run typecheck` passes on `main` and fails on a planted TS2322 in each of the five
 projects; `pnpm run ci` passes.
+
+Execution plan:
+1. Run `stator-ts check` on the five projects; fix in `packages/transpiler` every error `tsc`
+   does not report, each with a fixture checked by `tests/differential.sh` against tsc 7.
+2. `scripts/typecheck.ts`: build stator-ts (`zig build -Doptimize=ReleaseSafe`, or `STATOR_TS`),
+   then `check -p` each project; `pnpm run typecheck` and the moon `typecheck` tasks call it.
+3. CI: `.github/actions/setup` installs Zig on Windows too, since every frontend leg runs
+   `typecheck`.
+4. Docs: `AGENTS.md`, `docs/TOOLCHAIN.md`, `toolchain.md`.
+5. Verify: planted TS2322 per project fails the gate; `zig build test`, `tests/differential.sh`,
+   the TS7 ratchet and `pnpm run ci` pass.
