@@ -179,15 +179,18 @@ fn helperCalls(comptime fs: anytype) [fs.len]usize {
 }
 
 /// What `src` cost under the JIT: templates compiled and calls into each of `fs`.
-fn jitCost(src: []const u8, comptime fs: anytype) !struct { compiled: usize, calls: [fs.len]usize } {
+/// `entries` counts native code entered from the interpreter, which a call between compiled
+/// functions skips.
+fn jitCost(src: []const u8, comptime fs: anytype) !struct { compiled: usize, entries: usize, calls: [fs.len]usize } {
     jit.mode = .jit;
     defer jit.mode = .interp;
     const compiled = jit.compiled;
+    const entries = jit.entries;
     const before = helperCalls(fs);
     _ = try runOk(src);
     var calls = helperCalls(fs);
     for (&calls, before) |*n, b| n.* -= b;
-    return .{ .compiled = jit.compiled - compiled, .calls = calls };
+    return .{ .compiled = jit.compiled - compiled, .entries = jit.entries - entries, .calls = calls };
 }
 
 test "a JS call reaches the call helper once and nothing else per call" {
@@ -198,6 +201,9 @@ test "a JS call reaches the call helper once and nothing else per call" {
     );
     // The script and fib, each compiled on its first call and never again.
     try std.testing.expectEqual(2, r.compiled);
+    // The interpreter enters the script and fib's first call, which compiles it; every
+    // recursive call goes from compiled code straight into compiled code.
+    try std.testing.expectEqual(2, r.entries);
     // fib(20) makes 21891 calls; each one is exactly one helper call.
     try std.testing.expectEqual(21891, r.calls[0]);
     // Three `fib` reads (one in the script, two in fib): one cache miss per site.

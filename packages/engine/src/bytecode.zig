@@ -251,6 +251,9 @@ pub const Op = enum(u8) {
 pub const Native = struct {
     state: enum(u8) { untried, rejected, compiled } = .untried,
     code: ?*const anyopaque = null,
+    /// A plain function: its [[Call]] runs this code with nothing before it, so compiled code may
+    /// call it directly (vm.zig `callCompiled`).
+    direct: bool = false,
 };
 
 pub const Handler = struct {

@@ -32,6 +32,10 @@ jsrt_value *jsrt_pending_slot(void) {
   return &pending_value;
 }
 
+const bool *jsrt_pending_flag(void) {
+  return &pending_flag;
+}
+
 bool jsrt_pending(void) {
   return pending_flag;
 }

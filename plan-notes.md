@@ -14975,6 +14975,14 @@ prologue's dead stores. Test builds wrap every helper the JIT calls in a counter
 (`helpers.counted`); `jitCost` tests in `src/interp.zig` pin those counts. `src/bench.zig` runs
 `packages/tests/engine/bench/*.js` in one process; `bench.ts` runs them under Node and the CLI.
 
-**Measured** (`docs/ENGINE.md` §4): `fib.ts` from 11.2 to 6.3 times V8's time, `objects-churn`
-from 15.3 to 12. `loop.js` now runs wholly in generated code at 5.7 times V8, so the remaining
+**Direct calls.** A call from compiled code to a compiled plain function opens the callee's
+window itself (`vm.callCompiled`) instead of passing through `vm.call`, `callInterpreted`, `run`
+and `exec`. The thread-locals that path read on every call (`sp`, `jsrt_frame_top`,
+`jsrt_stack_limit`, the pending flag; each a `_tlv_get_addr` call on macOS) are read once where
+the interpreter enters native code and handed down in `helpers.Stack`; the runtime gained
+`jsrt_pending_flag()` (`jsrt_value.h`) for the last one. A test pins that `fib(20)` enters native
+code from the interpreter twice, whatever its depth.
+
+**Measured** (`docs/ENGINE.md` §4): `fib.ts` from 11.2 to 2.9 times V8's time, `closures.js` from
+4.4 to 2.6, `objects-churn` from 15.3 to 10.7. `loop.js` now runs wholly in generated code at 5.7 times V8, so the remaining
 gap is the baseline design itself: the optimizing tier is the next step.

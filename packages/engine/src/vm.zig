@@ -11,6 +11,7 @@ const bc = @import("bytecode.zig");
 const compile = @import("compile.zig");
 const builtins = @import("builtins.zig");
 const jit = @import("jit/jit.zig");
+const builtin = @import("builtin");
 const Value = rt.Value;
 const Op = bc.Op;
 const Template = bc.Template;
@@ -112,6 +113,33 @@ fn callInterpreted(fe: *Env, callee: Value, this: Value, args: []const Value) Va
     if (t.is_async) return startAsync(t, fe, callee, this, args);
     if (t.generator) return startGenerator(t, fe, callee, this, args);
     return run(t, fe, callee, this, args, rt.undefined_value);
+}
+
+/// A call from compiled code to a compiled plain function (jit/helpers.zig `call`): the callee's
+/// window opens where `exec` would open it and its code runs with no interpreter layer between.
+/// Null when `callee` needs [[Call]]'s full path.
+pub fn callCompiled(st: *const jit.Stack, callee: Value, this: Value, args: []const Value) ?Value {
+    if (!isInterpreted(callee)) return null;
+    const fe = fnEnv(callee);
+    const t = templateOf(fe);
+    if (!t.jit.direct) return null;
+    if (@frameAddress() < st.limit) return c.jsrt_stack_overflow();
+    const base = st.sp.*;
+    const window = windowSize(t);
+    if (base + window > st.values.len) {
+        rt.throwRange("Maximum call stack size exceeded");
+        return rt.undefined_value;
+    }
+    st.sp.* = base + window;
+    defer st.sp.* = base;
+    const w = st.values[base .. base + window];
+    @memset(w, rt.undefined_value);
+    w[0] = callee;
+    w[1] = this;
+    var frame: c.JSRTFrame = .{ .prev = st.top.*, .count = @intCast(window), .slots = w.ptr, .env = fe.parent };
+    st.top.* = &frame;
+    defer st.top.* = frame.prev;
+    return jit.enter(@ptrCast(@alignCast(t.jit.code.?)), t, fe, w.ptr, args, &frame, st);
 }
 
 /// Calls any value with a receiver; a non-function is the TypeError Node raises.
@@ -1093,7 +1121,11 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
         },
     }
 
-    if (entry == .call and state == null) if (jit.codeFor(t)) |native| return jit.enter(native, t, fe, w.ptr, argv, &frame);
+    if (entry == .call and state == null) if (jit.codeFor(t)) |native| {
+        if (builtin.is_test) jit.entries += 1;
+        const st: jit.Stack = .{ .sp = &sp, .top = &c.jsrt_frame_top, .values = vs, .limit = c.jsrt_stack_limit, .pending = c.jsrt_pending_flag() };
+        return jit.enter(native, t, fe, w.ptr, argv, &frame, &st);
+    };
 
     while (true) {
         const at = pc;

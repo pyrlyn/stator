@@ -2006,6 +2006,10 @@ void jsrt_throw_str(const char *msg);
 bool jsrt_pending(void);
 jsrt_value jsrt_take_exception(void);
 jsrt_value *jsrt_pending_slot(void);
+/* The calling thread's pending flag, which `jsrt_pending` reads. For a caller that tests it after
+ * every operation and holds the address for the thread's lifetime (the engine's JIT): reaching a
+ * thread-local through a call each time is what it saves. Read it only; throw and take as above. */
+const bool *jsrt_pending_flag(void);
 
 /* A runtime-side invoke that turns a pending throw into a completion value so a builtin can
  * settle a promise (or otherwise handle it) instead of unwinding into library C. docs/VALUE.md §4.9. */
