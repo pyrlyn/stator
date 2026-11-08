@@ -214,6 +214,37 @@ pub const Op = enum(u8) {
     /// array local-index -> value, or jumps when done. Operands: u16 array local, u16 index local, u32 target.
     for_in_next,
 
+    // ---- suspension (docs/INTERPRETER.md §5)
+    /// value -> sent mode. Suspends a generator; resumed, it pushes what `next(v)`, `throw(e)` or
+    /// `return(v)` sent and the generator's `inject` mode, which the code after it dispatches on.
+    yield,
+    /// value -> value. Suspends an async function until the value settles; resumed by a
+    /// rejection, it throws the reason here.
+    await,
+    /// iter received mode -> iter value kind. One step of `yield*`: kind 0 yields the value, 1
+    /// ends the expression with it, 2 returns it from the generator.
+    delegate,
+    /// rec received mode -> rec mode result. The call half of an async generator's `yield*`
+    /// step; the result is awaited, and the mode changes when the iterator lacked a method.
+    async_delegate,
+    /// rec mode settled -> rec value kind: `delegate`'s kinds, plus 3 to await a sync
+    /// iterable's value before yielding it.
+    async_delegate_step,
+    /// A generator's parameters are bound: the call stops here and answers the generator object.
+    gen_start,
+    /// Drops every operand: a `return` injected at a `yield` leaves the expression it was in.
+    reset_stack,
+    /// obj -> async iterator record (§7.4.3 GetIterator with kind async).
+    get_async_iterator,
+    /// rec -> what `next()` answered, for an `await` to settle; a sync iterator's next value.
+    async_iter_next,
+    /// rec settled -> value, or jumps (both popped) when done. u32 target.
+    async_iter_step,
+    /// rec -> what `return()` answered, or jumps (rec popped) when there is none. u32 target.
+    async_close_call,
+    /// settled -> (nothing): a TypeError unless the settled `return()` result is an object.
+    async_close_check,
+
     debugger,
 };
 
@@ -266,8 +297,17 @@ pub const Template = struct {
     name: [*:0]const u8,
     kind: Kind,
     strict: bool,
+    /// `function*`: a call makes the generator object and runs nothing.
+    generator: bool = false,
+    /// `async`: a call runs up to the first `await` and answers a promise.
+    is_async: bool = false,
     /// Byte offset of the function in the source, for messages.
     start: u32,
+
+    /// [[Construct]]: generators and async functions have none (§15.5, §15.8).
+    pub fn constructible(t: *const Template) bool {
+        return t.kind.constructible() and !t.generator and !t.is_async;
+    }
 };
 
 pub fn read16(code: []const u8, pc: usize) u16 {

@@ -28,6 +28,8 @@ const slot_object_proto = 1;
 const slot_errors = 2; // one per ErrorKind
 const slot_symbol_count = slot_errors + error_kinds.len;
 const slot_function_proto = slot_symbol_count + 1;
+const slot_generator_proto = slot_function_proto + 1;
+const slot_async_generator_proto = slot_generator_proto + 1;
 
 const ErrorKind = struct { name: [*:0]const u8, class: *const c.JSRTClass };
 const error_kinds = [_]ErrorKind{
@@ -104,6 +106,53 @@ pub fn functionPrototype() Value {
     return roots[slot_function_proto];
 }
 
+/// %GeneratorPrototype% (§27.5.1): what a generator object's properties resolve against.
+pub fn generatorPrototype() Value {
+    init();
+    return roots[slot_generator_proto];
+}
+
+/// %AsyncGeneratorPrototype% (§27.6.1).
+pub fn asyncGeneratorPrototype() Value {
+    init();
+    return roots[slot_async_generator_proto];
+}
+
+fn generatorPrototypes() void {
+    const gp = c.jsrt_dynobj_new();
+    roots[slot_generator_proto] = gp;
+    const gen = "Generator method called on incompatible receiver";
+    method(gp, "next", 1, onReceiver(isSyncGenerator, gen, c.jsrt_iterator_next));
+    method(gp, "return", 1, onReceiver(isSyncGenerator, gen, c.jsrt_generator_close));
+    method(gp, "throw", 1, onReceiver(isSyncGenerator, gen, c.jsrt_generator_throw));
+    // `[Symbol.iterator]() { return this; }`, which is what `valueOf` already is.
+    method(gp, "__@iterator", 0, &protoValueOf);
+    put(gp, "__@toStringTag", rt.string("Generator"));
+    const agp = c.jsrt_dynobj_new();
+    roots[slot_async_generator_proto] = agp;
+    method(agp, "next", 1, asyncGenMethod(c.JSRT_GEN_INJECT_NONE));
+    method(agp, "return", 1, asyncGenMethod(c.JSRT_GEN_INJECT_RETURN));
+    method(agp, "throw", 1, asyncGenMethod(c.JSRT_GEN_INJECT_THROW));
+    method(agp, "__@asyncIterator", 0, &protoValueOf);
+    put(agp, "__@toStringTag", rt.string("AsyncGenerator"));
+}
+
+fn isSyncGenerator(v: Value) bool {
+    return c.jsrt_is_generator(v) and !vm.isAsyncGenerator(v);
+}
+
+fn isPromise(v: Value) bool {
+    return c.jsrt_is_promise(v);
+}
+
+fn asyncGenMethod(comptime mode: u8) Native {
+    return &struct {
+        fn call(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
+            return vm.agEnqueue(argv[0], mode, arg(argc, argv, 0));
+        }
+    }.call;
+}
+
 fn arg(argc: u32, argv: [*c]const Value, i: u32) Value {
     return if (i + 1 < argc) argv[i + 1] else rt.undefined_value;
 }
@@ -130,6 +179,15 @@ fn populate(g: Value) void {
         put(g, name, ctor);
         put(ctor, "prototype", c.jsrt_builtin_proto(name));
     }
+    // Compiled code calls the promise operations directly; a script reaches them as properties.
+    const promise = c.jsrt_get_prop(g, "Promise", null);
+    method(promise, "resolve", 1, fixed(c.jsrt_promise_resolve));
+    method(promise, "reject", 1, fixed(c.jsrt_promise_reject));
+    const pproto = c.jsrt_builtin_proto("Promise");
+    const not_promise = "Promise method called on a non-promise";
+    method(pproto, "then", 2, onReceiver(isPromise, not_promise, c.jsrt_promise_then));
+    method(pproto, "catch", 1, onReceiver(isPromise, not_promise, c.jsrt_promise_catch));
+    method(pproto, "finally", 1, onReceiver(isPromise, not_promise, c.jsrt_promise_finally));
 
     const fproto = c.jsrt_builtin_proto("Function");
     roots[slot_function_proto] = fproto;
@@ -139,6 +197,7 @@ fn populate(g: Value) void {
     method(fproto, "toString", 0, &fnToString);
     // Constructible, so compiled code's `new Function(…)` reaches it through `jsrt_construct`.
     _ = c.jsrt_closure_constructible(wrapper(g, "Function", native("Function", 1, &functionCall)));
+    generatorPrototypes();
 
     const object = wrapper(g, "Object", native("Object", 1, &objectCall));
     method(object, "create", 2, &objectCreate);
@@ -718,6 +777,20 @@ fn fixed(comptime f: anytype) Native {
             inline for (0..a.len) |i| a[i] = arg(argc, argv, i);
             const r = @call(.auto, f, a);
             return if (@TypeOf(r) == bool) rt.boolean(r) else r;
+        }
+    }.call;
+}
+
+/// A prototype method over `f`, whose first parameter is the receiver: a TypeError of `what`
+/// unless `ok` accepts the receiver.
+fn onReceiver(comptime ok: fn (Value) bool, comptime what: [*:0]const u8, comptime f: anytype) Native {
+    return &struct {
+        fn call(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
+            if (!require(ok(argv[0]), what)) return rt.undefined_value;
+            var a: std.meta.ArgsTuple(@TypeOf(f)) = undefined;
+            a[0] = argv[0];
+            inline for (1..a.len) |i| a[i] = arg(argc, argv, i - 1);
+            return @call(.auto, f, a);
         }
     }.call;
 }
