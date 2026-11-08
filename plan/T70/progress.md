@@ -173,8 +173,9 @@ T70 remains open until the expanded performance Check and all correctness checks
 
 ## Continuation publication (2026-11-08)
 
-This continuation is integrated with `379802a0` (T71–T73), preserving the JIT remainder
-optimization and the collector's owner-lookup reuse. It implements iterative synchronous call
+This continuation is integrated with `d68da422` (T71–T74), preserving the JIT remainder
+optimization, the collector's owner-lookup reuse and T74's acyclic block layout. The only merge
+conflict was in the appended plan notes; both entries are preserved. It implements iterative synchronous call
 frames, compact call opcodes and parameter initialization, Int32 arithmetic, combined bytecodes,
 non-throwing cached reads, primitive-only barrier elision and the existing collector's
 single-thread fast path for allocation and string append. Both interpreter and JIT retain the
@@ -191,8 +192,8 @@ the ReleaseSafe CLI left by `engine:test`; it was discarded and is not the measu
 On the integrated tree, `mise exec -- pnpm run ci` exited 0:
 
 ```text
-Test Files 66 passed (66)
-Tests 841 passed (841)
+Test Files 67 passed (67)
+Tests 844 passed (844)
 subset: 1041 fixtures — 1010 passed, 31 expected-fail, 0 failed
 golden: 525 fixtures — 525 passed, 0 failed
 runtime: print corpus matches Node (ASan/UBSan)
@@ -201,7 +202,7 @@ golden: 525 fixtures — 525 passed, 0 failed
 asan: golden-asan green
 ```
 
-The four leak checks plateaued below 65,536 KB (peak RSS 12,448 / 12,624 / 12,592 / 16,000 KB).
+The four leak checks plateaued below 65,536 KB (peak RSS 12,016 / 12,624 / 13,360 / 15,936 KB).
 The ordinary and ASan golden runners each skipped the two ICU-only fixtures. The full unit suite
 includes the new concurrency test; the ASan thread subset passed 7 tests with 16 unrelated tests
 skipped. Type checking, lint, formatting and duplication checks passed (0 clones). After the
@@ -226,7 +227,8 @@ This remains a ratchet result with known unsupported cases and crashes, not full
 ### ReleaseFast performance
 
 [continuation-measurement.json](continuation-measurement.json) contains 15 interleaved samples
-per engine/program, quartiles, unchanged input hashes, source diff and executable provenance.
+per engine/program, quartiles, unchanged input hashes and executable provenance. The measured
+source is committed at `26cd1eb4`; its working-tree source diff is empty.
 Apple M3 Max, macOS 27.0.1, Node v26.7.0, Zig 0.17.1; wall milliseconds including startup after
 one untimed repetition. This task's builds and tests had finished; ordinary host background
 activity was not controlled. QuickJS 2026-06-04 and PrimJS 2.11.1-rc.1 use the provenance and
@@ -235,18 +237,18 @@ release arguments above. Every result matched the pinned Node stdout byte-for-by
 The baseline is the saved `e38c2a89` ReleaseFast executable, SHA-256
 `a742eccc3f3d19a16dda962d6eab655fc5b04825e3183d6bdd973dbe249ea06d`.
 The measured continuation executable is SHA-256
-`52312761e6e79ddefabe2c9beb35b6bad66cf7a0d0c92f4b14ea9fce20313246`.
+`3b04b622f0e46cb24e6b6cc27f60f76e1a8e72b26c437b92e15abe355a1d34d8`.
 The comparison includes the intervening main changes as well as this continuation.
 
 | Workload | PR #293 baseline | Stator interp | QuickJS | PrimJS | Speedup over baseline |
 | -------- | ---------------: | ------------: | ------: | -----: | --------------------: |
-| array | 39.56 | 31.39 | 44.26 | 27.96 | 1.26× |
-| closure | 31.67 | 25.03 | 32.32 | 22.36 | 1.27× |
-| fib | 150.63 | 96.00 | 136.78 | 84.51 | 1.57× |
-| loop | 102.27 | 48.97 | 83.33 | 56.50 | 2.09× |
-| objects | 53.33 | 43.51 | 56.88 | 36.70 | 1.23× |
-| sieve | 21.73 | 19.16 | 24.51 | 17.71 | 1.13× |
-| string | 12.51 | 9.94 | 12.46 | 8.84 | 1.26× |
+| array | 42.17 | 33.31 | 46.89 | 28.50 | 1.27× |
+| closure | 34.93 | 27.56 | 34.67 | 23.08 | 1.27× |
+| fib | 157.76 | 100.53 | 138.06 | 81.73 | 1.57× |
+| loop | 103.15 | 50.64 | 84.10 | 56.11 | 2.04× |
+| objects | 53.65 | 44.95 | 57.43 | 37.75 | 1.19× |
+| sieve | 22.28 | 19.37 | 24.75 | 18.83 | 1.15× |
+| string | 12.70 | 10.20 | 13.53 | 9.01 | 1.24× |
 
 Reproduction uses the command above with
 `STATOR_ENGINE="$PWD/packages/engine/zig-out/bin/stator-engine"` after the explicit ReleaseFast
@@ -260,3 +262,7 @@ QuickJS/PrimJS target unmet: array.ts, closure.ts, fib.ts, objects.ts, sieve.ts,
 The continuation improves every baseline median. Only the numeric loop satisfies the required
 win against both competitors. PrimJS remains ahead on the other six medians. **T70 remains open**;
 this is a publishable performance increment, not completion of the all-workload target.
+
+All correctness commands and the 15-run benchmark in this publication section were repeated
+after integrating T74. The all-competitor performance gate again exits 1 with the same six
+remaining workloads; it has not been weakened or waived as a T70 completion condition.
