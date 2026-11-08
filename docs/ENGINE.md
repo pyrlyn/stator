@@ -214,7 +214,7 @@ Install QuickJS separately, then run after `pnpm run runtime`:
 
 ```bash
 QJS=/path/to/qjs BENCH_RUNS=7 pnpm run engine:bench:quickjs
-QJS=/path/to/qjs BENCH_RUNS=15 pnpm run engine:bench:quickjs --require-faster
+QJS=/path/to/qjs PRIMJS=/path/to/primjs/out/Default_snapshot/qjs BENCH_RUNS=15 pnpm run engine:bench:quickjs --require-faster
 QJS=/path/to/qjs PRIMJS=/path/to/primjs/out/Default_snapshot/qjs BENCH_RUNS=15 pnpm run engine:bench:quickjs
 ```
 
@@ -229,8 +229,8 @@ so another build cannot replace it midway through a run.
 
 `STATOR_ENGINE` selects a prebuilt interpreter; `STATOR_ENGINE_BASELINE` adds an older
 ReleaseFast executable to the same rounds. Results are saved under the ignored `results/`
-directory. `--require-faster` fails unless the interpreter's 75th percentile is below QuickJS's
-25th percentile on **every** fixture. It does not hide losses or silently switch to JIT.
+directory. `--require-faster` fails unless the interpreter's 75th percentile is below both QuickJS's and PrimJS's
+25th percentiles on **every** fixture. It does not hide losses or silently switch to JIT.
 This is a local benchmark criterion, not a claim about all JavaScript programs or machines.
 The owner-requested target and remaining work are tracked in `plan/T70/task.md`.
 
@@ -238,8 +238,8 @@ The owner-requested target and remaining work are tracked in `plan/T70/task.md`.
 and output checks. Point it at a release executable built using upstream's instructions; on
 macOS arm64 use the snapshot interpreter with tracing GC enabled. `PRIMJS_VERSION`,
 `PRIMJS_REVISION` and `PRIMJS_BUILD_ARGS` record its provenance (its CLI has no version flag).
-The report also hashes that executable and records `--runtime-info`. `--require-faster` continues
-to check the QuickJS target; PrimJS is an additional comparison, not a replacement oracle.
+The report also hashes that executable and records `--runtime-info`. `--require-faster` requires `PRIMJS` and checks both competitors. A report without PrimJS
+can still be produced, but cannot satisfy T70's completion gate.
 
 Local comparison, 2026-11-08, Apple M3 Max / macOS 27.0.1: Zig 0.17.1 ReleaseFast, QuickJS
 2026-06-04, PrimJS 2.11.1-rc.1 at `941a365b` (release arm64 snapshot interpreter, tracing GC).

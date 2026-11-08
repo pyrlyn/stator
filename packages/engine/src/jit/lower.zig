@@ -500,7 +500,43 @@ const Lowerer = struct {
             .declare_global => try l.helper(h.declareGlobal, &.{i.a}),
             .store_global => try l.helper(h.storeGlobal, &.{ l.slot(d - 1), i.a, i.b }),
             .set_prop => try l.setProp(i),
+            .add_set_prop => {
+                try l.binaryOp(.add, l.slot(d - 2));
+                var write = i;
+                write.depth -= 1;
+                try l.setProp(write);
+            },
+            .add_local_string, .add_local_prop, .add_local_elem, .lt_local_prop, .le_local_prop => {
+                const compare = i.op == .lt_local_prop or i.op == .le_local_prop;
+                try l.store(l.slot(d), try l.checkedLocal(i.a, i.b));
+                if (i.op == .add_local_string) {
+                    try l.helper(h.str, &.{ l.slot(d + 1), i.c });
+                } else {
+                    try l.store(l.slot(d + 1), try l.checkedLocal(i.c, i.d));
+                    if (i.op == .add_local_prop or compare) {
+                        try l.getProp(l.slot(d + 1), i.tail[0], i.tail[1]);
+                    } else {
+                        try l.store(l.slot(d + 2), try l.checkedLocal(i.tail[0], i.tail[1]));
+                        try l.helper(h.getElem, &.{l.slot(d + 1)});
+                    }
+                }
+                try l.binaryOp(if (i.op == .lt_local_prop) .lt else if (i.op == .le_local_prop) .le else .add, l.slot(d));
+                if (!compare) {
+                    _ = try l.checkedLocal(i.a, i.b);
+                    try l.store(vm.header + i.a, try l.load(l.slot(d)));
+                }
+            },
+            .add_store_local => {
+                try l.binaryOp(.add, l.slot(d - 2));
+                _ = try l.checkedLocal(i.a, i.b);
+                try l.store(vm.header + i.a, try l.load(l.slot(d - 2)));
+            },
             .get_elem => try l.helper(h.getElem, &.{l.slot(d - 2)}),
+            .get_elem_locals => {
+                try l.store(l.slot(d), try l.checkedLocal(i.a, i.b));
+                try l.store(l.slot(d + 1), try l.checkedLocal(i.c, i.d));
+                try l.helper(h.getElem, &.{l.slot(d)});
+            },
             .set_elem => try l.helper(h.setElem, &.{l.slot(d - 3)}),
             .new_object => try l.helper(h.newObject, &.{l.slot(d)}),
             .new_array => try l.helper(h.newArray, &.{ l.slot(d - i.a), i.a }),
@@ -522,9 +558,15 @@ const Lowerer = struct {
             },
             .load => try l.store(l.slot(d), try l.load(vm.header + i.a)),
             .store => try l.store(vm.header + i.a, try l.load(l.slot(d - 1))),
-            .load_checked => {
+            .ret_local => {
+                try l.store(l.slot(d), try l.checkedLocal(i.a, i.b));
+                try l.store(l.slot(d + 1), try l.load(1));
+                try l.retCtor(l.slot(d));
+            },
+            .load_checked, .local_callee => {
                 const v = try l.checkedLocal(i.a, i.b);
                 try l.store(l.slot(d), v);
+                if (i.op == .local_callee) try l.storeConst(l.slot(d + 1), rt.undefined_value);
             },
             .inc_local, .dec_local => {
                 const v = try l.checkedLocal(i.a, i.b);
@@ -547,8 +589,16 @@ const Lowerer = struct {
             },
             .arg => try l.arg(i.a, l.slot(d)),
             .arg_local => try l.arg(i.a, vm.header + i.b),
-            .load_global => try l.globalLoad(i),
+            .load_global, .global_callee => {
+                try l.globalLoad(i);
+                if (i.op == .global_callee) try l.storeConst(l.slot(d + 1), rt.undefined_value);
+            },
             .typeof_global => try l.helper(h.loadGlobal, &.{ l.slot(d), i.a, 1 }),
+            .inc_env, .dec_env => {
+                try l.helper(h.loadEnv, &.{ l.slot(d), i.a, i.b, i.c + 1 });
+                try l.unaryOp(if (i.op == .inc_env) .inc else .dec, l.slot(d));
+                try l.helper(h.storeEnv, &.{ l.slot(d), i.a, i.b, i.c + 1 });
+            },
             .load_env => try l.helper(h.loadEnv, &.{ l.slot(d), i.a, i.b, 0 }),
             .load_env_checked => try l.helper(h.loadEnv, &.{ l.slot(d), i.a, i.b, i.c + 1 }),
             .store_env => try l.helper(h.storeEnv, &.{ l.slot(d - 1), i.a, i.b, 0 }),
@@ -558,7 +608,7 @@ const Lowerer = struct {
                 try l.getProp(l.slot(d), i.c, i.d);
             },
             .get_prop, .get_method => try l.getProp(l.slot(d - 1), i.a, i.b),
-            .call => try l.helper(h.call, &.{ l.slot(d - i.a - 2), i.a }),
+            .call, .call0, .call1, .call2, .call3 => try l.helper(h.call, &.{ l.slot(d - i.a - 2), i.a }),
             .add, .sub, .mul, .div, .mod, .exp, .bitand, .bitor, .bitxor, .shl, .shr, .ushr, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge => try l.binaryOp(i.op, l.slot(d - 2)),
             .neg, .plus, .bitnot, .not, .typeof, .inc, .dec => try l.unaryOp(i.op, l.slot(d - 1)),
             .jump => try l.br(try l.blockAt(i.a)),
@@ -607,8 +657,13 @@ fn deadStores(alloc: std.mem.Allocator, t: *const bc.Template, insns: []const an
     const read = try alloc.alloc(bool, t.nlocals);
     @memset(read, false);
     for (insns) |i| switch (i.op) {
-        .load, .load_checked, .store_checked, .inc_local, .dec_local, .get_prop_local, .add_local_int, .sub_local_int, .lt_local_int, .le_local_int => read[i.a] = true,
-        .add_locals, .sub_locals, .lt_locals, .le_locals => {
+        .add_local_string, .add_local_prop, .add_local_elem, .lt_local_prop, .le_local_prop => {
+            read[i.a] = true;
+            if (i.op != .add_local_string) read[i.c] = true;
+            if (i.op == .add_local_elem) read[i.tail[0]] = true;
+        },
+        .load, .load_checked, .local_callee, .ret_local, .add_store_local, .store_checked, .inc_local, .dec_local, .get_prop_local, .add_local_int, .sub_local_int, .lt_local_int, .le_local_int => read[i.a] = true,
+        .add_locals, .sub_locals, .lt_locals, .le_locals, .get_elem_locals => {
             read[i.a] = true;
             read[i.c] = true;
         },

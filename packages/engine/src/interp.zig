@@ -281,6 +281,40 @@ test "functions and closures" {
     try expectRuns("let fs = []; for (let i = 0; i < 3; i++) fs.push(() => i); fs[0]() + fs[2]()", "2");
 }
 
+test "synchronous calls restore frames across native reentry and exception unwinding" {
+    try expectRuns("function f(){return arguments.length;} [f(),f(1),f(1,2),f(1,2,3),f(1,2,3,4)].join()", "0,1,2,3,4");
+    try expectRuns("function f(){throw arguments.length;} let s=''; try{f();}catch(e){s+=e;} try{f(1);}catch(e){s+=e;} try{f(1,2);}catch(e){s+=e;} try{f(1,2,3);}catch(e){s+=e;} try{f(1,2,3,4);}catch(e){s+=e;} s", "01234");
+    try expectRuns("function f(n) { if (!n) return 1; return [n].map(function(x) { return f(x - 1); })[0] + n; } f(30)", "466");
+    try expectRuns("let log = ''; function f(n) { try { if (!n) throw 'x'; return f(n - 1); } finally { log += n; } } try { f(5); } catch (e) { log += e; } log", "012345x");
+    try expectRuns("function fail(n) { if (n) return fail(n - 1); throw 7; } function f() { let x = 3; try { fail(30); } catch (e) { x += e; } return x; } f() + f()", "20");
+    try expectRuns("function f(n) { var x; if (n) { x = { n: n }; f(n - 1); return x.n; } return x; } f(3) + ',' + f(0)", "3,undefined");
+}
+
+fn collectDuringCall(_: u32, _: [*c]const Value, _: [*c]c.JSRTEnv) callconv(.c) Value {
+    c.jsrt_gc_collect();
+    return rt.undefined_value;
+}
+
+test "saved callers remain GC roots across collection and native reentry" {
+    _ = try runOk("0");
+    var roots = [_]Value{c.jsrt_closure_new(&collectDuringCall, 0, "collectDuringCall", null, false)};
+    var frame: c.JSRTFrame = .{ .prev = c.jsrt_frame_top, .count = 1, .slots = &roots, .env = null };
+    c.jsrt_frame_top = &frame;
+    defer c.jsrt_frame_top = frame.prev;
+    c.jsrt_set_prop(builtins.global(), "collectDuringCall", roots[0], null);
+    try expectRuns("function f(n) { const x = {value: 'x' + n}; if (n) [n].map(function(k) { return f(k - 1); }); else collectDuringCall(); return x.value; } f(30)", "x30");
+    try expectRuns("function f(){ let x={valueOf(){return 'old';}}; const a={get y(){x=null;collectDuringCall();return 'rhs';}}; x+=a.y; return x; } f()", "oldrhs");
+    try expectRuns("function f(){ let x={valueOf(){collectDuringCall();return 'old';}}; x+='rhs'; return x; } f()", "oldrhs");
+    try expectRuns("function f(x){return x+'rhs';} f({valueOf(){collectDuringCall();return 'old';}})", "oldrhs");
+}
+
+test "integer execution preserves overflow, negative zero and mixed numeric values" {
+    try expectRuns("function f(){ let low=0-2147483647; --low; return JSON.stringify({zero:0, one:1, high:2147483647, low:low, mixed:[2,2.5,-0,Infinity]}); } f()", "{\"zero\":0,\"one\":1,\"high\":2147483647,\"low\":-2147483648,\"mixed\":[2,2.5,0,null]}");
+    try expectRuns("function f(x) { return [x + 1, x - 1, ++x, --x].join(); } f(2147483647) + ';' + f(-2147483648)", "2147483648,2147483646,2147483648,2147483647;-2147483647,-2147483649,-2147483647,-2147483648");
+    try expectRuns("function r(x,y) { return x % y; } [Object.is(r(-4,2), -0), Number.isNaN(r(1,0)), r(-2147483648,-1), r(7,2.5), r(7,Infinity), r('7',3)].join()", "true,true,0,2,7,1");
+    try expectRuns("function f(x,y) { return [x + y,x - y,x < y,x <= y,x === y].join(); } f(1,1.0) + ';' + f(1,0.5)", "2,0,false,true,true;1.5,0.5,false,false,false");
+}
+
 test "call values without captured bindings" {
     try expectRuns("function f() { return this.x; } f.call({x: 7})", "7");
     try expectRuns("function f() { 'use strict'; return this; } f()", "undefined");
@@ -456,6 +490,46 @@ test "fused local reads preserve operand order and argument initialization" {
 test "invalid super calls in eval throw instead of writing immutable call values" {
     try expectRuns("let result; try { eval('super()'); } catch (e) { result = e instanceof SyntaxError; } result", "true");
     try expectRuns("let result; try { (0, eval)('super()'); } catch (e) { result = e instanceof SyntaxError; } result", "true");
+}
+
+test "combined reads and returns preserve lookup and coercion order" {
+    try expectRuns("function f(a,i) { return a[i]; } f({x: 7}, 'x') + f([3], 0)", "10");
+    try expectRuns("function f(a,i) { return a[i]; } let log=''; const k={toString(){ log+='k'; return 'x'; }}; const a={get x(){log+='g'; return 9; }}; f(a,k) + log", "9kg");
+    try expectRuns("function f() { try { return a[i]; } catch(e) { return e instanceof ReferenceError; } let a, i; } f()", "true");
+    try expectRuns("function f() { return 1; } function g() { f = function(){return 2;}; return 0; } f(g()) + f()", "3");
+    try expectRuns("function run() { let f = function(){return 1;}; return f(f = function(){return 2;}) + f(); } run()", "3");
+    try expectRuns("function f() { return x; let x; } let r; try { f(); } catch(e) {r=e instanceof ReferenceError;} r", "true");
+    try expectRuns("function C() { const x=7; this.x=x; return x; } new C().x", "7");
+    try expectRuns("function make(v) { let x=v; return function() { return ++x; }; } make('2')() + make(2147483647)()", "2147483651");
+    try expectRuns("function make() { let x={valueOf(){throw 7;}}; return function() {try {return ++x;} catch(e){return e;}}; } make()()", "7");
+}
+
+test "compound stores preserve captured operands, coercion and exceptions" {
+    try expectRuns("function f() { let x=1; x += (x=10); return x; } f()", "11");
+    try expectRuns("function f() { let x={valueOf(){return 'a';}}; x += 'b'; return x; } f()", "ab");
+    try expectRuns("function f() { let x=1; try { x += {valueOf(){throw 'e';}}; } catch(e) { return x+e; } } f()", "1e");
+    try expectRuns("function f() { let log=''; try { x += (log+='r'); } catch(e) { return (e instanceof ReferenceError)+log; } let x; } f()", "true");
+    try expectRuns("let log=''; const a={get x(){log+='g'; return {valueOf(){log+='v'; return 2;}};}, set x(v){log+='s'+v;}}; function rhs(){log+='r'; return 3;} a.x += rhs(); log", "grvs5");
+    try expectRuns("let log=''; const a={get x(){throw 'g';},set x(v){log+='s';}}; try {a.x += (log+='r');} catch(e){log+=e;} log", "g");
+    try expectRuns("let log=''; const a={get x(){return 2;},set x(v){throw v;}}; try {a.x += 3;} catch(e){log+=e;} log", "5");
+    try expectRuns("const a={x:'a'}; a.x += 'b'; a.x", "ab");
+}
+
+test "combined compound reads keep the old LHS through RHS effects" {
+    try expectRuns("function C(){this.x=7;return 'a'+1;} new C().x", "7");
+    try expectRuns("function f(x){return 'a'+x;} let out; try{f({valueOf(){throw 7;}});}catch(e){out=e;} out", "7");
+    try expectRuns("function f(a,b){return a()+b();} let log=''; f(()=>{log+='a';return 1;},()=>{log+='b';return 2;})+log", "3ab");
+    try expectRuns("function f(){let log=''; let a={valueOf(){log+='a';return 1;}}; const b={get x(){log+='g';return {valueOf(){log+='b';return 2;}};}}; return (a<b.x)+log;} f()", "truegab");
+    try expectRuns("function f(a,b){return [a<b.x,a<=b.x].join();} f('10',{x:'2'})", "true,true");
+    try expectRuns("function f(a){try{return a<b.x;}catch(e){return e instanceof ReferenceError;} let b;} f(1)", "true");
+    try expectRuns("function f(){ let x=1; const a={get y(){x=10;return 2;}}; x+=a.y; return x; } f()", "3");
+    try expectRuns("function f(){ let x=1; const a={y:2}; const k={toString(){x=10;return 'y';}}; x+=a[k]; return x; } f()", "3");
+    try expectRuns("function f(){ let x={valueOf(){return 'a';}}; const a={y:2}; x+=a.y; return x; } f()", "a2");
+    try expectRuns("function f(){ let x=1; let a=null; try{x+=a.x;}catch(e){return (e instanceof TypeError)+','+x;} } f()", "true,1");
+    try expectRuns("function f(){ let x=1; const a={get y(){throw 'g';}}; try{x+=a.y;}catch(e){return x+e;} } f()", "1g");
+    try expectRuns("function f(){ let x='a'; x+='b'; return x; } f()", "ab");
+    try expectRuns("function f(){ let x=1; try{x+=a.y;}catch(e){return e instanceof ReferenceError;} let a; } f()", "true");
+    try expectRuns("function f(){ let x=1; const a={}; try{x+=a[k];}catch(e){return e instanceof ReferenceError;} let k; } f()", "true");
 }
 
 test "syntax errors are pending SyntaxErrors" {

@@ -138,3 +138,125 @@ BENCH_RUNS=15 mise exec -- pnpm run engine:bench:quickjs --require-faster
 The remaining performance work needs profiling of the optimized call/frame path, numeric loop
 and string allocation costs. More aggressive call-helper inlining already lost on recursive
 performance; it is not an evidence-backed route to closing this gap.
+
+## Continuation after PR #293
+
+The creator expanded the target to wins against **both** QuickJS and PrimJS on all seven
+unchanged programs. `--require-faster` now requires a PrimJS executable and rejects any row
+whose interpreter p75 is not below both competitor p25 values. Historical measurements above
+remain the record of the first patch; they do not describe the continuation.
+
+Work starts from `e38c2a89`. The comparator is rebuilt from the same PrimJS commit and release
+arguments recorded above. The baseline binary is preserved locally during iteration. Exploratory
+interleaved runs are used to accept or reject changes; a final measurement must follow the builds
+and correctness checks, with source and binary hashes matching the tested tree.
+
+Profiles of scaled copies (not replacements for the committed programs) found recursive-call
+window preparation and VM dispatch, numeric-loop dispatch, property write barriers, and repeated
+ToPrimitive/ToString calls on strings. The continuation reuses the existing Int32 value tag,
+property ICs, collector, concatenation implementation, bytecode compiler and baseline JIT.
+
+A startup `JSRT_GC_STRESS=1` experiment panics with a negative collector count on both the
+unchanged `e38c2a89` binary and the changed binary. It is not evidence of a new regression or a
+passing stress gate. A focused regression test instead explicitly collects after initialization
+while interpreted callers and native callback reentry hold live objects.
+
+The Int32 path exposed a runtime JSON serializer that still recognized only doubles. The same
+change now uses the shared Number predicate/accessor and tests nested Int32 values, limits,
+negative zero and mixed doubles. `engine:test` on the resulting CLI reports `54 passed, 0 failed`.
+The explicit string-buffer transition/concurrency regression and the existing `std` tests report
+`23 passed`. The interpreter/JIT Zig tests pass in ReleaseSafe. An intermediate Test262 run
+retains `14654 / 23726 pass (61.76%)`, with the baseline's 24 crashes and no timeouts; this is a
+ratchet result, not full language conformance. These are iteration checks, not the final gate.
+
+T70 remains open until the expanded performance Check and all correctness checks pass.
+
+## Continuation publication (2026-11-08)
+
+This continuation is integrated with `379802a0` (T71–T73), preserving the JIT remainder
+optimization and the collector's owner-lookup reuse. It implements iterative synchronous call
+frames, compact call opcodes and parameter initialization, Int32 arithmetic, combined bytecodes,
+non-throwing cached reads, primitive-only barrier elision and the existing collector's
+single-thread fast path for allocation and string append. Both interpreter and JIT retain the
+slow paths for coercion, TDZ, getters, exceptions and constructors. Regression tests explicitly
+collect with suspended callers and native reentry and exercise the first worker transition.
+
+The benchmark now requires PrimJS for `--require-faster`. Its source diff includes both staged
+and unstaged changes, so the executable's recorded provenance survives staging for publication.
+No benchmark program or conformance baseline changed. The initial publication measurement used
+the ReleaseSafe CLI left by `engine:test`; it was discarded and is not the measurement below.
+
+### Correctness checks
+
+On the integrated tree, `mise exec -- pnpm run ci` exited 0:
+
+```text
+Test Files 66 passed (66)
+Tests 841 passed (841)
+subset: 1041 fixtures — 1010 passed, 31 expected-fail, 0 failed
+golden: 525 fixtures — 525 passed, 0 failed
+runtime: print corpus matches Node (ASan/UBSan)
+ffi static-lib: ok (asan, two libraries, two collectors collecting on every allocation)
+golden: 525 fixtures — 525 passed, 0 failed
+asan: golden-asan green
+```
+
+The four leak checks plateaued below 65,536 KB (peak RSS 12,448 / 12,624 / 12,592 / 16,000 KB).
+The ordinary and ASan golden runners each skipped the two ICU-only fixtures. The full unit suite
+includes the new concurrency test; the ASan thread subset passed 7 tests with 16 unrelated tests
+skipped. Type checking, lint, formatting and duplication checks passed (0 clones). After the
+benchmark provenance correction, its targeted lint and formatting checks also passed.
+
+`mise exec -- pnpm run interp:test` exited 0. `mise exec -- pnpm run engine:test` reported
+`engine: 58 passed, 0 failed` on ReleaseSafe. After an explicit
+`mise exec -- zig build cli -Doptimize=ReleaseFast --build-file packages/engine/build.zig`,
+the same corpus using `STATOR_ENGINE` reported `engine: 58 passed, 0 failed` on the exact
+ReleaseFast executable measured below.
+
+`STATOR_TEST262=<pinned corpus> mise exec -- pnpm run test262:interp-exec` exited 0:
+
+```text
+test262-exec: 14654 / 23726 pass (61.76%)
+not run: 817 module tests; unsupported constructs in 1280 tests; 0 timeouts; 24 crashes
+test262-exec: 3 directories pass more than the baseline; record them with --update
+```
+
+This remains a ratchet result with known unsupported cases and crashes, not full conformance.
+
+### ReleaseFast performance
+
+[continuation-measurement.json](continuation-measurement.json) contains 15 interleaved samples
+per engine/program, quartiles, unchanged input hashes, source diff and executable provenance.
+Apple M3 Max, macOS 27.0.1, Node v26.7.0, Zig 0.17.1; wall milliseconds including startup after
+one untimed repetition. This task's builds and tests had finished; ordinary host background
+activity was not controlled. QuickJS 2026-06-04 and PrimJS 2.11.1-rc.1 use the provenance and
+release arguments above. Every result matched the pinned Node stdout byte-for-byte.
+
+The baseline is the saved `e38c2a89` ReleaseFast executable, SHA-256
+`a742eccc3f3d19a16dda962d6eab655fc5b04825e3183d6bdd973dbe249ea06d`.
+The measured continuation executable is SHA-256
+`52312761e6e79ddefabe2c9beb35b6bad66cf7a0d0c92f4b14ea9fce20313246`.
+The comparison includes the intervening main changes as well as this continuation.
+
+| Workload | PR #293 baseline | Stator interp | QuickJS | PrimJS | Speedup over baseline |
+| -------- | ---------------: | ------------: | ------: | -----: | --------------------: |
+| array | 39.56 | 31.39 | 44.26 | 27.96 | 1.26× |
+| closure | 31.67 | 25.03 | 32.32 | 22.36 | 1.27× |
+| fib | 150.63 | 96.00 | 136.78 | 84.51 | 1.57× |
+| loop | 102.27 | 48.97 | 83.33 | 56.50 | 2.09× |
+| objects | 53.33 | 43.51 | 56.88 | 36.70 | 1.23× |
+| sieve | 21.73 | 19.16 | 24.51 | 17.71 | 1.13× |
+| string | 12.51 | 9.94 | 12.46 | 8.84 | 1.26× |
+
+Reproduction uses the command above with
+`STATOR_ENGINE="$PWD/packages/engine/zig-out/bin/stator-engine"` after the explicit ReleaseFast
+build, the preserved baseline and `BENCH_RUNS=15`. The performance Check exited **1**:
+
+```text
+Faster with non-overlapping interquartile ranges: 1/7
+QuickJS/PrimJS target unmet: array.ts, closure.ts, fib.ts, objects.ts, sieve.ts, string.ts
+```
+
+The continuation improves every baseline median. Only the numeric loop satisfies the required
+win against both competitors. PrimJS remains ahead on the other six medians. **T70 remains open**;
+this is a publishable performance increment, not completion of the all-workload target.

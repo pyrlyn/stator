@@ -6,6 +6,8 @@
 const std = @import("std");
 const c = @import("rt.zig").c;
 
+pub const header = 3;
+
 pub const Op = enum(u8) {
     // ---- values
     undef,
@@ -37,6 +39,16 @@ pub const Op = enum(u8) {
     load_checked,
     /// Same check, for an assignment to a `let` before its declaration.
     store_checked,
+    /// u16 local, u16 name: add two rooted operands and store, discarding the result.
+    add_store_local,
+    /// Checked local += RHS with discarded result. Local/name, then a string index, or
+    /// receiver local/name and property key/ic or element local/name. Reads remain ordered.
+    add_local_string,
+    add_local_prop,
+    add_local_elem,
+    /// Checked local compared with a named property: local/name, receiver/name, key/ic.
+    lt_local_prop,
+    le_local_prop,
     /// u16 local, u16 name key: a discarded ++/--, with TDZ and coercion before the store.
     inc_local,
     dec_local,
@@ -55,6 +67,9 @@ pub const Op = enum(u8) {
     store_env,
     /// u8 hops, u16 slot, u16 key.
     load_env_checked,
+    /// Same operands as load_env_checked: prefix update, leaves the new value.
+    inc_env,
+    dec_env,
     store_env_checked,
     /// u8 hops, u16 slot: the slot holds a pointer to a compiled caller's binding (a direct
     /// `eval`'s scope, docs/INTERPRETER.md §3), read or written through.
@@ -62,6 +77,10 @@ pub const Op = enum(u8) {
     store_ref,
     /// u16 key: the global object's property, a ReferenceError when absent.
     load_global,
+    /// u16 key: load a global callee and its undefined receiver together.
+    global_callee,
+    /// u16 local, u16 name: checked local callee and undefined receiver.
+    local_callee,
     /// u16 key, u8 strict.
     store_global,
     /// u16 key: `typeof x` of an unresolved name, never a ReferenceError.
@@ -108,7 +127,11 @@ pub const Op = enum(u8) {
     get_prop_local,
     /// obj value -> value. u16 key, u16 ic.
     set_prop,
+    /// u16 key, u16 IC: obj lhs rhs -> empty, for a discarded named-property +=.
+    add_set_prop,
     get_elem,
+    /// u16 local and u16 name for receiver and key: checked reads, then indexed get.
+    get_elem_locals,
     set_elem,
     /// u16 key.
     delete_prop,
@@ -166,6 +189,11 @@ pub const Op = enum(u8) {
     // ---- calls
     /// callee this args… -> result. u16 argc.
     call,
+    /// The same operation for common argument counts, encoded in the opcode.
+    call0,
+    call1,
+    call2,
+    call3,
     /// callee this array -> result
     call_spread,
     /// callee args… -> object. u16 argc.
@@ -175,6 +203,8 @@ pub const Op = enum(u8) {
     super_call,
     super_call_spread,
     ret,
+    /// u16 local, u16 name: checked local return, with immutable activation this.
+    ret_local,
     /// value this -> the result a construction answers (§10.2.2 [[Construct]] steps 10–12).
     ret_ctor,
     /// value -> construction result, taking immutable `this` from the activation header.
@@ -323,6 +353,12 @@ pub const Template = struct {
     handlers: []const Handler,
     nlocals: u32,
     max_stack: u32,
+    /// Precomputed activation capacity; opening and closing a call need one load.
+    window_size: usize,
+    plain_call: bool,
+    /// Leading arg_local instructions mapping argument i to local i; later/default parameters
+    /// remain bytecode. The initialized window already supplies undefined for missing arguments.
+    entry_args: u16,
     /// `length`: the parameters before the first default or rest.
     arity: u32,
     name: [*:0]const u8,

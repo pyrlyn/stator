@@ -229,6 +229,11 @@ A buffered header keeps the buffer's own address in `buffer`, so the collector r
 through it without relying on interior-pointer recognition. The header is a scanned allocation;
 the flat string and the buffer are pointer-free (atomic). A long-lived built string may hold up to
 twice its length in capacity; that is the price of the amortized append.
+Before any worker is published, concatenation uses the collector's single-thread state to skip
+its append mutex. Enabling threads is permanent and precedes worker publication; thereafter
+all appends serialize updates to a shared buffer's `used` counter, including appends on main.
+The immutable prefix rule is identical in both paths. Allocation also skips mutex reentrancy
+bookkeeping before that transition, avoiding thread-local accesses when no other worker exists.
 
 Past `JSRT_MAX_STRING_LENGTH` (2^29 − 24 code units, V8's `String::kMaxLength`)
 `jsrt_string_concat` leaves Node's catchable `RangeError: Invalid string length` pending. It used to

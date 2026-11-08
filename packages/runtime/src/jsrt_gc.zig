@@ -493,7 +493,7 @@ fn lock() void {
         return;
     }
     lock_depth = 1;
-    if (!concurrent.load(.acquire)) return;
+    if (!isConcurrent()) return;
     if (std.c.pthread_mutex_trylock(&heap_mutex) != .SUCCESS) {
         enterBlocking();
         pthreadOk(std.c.pthread_mutex_lock(&heap_mutex), "collector: heap lock");
@@ -519,7 +519,7 @@ fn resumeWorld() void {
 }
 
 fn setStopped(stop: bool) void {
-    if (!concurrent.load(.acquire)) return;
+    if (!isConcurrent()) return;
     pthreadOk(std.c.pthread_mutex_lock(&stw_mutex), "collector: stop lock");
     stop_requested.store(stop, .release);
     if (stop) {
@@ -563,6 +563,12 @@ fn unregister() void {
     thread_count -= 1;
     registered = false;
     _ = std.c.pthread_mutex_unlock(&stw_mutex);
+}
+
+/// Once set before publishing the first worker, concurrency stays enabled. Runtime operations
+/// that cannot start workers may omit their own mutex until this transition, like heap access.
+pub fn isConcurrent() bool {
+    return concurrent.load(.acquire);
 }
 
 pub fn enableThreads() void {
@@ -835,8 +841,11 @@ fn maybeCollect() void {
 
 pub fn alloc(bytes: usize, kind_: *const Kind) *anyopaque {
     const total = blockTotal(bytes, kind_.name);
-    lock();
-    defer unlock();
+    // Before worker publication there is no mutex to own and no reentrancy depth to track.
+    // Avoid two thread-local lookups for every single-thread allocation.
+    const shared = isConcurrent();
+    if (shared) lock();
+    defer if (shared) unlock();
     maybeCollect();
     const block = rawAlloc(total, kind_.name);
     // Dirty, so `jsrt_gc_write` returns at once: a young object's references are counted only if

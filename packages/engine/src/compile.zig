@@ -224,6 +224,12 @@ const Fn = struct {
         @memset(global_ics, .{ .shape = null, .offset = 0 });
         const strings = try p.alloc([]const u8, fs.strings.items.len);
         for (strings, fs.strings.items) |*d, s| d.* = try p.dupe(u8, s);
+        var entry_args: u16 = 0;
+        var parameter_pc: usize = 0;
+        while (parameter_pc < fs.code.items.len and fs.code.items[parameter_pc] == @backingInt(Op.arg_local)) : (parameter_pc += 5) {
+            if (bc.read16(fs.code.items, parameter_pc + 1) != entry_args or bc.read16(fs.code.items, parameter_pc + 3) != entry_args) break;
+            entry_args += 1;
+        }
         t.* = .{
             .code = try p.dupe(u8, fs.code.items),
             .strings = strings,
@@ -235,6 +241,9 @@ const Fn = struct {
             .handlers = try p.dupe(bc.Handler, fs.handlers.items),
             .nlocals = fs.nlocals,
             .max_stack = @intCast(fs.max_depth + 2),
+            .window_size = @max(16, bc.header + @as(usize, fs.nlocals) + @as(usize, @intCast(fs.max_depth + 2)) + strings.len + 2 * fs.nics),
+            .plain_call = !fs.kind.ctor() and !fs.generator and !fs.is_async,
+            .entry_args = entry_args,
             .arity = arity,
             .name = intern(name),
             .kind = fs.kind,
@@ -270,6 +279,10 @@ const Fn = struct {
     fn op(fs: *Fn, o: Op) Error!void {
         try fs.byte(@backingInt(o));
         fs.adjust(switch (o) {
+            .call0 => -1,
+            .call1 => -2,
+            .call2 => -3,
+            .call3 => -4,
             .ret_this => -1,
             .undef, .null, .true, .false, .uninit, .dup, .arguments, .this_raw, .this_sloppy, .new_target, .callee, .home, .new_object => 1,
             .dup2 => 2,
@@ -284,9 +297,11 @@ const Fn = struct {
     }
 
     fn op16(fs: *Fn, o: Op, v: u16) Error!void {
+        if (o == .call and v <= 3) return fs.op(@fromBackingInt(@backingInt(Op.call0) + @as(u8, @intCast(v))));
         try fs.byte(@backingInt(o));
         try fs.operand(u16, v);
         fs.adjust(switch (o) {
+            .global_callee => 2,
             .num, .str, .load, .load_global, .typeof_global, .delete_global, .arg, .rest => 1,
             .store, .store_global => -1,
             .push_env, .save_env, .const_assign, .delete_prop, .throw_error, .declare_global => 0,
@@ -345,7 +360,7 @@ const Fn = struct {
     fn propOp(fs: *Fn, o: Op, key: []const u8) Error!void {
         try fs.byte(@backingInt(o));
         try fs.propOperands(key);
-        fs.adjust(if (o == .set_prop) -1 else 0);
+        fs.adjust(if (o == .add_set_prop) -3 else if (o == .set_prop) -1 else 0);
     }
 
     fn propOperands(fs: *Fn, key: []const u8) Error!void {
@@ -360,7 +375,7 @@ const Fn = struct {
         try fs.operand(u16, slot);
         if (name) |n| try fs.operand(u16, try fs.keyIndex(n));
         fs.adjust(switch (o) {
-            .load_env, .load_env_checked, .load_ref => 1,
+            .load_env, .load_env_checked, .inc_env, .dec_env, .load_ref => 1,
             .store_env, .store_env_checked, .store_ref => -1,
             else => unreachable,
         });
@@ -368,14 +383,21 @@ const Fn = struct {
 
     fn localOp(fs: *Fn, o: Op, slot: u16, name: []const u8) Error!void {
         try fs.byte(@backingInt(o));
-        try fs.operand(u16, slot);
-        try fs.operand(u16, try fs.keyIndex(name));
+        try fs.localOperands(slot, name);
         fs.adjust(switch (o) {
+            .ret_local, .add_local_string, .add_local_prop, .add_local_elem => 0,
+            .local_callee => 2,
             .load_checked, .get_prop_local => 1,
             .store_checked => -1,
+            .add_store_local => -2,
             .inc_local, .dec_local => 0,
             else => unreachable,
         });
+    }
+
+    fn localOperands(fs: *Fn, slot: u16, name: []const u8) Error!void {
+        try fs.operand(u16, slot);
+        try fs.operand(u16, try fs.keyIndex(name));
     }
 
     fn keyIndex(fs: *Fn, name: []const u8) Error!u16 {
@@ -733,9 +755,7 @@ const Fn = struct {
             .block => |b| try fs.block(b.stmts),
             .empty_stmt, .debugger_stmt => {},
             .if_stmt => |i| {
-                try fs.expr(i.cond);
-                const else_jump = try fs.jump(.jump_if_false);
-                try fs.stmt(i.then);
+                const else_jump = try fs.thenBranch(i.cond, i.then, stmt);
                 if (i.els) |e| {
                     const end = try fs.jump(.jump);
                     fs.patch(else_jump);
@@ -745,6 +765,7 @@ const Fn = struct {
             },
             .return_stmt => |r| {
                 if (r.expr) |e| {
+                    if (fs.ctx.items.len == 0 and !fs.generator and !fs.is_async) return fs.returnExpr(e);
                     try fs.expr(e);
                     // §15.6.2: an async generator's `return v` settles on what `v` settles to.
                     if (fs.generator and fs.is_async) try fs.op(.await);
@@ -1200,6 +1221,35 @@ const Fn = struct {
         while (k > level) : (k -= 1) {
             try fs.byte(@backingInt(Op.pop_env));
         }
+    }
+
+    fn thenBranch(fs: *Fn, cond: *Node, body: *Node, comptime emit: fn (*Fn, *Node) Error!void) Error!u32 {
+        try fs.expr(cond);
+        const skip = try fs.jump(.jump_if_false);
+        try emit(fs, body);
+        return skip;
+    }
+
+    fn returnExpr(fs: *Fn, n: *Node) Error!void {
+        switch (n.data) {
+            .paren => |p| return fs.returnExpr(p.expr),
+            .conditional => |cond| {
+                const els = try fs.thenBranch(cond.cond, cond.then, returnExpr);
+                fs.patch(els);
+                return fs.returnExpr(cond.els);
+            },
+            .identifier => |id| if (fs.resolve(id)) |r| {
+                if (r.b.loc == .local and (!fs.kind.constructible() or fs.resolve(this_name).?.b.loc == .special)) {
+                    // The JIT roots this checked read in its ordinary return operand slot.
+                    fs.adjust(1);
+                    fs.adjust(-1);
+                    return fs.localOp(.ret_local, r.b.loc.local, id);
+                }
+            },
+            else => {},
+        }
+        try fs.expr(n);
+        try fs.emitReturn();
     }
 
     /// Returns the value on top, through every enclosing `finally` and `for-of`.
@@ -1755,13 +1805,13 @@ const Fn = struct {
             inline .prop_access, .elem_access => |a, tag| {
                 const prop = tag == .prop_access;
                 if (prop) {
-                    if (!this_too and !a.optional and a.expr.data == .identifier) {
-                        const id = a.expr.data.identifier;
-                        if (fs.resolve(id)) |r| if (r.b.loc == .local) {
-                            try fs.localOp(.get_prop_local, r.b.loc.local, id);
-                            try fs.propOperands(memberName(a.name));
-                            return;
-                        };
+                    if (!this_too and try fs.localProperty(n, .get_prop_local)) return;
+                } else if (!this_too and !a.optional and a.expr.data == .identifier and a.index.data == .identifier) {
+                    const left = fs.resolve(a.expr.data.identifier);
+                    const right = fs.resolve(a.index.data.identifier);
+                    if (left != null and right != null and left.?.b.loc == .local and right.?.b.loc == .local) {
+                        try fs.localPair(.get_elem_locals, left.?.b.loc.local, a.expr.data.identifier, right.?.b.loc.local, a.index.data.identifier);
+                        return;
                     }
                 }
                 if (a.expr.data == .super_expr) {
@@ -1795,12 +1845,24 @@ const Fn = struct {
         }
     }
 
+    fn loadCallee(fs: *Fn, id: []const u8) Error!void {
+        const r = fs.resolve(id) orelse return fs.op16(.global_callee, try fs.keyIndex(id));
+        switch (r.b.loc) {
+            .local => |slot| return fs.localOp(.local_callee, slot, id),
+            .global => |name| return fs.op16(.global_callee, try fs.keyIndex(name)),
+            else => {},
+        }
+        try fs.loadName(id);
+        try fs.op(.undef);
+    }
+
     fn callExpr(fs: *Fn, n: *Node, call: anytype, ch: *Chain) Error!void {
         const callee = call.callee;
         if (callee.data == .super_expr) return fs.superCall(call.args);
         if (callee.data == .import_kw) return fs.comp.unsupported(n, "import()");
         // The callee and `this`: a member call's object, undefined for any other.
         switch (callee.data) {
+            .identifier => |id| try fs.loadCallee(id),
             .prop_access, .elem_access => try fs.member(callee, ch, true),
             .paren => |p| {
                 // `(a.b)()` keeps `a` as `this`; `(0, a.b)()` does not.
@@ -1900,6 +1962,18 @@ const Fn = struct {
         }
     }
 
+    fn localProperty(fs: *Fn, n: *Node, op_: Op) Error!bool {
+        if (n.data != .prop_access) return false;
+        const prop = n.data.prop_access;
+        if (prop.optional or prop.expr.data != .identifier) return false;
+        const id = prop.expr.data.identifier;
+        const r = fs.resolve(id) orelse return false;
+        if (r.b.loc != .local) return false;
+        try fs.localOp(op_, r.b.loc.local, id);
+        try fs.propOperands(memberName(prop.name));
+        return true;
+    }
+
     /// A member target with its value on top, the target kept for `memberSet`.
     fn memberGet(fs: *Fn, n: *Node) Error!void {
         try fs.memberTarget(n);
@@ -1963,6 +2037,11 @@ const Fn = struct {
         const step: Op = if (inc) .inc else .dec;
         switch (target.data) {
             .identifier => |id| {
+                if (keep and !postfix) if (fs.resolve(id)) |r| {
+                    if (r.b.loc == .env and r.b.kind != .const_ and r.b.kind != .callee) {
+                        return fs.envOp(if (inc) .inc_env else .dec_env, r.hops, r.b.loc.env, id);
+                    }
+                };
                 if (!keep) if (fs.resolve(id)) |r| {
                     if (r.b.loc == .local and r.b.kind != .const_ and r.b.kind != .callee) {
                         return fs.localOp(if (inc) .inc_local else .dec_local, r.b.loc.local, id);
@@ -2057,12 +2136,30 @@ const Fn = struct {
         try fs.op(bop);
     }
 
+    fn localPair(fs: *Fn, o: Op, left: u16, left_name: []const u8, right: u16, right_name: []const u8) Error!void {
+        try fs.byte(@backingInt(o));
+        try fs.localOperands(left, left_name);
+        try fs.localOperands(right, right_name);
+        // Coercion and the JIT's lowering need both inputs rooted before producing one result.
+        fs.adjust(2);
+        fs.adjust(-1);
+    }
+
     /// Only the literal is known here; the local still receives the ordinary JS operation.
     fn localBinary(fs: *Fn, left: *Node, bop: Op, right: *Node) Error!bool {
         if (left.data != .identifier) return false;
         const id = left.data.identifier;
         const r = fs.resolve(id) orelse return false;
         if (r.b.loc != .local) return false;
+        if ((bop == .lt or bop == .le) and right.data == .prop_access) {
+            const prop = right.data.prop_access;
+            if (prop.optional or prop.expr.data != .identifier) return false;
+            const receiver = fs.resolve(prop.expr.data.identifier) orelse return false;
+            if (receiver.b.loc != .local) return false;
+            try fs.localPair(if (bop == .lt) .lt_local_prop else .le_local_prop, r.b.loc.local, id, receiver.b.loc.local, prop.expr.data.identifier);
+            try fs.propOperands(memberName(prop.name));
+            return true;
+        }
         if (right.data == .identifier) {
             const rhs = fs.resolve(right.data.identifier) orelse return false;
             if (rhs.b.loc != .local) return false;
@@ -2073,13 +2170,7 @@ const Fn = struct {
                 .le => .le_locals,
                 else => return false,
             };
-            try fs.byte(@backingInt(fused));
-            try fs.operand(u16, r.b.loc.local);
-            try fs.operand(u16, try fs.keyIndex(id));
-            try fs.operand(u16, rhs.b.loc.local);
-            try fs.operand(u16, try fs.keyIndex(right.data.identifier));
-            fs.adjust(2);
-            fs.adjust(-1);
+            try fs.localPair(fused, r.b.loc.local, id, rhs.b.loc.local, right.data.identifier);
             return true;
         }
         const fused: Op = switch (bop) {
@@ -2120,14 +2211,52 @@ const Fn = struct {
         return at;
     }
 
+    /// Combine a discarded local += with a simple RHS, keeping both operands rooted during
+    /// getters and coercion. Resolve bindings only; no value or type is assumed from source.
+    fn addAssignLocal(fs: *Fn, id: []const u8, right: *Node) Error!bool {
+        const target = fs.resolve(id) orelse return false;
+        if (target.b.loc != .local or target.b.kind == .const_ or target.b.kind == .callee) return false;
+        const slot = target.b.loc.local;
+        switch (right.data) {
+            .string_lit, .no_subst_template => |str| {
+                try fs.localOp(.add_local_string, slot, id);
+                try fs.operand(u16, try fs.strIndex(str));
+            },
+            inline .prop_access, .elem_access => |a, tag| {
+                if (a.optional or a.expr.data != .identifier) return false;
+                const receiver = fs.resolve(a.expr.data.identifier) orelse return false;
+                if (receiver.b.loc != .local) return false;
+                const prop = tag == .prop_access;
+                const index = if (!prop) blk: {
+                    if (a.index.data != .identifier) return false;
+                    const r = fs.resolve(a.index.data.identifier) orelse return false;
+                    if (r.b.loc != .local) return false;
+                    break :blk r.b.loc.local;
+                } else 0;
+                try fs.localOp(if (prop) .add_local_prop else .add_local_elem, slot, id);
+                try fs.localOperands(receiver.b.loc.local, a.expr.data.identifier);
+                if (prop) try fs.propOperands(memberName(a.name)) else try fs.localOperands(index, a.index.data.identifier);
+            },
+            else => return false,
+        }
+        // The LHS and RHS receiver/key coexist across a potentially collecting lookup.
+        fs.adjust(3);
+        fs.adjust(-3);
+        return true;
+    }
+
     /// `left = right`, or `left bop= right`.
     fn assign(fs: *Fn, left: *Node, bop: ?Op, right: *Node, keep: bool) Error!void {
         switch (left.data) {
             .identifier => |id| {
+                if (!keep and bop == .add and try fs.addAssignLocal(id, right)) return;
                 if (bop) |b| {
                     if (!try fs.localBinary(left, b, right)) {
                         try fs.loadName(id);
                         try fs.expr(right);
+                        if (!keep and b == .add) if (fs.resolve(id)) |r| {
+                            if (r.b.loc == .local and r.b.kind != .const_ and r.b.kind != .callee) return fs.localOp(.add_store_local, r.b.loc.local, id);
+                        };
                         try fs.op(b);
                     }
                 } else try fs.exprNamed(right, id);
@@ -2138,6 +2267,7 @@ const Fn = struct {
                 if (bop) |b| {
                     try fs.memberGet(left);
                     try fs.expr(right);
+                    if (!keep and b == .add and left.data == .prop_access and memberObject(left).data != .super_expr) return fs.propOp(.add_set_prop, memberName(left.data.prop_access.name));
                     try fs.op(b);
                 } else {
                     if (memberObject(left).data == .super_expr)

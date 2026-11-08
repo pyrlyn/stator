@@ -134,6 +134,32 @@ and `src/vm.zig` runs it:
   and callee values read the activation header directly. Derived constructors retain a mutable
   `this` binding, and captured call values remain in environments. Calls within the interpreter
   reuse the machine pointer; entry from native code obtains the thread's machine normally.
+  Ordinary synchronous interpreter calls save their caller in a bounded, per-thread array and
+  continue in the same dispatcher. Each saved caller keeps a published `JSRTFrame`; exceptions
+  unwind to the caller's call PC, while native callbacks can re-enter with their own root frame.
+  Arguments remain in the suspended caller's rooted operand window; saved metadata records their
+  count rather than copying an argument slice. Calls with zero through three arguments encode
+  that count in their opcode. Constructors, generators, async functions and JIT calls retain their existing entry paths.
+  Capacity exhaustion throws a `RangeError`; it does not recurse indefinitely in native code.
+- **Integer execution.** Integral literals and non-overflowing integer additions, subtractions,
+  increments and decrements use the runtime's existing `Int32` tag. Overflow and mixed doubles
+  take the floating-point path; remainder preserves negative zero and exceptional IEEE values.
+  Runtime JSON serialization accepts both representations of Number. Two primitive strings concatenate through the runtime without repeating coercions.
+- **Combined operations.** Callee/receiver loads, indexed reads from two locals, local returns,
+  prefix environment updates and discarded compound assignments can share a bytecode. A local
+  `+=` may combine a literal, named property or indexed RHS; comparisons may combine a named
+  property read. The old LHS remains rooted through getters and coercions, even if they overwrite
+  its binding. Reads retain TDZ checks and coercion order. The JIT lowers the same operations. A numeric result
+  immediately followed by a local store or comparison branch can also avoid a second dispatch;
+  bytecode PCs and handler ranges remain unchanged.
+- **Window preparation.** Templates retain their activation capacity. Small windows reserve at
+  least sixteen values and initialize them with fixed vector stores. Only published windows
+  are initialized; the unused remainder of the value stack is never scanned as roots.
+  Templates record the initial consecutive argument-to-local moves. Those run when the window
+  opens; defaults, duplicate bindings and later parameter operations remain ordinary bytecode.
+- **Primitive stores.** Updating a cached property or dense array slot skips the GC write barrier
+  only when neither its old value nor its new value is a reference. Reference replacement,
+  insertion and removal still execute the existing barrier.
 - **Activation caches.** String literals are allocated lazily once per activation. A direct
   array method call can reuse its bound method while the receiver is unchanged and has no own
   named properties. Overrides, accessors and receiver changes take normal lookup; a property

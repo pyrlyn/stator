@@ -17,6 +17,10 @@ pub fn number(d: f64) Value {
     return c.jsrt_number(d);
 }
 
+pub fn int32(n: i32) Value {
+    return c.JSRT_BOX(c.JSRT_TAG_INT32, @as(u32, @bitCast(n)));
+}
+
 pub fn boolean(b: bool) Value {
     return if (b) true_value else false_value;
 }
