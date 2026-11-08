@@ -6,7 +6,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit -p packages/compiler/tsconfig.json && tsc --noEmit -p packages/tests/tsconfig.json && tsc --noEmit -p packages/std/tsconfig.json && tsc --noEmit -p packages/node/tsconfig.json && tsc --noEmit -p packages/vite-stator/tsconfig.json",
+    "typecheck": "node scripts/typecheck.ts",
     "build": "tsc -p packages/compiler/tsconfig.json",
     "lint": "oxlint --deny-warnings . && oxfmt --check \"**/*.{ts,tsx,js,mjs,cjs,json,jsonc}\"",
     "format": "oxlint --fix . && oxfmt \"**/*.{ts,tsx,js,mjs,cjs,json,jsonc}\"",

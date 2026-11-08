@@ -1,0 +1,1 @@
+{ "compilerOptions": { "strict": true, "noUnusedLocals": true, "noEmit": true, "target": "esnext", "module": "esnext", "types": [] }, "files": ["a.ts"] }

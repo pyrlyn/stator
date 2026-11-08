@@ -24,7 +24,15 @@ that changes the pin, and note the reason in `plan-notes.md`.
 | pnpm                      | `12.3.4`           | `packageManager` in root `package.json`, `npm:pnpm` in `mise.toml`                                                                                                                                                               |
 | LLVM                      | `21.1.8`           | `mise.toml` (`conda:llvm` + `conda:clang`, Unix). The C compiler the justfile and `packages/compiler/src/cli/build.ts` look up as `$CC`/`clang`. Conda prebuilts — the asdf llvm plugin compiles from source and is not the pin. |
 | just                      | `1.58.0`           | `mise.toml`. The runtime build (`just -f packages/runtime/justfile -d packages/runtime runtime`, `runtime-asan`, `runtime-intl`).                                                                                                |
-| Zig                       | `0.17.1`           | `mise.toml` (`zig`, Unix). The memory-core objects in `libjsrt.a` (plan-notes 238, T9.1) and the `std/*` backings in `libjsrt_std.a` (T11.2). CI install via `mlugg/setup-zig@v2` in `.github/actions/setup` (skipped on Windows, which never builds the runtime). |
+| Zig                       | `0.17.1`           | `mise.toml` (`zig`, Unix). The memory-core objects in `libjsrt.a` (plan-notes 238, T9.1) and the `std/*` backings in `libjsrt_std.a` (T11.2). stator-ts (`packages/transpiler`), which `pnpm run typecheck` builds and runs (plan/T65). CI install via `mlugg/setup-zig@v2` in `.github/actions/setup`, Windows included, because every frontend leg runs `typecheck`. |
+
+`pnpm run typecheck` is `scripts/typecheck.ts`: it builds stator-ts with `zig build
+-Doptimize=ReleaseSafe` in `packages/transpiler` (cached; the first build fetches its Zig
+dependencies) and runs `stator-ts check -p <project>/tsconfig.json` on `packages/compiler`,
+`tests`, `std`, `node` and `vite-stator`. Any error, or a run that ends without a verdict, fails
+it. `STATOR_TS` names a prebuilt binary instead; `node scripts/typecheck.ts packages/node` checks
+one project, which is what each moon `typecheck` task runs. `tsc` is left for `pnpm run build`,
+and the compiler keeps the `typescript` API until plan/T41 replaces it.
 
 Node ≥ 24 is required because dev runs the compiler's TypeScript sources directly
 (`node packages/compiler/src/cli/main.ts`) via native type stripping — there is no build step in development.

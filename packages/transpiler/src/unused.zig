@@ -294,8 +294,9 @@ fn declaredIn(decl: *Node, scope: *Node) bool {
 fn isExported(s: *Symbol) bool {
     for (s.decls) |decl| {
         if (decl.mods.@"export") return true;
-        // `export const x`: the modifier sits on the statement.
-        if (decl.data == .var_decl) if (decl.parent) |list| if (list.parent) |st| if (st.mods.@"export") return true;
+        // `export const x` and `export const { x }`: the modifier sits on the statement.
+        const root = rootDeclaration(decl);
+        if (root.data == .var_decl) if (root.parent) |list| if (list.parent) |st| if (st.mods.@"export") return true;
     }
     return false;
 }
