@@ -161,7 +161,7 @@ and `src/vm.zig` runs it:
   global scope, like an indirect `eval`.
 
 **As built (T14.3).** Only the strict case exists. `STA1206` now means only a direct `eval` in
-sloppy code: a CommonJS file outside every "use strict" prologue and class body (plan-notes 405).
+sloppy code: a CommonJS file outside every "use strict" prologue and class body (plan-notes 406).
 
 - **The gate** accepts `eval` and `Function` in `js` mode, as a callee, as a value, and as
   `globalThis.eval` / `globalThis.Function`. `ts` mode still refuses them (`STA1101`, `STA1103`).
@@ -288,4 +288,4 @@ question is measured again after T14.4.
 
 A binary without an `Interpret` node does not link `libjsrt_interp.a`, so its size is
 byte-identical to before; every `ts`-mode binary is in that set. At T14.3, 18 golden fixtures
-(10 `js`, 8 `ts`) built byte-identical before and after (plan-notes 405).
+(10 `js`, 8 `ts`) built byte-identical before and after (plan-notes 406).

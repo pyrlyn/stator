@@ -1,5 +1,5 @@
-# Configuration for pyrlyn/ci's ci.yml, called from pipeline.yml (docs/config.md in
-# pyrlyn/ci). Replaces the former pipeline.yml call and sonarcloud.yml; language CI stays in ci.yml.
+# Configuration for pyrlyn-archive/ci-old's ci.yml, called from pipeline.yml (docs/config.md in
+# pyrlyn-archive/ci-old). Replaces the former pipeline.yml call and sonarcloud.yml; language CI stays in ci.yml.
 version: 1
 
 codeql:
@@ -9,7 +9,7 @@ codeql:
 snyk:
   enabled: true
 
-# SonarCloud is `pipeline / sonarcloud` inside pyrlyn/ci's ci.yml, which pipeline.yml
+# SonarCloud is `pipeline / sonarcloud` inside pyrlyn-archive/ci-old's ci.yml, which pipeline.yml
 # calls as `@main`. A local sonarcloud.yml pinned by SHA fails `no-pinned-ci` (plan-notes
 # 361). sonar-project.properties holds the project key. mise installs only the tools the
 # runtime build needs (`pnpm`, not `npm:pnpm` — #138). Setup is a hard failure, so a broken

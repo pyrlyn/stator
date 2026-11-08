@@ -14746,7 +14746,22 @@ CommonJS helpers `__toESM`/`__copyProps`, which need `Object.defineProperty` and
 (Phase 5, extname) or as a value (join, relative); and `for-of` destructuring (Phase 6), then
 `path.matchesGlob` (glob). `path.win32` is the blocker most files share.
 
-## 405. T14.3: compiled code calls the interpreter; STA1206 narrowed; the Test262 host is compiled (2026-11-08)
+## 405. The shared CI moved to `pyrlyn-archive/ci-old`; `pipeline.yml` calls it there (2026-11-08)
+
+**Evidence.** Every `pipeline.yml` run since 2026-11-06 failed at startup, on `main` and on every pull
+request, so the required `pipeline / gate` check never reported and nothing could merge. The run
+page says: `error parsing called workflow ".github/workflows/pipeline.yml" ->
+"pyrlyn/ci/.github/workflows/ci.yml@main": workflow was not found`. `gh api repos/pyrlyn/ci` answers
+with `full_name: pyrlyn-archive/ci-old`: the repository was moved, and GitHub redirects the API,
+`git` and composite actions (the `macos-runner` job kept passing) but not reusable-workflow
+references. No new `ci` repository exists under `pyrlyn`.
+
+**Change.** Every `pyrlyn/ci` reference under `.github/` (`pipeline.yml`, `ci.yml`,
+`dependabot.yml`, `sync-docs.yml`, `infra.yml`, `jactionlint.yaml`) and in `docs/TOOLCHAIN.md` and
+`docs/sonarcloud-setup.md` now names `pyrlyn-archive/ci-old`, still at `@main` (notes 361, 362, 375).
+Historical notes and `done.md` keep the old name.
+
+## 406. T14.3: compiled code calls the interpreter; STA1206 narrowed; the Test262 host is compiled (2026-11-08)
 
 **STA1206 narrowed, not retired.** A direct `eval` in `js` mode now runs in the interpreter against
 the caller's bindings (docs/INTERPRETER.md §3, "As built"). One case stays refused: a direct `eval`

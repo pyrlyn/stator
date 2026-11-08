@@ -13,7 +13,7 @@
 #   .github/dependabot.yml).
 # - Notifications: only a major update assigns and mentions @listepo. A failed
 #   Dependabot run posts nothing (as in ketch, CI failures notify only on main,
-#   through pyrlyn/ci main-failure).
+#   through pyrlyn-archive/ci-old main-failure).
 # - GitHub's auto-merge (`gh pr merge --auto`) is never used: with no branch
 #   protection on main it merges at once, without waiting for any check.
 name: Dependabot

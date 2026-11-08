@@ -119,7 +119,7 @@ CI runs in two stages (plan-notes 292):
    check, `dupes`, then jactionlint 2.0.2 over the workflows against `.github/jactionlint-baseline.json`
    and the durable ignores in `.github/jactionlint.yaml`) and `frontend (linux/x64)` (subset tests, runtime archive, unit tests **with
    coverage**; uploads the `coverage-lcov` artifact). This is the only job that collects coverage.
-   The `pyrlyn/ci` workflow callers and `macos-runner` action use `@main`: pinning them fails `no-pinned-ci` (plan-notes 362, 375).
+   The `pyrlyn-archive/ci-old` workflow callers and `macos-runner` action use `@main`: pinning them fails `no-pinned-ci` (plan-notes 362, 375).
    Set the repository Actions variable `CI_RUNNER=ubuntu-latest` for the shared pipeline.
    Its Snyk and SonarCloud jobs otherwise fall back to the `xcode-27-local` label, which
    has no runner registered for this repository (plan-notes 375).

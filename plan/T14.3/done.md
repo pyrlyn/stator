@@ -15,7 +15,7 @@ interpreter.
 - **Frontend**:
   - `eval` and `Function` are `dynamic` in `js` mode.
   - Every binding a direct `eval` can see is widened to Unknown and kept in an environment cell.
-  - STA1206 is narrowed to a direct `eval` in sloppy CommonJS code (plan-notes 405).
+  - STA1206 is narrowed to a direct `eval` in sloppy CommonJS code (plan-notes 406).
 - **HIR, passes and emitter**:
   - New nodes `interpret-global` and `direct-eval`, both checked by the verifier.
   - The emitter calls the C ABI.
@@ -34,7 +34,7 @@ interpreter.
   - Unit tests: the gate's eval verdicts, and that `libjsrt_interp.a` is on the link line only when
     a module interprets.
 - **Docs**: `INTERPRETER.md` (§3 as built, §4, §6, §8, §9), `HIR.md`, `MODES.md`, `SUBSET.md`,
-  `DIAGNOSTICS.md`, `AGENTS.md`, `packages/interpreter/README.md`, plan-notes 405.
+  `DIAGNOSTICS.md`, `AGENTS.md`, `packages/interpreter/README.md`, plan-notes 406.
 
 ## How it was checked
 
@@ -43,7 +43,7 @@ interpreter.
   (unchanged at 441 × STA1214) and `test:asan`.
 - **Binary sizes:** 18 golden fixtures (10 `js`, 8 `ts`), none of which interprets, were built by
   the base commit's compiler (fc5b912e) and by this change's under the same output name. All 18
-  are byte-identical (plan-notes 405).
+  are byte-identical (plan-notes 406).
 - **Test262** (`pnpm run test262:interp-exec --update`): 8,160 / 23,726 tests pass (8,105 before);
   crashes fell from 16 to 8. The new baseline is recorded in
   `packages/interpreter/test262-exec.json`.
