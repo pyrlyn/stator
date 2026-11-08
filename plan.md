@@ -1567,7 +1567,7 @@ rule 9, §11a), and it compiles to bytecode (the spike: 2.9× faster than a tree
 
 ### T14.4. Async, generators, and the remaining constructs → [`plan/T14.4`](plan/T14.4/task.md)
 
-### T67. `packages/engine`: the interpreter and a JIT as one engine, with the `stator-engine` CLI → [`plan/T67`](plan/T67/task.md)
+### ~~T67. `packages/engine`: the interpreter and a JIT as one engine, with the `stator-engine` CLI~~ → [`plan/T67`](plan/T67/done.md)
 
 ### T67.1. The engine's optimizing JIT tier → [`plan/T67.1`](plan/T67.1/task.md)
 

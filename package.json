@@ -38,6 +38,8 @@
     "ci": "node scripts/check-node.ts && node scripts/check-js-sources.ts && pnpm run typecheck && pnpm run lint && pnpm run dupes && pnpm run runtime && pnpm run test && pnpm run test:runtime && pnpm run test:subset && pnpm run test:golden && pnpm run test:selfhost && pnpm run test:builtins && pnpm run test:node-coverage && pnpm run test:leak && pnpm run test:asan",
     "zig-core:test": "zig build test --build-file packages/compiler-zig/build.zig",
     "interp:test": "zig build test --build-file packages/engine/build.zig",
+    "engine:test": "node packages/tests/engine/run.ts",
+    "engine:bench": "node packages/tests/engine/bench.ts",
     "test262:interp-parse": "zig build test262-parse -Doptimize=ReleaseFast --build-file packages/engine/build.zig --",
     "test262:interp-exec": "node packages/compiler/src/cli/main.ts build packages/engine/test262/host.ts -o packages/engine/build/test262-host --mode=js --node && zig build test262-exec -Doptimize=ReleaseSafe --build-file packages/engine/build.zig --",
     "test:builtins": "node packages/tests/golden/builtins.ts",

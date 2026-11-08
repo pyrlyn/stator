@@ -14939,3 +14939,25 @@ registers, blocks, calls to native addresses), a linear-scan register allocator 
 for AArch64 and x86-64 (`src/aarch64/compiler.zig`, `src/x86_64/compiler.zig`), and `JitRuntime`
 for executable memory (MAP_JIT and `pthread_jit_write_protect_np` on macOS).
 
+
+**Later directions in the same session** (2026-11-08), carded and not started: a WebAssembly
+runtime inside the engine, so `.wasm` modules run from JS/TS through the `WebAssembly` API
+(plan/T67.3); JS/TS compiled to WebAssembly (plan/T67.2) and to Zig source,
+`stator-engine build --target=zig` (plan/T67.4). The CLI names all three and exits 1 with the
+card until they land.
+
+**Found while testing.** stator-ts read `a < 1, b >= 1` as a call with type arguments, because the
+closing `>` of a speculative type-argument list did not rescan greedily the way tsc's
+`parseTypeArgumentsInExpression` does (`reScanGreaterToken`); the engine reported a syntax error
+on a TypeScript script Node runs. Fixed in `packages/transpiler/src/parser.zig`
+(`tryTypeArgsInExpr`) with a regression line in its "awkward corners" test. `analyze.zig` leaked
+its instruction list on every rejected template; fixed before merge, caught by the testing
+allocator.
+
+**Measured** (`docs/ENGINE.md` §4, Apple M3 Max, Node v26.7.0): the baseline JIT runs `fib(34)`
+2.4 times faster than the interpreter and 11 times slower than V8; short scripts favor the engine
+(under 10 ms to start against Node's 55). The gap on calls and property access is the next work:
+direct calls between compiled templates and inline cache checks.
+
+**Open.** `LICENSE` is GPL-3.0 while every `package.json` says `"license": "MIT"`; pyrlyn/jit is
+GPL-3.0 or commercial, which fits the former. The creator decides which one is right.

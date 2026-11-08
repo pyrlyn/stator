@@ -72,6 +72,7 @@ packages/tests/    the test package "@stator/tests" — every harness + a tsconf
   test262/         runner + pin (corpus fetched, not vendored)
   node-suite/      Node's own test/parallel slice: pin, expectations, strict-TS common/, vitest driver (corpus fetched)
   leak/            GC hygiene: a 10M-object loop whose RSS must plateau
+  engine/          `stator-engine`: script corpus vs Node in both modes (run.ts), V8 benchmark (bench.ts; plan/T67)
   impact/          test impact: map recorder, selector driver (`test:impact`), mutation check
   selfhost/        self-compilation ratchet: targets.json, baseline.json (plan §9 Task 6.19)
   typediff/        stator-ts's types vs the `typescript` checker, ratcheted (plan/T41)
@@ -88,7 +89,7 @@ packages/engine/   Zig: the JavaScript engine (docs/ENGINE.md, plan/T67) — the
                    `stator-engine` CLI; src/parse.zig (stator-ts's parser as `eval` and `new Function`
                    read source), src/capi.zig (the C ABI), src/compile.zig + src/vm.zig (bytecode
                    compiler and VM), src/jit/ (bytecode → pyrlyn/jit IR → native code), src/builtins.zig
-                   (globals), src/engine.zig + src/cli.zig (modes, languages, the CLI), bench/ (vs V8),
+                   (globals), src/engine.zig + src/cli.zig (modes, languages, the CLI),
                    test262/parse.zig + test262/exec.zig (Test262 language/ parse and execution drivers,
                    ratcheted in test262-parse.json and test262-exec.json), test262/host.ts (the
                    compiled Test262 host exec.zig runs)
@@ -150,6 +151,8 @@ pnpm run test:asan              # golden fixtures with runtime + generated C und
 pnpm run test:leak              # 10M-object loop plus a cyclic one; RSS must plateau
 pnpm run test262                # Test262 slice against packages/tests/test262/pin.json (not part of `ci`)
 pnpm run interp:test            # the engine's Zig tests, interpreter and JIT (packages/engine; not part of `ci`)
+pnpm run engine:test            # engine script corpus in both modes vs Node, plus the CLI contract (packages/tests/engine; not part of `ci`)
+pnpm run engine:bench           # Node (V8) vs `stator-engine` interp and jit on the bench programs (docs/ENGINE.md §4; not part of `ci`)
 pnpm run test262:interp-parse   # Test262 language/ through the interpreter's parse entry, ratcheted (not part of `ci`)
 pnpm run test262:interp-exec    # compiles test262/host.ts, then runs Test262 language/ through it in the interpreter, ratcheted; needs `pnpm run runtime` (not part of `ci`)
 pnpm run test:node-suite        # Node's own tests (packages/tests/node-suite/pin.json) through vitest, ratcheted (not part of `ci`)

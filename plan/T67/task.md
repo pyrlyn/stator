@@ -2,7 +2,7 @@
 status: in progress
 priority: P1
 complexity: 5
-readiness: 5%
+readiness: 90%
 agent: Claude Code / claude-opus-5-5
 ---
 
@@ -54,7 +54,7 @@ Done means:
    the frame window the collector already roots; number and boolean fast paths inline, the rest
    through the VM's own helpers), compile on first call in `jit` mode, cache on the template;
    functions with handlers, generators or async bodies stay interpreted.
-5. `src/engine.zig` (mode, language) and `src/cli.zig` (`stator-engine`); `transpile` in stator-ts.
+5. `src/engine.zig` (mode, language) and `src/cli.zig` (`stator-engine`); `erase.zig` in stator-ts.
 6. Tests (`zig build test`, run by `pnpm run interp:test`):
    - `src/jit/` unit tests: stack-depth analysis, eligibility (handlers, generators, async and
      unsupported opcodes stay interpreted), and compiled templates for arithmetic, comparisons,
@@ -62,11 +62,12 @@ Done means:
    - double fast paths: NaN canonicalization, `-0`, int32 overflow into doubles, mixed
      number/string operands falling back to helpers;
    - exceptions thrown from a helper inside JIT code reach the interpreter's handler;
-   - a script corpus under `packages/engine/tests/` (`.js` and `.ts` with `.out` files) run by
-     `stator-engine` in `interp` and `jit` mode, both equal to the pinned Node's output;
+   - a script corpus under `packages/tests/engine/scripts/` run by `stator-engine` in `interp`
+     and `jit` mode, stdout and exit status equal to the pinned Node's (`pnpm run engine:test`);
    - CLI tests: `--lang` from the extension, `wasm` rejected with its message, a missing file and
      a syntax error exit non-zero with a diagnostic.
-7. `packages/engine/bench/`: scripts and a strict-TS runner vs Node; results recorded.
+7. `packages/tests/engine/bench.ts` (`pnpm run engine:bench`): the bench programs vs Node; results
+   recorded in `docs/ENGINE.md` §4.
 8. Docs: `docs/ENGINE.md`, `docs/INTERPRETER.md` §9, `packages/engine/README.md`, architecture
    diagram if the package graph changes.
 
@@ -74,7 +75,7 @@ Done means:
 
 ```bash
 pnpm run runtime && pnpm run interp:test
-zig build --build-file packages/engine/build.zig cli -Doptimize=ReleaseFast
-node packages/engine/bench/run.ts
+pnpm run engine:test
+pnpm run engine:bench
 pnpm run test:golden
 ```
