@@ -1,4 +1,4 @@
-# The interpreter (docs/INTERPRETER.md §9) → packages/interpreter/build/lib/libjsrt_interp.a. The
+# The interpreter (docs/INTERPRETER.md §9) → packages/engine/build/lib/libjsrt_interp.a. The
 # compiler links this archive only into programs whose HIR holds an `Interpret` node; every other
 # program's link line never names it.
 #
@@ -13,7 +13,7 @@ cc := env("CC", "clang")
 default:
     @just --list
 
-# packages/interpreter/build/lib/libjsrt_interp.a (zig build lib -Doptimize=ReleaseSafe)
+# packages/engine/build/lib/libjsrt_interp.a (zig build lib -Doptimize=ReleaseSafe)
 interp:
     #!/usr/bin/env bash
     set -euo pipefail

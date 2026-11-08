@@ -204,6 +204,7 @@ test {
     _ = @import("binder.zig");
     _ = @import("bump.zig");
     _ = @import("emit.zig");
+    _ = @import("erase.zig");
     _ = @import("pool.zig");
     _ = @import("project.zig");
     _ = @import("driver.zig");

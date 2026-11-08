@@ -209,7 +209,7 @@ export function resolveRuntime(): Runtime {
 const STD_ARCHIVE = join(STD_ROOT, 'build', 'libjsrt_std.a');
 /** The interpreter (docs/INTERPRETER.md §9): one archive for every runtime flavor, as std's is.
  * Linked only into a program that calls it, so every other binary is the size it always was. */
-const INTERP_ROOT = packageRoot('STATOR_INTERP_ROOT', 'interpreter', 'src');
+const INTERP_ROOT = packageRoot('STATOR_ENGINE_ROOT', 'engine', 'src');
 const INTERP_ARCHIVE = join(INTERP_ROOT, 'build', 'lib', 'libjsrt_interp.a');
 
 /** The first-party archives a link owes beyond the runtime's. `CompiledC` is one. */

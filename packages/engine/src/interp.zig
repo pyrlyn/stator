@@ -6,6 +6,7 @@ const parse = @import("parse.zig");
 const compile = @import("compile.zig");
 const builtins = @import("builtins.zig");
 const vm = @import("vm.zig");
+const jit = @import("jit/jit.zig");
 const Value = rt.Value;
 const c = rt.c;
 
@@ -146,11 +147,27 @@ fn runOk(src: []const u8) !Value {
     return out.value;
 }
 
+/// Runs `src` in both of the engine's modes: the JIT must answer what the interpreter answers.
 fn expectRuns(src: []const u8, want: []const u8) !void {
-    const v = try runOk(src);
-    const p = rt.c.jsrt_shape_key_ephemeral(rt.c.jsrt_to_string(v));
-    defer std.c.free(p);
-    try std.testing.expectEqualStrings(want, std.mem.span(p));
+    inline for (.{ jit.Mode.interp, jit.Mode.jit }) |m| {
+        jit.mode = m;
+        defer jit.mode = .interp;
+        const v = try runOk(src);
+        const p = rt.c.jsrt_shape_key_ephemeral(rt.c.jsrt_to_string(v));
+        defer std.c.free(p);
+        std.testing.expectEqualStrings(want, std.mem.span(p)) catch |e| {
+            std.debug.print("mode {s}: {s}\n", .{ @tagName(m), src });
+            return e;
+        };
+    }
+}
+
+test "the JIT compiles numeric functions and calls them" {
+    if (!jit.available) return error.SkipZigTest;
+    const before = jit.compiled;
+    try expectRuns("function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); } fib(20)", "6765");
+    try expectRuns("function sum(n) { let s = 0; for (let i = 0; i < n; i++) s += i * 0.5; return s; } sum(1000)", "249750");
+    try std.testing.expect(jit.compiled >= before + 2);
 }
 
 test "arithmetic and bindings" {

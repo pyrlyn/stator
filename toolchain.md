@@ -52,3 +52,5 @@ Pins below are the ones in `mise.toml` and the package manifests. `docs/TOOLCHAI
 | Package | Where | Source | Why here |
 | --- | --- | --- | --- |
 | kxgc (pyrlyn/gc) 0.1.0 at `9bfc433` | local (`packages/runtime/build.zig.zon`) | https://github.com/pyrlyn/gc | The collector: deferred reference counting with trial deletion (plan/T66) |
+| pyrlyn/jit at `20d0ed4` | local (`packages/engine/build.zig.zon`) | https://github.com/pyrlyn/jit | The engine's JIT backend: IR, register allocation, AArch64 and x86-64 code (plan/T67; GPL-3.0 or commercial) |
+| stator-ts, jstext | local (`packages/engine/build.zig.zon`, by path) | `packages/transpiler`, `packages/jstext` | The engine's parser, and TypeScript erasure for `stator-engine` (plan/T67) |

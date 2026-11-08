@@ -21,6 +21,7 @@ packages/tests/differential/failures/
 # have to know it is transient -- otherwise `pnpm run ci` fails whenever a fuzzer run overlaps it.
 .differential-*/
 packages/tests/bench/results/
+packages/tests/engine/results/
 packages/tests/bench/profile/out/
 packages/tests/test262/corpus/
 packages/tests/node-suite/corpus/
@@ -53,7 +54,7 @@ packages/jstext/zig-out/
 # The runtime fetches pyrlyn/gc here (build.zig.zon); `zig build --fetch` recreates it.
 packages/runtime/.zig-cache/
 packages/runtime/zig-pkg/
-packages/interpreter/.zig-cache/
-packages/interpreter/zig-out/
-packages/interpreter/zig-pkg/
-packages/interpreter/build/
+packages/engine/.zig-cache/
+packages/engine/zig-out/
+packages/engine/zig-pkg/
+packages/engine/build/

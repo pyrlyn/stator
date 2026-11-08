@@ -170,7 +170,7 @@ interface Test262Rate {
 /** Test262 `language/` through the interpreter (plan T14.2), summed from the ratchet that
  * `zig build test262-exec -- --update` records: that driver measures it, this page only shows it. */
 export function interpreterTest262(
-  file = join(REPO, 'interpreter', 'test262-exec.json'),
+  file = join(REPO, 'engine', 'test262-exec.json'),
 ): Test262Rate | undefined {
   if (!existsSync(file)) return undefined;
   const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));

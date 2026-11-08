@@ -35,7 +35,9 @@ In the SonarCloud project: **Administration → Analysis Method → Automatic An
 
 While it is still on (the `pyrlyn_stator` project runs it as "SonarCloud Code Analysis"), it
 reads `.sonarcloud.properties`, not `sonar-project.properties`. That file excludes
-`packages/transpiler/tests/**`: stator-ts's checker fixtures, whose odd code is deliberate.
+`packages/transpiler/tests/**`: stator-ts's checker fixtures, whose odd code is deliberate, and
+`packages/tests/engine/scripts/**`: the engine's scripts, which run NaN arithmetic, default sorts
+and dead code after a throw because Node's answer to those is what they compare against.
 
 ## 3. Create a token
 

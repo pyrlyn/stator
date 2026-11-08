@@ -14946,3 +14946,49 @@ and the schema's `cc` description state the order.
 
 Alerts on those paths stop being reported on the next analysis of `main`; nothing is dismissed by
 hand. The C analysis runs with `build-mode: none`, where `paths-ignore` applies.
+
+## 412. T67: `packages/interpreter` becomes `packages/engine`, with a JIT and a CLI (2026-11-08)
+
+**Direction.** The creator asked for a JavaScript engine in Zig under `packages/engine`, reusing
+what Stator has, with two modes: a small, fast interpreter (PrimJS is the reference point) and a
+JIT whose goal is to beat V8; TypeScript and WebAssembly as later inputs; a CLI that runs `.js`
+and `.ts` files and is benchmarked against V8; and, later, JS/TS compiled to WebAssembly.
+
+**Decisions the creator took** (2026-11-08): `packages/interpreter` moves into the engine rather
+than being wrapped or rewritten; pyrlyn/jit is pinned by URL and commit hash; this session lands
+the package, the CLI and a first JIT.
+
+**Found.** Zig 0.17.1 and pyrlyn/gc were already in place (T66): the collector is compiled into
+`libjsrt.a`, so the engine uses it through the runtime's values instead of linking it twice.
+pyrlyn/jit (https://github.com/pyrlyn/jit, commit 20d0ed4e4618d6ee040943644f5521db5fb91353,
+checked 2026-11-08, GPL-3.0 or commercial, `LICENSE`, `README.md`) has no `build.zig.zon`, which
+`zig fetch` accepts; its `pyrlyn_jit` module exports an IR (`src/core/ir.zig`: i64/f64 virtual
+registers, blocks, calls to native addresses), a linear-scan register allocator and IR compilers
+for AArch64 and x86-64 (`src/aarch64/compiler.zig`, `src/x86_64/compiler.zig`), and `JitRuntime`
+for executable memory (MAP_JIT and `pthread_jit_write_protect_np` on macOS).
+
+
+**Later directions in the same session** (2026-11-08), carded and not started: a WebAssembly
+runtime inside the engine, so `.wasm` modules run from JS/TS through the `WebAssembly` API
+(plan/T67.3); JS/TS compiled to WebAssembly (plan/T67.2) and to Zig source,
+`stator-engine build --target=zig` (plan/T67.4). The CLI names all three and exits 1 with the
+card until they land.
+
+**Found while testing.** stator-ts read `a < 1, b >= 1` as a call with type arguments, because the
+closing `>` of a speculative type-argument list did not rescan greedily the way tsc's
+`parseTypeArgumentsInExpression` does (`reScanGreaterToken`); the engine reported a syntax error
+on a TypeScript script Node runs. Fixed in `packages/transpiler/src/parser.zig`
+(`tryTypeArgsInExpr`) with a regression line in its "awkward corners" test. `analyze.zig` leaked
+its instruction list on every rejected template; fixed before merge, caught by the testing
+allocator.
+
+**Measured** (`docs/ENGINE.md` §4, Apple M3 Max, Node v26.7.0): the baseline JIT runs `fib(34)`
+2.4 times faster than the interpreter and 11 times slower than V8; short scripts favor the engine
+(under 10 ms to start against Node's 55). The gap on calls and property access is the next work:
+direct calls between compiled templates and inline cache checks.
+
+**Open.** `LICENSE` is GPL-3.0 while every `package.json` says `"license": "MIT"`; pyrlyn/jit is
+GPL-3.0 or commercial, which fits the former. The creator decides which one is right.
+
+**CodeQL.** plan-notes 411 ignores `packages/interpreter/test262`; that directory is now
+`packages/engine/test262`, and `.github/codeql/codeql-config.yml` names the new path.

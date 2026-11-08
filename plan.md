@@ -830,7 +830,7 @@ built yet:
 - **Targets.** Every directory under `packages/` is a target in
   `packages/tests/selfhost/targets.json`, or it is in that file's `notTargets` with a reason.
   `packages/node` (T11.6), `packages/webapi` (T13.1), `packages/renderer-clay` (T13.4) and
-  `packages/interpreter` (T14.1) are added there by the card that creates them, in the same change.
+  `packages/engine` (T14.1, renamed by T67) are added there by the card that creates them, in the same change.
   Each one gets a `stator.config.json` for its mode and entry.
 - **Ratchet.** `packages/tests/selfhost/baseline.json` holds each target's verdict and its count per
   diagnostic code. The test fails when a count grows, a new code appears or a verdict gets worse.
@@ -1552,7 +1552,7 @@ rule 9, §11a), and it compiles to bytecode (the spike: 2.9× faster than a tree
 
 | Package | Holds | Must not |
 | --- | --- | --- |
-| `packages/interpreter` (new, Zig) | the bytecode compiler and VM, and the entry points the runtime calls (`eval`, the `Function` constructor, the call trampoline), built into `libjsrt_interp.a`; imports stator-ts's `parser.zig` | hold its own value model, object model or GC — values are `jsrt_value`, objects are runtime objects, memory is the Zig core (§11a) |
+| `packages/engine` (Zig; `packages/interpreter` until T67) | the bytecode compiler and VM, and the entry points the runtime calls (`eval`, the `Function` constructor, the call trampoline), built into `libjsrt_interp.a`; imports stator-ts's `parser.zig` | hold its own value model, object model or GC — values are `jsrt_value`, objects are runtime objects, memory is the Zig core (§11a) |
 | `packages/transpiler` (stator-ts) | the parser; gaps the interpreter meets are fixed here, with a regression test | know the interpreter exists |
 | `packages/compiler` (and plan/T41's Zig port) | the `Interpret` HIR node, the eval-visible cells and scope descriptors for direct `eval`, and linking the library on demand | interpret anything at compile time |
 | `packages/runtime` | the C ABI the interpreter calls (property access, calls, allocation, exceptions, promise jobs) — mostly what compiled dynamic code already calls | grow a second dispatch path: the interpreter goes through the same ICs and helpers |
@@ -1566,6 +1566,16 @@ rule 9, §11a), and it compiles to bytecode (the spike: 2.9× faster than a tree
 ### T14.3. Wiring: `eval`, `new Function`, and the `Interpret` node → [`plan/T14.3`](plan/T14.3/task.md)
 
 ### T14.4. Async, generators, and the remaining constructs → [`plan/T14.4`](plan/T14.4/task.md)
+
+### ~~T67. `packages/engine`: the interpreter and a JIT as one engine, with the `stator-engine` CLI~~ → [`plan/T67`](plan/T67/done.md)
+
+### T67.1. The engine's optimizing JIT tier → [`plan/T67.1`](plan/T67.1/task.md)
+
+### T67.2. `stator-engine build --target=wasm`: JavaScript and TypeScript to WebAssembly → [`plan/T67.2`](plan/T67.2/task.md)
+
+### T67.3. A WebAssembly runtime in the engine: `.wasm` modules run from JavaScript and TypeScript → [`plan/T67.3`](plan/T67.3/task.md)
+
+### T67.4. `stator-engine build --target=zig`: JavaScript and TypeScript to Zig source → [`plan/T67.4`](plan/T67.4/task.md)
 
 ---
 
@@ -1739,7 +1749,7 @@ ms/line flat, golden byte-for-byte, full gate green.
 | `--node` (Phase 11) | typed arrays, `packages/std` + `packages/node`, CommonJS, sync `tsc` (N1) | T11.1–T11.6; the largest item is T11.4 (js-mode coverage, not Node). N2 deferred, N3 not planned (plan-notes 289) |
 | Bundler front end (Phase 12) | `statorc/api`, `BundlerAdapter`, `packages/vite-stator`; packages + CommonJS bundled into one vendor module, project stays Stator's graph | T12.0–T12.2 landed (plan-notes 296, 320, 321, `docs/BUNDLER.md`); T12.3 |
 | Web API (Phase 13) | `packages/webapi` (DOM + CSS, strict TS, render API) + `packages/renderer-clay` (default renderer) | T13.0 design first; T13.1–T13.5 (coverage in generated `docs/WEBAPI.md`); other Web APIs low priority (plan-notes 298, 299) |
-| JS interpreter (Phase 14) | `packages/interpreter` in Zig on stator-ts's parser: `eval`, `new Function` and other `not-yet` constructs in `js` mode, on the runtime's own values (`docs/INTERPRETER.md`) | T14.0–T14.2 done; T14.3–T14.4 (plan-notes 300, 396, 401, 403) |
+| JS interpreter (Phase 14) | `packages/engine` (`packages/interpreter` until T67) in Zig on stator-ts's parser: `eval`, `new Function` and other `not-yet` constructs in `js` mode, on the runtime's own values (`docs/INTERPRETER.md`) | T14.0–T14.2 done; T14.3–T14.4 (plan-notes 300, 396, 401, 403) |
 | Optimization ladder §12 rows 1–5 | competitive perf story | +3–5 months |
 | Conformance long tail | Porffor is at ~61% Test262 after years with a funded lead | years — the moat, budget honestly |
 
@@ -1982,3 +1992,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.89** (2026-11-06): **T14.0: the interpreter is Zig in the runtime, on stator-ts's parser, running bytecode** (plan-notes 396, `docs/INTERPRETER.md`). The creator chose the parser and the language from the spike's numbers; §11f and plan/T14.1–T14.4 follow.
 - **v4.90** (2026-11-07): **T14.1: `packages/interpreter`'s parser front** (plan-notes 401). The parse entry, the C ABI and a Test262 `language/` parse driver land in Zig on stator-ts's parser as it stands; 80.76% pass at the pin, ratcheted, and the rest is listed for stator-ts's owners.
 - **v4.91** (2026-11-07): **T66: Boehm is replaced by pyrlyn/gc as coalesced deferred reference counting** (plan-notes 407, `docs/VALUE.md` §4.12). No system GC library; each `--emit=lib` library carries its own collector; Zig moves to 0.17.1.
+- **v4.92** (2026-11-08): **T67 opens: `packages/interpreter` becomes `packages/engine`** (plan-notes 412). The interpreter is the engine's `interp` mode; a baseline JIT on pyrlyn/jit's IR is its `jit` mode; `stator-engine` runs `.js` and `.ts` files and is benchmarked against V8. T67.1 (optimizing tier), T67.2 (Wasm output), T67.3 (a Wasm runtime for JS and TS) and T67.4 (Zig source output) are carded.

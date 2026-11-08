@@ -7,7 +7,7 @@
   ],
   "notTargets": {
     "packages/compiler-zig": "the compiler's Zig port, built by zig; Stator does not compile Zig",
-    "packages/interpreter": "the interpreter, in Zig, built by zig into libjsrt_interp.a; Stator links it, it does not compile it",
+    "packages/engine": "the interpreter, in Zig, built by zig into libjsrt_interp.a; Stator links it, it does not compile it",
     "packages/jstext": "Zig text helpers stator-ts and the Zig compiler share; built by zig, not by Stator",
     "packages/runtime": "C and Zig, built by clang and zig; Stator links it, it does not compile it",
     "packages/transpiler": "stator-ts, the Zig TypeScript checker the Zig compiler builds on; built by zig, not by Stator",

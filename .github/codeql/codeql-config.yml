@@ -6,4 +6,4 @@ paths-ignore:
   - packages/runtime/tests
   - packages/tests
   - packages/transpiler/tests
-  - packages/interpreter/test262
+  - packages/engine/test262

@@ -41,7 +41,7 @@ pub fn parseScript(a: Allocator, src: []const u8) Result {
 }
 
 /// The diagnostic that starts first: the lexer reports some only after reading past them.
-fn firstDiag(file: *const File) ?SyntaxError {
+pub fn firstDiag(file: *const File) ?SyntaxError {
     if (file.diags.len == 0) return null;
     var first = file.diags[0];
     for (file.diags[1..]) |d| {

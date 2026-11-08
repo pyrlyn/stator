@@ -5,11 +5,15 @@ pub const rt = @import("rt.zig");
 pub const interp = @import("interp.zig");
 pub const vm = @import("vm.zig");
 pub const builtins = @import("builtins.zig");
+pub const jit = @import("jit/jit.zig");
+pub const engine = @import("engine.zig");
 
 test {
     _ = parse;
     _ = @import("compile.zig");
     _ = interp;
+    _ = jit;
+    _ = engine;
 }
 
 test "the runtime links" {

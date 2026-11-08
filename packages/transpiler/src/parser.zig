@@ -2112,7 +2112,10 @@ const Parser = struct {
         const diags = p.lx.diags.items.len;
         p.lx.rescanLessThan();
         const tl = p.parseTypeArgs();
-        if (p.lx.diags.items.len != diags or !p.canFollowTypeArgs()) {
+        // tsc rescans the closing `>` greedily: in `a < 1, b >= 1` it is `>=`, not type arguments.
+        const glued = p.prev_end == p.lx.start and p.lx.start < p.lx.src.len and
+            (p.lx.src[p.lx.start] == '=' or p.lx.src[p.lx.start] == '>');
+        if (glued or p.lx.diags.items.len != diags or !p.canFollowTypeArgs()) {
             p.restore(st);
             return null;
         }
@@ -3252,6 +3255,7 @@ test "syntax covers the awkward corners" {
         \\for await (const v of w) ;
         \\let r = /[/]/g.test(s) ? 1 >> 2 : a < b > c;
         \\let i = f<string>(`a${b}c`) satisfies Z;
+        \\console.log(n < 1, n >= 1, n < 2, m >>= 1, n<T>(0));
         \\function assertIsString(v: unknown): asserts v is string {}
         \\type Fn = abstract new <T>(...args: T[]) => void;
     ;
