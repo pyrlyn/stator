@@ -295,6 +295,124 @@ jsrt_value jsrt_function_call_method(jsrt_value fn, bool apply) {
                            apply ? "apply" : "call");
 }
 
+/* ------------------------------------------------ Function.prototype.bind (§20.2.3.2) */
+
+/* A bound function is a plain closure over this env (docs/VALUE.md §4.16): the one representation
+ * `bind` may add, so `typeof`, `call`, `apply` and a second `bind` need no case of their own.
+ * The interpreter builds its bound functions here too (packages/interpreter/src/builtins.zig
+ * `fnBind`), so compiled and interpreted code see through each other's. */
+enum { BOUND_TARGET = 0, BOUND_THIS = 1, BOUND_ARGS = 2, BOUND_SLOTS = 3 };
+
+static jsrt_value bound_call(uint32_t argc, const jsrt_value *argv, JSRTEnv *env);
+
+static const JSRTEnv *bound_env(jsrt_value fn) {
+  if (!jsrt_is(fn, JSRT_TAG_CLOSURE) || jsrt_as_closure(fn)->fn != bound_call) {
+    return NULL;
+  }
+  return jsrt_as_closure(fn)->env;
+}
+
+bool jsrt_is_bound_function(jsrt_value fn) { return bound_env(fn) != NULL; }
+
+jsrt_value jsrt_bound_target(jsrt_value fn) { return bound_env(fn)->slots[BOUND_TARGET]; }
+
+/* The bound arguments, then the call's own, as a GC array for a caller that roots it. */
+static jsrt_value bound_arguments(const JSRTEnv *env, uint32_t argc, const jsrt_value *argv) {
+  const JSRTArray *bound = jsrt_as_array(env->slots[BOUND_ARGS]);
+  const jsrt_value all = jsrt_array_new(bound->length, bound->elements);
+  for (uint32_t i = 0; i < argc; i++) {
+    (void)jsrt_array_push(all, argv[i]);
+  }
+  return all;
+}
+
+/* The same list as a malloc'd vector the caller frees. It needs no rooting: the bound env and the
+ * caller's argv already hold every value in it, and neither changes during the call. */
+static jsrt_value *bound_vector(const JSRTEnv *env, uint32_t argc, const jsrt_value *argv,
+                                uint32_t *count) {
+  const JSRTArray *bound = jsrt_as_array(env->slots[BOUND_ARGS]);
+  *count = bound->length + argc;
+  jsrt_value *all = malloc(((size_t)*count + 1U) * sizeof *all);
+  if (all == NULL) {
+    jsrt_panic("out of memory calling a bound function");
+  }
+  for (uint32_t i = 0; i < bound->length; i++) {
+    all[i] = bound->elements[i];
+  }
+  for (uint32_t i = 0; i < argc; i++) {
+    all[bound->length + i] = argv[i];
+  }
+  return all;
+}
+
+static jsrt_value bound_call(uint32_t argc, const jsrt_value *argv, JSRTEnv *env) {
+  uint32_t count = 0;
+  jsrt_value *all = bound_vector(env, argc, argv, &count);
+  const jsrt_value out =
+      jsrt_call_with_this(env->slots[BOUND_TARGET], env->slots[BOUND_THIS], count, all);
+  free(all);
+  return out;
+}
+
+jsrt_value jsrt_bound_arguments(jsrt_value fn, uint32_t argc, const jsrt_value *argv) {
+  return bound_arguments(bound_env(fn), argc, argv);
+}
+
+/* §10.4.1.2 [[Construct]]: the bound receiver is ignored and the target constructs. */
+jsrt_value jsrt_bound_construct(jsrt_value fn, uint32_t argc, const jsrt_value *argv) {
+  const JSRTEnv *env = bound_env(fn);
+  uint32_t count = 0;
+  jsrt_value *all = bound_vector(env, argc, argv, &count);
+  const jsrt_value out = jsrt_construct(env->slots[BOUND_TARGET], count, all);
+  free(all);
+  return out;
+}
+
+/* `"bound " + target.name`, interned because a closure's name must outlive the program. */
+static const char *bound_name(jsrt_value target) {
+  const jsrt_value name = jsrt_get_prop(target, "name", NULL);
+  char *text = jsrt_is(name, JSRT_TAG_STRING) ? jsrt_shape_key_ephemeral(name) : NULL;
+  const char *inner = text != NULL ? text : "";
+  const size_t len = strlen("bound ") + strlen(inner);
+  char *joined = malloc(len + 1);
+  if (joined == NULL) {
+    jsrt_panic("out of memory naming a bound function");
+  }
+  (void)snprintf(joined, len + 1, "bound %s", inner);
+  free(text);
+  const char *interned = jsrt_shape_key(jsrt_string_from_utf8(joined, len));
+  free(joined);
+  return interned;
+}
+
+/* §20.2.3.2 steps 4-6: the target's `length` less the bound arguments, never below zero. */
+static uint32_t bound_length(jsrt_value target, uint32_t bound) {
+  const jsrt_value length = jsrt_get_prop(target, "length", NULL);
+  if (!jsrt_is_number(length)) {
+    return 0;
+  }
+  const double rest = jsrt_number_value(length) - (double)bound;
+  return isnan(rest) || rest <= 0 ? 0U : rest >= 4294967295.0 ? UINT32_MAX : (uint32_t)rest;
+}
+
+static jsrt_value function_bind_call(uint32_t argc, const jsrt_value *argv, JSRTEnv *env) {
+  const jsrt_value target = env->slots[0];
+  const uint32_t extra = argc > 0 ? argc - 1U : 0U;
+  const char *name = bound_name(target);
+  const uint32_t length = bound_length(target, extra);
+  const jsrt_value args = jsrt_array_new(extra, argc > 0 ? argv + 1 : argv);
+  /* Until jsrt_closure_new returns, only this C frame names the env, as in jsrt_bound_method. */
+  JSRTEnv *bound = jsrt_env_new(NULL, BOUND_SLOTS);
+  bound->slots[BOUND_THIS] = jsrt_arg(argc, argv, 0);
+  bound->slots[BOUND_TARGET] = target;
+  bound->slots[BOUND_ARGS] = args;
+  return jsrt_closure_new(bound_call, length, name, bound, false);
+}
+
+jsrt_value jsrt_function_bind_method(jsrt_value fn) {
+  return jsrt_bound_method(fn, 0U, function_bind_call, 1U, "bind");
+}
+
 /* ------------------------------------------- Object.prototype methods as values (`has.call`) */
 
 /* Object.prototype.hasOwnProperty over any receiver: the key is ToPropertyKey'd to a string; an

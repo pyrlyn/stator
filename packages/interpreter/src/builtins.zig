@@ -307,7 +307,7 @@ pub fn errorConstructorOf(e: Value) Value {
 
 pub fn isConstructor(f: Value) bool {
     if (errorKindOf(f) != null) return true;
-    if (boundOf(f)) |env| return vm.isConstructor(env.slots()[bound_target]);
+    if (c.jsrt_is_bound_function(f)) return vm.isConstructor(c.jsrt_bound_target(f));
     for (runtime_ctors) |name| if (c.jsrt_builtin_ctor(name) == f) return true;
     const g = global();
     inline for (wrapped) |name| if (c.jsrt_get_prop(g, name, null) == f) return true;
@@ -316,11 +316,11 @@ pub fn isConstructor(f: Value) bool {
 
 pub fn construct(f: Value, argv: []const Value, nt: Value) Value {
     if (errorKindOf(f) != null) return vm.call(f, rt.undefined_value, argv);
-    if (boundOf(f)) |env| {
+    if (c.jsrt_is_bound_function(f)) {
         // §10.4.1.2: a bound function's new.target is its target when it was itself.
-        const target = env.slots()[bound_target];
+        const target = c.jsrt_bound_target(f);
         var frame: Frame(1) = .{};
-        frame.open(.{boundArgs(env, argv)});
+        frame.open(.{c.jsrt_bound_arguments(f, @intCast(argv.len), argv.ptr)});
         defer frame.pop();
         return vm.construct(target, vm.arrayItems(frame.slots[0]), if (nt == f) target else nt);
     }
@@ -418,48 +418,15 @@ fn fnApply(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
     return vm.call(argv[0], arg(argc, argv, 0), vm.arrayItems(frame.slots[0]));
 }
 
-const bound_target = 0;
-const bound_this = 1;
-const bound_args = 2;
-
-fn boundOf(f: Value) ?*Env {
-    if (!rt.is(f, c.JSRT_TAG_CLOSURE)) return null;
-    const clo: *c.JSRTClosure = @ptrCast(@alignCast(c.jsrt_ptr(f)));
-    if (clo.@"fn" != &boundCall) return null;
-    return clo.env;
-}
-
-/// The bound arguments, then the call's own.
-fn boundArgs(env: *Env, argv: []const Value) Value {
-    const all = c.jsrt_array_new(0, null);
-    for (vm.arrayItems(env.slots()[bound_args])) |v| _ = c.jsrt_array_push(all, v);
-    for (argv) |v| _ = c.jsrt_array_push(all, v);
-    return all;
-}
-
-fn boundCall(argc: u32, argv: [*c]const Value, env: [*c]Env) callconv(.c) Value {
-    var frame: Frame(1) = .{};
-    frame.open(.{boundArgs(env, args(argc, argv))});
-    defer frame.pop();
-    return vm.call(env.*.slots()[bound_target], env.*.slots()[bound_this], vm.arrayItems(frame.slots[0]));
-}
-
 fn fnBind(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
     const target = argv[0];
     if (!requireCallable(target, "Bind must be called on a function")) return rt.undefined_value;
-    const env = c.jsrt_env_new(null, 3);
-    env.*.slots()[bound_target] = target;
-    env.*.slots()[bound_this] = arg(argc, argv, 0);
-    const rest = args(argc, argv);
-    const extra = if (rest.len > 0) rest[1..] else rest;
-    env.*.slots()[bound_args] = c.jsrt_array_new(@intCast(extra.len), extra.ptr);
-    var name_buf: [256]u8 = undefined;
-    var target_name: [128]u8 = undefined;
-    const tn = keyText(vm.getProp(target, "name", null), &target_name);
-    const name = std.fmt.bufPrintSentinel(&name_buf, "bound {s}", .{tn}, 0) catch "bound";
-    const len = c.jsrt_to_number(vm.getProp(target, "length", null));
-    const arity: u32 = if (std.math.isNan(len) or len <= @as(f64, @floatFromInt(extra.len))) 0 else @intFromFloat(@min(len - @as(f64, @floatFromInt(extra.len)), 1 << 30));
-    return c.jsrt_closure_new(&boundCall, arity, c.jsrt_shape_key(rt.string(name)), env, true);
+    // The runtime builds every bound function (docs/VALUE.md §4.16), so compiled code's `new`
+    // and `instanceof` see through one made here, and this module sees through theirs.
+    var frame: Frame(1) = .{};
+    frame.open(.{c.jsrt_function_bind_method(target)});
+    defer frame.pop();
+    return c.jsrt_call(frame.slots[0], argc - 1, argv + 1);
 }
 
 /// A string value's bytes, copied into `buf`; "" for anything else.

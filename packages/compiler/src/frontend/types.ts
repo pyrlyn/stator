@@ -1598,7 +1598,11 @@ export function isFunctionValueCallee(callee: ts.Expression, checker: ts.TypeChe
     return false;
   }
   const type = checker.getTypeAtLocation(callee);
-  if (classLikeOf(type) !== undefined || declaredOnlyInDeclarationFiles(type.getSymbol())) {
+  const symbol = type.getSymbol();
+  // The lib spells a bound function's type (`bind`'s `(...args: B) => R`) as an anonymous type
+  // literal: that is a shape, not a builtin constructor interface the runtime has no value for.
+  const libShape = symbol !== undefined && (symbol.flags & ts.SymbolFlags.TypeLiteral) !== 0;
+  if (classLikeOf(type) !== undefined || (!libShape && declaredOnlyInDeclarationFiles(symbol))) {
     return false;
   }
   const shape = tsTypeToHType(type, checker);

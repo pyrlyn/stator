@@ -37,7 +37,7 @@ import {
 import {
   builtinValueOf,
   dynamicCodeGeneration,
-  isPlainFunctionValue,
+  isFunctionProtoCall,
   isSelfBoundCallApply,
   globalFunctionOf,
   globalTypeofOf,
@@ -8208,10 +8208,10 @@ function lowerDynMethodCall(
   // `info.cb()` where `cb` was grown onto a fixed object: the overflow table holds it, and its
   // result is Unknown for the same reason (docs/VALUE.md §4.24).
   const grown = frontendTypes.isUndeclaredMemberRead(expr, checker);
-  // `f.call(t, ...)` / `f.apply(t, list)` on a plain function: the runtime answers both names on
-  // every closure, and the result is whatever `f` returns, read as Unknown.
-  const callApply =
-    (expr.name.text === 'call' || expr.name.text === 'apply') && isPlainFunctionValue(obj, checker);
+  // `f.call(t, ...)` / `f.apply(t, list)` / `f.bind(t, ...)` on a plain function: the runtime
+  // answers the three names on every closure, and the result -- what `f` returns, or the bound
+  // function -- is read as Unknown.
+  const callApply = isFunctionProtoCall(expr.name.text, obj, checker);
   // `k.make()` on a class object: the static method loads through the descriptor's statics.
   const classValue = isClassValueReceiver(expr, checker);
   // A declared field that is not callable by its type (`unknownFn: null`, later a function):

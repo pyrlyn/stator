@@ -567,8 +567,8 @@ bundle — evidence: done.md → Phase 5).~~ ✅
     with no member is a JavaScript SyntaxError and stays refused).
     Method values use the method's own `JSRTClosure` with `has_receiver` so `jsrt_call` shifts when
     the receiver is omitted (`docs/VALUE.md` §4.16, plan-notes 208, 230); that is still not
-    `Function.prototype.bind`'s two-slot `JSRTEnv` (which INSERTS a receiver where this DROPS one),
-    which stays not-yet. A class used as a value and `super` as a value are blocked on the class
+    `Function.prototype.bind`'s env (which INSERTS a receiver where this DROPS one), which landed
+    with plan/T34 (`docs/VALUE.md` §4.16). A class used as a value and `super` as a value are blocked on the class
     object instead, which is family (d)'s. Named function expressions bind the function's own name
     inside its body only (plan-notes 231).
     (f) **[D4] Generics beyond monomorphization** last, because they multiply everything above.

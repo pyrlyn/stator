@@ -3470,14 +3470,11 @@ function gateCall(call: ts.CallExpression, typeChecker: ts.TypeChecker, mode: Mo
       if (mode === 'js' && hasPlaceholderField(shape, callee.name.text)) {
         return { kind: 'accept' };
       }
-      // `f.call(thisArg, ...args)` / `f.apply(thisArg, list)` on a plain function value
-      // (`has.call(o, k)` with `has = Object.prototype.hasOwnProperty`): the runtime answers
-      // both names on every closure (Function.prototype.call/apply, §20.2.3.1/3), so the call
-      // reads the member dynamically. A class object is refused -- calling one throws.
-      if (
-        (callee.name.text === 'call' || callee.name.text === 'apply') &&
-        isPlainFunctionValue(callee.expression, typeChecker)
-      ) {
+      // `f.call(thisArg, ...args)` / `f.apply(thisArg, list)` / `f.bind(thisArg, ...args)` on a
+      // plain function value (`has.call(o, k)` with `has = Object.prototype.hasOwnProperty`):
+      // the runtime answers the three names on every closure, so the call reads the member
+      // dynamically. A class object is refused -- calling one throws.
+      if (isFunctionProtoCall(callee.name.text, callee.expression, typeChecker)) {
         return call.arguments.some((a) => ts.isSpreadElement(a))
           ? notYet(
               `a spread argument to Function.prototype.${callee.name.text} is not yet supported`,
@@ -6368,6 +6365,11 @@ function gateMemberAccess(
           : notYet('a static of this type read through a class object is not yet supported', 5);
       }
     }
+    // `new` on a class-typed value builds the class's descriptor directly, so a bound class would
+    // construct without its bound arguments (docs/VALUE.md §4.16).
+    if (access.name.text === 'bind') {
+      return notYet('Function.prototype.bind on a class is not yet supported', 5);
+    }
     return notYet('a member read through a class object is not yet supported', 5);
   }
   // `m.size`, and the method names that are only ever callees. `size` is a READ of a count the
@@ -6488,12 +6490,12 @@ function gateMemberAccess(
     if (frontendTypes.isFunctionValueMember(access.expression, access.name.text, checker)) {
       return functionMemberResult(mode);
     }
-    // `f.call` / `f.apply` as the callee of a call on a plain function value: gateCall vetted it.
+    // `f.call` / `f.apply` / `f.bind` as the callee of a call on a plain function value: gateCall
+    // vetted it.
     if (
-      (access.name.text === 'call' || access.name.text === 'apply') &&
+      isFunctionProtoCall(access.name.text, access.expression, checker) &&
       ts.isCallExpression(access.parent) &&
-      access.parent.expression === access &&
-      isPlainFunctionValue(access.expression, checker)
+      access.parent.expression === access
     ) {
       return { kind: 'accept' };
     }
@@ -7064,6 +7066,22 @@ function isPureChain(node: ts.Expression): boolean {
   return ts.isPropertyAccessExpression(node) && node.questionDotToken === undefined
     ? isPureChain(node.expression)
     : false;
+}
+
+/** `receiver.name(…)` is `Function.prototype.call` / `apply` / `bind` (§20.2.3.1-3) on a value the
+ * runtime answers all three on: a function the program can call, which a class object is not
+ * (calling one throws). A js-mode constructor function (`function P() { this.x = … }`) counts,
+ * though the checker gives it a construct signature too. */
+export function isFunctionProtoCall(
+  name: string,
+  receiver: ts.Expression,
+  checker: ts.TypeChecker,
+): boolean {
+  return (
+    (name === 'call' || name === 'apply' || name === 'bind') &&
+    (isPlainFunctionValue(receiver, checker) ||
+      checker.getTypeAtLocation(receiver).getCallSignatures().length > 0)
+  );
 }
 
 /** Whether `expression` is a function value that is not a class: its type has call signatures and
