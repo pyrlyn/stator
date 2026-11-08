@@ -14918,3 +14918,24 @@ Zig. None of it landed, so the codes, their decision tests and `explain` are unc
 **Known gaps.** `await` does not adopt a thenable that is not a promise. A sync `yield*` yields a
 fresh result object rather than the inner one. In an async generator, a sync iterable's final
 value is not awaited.
+
+## 409. T67: `packages/interpreter` becomes `packages/engine`, with a JIT and a CLI (2026-11-08)
+
+**Direction.** The creator asked for a JavaScript engine in Zig under `packages/engine`, reusing
+what Stator has, with two modes: a small, fast interpreter (PrimJS is the reference point) and a
+JIT whose goal is to beat V8; TypeScript and WebAssembly as later inputs; a CLI that runs `.js`
+and `.ts` files and is benchmarked against V8; and, later, JS/TS compiled to WebAssembly.
+
+**Decisions the creator took** (2026-11-08): `packages/interpreter` moves into the engine rather
+than being wrapped or rewritten; pyrlyn/jit is pinned by URL and commit hash; this session lands
+the package, the CLI and a first JIT.
+
+**Found.** Zig 0.17.1 and pyrlyn/gc were already in place (T66): the collector is compiled into
+`libjsrt.a`, so the engine uses it through the runtime's values instead of linking it twice.
+pyrlyn/jit (https://github.com/pyrlyn/jit, commit 20d0ed4e4618d6ee040943644f5521db5fb91353,
+checked 2026-11-08, GPL-3.0 or commercial, `LICENSE`, `README.md`) has no `build.zig.zon`, which
+`zig fetch` accepts; its `pyrlyn_jit` module exports an IR (`src/core/ir.zig`: i64/f64 virtual
+registers, blocks, calls to native addresses), a linear-scan register allocator and IR compilers
+for AArch64 and x86-64 (`src/aarch64/compiler.zig`, `src/x86_64/compiler.zig`), and `JitRuntime`
+for executable memory (MAP_JIT and `pthread_jit_write_protect_np` on macOS).
+

@@ -1567,6 +1567,12 @@ rule 9, §11a), and it compiles to bytecode (the spike: 2.9× faster than a tree
 
 ### T14.4. Async, generators, and the remaining constructs → [`plan/T14.4`](plan/T14.4/task.md)
 
+### T67. `packages/engine`: the interpreter and a JIT as one engine, with the `stator-engine` CLI → [`plan/T67`](plan/T67/task.md)
+
+### T67.1. The engine's optimizing JIT tier → [`plan/T67.1`](plan/T67.1/task.md)
+
+### T67.2. `stator-engine build --target=wasm`: JavaScript and TypeScript to WebAssembly → [`plan/T67.2`](plan/T67.2/task.md)
+
 ---
 
 ## 12. Make it better — the optimization ladder (post-MVP, in this order)
@@ -1982,3 +1988,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.89** (2026-11-06): **T14.0: the interpreter is Zig in the runtime, on stator-ts's parser, running bytecode** (plan-notes 396, `docs/INTERPRETER.md`). The creator chose the parser and the language from the spike's numbers; §11f and plan/T14.1–T14.4 follow.
 - **v4.90** (2026-11-07): **T14.1: `packages/interpreter`'s parser front** (plan-notes 401). The parse entry, the C ABI and a Test262 `language/` parse driver land in Zig on stator-ts's parser as it stands; 80.76% pass at the pin, ratcheted, and the rest is listed for stator-ts's owners.
 - **v4.91** (2026-11-07): **T66: Boehm is replaced by pyrlyn/gc as coalesced deferred reference counting** (plan-notes 407, `docs/VALUE.md` §4.12). No system GC library; each `--emit=lib` library carries its own collector; Zig moves to 0.17.1.
+- **v4.92** (2026-11-08): **T67 opens: `packages/interpreter` becomes `packages/engine`** (plan-notes 409). The interpreter is the engine's `interp` mode; a baseline JIT on pyrlyn/jit's IR is its `jit` mode; `stator-engine` runs `.js` and `.ts` files and is benchmarked against V8. T67.1 (optimizing tier) and T67.2 (Wasm output) are carded.
