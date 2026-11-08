@@ -74,8 +74,8 @@ const GLOBALS = new Set([
 ]);
 const BUILTINS = new Set(builtinModules.map((m) => m.replace(/^node:/, '')));
 
-function bump(c: Counts, k: string): void {
-  c[k] = (Object.hasOwn(c, k) ? (c[k] ?? 0) : 0) + 1;
+function bump(c: Counts, k: string, by = 1): void {
+  c[k] = (Object.hasOwn(c, k) ? (c[k] ?? 0) : 0) + by;
 }
 
 function builtinName(spec: string): string | undefined {
@@ -216,26 +216,37 @@ function top(c: Counts, n: number): string {
     .join(', ');
 }
 
+/* One built-in module's or global's totals across the corpus: `count` is its sites or uses. */
+type Tally = { pkgs: string[]; count: number; members: Counts };
+
+function tally<V extends { members: Counts }>(
+  into: Map<string, Tally>,
+  pkg: string,
+  from: Record<string, V>,
+  count: (v: V) => number,
+): void {
+  for (const [name, v] of Object.entries(from)) {
+    const a = into.get(name) ?? { pkgs: [], count: 0, members: {} };
+    a.pkgs.push(pkg);
+    a.count += count(v);
+    for (const [k, c] of Object.entries(v.members)) bump(a.members, k, c);
+    into.set(name, a);
+  }
+}
+
+/* Most packages first, then most sites or uses. */
+function tallyRows(t: Map<string, Tally>): string[] {
+  return [...t.entries()]
+    .sort((a, b) => b[1].pkgs.length - a[1].pkgs.length || b[1].count - a[1].count)
+    .map(([name, a]) => `| ${name} | ${a.pkgs.length} | ${a.count} | ${top(a.members, 12)} |`);
+}
+
 function markdown(): string {
-  const mods = new Map<string, { pkgs: string[]; sites: number; members: Counts }>();
-  const globs = new Map<string, { pkgs: string[]; uses: number; members: Counts }>();
+  const mods = new Map<string, Tally>();
+  const globs = new Map<string, Tally>();
   for (const p of result) {
-    for (const [m, v] of Object.entries(p.modules)) {
-      const a = mods.get(m) ?? { pkgs: [], sites: 0, members: {} };
-      a.pkgs.push(p.name);
-      a.sites += v.sites;
-      for (const [k, c] of Object.entries(v.members))
-        a.members[k] = (Object.hasOwn(a.members, k) ? (a.members[k] ?? 0) : 0) + c;
-      mods.set(m, a);
-    }
-    for (const [g, v] of Object.entries(p.globals)) {
-      const a = globs.get(g) ?? { pkgs: [], uses: 0, members: {} };
-      a.pkgs.push(p.name);
-      a.uses += v.uses;
-      for (const [k, c] of Object.entries(v.members))
-        a.members[k] = (Object.hasOwn(a.members, k) ? (a.members[k] ?? 0) : 0) + c;
-      globs.set(g, a);
-    }
+    tally(mods, p.name, p.modules, (v) => v.sites);
+    tally(globs, p.name, p.globals, (v) => v.uses);
   }
   const lines = [
     `# Corpus scan (${process.version})`,
@@ -253,17 +264,13 @@ function markdown(): string {
     '',
     '| Module | Packages | Sites | Top members |',
     '| --- | --- | --- | --- |',
-    ...[...mods.entries()]
-      .sort((a, b) => b[1].pkgs.length - a[1].pkgs.length || b[1].sites - a[1].sites)
-      .map(([m, a]) => `| ${m} | ${a.pkgs.length} | ${a.sites} | ${top(a.members, 12)} |`),
+    ...tallyRows(mods),
     '',
     '## Node globals',
     '',
     '| Global | Packages | Uses | Top members |',
     '| --- | --- | --- | --- |',
-    ...[...globs.entries()]
-      .sort((a, b) => b[1].pkgs.length - a[1].pkgs.length || b[1].uses - a[1].uses)
-      .map(([g, a]) => `| ${g} | ${a.pkgs.length} | ${a.uses} | ${top(a.members, 12)} |`),
+    ...tallyRows(globs),
     '',
   ];
   return lines.join('\n');
