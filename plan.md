@@ -1592,6 +1592,8 @@ supply throughput numbers; GC event durations alone are not evidence of beating 
 
 ---
 
+### T70. Interpreter performance above QuickJS across the benchmark set → [`plan/T70`](plan/T70/task.md)
+
 ## 12. Make it better — the optimization ladder (post-MVP, in this order)
 
 Ordering rule (from the Boa deep-dive): **memory first, codegen last**. Each step: measure on the Phase-6 harness before/after; keep the change only if the geomean moves.
