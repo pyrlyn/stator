@@ -14961,3 +14961,20 @@ direct calls between compiled templates and inline cache checks.
 
 **Open.** `LICENSE` is GPL-3.0 while every `package.json` says `"license": "MIT"`; pyrlyn/jit is
 GPL-3.0 or commercial, which fits the former. The creator decides which one is right.
+
+## 413. T67.1: pyrlyn/gc to `bad8e04`; the baseline JIT's inline caches; V8 the only benchmark reference (2026-11-08)
+
+**Direction.** The creator asked for the latest pyrlyn/gc and pyrlyn/jit, for tests that code runs
+no more often than it must, for benchmarks written in JavaScript and in Zig, and for V8 as the
+only reference the benchmark compares against. pyrlyn/jit was already at its latest commit;
+pyrlyn/gc moves from `9bfc433` to `bad8e04` (`packages/runtime/build.zig.zon`, `toolchain.md`).
+
+**Change.** The JIT reads and writes a cached property, reads a global through a cache of its own
+per site, computes sloppy `this` and a plain call's constructor return inline, and drops the
+prologue's dead stores. Test builds wrap every helper the JIT calls in a counter
+(`helpers.counted`); `jitCost` tests in `src/interp.zig` pin those counts. `src/bench.zig` runs
+`packages/tests/engine/bench/*.js` in one process; `bench.ts` runs them under Node and the CLI.
+
+**Measured** (`docs/ENGINE.md` §4): `fib.ts` from 11.2 to 6.3 times V8's time, `objects-churn`
+from 15.3 to 12. `loop.js` now runs wholly in generated code at 5.7 times V8, so the remaining
+gap is the baseline design itself: the optimizing tier is the next step.

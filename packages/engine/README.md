@@ -41,4 +41,5 @@ The Test262 corpus comes from `pnpm run test262:fetch`, or from `$STATOR_TEST262
 set. A `--filter` run checks a slice, so it neither gates nor records.
 
 The script corpus and the V8 benchmark live in `packages/tests/engine/` (`pnpm run engine:test`,
-`pnpm run engine:bench`).
+`pnpm run engine:bench`); `src/bench.zig` times the `bench/` programs inside one process
+(`pnpm run engine:bench:zig`).

@@ -21,6 +21,58 @@ pub const Ctx = extern struct {
     fe: ?*c.JSRTEnv,
 };
 
+/// How many times native code has called helper `f`. Only test builds count: there `lower.zig`
+/// routes every helper call through `counted`, so tests can pin which fast paths still reach a
+/// helper and how often.
+pub fn Counter(comptime f: anytype) type {
+    return struct {
+        /// Makes the type depend on `f`: without it every counter would be one type.
+        pub const helper = f;
+        pub var n: usize = 0;
+    };
+}
+
+/// `f` behind a wrapper that counts its calls in `Counter(f)`.
+pub fn counted(comptime f: anytype) *const anyopaque {
+    const F = @typeInfo(@TypeOf(f)).@"fn";
+    const R = F.return_type.?;
+    const P = F.param_types;
+    const n = &Counter(f).n;
+    return switch (P.len) {
+        1 => &struct {
+            fn g(a: P[0].?) callconv(.c) R {
+                n.* += 1;
+                return f(a);
+            }
+        }.g,
+        2 => &struct {
+            fn g(a: P[0].?, b: P[1].?) callconv(.c) R {
+                n.* += 1;
+                return f(a, b);
+            }
+        }.g,
+        3 => &struct {
+            fn g(a: P[0].?, b: P[1].?, d: P[2].?) callconv(.c) R {
+                n.* += 1;
+                return f(a, b, d);
+            }
+        }.g,
+        4 => &struct {
+            fn g(a: P[0].?, b: P[1].?, d: P[2].?, e: P[3].?) callconv(.c) R {
+                n.* += 1;
+                return f(a, b, d, e);
+            }
+        }.g,
+        5 => &struct {
+            fn g(a: P[0].?, b: P[1].?, d: P[2].?, e: P[3].?, k: P[4].?) callconv(.c) R {
+                n.* += 1;
+                return f(a, b, d, e, k);
+            }
+        }.g,
+        else => @compileError("a helper takes one to five arguments"),
+    };
+}
+
 fn status() u64 {
     return @intFromBool(rt.pending());
 }
@@ -49,7 +101,12 @@ pub fn truthy(v: Value) callconv(.c) u64 {
 }
 
 pub fn loadGlobal(cx: *Ctx, s: u64, key: u64, typeof_: u64) callconv(.c) u64 {
-    return put(cx, s, vm.loadGlobal(cx.t.keys[key], typeof_ != 0));
+    return put(cx, s, vm.loadGlobal(cx.t.keys[key], typeof_ != 0, null));
+}
+
+/// A global read whose site has a JIT-owned cache (lower.zig `globalLoad`).
+pub fn loadGlobalCached(cx: *Ctx, s: u64, key: u64, ic: *c.JSRTIC) callconv(.c) u64 {
+    return put(cx, s, vm.loadGlobal(cx.t.keys[key], false, ic));
 }
 
 pub fn getProp(cx: *Ctx, s: u64, key: u64, ic: u64) callconv(.c) u64 {
@@ -96,10 +153,6 @@ pub fn arguments(cx: *Ctx, s: u64) callconv(.c) u64 {
 
 pub fn home(cx: *Ctx, s: u64) callconv(.c) u64 {
     return put(cx, s, vm.homeOf(cx.fe));
-}
-
-pub fn thisSloppy(cx: *Ctx, s: u64) callconv(.c) u64 {
-    return put(cx, s, vm.sloppyThis(cx.w[1]));
 }
 
 /// Makes `e` the frame's environment and answers the pending status.

@@ -1160,7 +1160,7 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
                     cell.* = vs[top];
                 }
             },
-            .load_global, .typeof_global => push(vs, &top, loadGlobal(t.keys[next16(code, &pc)], o == .typeof_global)),
+            .load_global, .typeof_global => push(vs, &top, loadGlobal(t.keys[next16(code, &pc)], o == .typeof_global, null)),
             .store_global => {
                 top -= 1;
                 // Operands decode left to right: the key, then the strict flag.
@@ -1642,15 +1642,16 @@ pub fn unary(o: Op, v: Value) Value {
     };
 }
 
-/// A global name's value (`typeof_` answers its `typeof` instead, never a ReferenceError).
-pub fn loadGlobal(k: [*:0]const u8, typeof_: bool) Value {
+/// A global name's value (`typeof_` answers its `typeof` instead, never a ReferenceError);
+/// `ic`, when given, is filled for the JIT's inline read of the global object.
+pub fn loadGlobal(k: [*:0]const u8, typeof_: bool, ic: ?*c.JSRTIC) Value {
     const g = builtins.global();
     if (!c.jsrt_has_prop(g, k)) {
         if (typeof_) return rt.string("undefined");
         throwFmt(&c.jsrt_class_reference_error, "{s} is not defined", .{keyText(k)});
         return rt.undefined_value;
     }
-    const v = c.jsrt_get_prop(g, k, null);
+    const v = c.jsrt_get_prop(g, k, ic);
     return if (typeof_) c.jsrt_typeof(v) else v;
 }
 
@@ -1672,7 +1673,7 @@ pub fn homeOf(fe: ?*Env) Value {
 }
 
 /// `this` as a sloppy function sees it: the global object for undefined or null.
-pub fn sloppyThis(v: Value) Value {
+fn sloppyThis(v: Value) Value {
     return if (c.jsrt_is_nullish(v)) builtins.global() else v;
 }
 
