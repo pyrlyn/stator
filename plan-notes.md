@@ -14642,3 +14642,18 @@ throws Node's own "Digest method not supported", where Node would hash with Open
 its own; `DataView` input and the `options` of `createHash` and `copy` are not landed;
 `x instanceof crypto.Hash` through the namespace is `STA1214` in `ts` mode ("instanceof against
 anything but a class name"), while the named `Hash` works.
+
+## 404. The shared CI moved to `pyrlyn-archive/ci-old`; `pipeline.yml` calls it there (2026-11-08)
+
+**Evidence.** Every `pipeline.yml` run since 2026-11-06 failed at startup, on `main` and on every pull
+request, so the required `pipeline / gate` check never reported and nothing could merge. The run
+page says: `error parsing called workflow ".github/workflows/pipeline.yml" ->
+"pyrlyn/ci/.github/workflows/ci.yml@main": workflow was not found`. `gh api repos/pyrlyn/ci` answers
+with `full_name: pyrlyn-archive/ci-old`: the repository was moved, and GitHub redirects the API,
+`git` and composite actions (the `macos-runner` job kept passing) but not reusable-workflow
+references. No new `ci` repository exists under `pyrlyn`.
+
+**Change.** Every `pyrlyn/ci` reference under `.github/` (`pipeline.yml`, `ci.yml`,
+`dependabot.yml`, `sync-docs.yml`, `infra.yml`, `jactionlint.yaml`) and in `docs/TOOLCHAIN.md` and
+`docs/sonarcloud-setup.md` now names `pyrlyn-archive/ci-old`, still at `@main` (notes 361, 362, 375).
+Historical notes and `done.md` keep the old name.

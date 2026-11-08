@@ -1,8 +1,8 @@
-# Gated pipeline: pyrlyn/ci's config-driven ci.yml (configured in .github/infra.yml) runs
+# Gated pipeline: pyrlyn-archive/ci-old's config-driven ci.yml (configured in .github/infra.yml) runs
 # CodeQL, Semgrep, Snyk and SonarCloud behind `pipeline / gate`. TypeScript/C/Zig CI stays in ci.yml.
 # Draft pull requests skip every job, the gate included, until marked ready. Secrets are passed
 # explicitly.
-# Shared workflows: https://github.com/pyrlyn/ci/blob/main/docs/reusable-workflows.md
+# Shared workflows: https://github.com/pyrlyn-archive/ci-old/blob/main/docs/reusable-workflows.md
 name: pipeline
 
 on:
@@ -24,14 +24,14 @@ permissions:
 
 jobs:
   pipeline:
-    uses: pyrlyn/ci/.github/workflows/ci.yml@main
+    uses: pyrlyn-archive/ci-old/.github/workflows/ci.yml@main
     # The union every nested job asks for, validated up front even for disabled checks.
     permissions:
       contents: read
       security-events: write
       pull-requests: read
       actions: write
-      issues: write # pyrlyn/ci main-failure job
+      issues: write # pyrlyn-archive/ci-old main-failure job
     secrets:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

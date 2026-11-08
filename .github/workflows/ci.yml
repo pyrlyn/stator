@@ -63,7 +63,7 @@ permissions:
   contents: read
 
 jobs:
-  # Which runner the macOS jobs use: pyrlyn/ci's macos-runner action reads the MACOS_RUNNER
+  # Which runner the macOS jobs use: pyrlyn-archive/ci-old's macos-runner action reads the MACOS_RUNNER
   # variable (unset or `hosted` = the hosted label, `xcode-27-local` = the dedicated Mac).
   macos-runner:
     runs-on: ubuntu-latest
@@ -72,7 +72,7 @@ jobs:
       value: ${{ steps.r.outputs.value }}
     steps:
       - id: r
-        uses: pyrlyn/ci/.github/actions/macos-runner@main
+        uses: pyrlyn-archive/ci-old/.github/actions/macos-runner@main
         with:
           runner: ${{ vars.MACOS_RUNNER }}
           value: '["macos-14"]'
@@ -292,7 +292,7 @@ jobs:
           - { platform: linux, arch: x64, os: ubuntu-24.04 }
           - { platform: linux, arch: arm64, os: ubuntu-24.04-arm }
     needs: macos-runner
-    # MACOS_RUNNER (pyrlyn/ci macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
+    # MACOS_RUNNER (pyrlyn-archive/ci-old macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
     runs-on: ${{ startsWith(matrix.os, 'macos') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(needs.macos-runner.outputs.value)[0] || matrix.os }}
     timeout-minutes: 60
     steps: &runtime-steps
@@ -342,7 +342,7 @@ jobs:
           - { platform: macos, arch: arm64, os: macos-14 }
     # Org variable MACOS_CI_DISABLED=true skips this macOS job.
     if: vars.MACOS_CI_DISABLED != 'true'
-    # MACOS_RUNNER (pyrlyn/ci macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
+    # MACOS_RUNNER (pyrlyn-archive/ci-old macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
     runs-on: ${{ startsWith(matrix.os, 'macos') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(needs.macos-runner.outputs.value)[0] || matrix.os }}
     timeout-minutes: 60
     steps: *runtime-steps
@@ -375,7 +375,7 @@ jobs:
     strategy: *macos-strategy
     # Org variable MACOS_CI_DISABLED=true skips this macOS job.
     if: vars.MACOS_CI_DISABLED != 'true'
-    # MACOS_RUNNER (pyrlyn/ci macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
+    # MACOS_RUNNER (pyrlyn-archive/ci-old macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
     runs-on: ${{ startsWith(matrix.os, 'macos') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(needs.macos-runner.outputs.value)[0] || matrix.os }}
     timeout-minutes: 60
     steps: *asan-steps
@@ -415,7 +415,7 @@ jobs:
     strategy: *macos-strategy
     # Org variable MACOS_CI_DISABLED=true skips this macOS job.
     if: vars.MACOS_CI_DISABLED != 'true'
-    # MACOS_RUNNER (pyrlyn/ci macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
+    # MACOS_RUNNER (pyrlyn-archive/ci-old macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
     runs-on: ${{ startsWith(matrix.os, 'macos') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(needs.macos-runner.outputs.value)[0] || matrix.os }}
     timeout-minutes: 60
     steps: *intl-steps
@@ -478,7 +478,7 @@ jobs:
     strategy: *macos-strategy
     # Org variable MACOS_CI_DISABLED=true skips this macOS job.
     if: vars.MACOS_CI_DISABLED != 'true'
-    # MACOS_RUNNER (pyrlyn/ci macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
+    # MACOS_RUNNER (pyrlyn-archive/ci-old macos-runner): unset/hosted = the hosted label, xcode-27-local = the dedicated Mac (fork PRs keep the hosted label)
     runs-on: ${{ startsWith(matrix.os, 'macos') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(needs.macos-runner.outputs.value)[0] || matrix.os }}
     timeout-minutes: 60
     steps: *ffi-steps
