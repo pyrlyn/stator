@@ -21,6 +21,7 @@ pub const Insn = struct {
     a: u32 = 0,
     b: u32 = 0,
     c: u32 = 0,
+    d: u32 = 0,
     /// Where the next instruction starts.
     next: u32,
     /// Another instruction jumps here, or a conditional jump falls through here: a block starts.
@@ -79,7 +80,7 @@ pub fn analyze(gpa: std.mem.Allocator, t: *const Template) error{OutOfMemory}!Re
             try found.append(gpa, insn);
             const after = d - fx.pops + fx.pushes;
             switch (insn.op) {
-                .ret, .ret_ctor, .throw => break,
+                .ret, .ret_ctor, .ret_this, .throw => break,
                 .jump => {
                     leader[insn.a] = true;
                     if (!try reach(gpa, &work, depth_at, insn.a, after)) return .{ .reject = .{ .depth = insn.a } };
@@ -135,6 +136,8 @@ pub fn decode(code: []const u8, pc: u32, depth: u32) ?Insn {
     var i: Insn = .{ .pc = pc, .op = op, .depth = depth, .next = pc + 1 };
     const rest = code.len - (pc + 1);
     const width: u32 = switch (op) {
+        .ret_this => 0,
+        .arg_local => 4,
         .undef, .null, .true, .false, .uninit, .pop, .dup, .swap, .ret, .ret_ctor, .throw, .arguments => 0,
         .this_raw, .this_sloppy, .new_target, .callee, .home, .pop_env, .clone_env => 0,
         .new_object, .get_elem, .set_elem => 0,
@@ -145,21 +148,34 @@ pub fn decode(code: []const u8, pc: u32, depth: u32) ?Insn {
         .num, .load, .store, .arg, .load_global, .typeof_global, .call, .new => 2,
         .push_env, .closure, .declare_global, .new_array, .define, .str, .rest => 2,
         .store_global => 3,
-        .load_checked, .store_checked, .get_prop, .set_prop => 4,
+        .load_checked, .store_checked, .inc_local, .dec_local, .get_prop, .get_method, .set_prop => 4,
         .load_env, .store_env => 3,
         .load_env_checked, .store_env_checked => 5,
+        .add_local_int, .sub_local_int, .lt_local_int, .le_local_int => 8,
+        .add_locals, .sub_locals, .lt_locals, .le_locals, .get_prop_local => 8,
         else => return null,
     };
     if (rest < width) return null;
     const at = pc + 1;
     switch (op) {
+        .add_locals, .sub_locals, .lt_locals, .le_locals, .get_prop_local => {
+            i.a = bc.read16(code, at);
+            i.b = bc.read16(code, at + 2);
+            i.c = bc.read16(code, at + 4);
+            i.d = bc.read16(code, at + 6);
+        },
+        .add_local_int, .sub_local_int, .lt_local_int, .le_local_int => {
+            i.a = bc.read16(code, at);
+            i.b = bc.read16(code, at + 2);
+            i.c = bc.read32(code, at + 4);
+        },
         .int, .jump, .jump_if_false, .jump_if_true, .jump_if_nullish, .jump_if_not_undef => i.a = bc.read32(code, at),
         .num, .load, .store, .arg, .load_global, .typeof_global, .call, .new, .push_env, .closure, .declare_global, .new_array, .define, .str, .rest => i.a = bc.read16(code, at),
         .store_global => {
             i.a = bc.read16(code, at);
             i.b = code[at + 2];
         },
-        .load_checked, .store_checked, .get_prop, .set_prop => {
+        .arg_local, .load_checked, .store_checked, .inc_local, .dec_local, .get_prop, .get_method, .set_prop => {
             i.a = bc.read16(code, at);
             i.b = bc.read16(code, at + 2);
         },
@@ -178,11 +194,15 @@ pub const Effect = struct { pops: u32, pushes: u32 };
 
 pub fn effect(i: Insn) Effect {
     return switch (i.op) {
+        .add_locals, .sub_locals, .lt_locals, .le_locals, .get_prop_local => .{ .pops = 0, .pushes = 1 },
+        .arg_local => .{ .pops = 0, .pushes = 0 },
+        .ret_this => .{ .pops = 1, .pushes = 0 },
+        .add_local_int, .sub_local_int, .lt_local_int, .le_local_int => .{ .pops = 0, .pushes = 1 },
         .undef, .null, .true, .false, .uninit, .int, .num, .load, .load_checked, .arg, .load_global, .typeof_global, .load_env, .load_env_checked => .{ .pops = 0, .pushes = 1 },
         .this_raw, .this_sloppy, .new_target, .callee, .home, .closure, .new_object, .str, .rest, .arguments => .{ .pops = 0, .pushes = 1 },
         .ret_ctor => .{ .pops = 2, .pushes = 0 },
         .pop, .store, .store_checked, .store_env, .store_env_checked, .store_global, .jump_if_false, .jump_if_true, .jump_if_nullish, .jump_if_not_undef, .ret, .throw => .{ .pops = 1, .pushes = 0 },
-        .push_env, .pop_env, .clone_env, .declare_global => .{ .pops = 0, .pushes = 0 },
+        .push_env, .pop_env, .clone_env, .declare_global, .inc_local, .dec_local => .{ .pops = 0, .pushes = 0 },
         .new_array => .{ .pops = i.a, .pushes = 1 },
         .new => .{ .pops = i.a + 1, .pushes = 1 },
         .set_elem => .{ .pops = 3, .pushes = 1 },
@@ -190,7 +210,7 @@ pub fn effect(i: Insn) Effect {
         .swap => .{ .pops = 2, .pushes = 2 },
         .jump => .{ .pops = 0, .pushes = 0 },
         .call => .{ .pops = i.a + 2, .pushes = 1 },
-        .get_prop, .neg, .plus, .bitnot, .not, .typeof, .inc, .dec => .{ .pops = 1, .pushes = 1 },
+        .get_prop, .get_method, .neg, .plus, .bitnot, .not, .typeof, .inc, .dec => .{ .pops = 1, .pushes = 1 },
         else => .{ .pops = 2, .pushes = 1 },
     };
 }

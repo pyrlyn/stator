@@ -265,6 +265,46 @@ test "functions and closures" {
     try expectRuns("let fs = []; for (let i = 0; i < 3; i++) fs.push(() => i); fs[0]() + fs[2]()", "2");
 }
 
+test "call values without captured bindings" {
+    try expectRuns("function f() { return this.x; } f.call({x: 7})", "7");
+    try expectRuns("function f() { 'use strict'; return this; } f()", "undefined");
+    try expectRuns("function f() { return this === globalThis; } f()", "true");
+    try expectRuns("function C() { this.x = new.target === C; } new C().x", "true");
+    try expectRuns("function C() { this.x = 9; return 1; } new C().x", "9");
+    try expectRuns("function C() { return {x: 8}; } new C().x", "8");
+    try expectRuns("class A { m() { return 3; } } class B extends A { m() { return super.m() + 1; } } new B().m()", "4");
+    try expectRuns("class A { constructor() { this.x = 5; } } class B extends A { constructor() { super(); this.x++; } } new B().x", "6");
+    try expectRuns("function f() { return () => this.x; } f.call({x: 6})()", "6");
+}
+
+test "discarded updates still coerce and throw once" {
+    try expectRuns("function f() { let x = '2'; x++; ++x; x--; --x; return x; } f()", "2");
+    try expectRuns("function f() { let calls=0; let x={valueOf() { calls++; return 4; }}; x++; return x + calls; } f()", "6");
+    try expectRuns("function f() { const x=1; try { x++; } catch(e) { return e.name; } } f()", "TypeError");
+    try expectRuns("function f() { try { x++; let x; } catch(e) { return e.name; } } f()", "ReferenceError");
+    try expectRuns("function f() { let x={valueOf() { throw 8; }}; try { x++; } catch(e) { return e + ':' + typeof x; } } f()", "8:object");
+    try expectRuns("function f() { let x='4'; let a=x++; let b=++x; return a + ':' + b + ':' + x; } f()", "4:6:6");
+    try expectRuns("function f() { let x=0; for (;x<4;(x++)) {} return x; } f()", "4");
+}
+
+test "direct method caches preserve overrides and evaluation order" {
+    try expectRuns("function f() { const a=[]; for(let i=0;i<4;i++) a.push(i); a.push=function(x) { return x+10; }; return a.push(3)+a.length; } f()", "17");
+    try expectRuns("function f() { const a=[], b=[]; for(let i=0;i<6;i++) (i%2 ? a:b).push(i); return a.join()+':'+b.join(); } f()", "1,3,5:0,2,4");
+    try expectRuns("function f() { const a=[]; a.push(0); a.push((a.push=function(){return 7;}, 2)); return a.join()+':'+a.push(3); } f()", "0,2:7");
+    try expectRuns("function f() { const a=[]; a.push(1); Object.defineProperty(a,'push',{get(){ throw 9; }}); try { a.push(2); } catch(e) { return e; } } f()", "9");
+    try expectRuns("function f() { let reads=0; const a={get m(){ reads++; return function(){return reads;}; }}; a.m(); return a.m(); } f()", "2");
+}
+
+test "cached string literals remain immutable and survive suspension" {
+    try expectRuns("function f() { let s='ab'; for(let i=0;i<10000;i++) s+='ab'; return s.length+':'+('ab'); } f()", "20002:ab");
+    try expectRuns("function* f() { for(let i=0;i<3;i++) yield 'cached'; } let s=''; for(const v of f()) s+=v; s", "cachedcachedcached");
+}
+
+test "discarded assignments preserve ordering and destructuring" {
+    try expectRuns("function f() { let a=0,b=0; a=b=3; a+=b; [a,b]=[b,a]; return a+':'+b; } f()", "3:6");
+    try expectRuns("function f() { let x=1; const o={get a(){x++;return 4;},set a(v){x+=v;}}; o.a+=3; return x; } f()", "9");
+}
+
 test "control flow" {
     try expectRuns("let s = 0; for (let i = 0; i < 10; i++) { if (i % 2) continue; s += i; } s", "20");
     try expectRuns("let n = 0; outer: for (;;) { for (;;) { n++; break outer; } } n", "1");
@@ -376,6 +416,27 @@ test "async generators and for await" {
         \\async function* outer() { const r = yield* inner(); yield r; yield* [Promise.resolve('p')]; }
         \\(async () => { for await (const v of outer()) s += v; })();
     , "s", "irp");
+}
+
+test "local immediate operators preserve coercion, TDZ and exceptional completion" {
+    try expectRuns("function f(x) { return [x + 2, x - 2, x < 2, x <= 2].join(); } f('2') + ';' + f(null)", "22,0,false,true;2,-2,true,true");
+    try expectRuns("function f() { try { return x - 1; } catch (e) { return e instanceof ReferenceError; } let x; } f()", "true");
+    try expectRuns("var calls = 0; function f(x) { return x + 1; } f({ valueOf() { calls++; return 'a'; } }) + calls", "a11");
+    try expectRuns("function f(x) { try { return x < 1; } catch (e) { return e; } } f({ valueOf() { throw 'coercion'; } })", "coercion");
+    try expectRuns("function f(x) { return x + 0; } Object.is(f(-0), 0) + ',' + Number.isNaN(f(NaN))", "true,true");
+}
+
+test "fused local reads preserve operand order and argument initialization" {
+    try expectRuns("function f(a, b) { return [a + b, a - b, a < b, a <= b].join(); } f('2', 3)", "23,-1,true,true");
+    try expectRuns("function f() { let x; try { x = a + b; } catch (e) { return e instanceof ReferenceError; } let a, b; } f()", "true");
+    try expectRuns("function f(a, b = 3, c) { return [a, b, c].join(); } f(1) + ';' + f(1, 2, 4)", "1,3,;1,2,4");
+    try expectRuns("function f(a, a) { return a; } f(1, 2) + ',' + f(1)", "2,undefined");
+    try expectRuns("function f(a, b) { a += b; return a; } f('x', 2)", "x2");
+}
+
+test "invalid super calls in eval throw instead of writing immutable call values" {
+    try expectRuns("let result; try { eval('super()'); } catch (e) { result = e instanceof SyntaxError; } result", "true");
+    try expectRuns("let result; try { (0, eval)('super()'); } catch (e) { result = e instanceof SyntaxError; } result", "true");
 }
 
 test "syntax errors are pending SyntaxErrors" {

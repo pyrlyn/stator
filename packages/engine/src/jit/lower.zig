@@ -324,13 +324,12 @@ const Lowerer = struct {
     }
 
     /// `obj.key` through the site's inline cache, the helper filling it on a miss.
-    fn getProp(l: *Lowerer, i: analyze.Insn) !void {
-        const s = l.slot(i.depth - 1);
+    fn getProp(l: *Lowerer, s: u32, key: u32, ic: u32) !void {
         // `constructor` has answers of its own before any shape is asked (vm.getProp).
-        if (std.mem.eql(u8, std.mem.span(l.t.keys[i.a]), "constructor")) return l.helper(h.getProp, &.{ s, i.a, i.b });
+        if (std.mem.eql(u8, std.mem.span(l.t.keys[key]), "constructor")) return l.helper(h.getProp, &.{ s, key, ic });
         const slow = try l.block();
-        const v = try l.cachedRead(try l.dynObj(try l.load(s), slow), &l.t.ics[i.b], slow);
-        try l.fastOrHelper(s, v, slow, h.getProp, &.{ s, i.a, i.b });
+        const v = try l.cachedRead(try l.dynObj(try l.load(s), slow), &l.t.ics[ic], slow);
+        try l.fastOrHelper(s, v, slow, h.getProp, &.{ s, key, ic });
     }
 
     /// A global name read from the global object through the key's cache, which the interpreter
@@ -402,14 +401,13 @@ const Lowerer = struct {
         try l.cbr(.eq, v, try l.konst(imm(c.JSRT_NULL)), target, fall);
     }
 
-    fn arg(l: *Lowerer, i: analyze.Insn) !void {
-        const to = l.slot(i.depth);
+    fn arg(l: *Lowerer, index: u32, to: u32) !void {
         const has = try l.block();
         const none = try l.block();
         const join = try l.block();
-        try l.cbr(.ugt, l.argc, try l.konst(i.a), has, none);
+        try l.cbr(.ugt, l.argc, try l.konst(index), has, none);
         l.cur = has;
-        try l.store(to, try l.def(.load, .{ .dst = undefined, .base = l.argv, .disp = @intCast(i.a * 8) }));
+        try l.store(to, try l.def(.load, .{ .dst = undefined, .base = l.argv, .disp = @intCast(index * 8) }));
         try l.br(join);
         l.cur = none;
         try l.storeConst(to, c.JSRT_UNDEFINED);
@@ -446,7 +444,11 @@ const Lowerer = struct {
             .str => try l.helper(h.str, &.{ l.slot(d), i.a }),
             .rest => try l.helper(h.rest, &.{ l.slot(d), i.a }),
             .arguments => try l.helper(h.arguments, &.{l.slot(d)}),
-            .ret_ctor => try l.retCtor(l.slot(d - 2)),
+            .ret_ctor, .ret_this => {
+                const result = l.slot(d - (if (i.op == .ret_this) @as(u32, 1) else 2));
+                if (i.op == .ret_this) try l.store(result + 1, try l.load(1));
+                try l.retCtor(result);
+            },
             .jump_if_nullish, .jump_if_not_undef => try l.undefJump(i),
             .push_env => try l.helper(h.pushEnv, &.{i.a}),
             .pop_env => try l.helper(h.popEnv, &.{}),
@@ -481,18 +483,38 @@ const Lowerer = struct {
                 const v = try l.checkedLocal(i.a, i.b);
                 try l.store(l.slot(d), v);
             },
+            .inc_local, .dec_local => {
+                const v = try l.checkedLocal(i.a, i.b);
+                // Coercion may throw. Keep the binding intact until the helper has succeeded.
+                try l.store(l.slot(d), v);
+                try l.unaryOp(if (i.op == .inc_local) .inc else .dec, l.slot(d));
+                try l.store(vm.header + i.a, try l.load(l.slot(d)));
+            },
+            .add_local_int, .sub_local_int, .lt_local_int, .le_local_int, .add_locals, .sub_locals, .lt_locals, .le_locals => {
+                try l.store(l.slot(d), try l.checkedLocal(i.a, i.b));
+                switch (i.op) {
+                    .add_locals, .sub_locals, .lt_locals, .le_locals => try l.store(l.slot(d + 1), try l.checkedLocal(i.c, i.d)),
+                    else => try l.storeConst(l.slot(d + 1), rt.number(@floatFromInt(@as(i32, @bitCast(i.c))))),
+                }
+                try l.binaryOp(bc.localOperator(i.op), l.slot(d));
+            },
             .store_checked => {
                 _ = try l.checkedLocal(i.a, i.b);
                 try l.store(vm.header + i.a, try l.load(l.slot(d - 1)));
             },
-            .arg => try l.arg(i),
+            .arg => try l.arg(i.a, l.slot(d)),
+            .arg_local => try l.arg(i.a, vm.header + i.b),
             .load_global => try l.globalLoad(i),
             .typeof_global => try l.helper(h.loadGlobal, &.{ l.slot(d), i.a, 1 }),
             .load_env => try l.helper(h.loadEnv, &.{ l.slot(d), i.a, i.b, 0 }),
             .load_env_checked => try l.helper(h.loadEnv, &.{ l.slot(d), i.a, i.b, i.c + 1 }),
             .store_env => try l.helper(h.storeEnv, &.{ l.slot(d - 1), i.a, i.b, 0 }),
             .store_env_checked => try l.helper(h.storeEnv, &.{ l.slot(d - 1), i.a, i.b, i.c + 1 }),
-            .get_prop => try l.getProp(i),
+            .get_prop_local => {
+                try l.store(l.slot(d), try l.checkedLocal(i.a, i.b));
+                try l.getProp(l.slot(d), i.c, i.d);
+            },
+            .get_prop, .get_method => try l.getProp(l.slot(d - 1), i.a, i.b),
             .call => try l.helper(h.call, &.{ l.slot(d - i.a - 2), i.a }),
             .add, .sub, .mul, .div, .mod, .exp, .bitand, .bitor, .bitxor, .shl, .shr, .ushr, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge => try l.binaryOp(i.op, l.slot(d - 2)),
             .neg, .plus, .bitnot, .not, .typeof, .inc, .dec => try l.unaryOp(i.op, l.slot(d - 1)),
@@ -542,7 +564,11 @@ fn deadStores(alloc: std.mem.Allocator, t: *const bc.Template, insns: []const an
     const read = try alloc.alloc(bool, t.nlocals);
     @memset(read, false);
     for (insns) |i| switch (i.op) {
-        .load, .load_checked, .store_checked => read[i.a] = true,
+        .load, .load_checked, .store_checked, .inc_local, .dec_local, .get_prop_local, .add_local_int, .sub_local_int, .lt_local_int, .le_local_int => read[i.a] = true,
+        .add_locals, .sub_locals, .lt_locals, .le_locals => {
+            read[i.a] = true;
+            read[i.c] = true;
+        },
         else => {},
     };
     const dead = try alloc.alloc(bool, insns.len);

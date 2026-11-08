@@ -81,7 +81,7 @@ fn compileCode(a: Allocator, perm: Allocator, file: *parse.File, strict: bool, o
 const BKind = enum { var_, let_, const_, class_, func, param, callee, special };
 
 /// `ref` is a slot holding a pointer to a compiled caller's binding (`Outer`).
-const Loc = union(enum) { local: u16, env: u16, global: []const u8, ref: u16 };
+const Loc = union(enum) { local: u16, env: u16, global: []const u8, ref: u16, special: Op };
 
 const Binding = struct {
     loc: Loc,
@@ -270,6 +270,7 @@ const Fn = struct {
     fn op(fs: *Fn, o: Op) Error!void {
         try fs.byte(@backingInt(o));
         fs.adjust(switch (o) {
+            .ret_this => -1,
             .undef, .null, .true, .false, .uninit, .dup, .arguments, .this_raw, .this_sloppy, .new_target, .callee, .home, .new_object => 1,
             .dup2 => 2,
             .pop, .get_elem, .in, .instanceof, .add, .sub, .mul, .div, .mod, .exp, .bitand, .bitor, .bitxor, .shl, .shr, .ushr, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge, .delete_elem, .new_spread, .ret, .throw, .array_push, .array_spread, .object_spread, .set_proto, .set_field_init, .iter_close, .assert_uninit => -1,
@@ -343,10 +344,14 @@ const Fn = struct {
 
     fn propOp(fs: *Fn, o: Op, key: []const u8) Error!void {
         try fs.byte(@backingInt(o));
+        try fs.propOperands(key);
+        fs.adjust(if (o == .set_prop) -1 else 0);
+    }
+
+    fn propOperands(fs: *Fn, key: []const u8) Error!void {
         try fs.operand(u16, try fs.keyIndex(key));
         try fs.operand(u16, fs.nics);
         fs.nics += 1;
-        fs.adjust(if (o == .set_prop) -1 else 0);
     }
 
     fn envOp(fs: *Fn, o: Op, hops: u8, slot: u16, name: ?[]const u8) Error!void {
@@ -365,7 +370,12 @@ const Fn = struct {
         try fs.byte(@backingInt(o));
         try fs.operand(u16, slot);
         try fs.operand(u16, try fs.keyIndex(name));
-        fs.adjust(if (o == .load_checked) 1 else -1);
+        fs.adjust(switch (o) {
+            .load_checked, .get_prop_local => 1,
+            .store_checked => -1,
+            .inc_local, .dec_local => 0,
+            else => unreachable,
+        });
     }
 
     fn keyIndex(fs: *Fn, name: []const u8) Error!u16 {
@@ -489,6 +499,7 @@ const Fn = struct {
             .env => |slot| try fs.envOp(if (checked) .load_env_checked else .load_env, r.hops, slot, if (checked) name else null),
             .global => |g| try fs.op16(.load_global, try fs.keyIndex(g)),
             .ref => |slot| try fs.envOp(.load_ref, r.hops, slot, null),
+            .special => |o| try fs.op(o),
         }
     }
 
@@ -498,6 +509,7 @@ const Fn = struct {
         switch (r.b.loc) {
             .local => |l| try fs.op16(.load, l),
             .env => |slot| try fs.envOp(.load_env, r.hops, slot, null),
+            .special => |o| try fs.op(if (o == .this_sloppy) .this_raw else o),
             .global, .ref => unreachable,
         }
     }
@@ -513,6 +525,7 @@ const Fn = struct {
                 fs.adjust(-1);
             },
             .ref => |slot| try fs.envOp(.store_ref, hops, slot, null),
+            .special => unreachable,
         }
         _ = name;
     }
@@ -555,7 +568,7 @@ const Fn = struct {
             .let_, .class_ => switch (r.b.loc) {
                 .local => |l| return fs.localOp(.store_checked, l, name),
                 .env => |slot| return fs.envOp(.store_env_checked, r.hops, slot, name),
-                .global, .ref => unreachable,
+                .global, .ref, .special => unreachable,
             },
             else => try fs.storeLoc(r.b.loc, r.hops, name),
         }
@@ -564,13 +577,19 @@ const Fn = struct {
     // ------------------------------------------------------------------ declarations
 
     fn declareSpecials(fs: *Fn, scope: *Scope) Error!void {
-        for (specials) |name| try fs.declare(scope, name, .special);
+        // Without nested functions no closure can capture these immutable call values. Derived
+        // constructors still need a mutable `this` binding until super() initializes it.
+        for ([_]Op{ if (fs.strict or fs.kind == .script) .this_raw else .this_sloppy, .new_target, .home, .callee }, specials) |o, name| {
+            if (!scope.env and fs.kind != .derived_ctor) {
+                try scope.names.put(fs.alloc(), name, .{ .loc = .{ .special = o }, .kind = .special });
+            } else try fs.declare(scope, name, .special);
+        }
     }
 
     fn initSpecials(fs: *Fn, scope: *Scope) Error!void {
-        _ = scope;
         const this: Op = if (fs.kind == .derived_ctor) .uninit else if (fs.strict or fs.kind == .script) .this_raw else .this_sloppy;
         for ([_]Op{ this, .new_target, .home, .callee }, specials) |o, name| {
+            if (scope.names.get(name).?.loc == .special) continue;
             try fs.op(o);
             try fs.initName(name);
         }
@@ -700,8 +719,10 @@ const Fn = struct {
         std.debug.assert(fs.depth == 0);
         switch (n.data) {
             .expr_stmt => |e| {
-                try fs.expr(e.expr);
-                if (fs.completion) |l| try fs.op16(.store, l) else try fs.op(.pop);
+                if (fs.completion) |l| {
+                    try fs.expr(e.expr);
+                    try fs.op16(.store, l);
+                } else try fs.discard(e.expr);
             },
             .var_stmt => |v| try fs.varList(v.list),
             .func => {}, // instantiated at scope entry
@@ -1194,6 +1215,7 @@ const Fn = struct {
             return;
         }
         if (fs.kind.constructible() and !fs.generator and !fs.is_async) {
+            if (fs.resolve(this_name).?.b.loc == .special) return fs.op(.ret_this);
             try fs.loadRaw(this_name);
             try fs.op(.ret_ctor);
         } else try fs.op(.ret);
@@ -1227,8 +1249,7 @@ const Fn = struct {
         fs.patchAll(&fs.ctx.items[ci].continues, fs.pc());
         if (per_iteration) try fs.op(.clone_env);
         if (f.update) |u| {
-            try fs.expr(u);
-            try fs.op(.pop);
+            try fs.discard(u);
         }
         try fs.jumpTo(.jump, top);
         if (exit) |e| fs.patch(e);
@@ -1561,7 +1582,7 @@ const Fn = struct {
             },
             .delete_expr => |d| try fs.deleteExpr(d.expr),
             .prefix => |p| try fs.prefix(n, p.op, p.expr),
-            .postfix => |p| try fs.update(p.expr, p.op == .plus2, true),
+            .postfix => |p| try fs.update(p.expr, p.op == .plus2, true, true),
             .binary => |b| try fs.binary(n, b.left, b.op, b.right),
             .conditional => |cnd| {
                 try fs.expr(cnd.cond);
@@ -1733,6 +1754,16 @@ const Fn = struct {
         switch (n.data) {
             inline .prop_access, .elem_access => |a, tag| {
                 const prop = tag == .prop_access;
+                if (prop) {
+                    if (!this_too and !a.optional and a.expr.data == .identifier) {
+                        const id = a.expr.data.identifier;
+                        if (fs.resolve(id)) |r| if (r.b.loc == .local) {
+                            try fs.localOp(.get_prop_local, r.b.loc.local, id);
+                            try fs.propOperands(memberName(a.name));
+                            return;
+                        };
+                    }
+                }
                 if (a.expr.data == .super_expr) {
                     try fs.loadName(home_name);
                     try fs.loadName(this_name);
@@ -1747,7 +1778,7 @@ const Fn = struct {
                 try fs.chainPart(a.expr, ch);
                 if (a.optional) try fs.nullishExit(ch);
                 if (this_too) try fs.op(.dup);
-                if (prop) try fs.propOp(.get_prop, memberName(a.name)) else {
+                if (prop) try fs.propOp(if (this_too) .get_method else .get_prop, memberName(a.name)) else {
                     try fs.expr(a.index);
                     try fs.op(.get_elem);
                 }
@@ -1806,7 +1837,9 @@ const Fn = struct {
         try fs.op(.dup);
         try fs.loadRaw(this_name);
         try fs.op(.assert_uninit);
-        try fs.initName(this_name);
+        // Invalid super() in eval still compiles: super_call/assert_uninit must throw at run
+        // time. An immutable call-header `this` can never pass that assertion.
+        if (fs.resolve(this_name).?.b.loc == .special) try fs.op(.pop) else try fs.initName(this_name);
         try fs.loadName(fn_name);
         try fs.loadRaw(this_name);
         try fs.op(.run_field_init);
@@ -1892,7 +1925,7 @@ const Fn = struct {
 
     fn prefix(fs: *Fn, n: *Node, o: Tok, e: *Node) Error!void {
         switch (o) {
-            .plus2, .minus2 => return fs.update(e, o == .plus2, false),
+            .plus2, .minus2 => return fs.update(e, o == .plus2, false, true),
             else => {},
         }
         try fs.expr(e);
@@ -1905,16 +1938,43 @@ const Fn = struct {
         });
     }
 
+    /// An unused update needs the write and coercion, but neither copy of its result.
+    fn discard(fs: *Fn, n: *Node) Error!void {
+        switch (n.data) {
+            .paren => |p| return fs.discard(p.expr),
+            .postfix => |p| return fs.update(p.expr, p.op == .plus2, true, false),
+            .prefix => |p| if (p.op == .plus2 or p.op == .minus2) return fs.update(p.expr, p.op == .plus2, false, false),
+            .binary => |b| {
+                if (b.op == .assign) return fs.assign(b.left, null, b.right, false);
+                if (isCompoundAssign(b.op)) return fs.assign(b.left, binaryOp(b.op).?, b.right, false);
+                if (b.op == .comma) {
+                    try fs.discard(b.left);
+                    return fs.discard(b.right);
+                }
+            },
+            else => {},
+        }
+        try fs.expr(n);
+        try fs.op(.pop);
+    }
+
     /// `++x`, `x--` and friends.
-    fn update(fs: *Fn, target: *Node, inc: bool, postfix: bool) Error!void {
+    fn update(fs: *Fn, target: *Node, inc: bool, postfix: bool, keep: bool) Error!void {
         const step: Op = if (inc) .inc else .dec;
         switch (target.data) {
             .identifier => |id| {
+                if (!keep) if (fs.resolve(id)) |r| {
+                    if (r.b.loc == .local and r.b.kind != .const_ and r.b.kind != .callee) {
+                        return fs.localOp(if (inc) .inc_local else .dec_local, r.b.loc.local, id);
+                    }
+                };
                 try fs.loadName(id);
-                try fs.op(.plus);
-                if (postfix) try fs.op(.dup);
+                if (keep and postfix) {
+                    try fs.op(.plus);
+                    try fs.op(.dup);
+                }
                 try fs.op(step);
-                if (!postfix) try fs.op(.dup);
+                if (keep and !postfix) try fs.op(.dup);
                 try fs.assignName(id);
             },
             .prop_access, .elem_access => {
@@ -1928,8 +1988,9 @@ const Fn = struct {
                 try fs.op(step);
                 try fs.memberSet(target);
                 if (postfix) try fs.op(.pop);
+                if (!keep) try fs.op(.pop);
             },
-            .paren => |p| try fs.update(p.expr, inc, postfix),
+            .paren => |p| try fs.update(p.expr, inc, postfix, keep),
             else => return fs.comp.unsupported(target, "this update target"),
         }
     }
@@ -1962,9 +2023,16 @@ const Fn = struct {
         };
     }
 
+    fn isCompoundAssign(o: Tok) bool {
+        return switch (o) {
+            .plus_assign, .minus_assign, .star_assign, .slash_assign, .percent_assign, .star2_assign, .amp_assign, .pipe_assign, .caret_assign, .shl_assign, .shr_assign, .ushr_assign => true,
+            else => false,
+        };
+    }
+
     fn binary(fs: *Fn, n: *Node, left: *Node, o: Tok, right: *Node) Error!void {
         switch (o) {
-            .assign => return fs.assign(left, null, right),
+            .assign => return fs.assign(left, null, right, true),
             .comma => {
                 try fs.expr(left);
                 try fs.op(.pop);
@@ -1980,14 +2048,58 @@ const Fn = struct {
             .amp2_assign, .pipe2_assign, .qq_assign => return fs.logicalAssign(left, o, right),
             else => {},
         }
-        if (o == .plus_assign or o == .minus_assign or o == .star_assign or o == .slash_assign or o == .percent_assign or
-            o == .star2_assign or o == .amp_assign or o == .pipe_assign or o == .caret_assign or o == .shl_assign or
-            o == .shr_assign or o == .ushr_assign) return fs.assign(left, binaryOp(o).?, right);
+        if (isCompoundAssign(o)) return fs.assign(left, binaryOp(o).?, right, true);
         const bop = binaryOp(o) orelse return fs.comp.unsupported(n, "this binary operator");
         if (bop == .in and left.data == .private_name) return fs.comp.unsupported(n, "#x in o");
+        if (try fs.localBinary(left, bop, right)) return;
         try fs.expr(left);
         try fs.expr(right);
         try fs.op(bop);
+    }
+
+    /// Only the literal is known here; the local still receives the ordinary JS operation.
+    fn localBinary(fs: *Fn, left: *Node, bop: Op, right: *Node) Error!bool {
+        if (left.data != .identifier) return false;
+        const id = left.data.identifier;
+        const r = fs.resolve(id) orelse return false;
+        if (r.b.loc != .local) return false;
+        if (right.data == .identifier) {
+            const rhs = fs.resolve(right.data.identifier) orelse return false;
+            if (rhs.b.loc != .local) return false;
+            const fused: Op = switch (bop) {
+                .add => .add_locals,
+                .sub => .sub_locals,
+                .lt => .lt_locals,
+                .le => .le_locals,
+                else => return false,
+            };
+            try fs.byte(@backingInt(fused));
+            try fs.operand(u16, r.b.loc.local);
+            try fs.operand(u16, try fs.keyIndex(id));
+            try fs.operand(u16, rhs.b.loc.local);
+            try fs.operand(u16, try fs.keyIndex(right.data.identifier));
+            fs.adjust(2);
+            fs.adjust(-1);
+            return true;
+        }
+        const fused: Op = switch (bop) {
+            .add => .add_local_int,
+            .sub => .sub_local_int,
+            .lt => .lt_local_int,
+            .le => .le_local_int,
+            else => return false,
+        };
+        if (right.data != .numeric_lit) return false;
+        const d = try numericValue(fs.comp, right, right.data.numeric_lit, fs.strict);
+        if (d != @trunc(d) or @abs(d) >= 2147483648 or (d == 0 and std.math.signbit(d))) return false;
+        try fs.byte(@backingInt(fused));
+        try fs.operand(u16, r.b.loc.local);
+        try fs.operand(u16, try fs.keyIndex(id));
+        try fs.operand(u32, @bitCast(@as(i32, @intFromFloat(d))));
+        // Keep two scratch slots available to the baseline JIT's ordinary binary lowering.
+        fs.adjust(2);
+        fs.adjust(-1);
+        return true;
     }
 
     /// With the left operand on top: jumps past the right one when it decides the result.
@@ -2009,15 +2121,17 @@ const Fn = struct {
     }
 
     /// `left = right`, or `left bop= right`.
-    fn assign(fs: *Fn, left: *Node, bop: ?Op, right: *Node) Error!void {
+    fn assign(fs: *Fn, left: *Node, bop: ?Op, right: *Node, keep: bool) Error!void {
         switch (left.data) {
             .identifier => |id| {
                 if (bop) |b| {
-                    try fs.loadName(id);
-                    try fs.expr(right);
-                    try fs.op(b);
+                    if (!try fs.localBinary(left, b, right)) {
+                        try fs.loadName(id);
+                        try fs.expr(right);
+                        try fs.op(b);
+                    }
                 } else try fs.exprNamed(right, id);
-                try fs.op(.dup);
+                if (keep) try fs.op(.dup);
                 try fs.assignName(id);
             },
             .prop_access, .elem_access => {
@@ -2032,12 +2146,13 @@ const Fn = struct {
                     try fs.expr(right);
                 }
                 try fs.memberSet(left);
+                if (!keep) try fs.op(.pop);
             },
-            .paren => |p| try fs.assign(p.expr, bop, right),
+            .paren => |p| try fs.assign(p.expr, bop, right, keep),
             .array_lit, .object_lit => {
                 if (bop != null) return fs.comp.unsupported(left, "this assignment target");
                 try fs.expr(right);
-                try fs.op(.dup);
+                if (keep) try fs.op(.dup);
                 try fs.bindPattern(left, .assign);
             },
             else => return fs.comp.unsupported(left, "this assignment target"),
@@ -2206,6 +2321,16 @@ fn compileFunction(comp: *Compiler, outer: ?*Scope, n: *Node, f: *Func, kind: Ki
     var counting = true;
     for (f.params, 0..) |p, i| {
         const param = p.data.param;
+        if (!param.dotdotdot and param.init == null and param.name.data == .identifier) {
+            const binding = fs.resolve(param.name.data.identifier).?.b;
+            if (binding.loc == .local) {
+                try fs.byte(@backingInt(Op.arg_local));
+                try fs.operand(u16, @intCast(i));
+                try fs.operand(u16, binding.loc.local);
+                if (counting) arity += 1;
+                continue;
+            }
+        }
         if (param.dotdotdot) {
             counting = false;
             try fs.op16(.rest, @intCast(i));
