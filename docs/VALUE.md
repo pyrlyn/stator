@@ -910,6 +910,13 @@ allocation and aborts on a platform where it does not hold (5-level paging, AArc
 that is neither — a double, a length — can mask to a plausible address and pin one object it does
 not own for one collection. It costs memory, never correctness.
 
+**Pause tracing.** `JSRT_GC_TRACE=1` writes `stator-gc: {"pauseNs":N,"liveBytes":N}` to stderr
+after each collection resumes the world. The monotonic duration includes stopping threads,
+root scanning, count reconciliation, young-object reclamation, cycle collection and resuming
+threads; it excludes writing the record and acquiring the heap lock before collection. It is
+disabled by default and is separate from pyrlyn/gc's narrower cycle-collector timing.
+Trace I/O perturbs execution, so collect throughput in a separate run with tracing disabled.
+
 **The checks.** `JSRT_GC_VERIFY=1` recounts every heap reference after each collection and names
 the kind whose stores skipped `jsrt_gc_write` or whose `trace` misses a field. `JSRT_GC_STRESS=1`
 (or `jsrt_gc_stress(1)`) collects before every allocation. `pnpm run test:leak` samples RSS over a

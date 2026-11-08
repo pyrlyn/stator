@@ -68,6 +68,11 @@ pub fn build(b: *std.Build) void {
     run_cli.addPassthruArgs();
     b.step("run", "Run stator-engine with the arguments after --").dependOn(&run_cli.step);
 
+    const steady = b.addExecutable(.{ .name = "stator-steady", .root_module = over(b, interp, "src/steady-host.zig") });
+    linkRuntime(b, steady.root_module, runtime);
+    const install_steady = b.addInstallArtifact(steady, .{});
+    b.step("steady", "Build the warmed benchmark host").dependOn(&install_steady.step);
+
     const driver = b.addExecutable(.{ .name = "test262-parse", .root_module = over(b, interp, "test262/parse.zig") });
     // The execution driver only spawns the compiled host (test262/host.ts), so it links neither
     // the interpreter nor the runtime.

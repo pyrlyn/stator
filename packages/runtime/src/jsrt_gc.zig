@@ -370,6 +370,7 @@ var allocated_since: usize = 0;
 const min_threshold: usize = 8 * 1024 * 1024;
 var threshold: usize = min_threshold;
 var collecting = false;
+var trace_pauses = false;
 var initialized = false;
 var gc_stress = false;
 
@@ -1185,6 +1186,14 @@ fn collectLocked() void {
     if (collecting) return;
     collecting = true;
     defer collecting = false;
+    const started = if (trace_pauses) host.rt_nanos() else 0;
+    // Registered first so reporting happens after resumeWorld, outside the stopped interval.
+    defer if (trace_pauses) {
+        const elapsed = host.rt_nanos() - started;
+        var buf: [192]u8 = undefined;
+        const line = std.fmt.bufPrint(&buf, "stator-gc: {{\"pauseNs\":{d},\"liveBytes\":{d}}}\n", .{ elapsed, live_bytes }) catch unreachable;
+        _ = std.c.write(2, line.ptr, line.len);
+    };
     stopWorld();
     defer resumeWorld();
     if (registered) publishStack();
@@ -1304,6 +1313,7 @@ pub export fn jsrt_gc_init() void {
     // A library built with --emit=lib localizes jsrt_gc_stress, so a C host cannot reach its
     // private collector's hook; the environment can (ffi static-lib, plan/T66).
     if (std.c.getenv("JSRT_GC_STRESS")) |v| gc_stress = v[0] != 0 and v[0] != '0';
+    if (std.c.getenv("JSRT_GC_TRACE")) |v| trace_pauses = v[0] != 0 and v[0] != '0';
     initialized = true;
 }
 

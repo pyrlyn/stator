@@ -8,21 +8,24 @@ export const REPO = join(HERE, '..', '..', '..');
 const ENGINE = join(REPO, 'packages', 'engine');
 
 /**
- * Builds the CLI with `optimize` and answers its path; `STATOR_ENGINE` names a prebuilt binary
- * instead. The build links `packages/runtime/build/libjsrt.a`, so `pnpm run runtime` comes first.
+ * Builds the requested host; `STATOR_ENGINE` (CLI) or `STATOR_STEADY` (benchmark) can name a
+ * prebuilt binary. Both link `packages/runtime/build/libjsrt.a`; `pnpm run runtime` comes first.
  */
-export function engineBinary(optimize: 'Debug' | 'ReleaseSafe' | 'ReleaseFast'): string {
-  const prebuilt = process.env['STATOR_ENGINE'];
+export function engineBinary(
+  optimize: 'Debug' | 'ReleaseSafe' | 'ReleaseFast',
+  target: 'cli' | 'steady' = 'cli',
+): string {
+  const prebuilt = process.env[target === 'cli' ? 'STATOR_ENGINE' : 'STATOR_STEADY'];
   if (prebuilt !== undefined && prebuilt !== '') return prebuilt;
   execFileSync(
     'zig',
-    ['build', 'cli', `-Doptimize=${optimize}`, '--build-file', join(ENGINE, 'build.zig')],
+    ['build', target, `-Doptimize=${optimize}`, '--build-file', join(ENGINE, 'build.zig')],
     { cwd: ENGINE, stdio: 'inherit' },
   );
   return join(
     ENGINE,
     'zig-out',
     'bin',
-    process.platform === 'win32' ? 'stator-engine.exe' : 'stator-engine',
+    `${target === 'cli' ? 'stator-engine' : 'stator-steady'}${process.platform === 'win32' ? '.exe' : ''}`,
   );
 }
