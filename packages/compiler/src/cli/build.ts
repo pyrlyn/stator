@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { emitC, type LibraryEmit } from '../codegen/index.ts';
+import { INTERP_INCLUDE } from '../codegen/helpers.ts';
 import { collectLinkFlags } from '../frontend/extern.ts';
 import {
   collectUnitExports,
@@ -193,6 +194,24 @@ export function resolveRuntime(): Runtime {
  * over libc, with no dependency on libjsrt.a (packages/std/justfile). Linked only into a program
  * whose module graph holds a std file. */
 const STD_ARCHIVE = join(STD_ROOT, 'build', 'libjsrt_std.a');
+/** The interpreter (docs/INTERPRETER.md §9): one archive for every runtime flavor, as std's is.
+ * Linked only into a program that calls it, so every other binary is the size it always was. */
+const INTERP_ROOT = packageRoot('STATOR_INTERP_ROOT', 'interpreter', 'src');
+const INTERP_ARCHIVE = join(INTERP_ROOT, 'build', 'lib', 'libjsrt_interp.a');
+
+/** The first-party archives a link owes beyond the runtime's. `CompiledC` is one. */
+export interface LinkedLibraries {
+  /** The module graph holds a `std/*` file: `libjsrt_std.a`. */
+  readonly std: boolean;
+  /** The C calls the interpreter (`direct-eval`, `interpret-global`): `libjsrt_interp.a`. */
+  readonly interp: boolean;
+}
+
+/** In link order. Neither depends on the other: the order a static link reads archives is
+ * load-bearing in general, and fixing it here keeps it stable. */
+function libraryArchives(libs: LinkedLibraries): string[] {
+  return [...(libs.std ? [STD_ARCHIVE] : []), ...(libs.interp ? [INTERP_ARCHIVE] : [])];
+}
 const SANITIZER_FLAGS = ['-O1', '-g', '-fsanitize=address,undefined'];
 
 /** What a program linking this archive must pass — Boehm's `-lgc` when the runtime was built
@@ -309,11 +328,11 @@ async function runBuild(options: BuildOptions): Promise<number> {
       }
       const object = join(scratch, 'unit.o');
       compileObject(cPath, object, options.opt ?? 2, runtime);
-      requireLinkArchives(compiled.std, runtime);
+      requireLinkArchives(compiled, runtime);
       writeStaticLibrary({
         cc: selectCC(runtime),
         object,
-        archives: [...(compiled.std ? [STD_ARCHIVE] : []), runtime.archive],
+        archives: [...libraryArchives(compiled), runtime.archive],
         symbols: compiled.exportSurface?.symbols ?? [],
         out,
         pc: lib.pc,
@@ -353,7 +372,7 @@ async function runBuild(options: BuildOptions): Promise<number> {
           options.out,
           opt,
           externFlags,
-          compiled.std,
+          compiled,
           runtime,
           compiled.flavor,
           jobs.jobs,
@@ -362,7 +381,7 @@ async function runBuild(options: BuildOptions): Promise<number> {
         rmSync(partsDir, { recursive: true, force: true });
       }
     } else {
-      linkExecutable(cPath, options.out, opt, externFlags, compiled.std, runtime, compiled.flavor);
+      linkExecutable(cPath, options.out, opt, externFlags, compiled, runtime, compiled.flavor);
     }
     return 0;
   } finally {
@@ -409,11 +428,9 @@ function libraryOutputs(options: BuildOptions): {
  * flags every extern-bearing `.d.ts` contributed (docs/FFI.md §9), in program order. The CLI
  * `--link=` flags join them at the link, never here — one source per carrier. `header` is the
  * `--emit-header` text, present only when a unit name was given (Task 7.2 steps 1–2). */
-export interface CompiledC {
+export interface CompiledC extends LinkedLibraries {
   readonly c: string;
   readonly linkFlags: readonly string[];
-  /** Whether the module graph holds a `std/*` file, so the link owes `libjsrt_std.a`. */
-  readonly std: boolean;
   /** The runtime flavor the gate admitted builtins against; the link must use the same one. */
   readonly flavor: RuntimeFlavor;
   /** Every source file of the program, so `build` can refuse an output that names one. */
@@ -537,20 +554,25 @@ async function compileToCInner(
     return null;
   }
 
-  return withSpan('codegen/emit-c', {}, () => ({
+  return withSpan('codegen/emit-c', {}, () => {
     // With `--emit-header` the object also defines the ABI-identity symbol the header
     // declares (plan §10 Task 7.2 step 7): same unit, same compiler constant, so the two
     // always agree — and a header from another build names a symbol this object lacks. The
     // init, stubs, and error cell ride `library` into the emitter, which owns the module's
     // slot layout and so is the only stage that can place them (steps 3–5).
-    c: emitC(optimized, library) + (unit === undefined ? '' : exportVersionDefinition(unit)),
-    linkFlags: withSpan('frontend/link-flags', {}, () => collectLinkFlags(program)),
-    std: order.some((file) => isStdSourceFile(file.fileName)),
-    flavor,
-    inputs: program.getSourceFiles().map((file) => file.fileName),
-    ...(header !== undefined && { header }),
-    ...(exportSurface !== undefined && { exportSurface }),
-  }));
+    const c = emitC(optimized, library) + (unit === undefined ? '' : exportVersionDefinition(unit));
+    return {
+      c,
+      linkFlags: withSpan('frontend/link-flags', {}, () => collectLinkFlags(program)),
+      std: order.some((file) => isStdSourceFile(file.fileName)),
+      // The emitter includes the interpreter's header exactly when a node calls it.
+      interp: c.includes(INTERP_INCLUDE),
+      flavor,
+      inputs: program.getSourceFiles().map((file) => file.fileName),
+      ...(header !== undefined && { header }),
+      ...(exportSurface !== undefined && { exportSurface }),
+    };
+  });
 }
 
 /** Prints diagnostics and reports whether any of them stops the build. `not-yet` and `never` are
@@ -577,12 +599,12 @@ function linkExecutable(
   out: string,
   opt: OptLevel,
   externFlags: readonly string[],
-  std: boolean,
+  libs: LinkedLibraries,
   runtime: Runtime,
   gateFlavor: RuntimeFlavor,
 ): void {
   withSpan('link/clang', {}, () => {
-    link(cPath, out, opt, externFlags, std, runtime, gateFlavor);
+    link(cPath, out, opt, externFlags, libs, runtime, gateFlavor);
   });
 }
 
@@ -762,7 +784,7 @@ async function linkExecutableParallel(
   out: string,
   opt: OptLevel,
   externFlags: readonly string[],
-  std: boolean,
+  libs: LinkedLibraries,
   runtime: Runtime,
   gateFlavor: RuntimeFlavor,
   jobs: number,
@@ -808,7 +830,7 @@ async function linkExecutableParallel(
   await runPool(compileTasks, jobs);
   addStageTime('link/compile', compileMs);
   withSpan('link/ld', {}, () => {
-    link(objects, out, opt, externFlags, std, runtime, gateFlavor);
+    link(objects, out, opt, externFlags, libs, runtime, gateFlavor);
   });
 }
 
@@ -855,13 +877,13 @@ function requireProduced(cc: string, out: string): void {
 
 /** The clang link line, pure so a test can read it: the generated C (or its partitioned
  * objects), `libjsrt_std.a` exactly when the program imports `std/*` (plan.md §11c T11.2 Check),
- * the runtime archive, the recorded and extern flags. Exported for that test only. */
+ * `libjsrt_interp.a` exactly when it calls the interpreter (plan T14.3), the runtime archive, the recorded and extern flags. Exported for that test only. */
 export function linkArguments(
   inputs: string | readonly string[],
   out: string,
   opt: OptLevel,
   externFlags: readonly string[],
-  std: boolean,
+  libs: LinkedLibraries,
   runtime: Runtime = resolveRuntime(),
 ): string[] {
   const sources = typeof inputs === 'string' ? [inputs] : inputs;
@@ -884,9 +906,8 @@ export function linkArguments(
     '-I',
     runtime.include,
     ...sources,
-    // The std archive before the runtime's, though neither depends on the other: the order a
-    // static link reads archives is load-bearing in general, and fixing it here keeps it stable.
-    ...(std ? [STD_ARCHIVE] : []),
+    // Ahead of the runtime's, which both call into.
+    ...libraryArchives(libs),
     '-L',
     runtime.libDir,
     '-ljsrt',
@@ -907,10 +928,10 @@ function systemLinkFlags(runtime: Runtime, externFlags: readonly string[]): stri
   return dedupLinkLibs([...extraLinkFlags(runtime), ...externFlags]);
 }
 
-/** STA0011 for a missing archive (the runtime's, or the std library's for a `std/*` importer),
- * naming the just recipe that builds it. */
+/** STA0011 for a missing archive (the runtime's, the std library's for a `std/*` importer, the
+ * interpreter's for a program that calls it), naming the just recipe that builds it. */
 function requireArchive(
-  what: 'runtime' | 'std',
+  what: 'runtime' | 'std' | 'interpreter',
   archive: string,
   root: string,
   recipe: string,
@@ -923,12 +944,15 @@ function requireArchive(
   }
 }
 
-/** The archives a link (or a `--emit=lib` prelink) reads: the runtime's, and the std library's
- * for a `std/*` importer. */
-function requireLinkArchives(std: boolean, runtime: Runtime): void {
+/** The archives a link (or a `--emit=lib` prelink) reads: the runtime's, plus each first-party
+ * library the program owes. */
+function requireLinkArchives(libs: LinkedLibraries, runtime: Runtime): void {
   requireArchive('runtime', runtime.archive, runtime.root, RUNTIME_JUST_RECIPE[runtime.flavor]);
-  if (std) {
+  if (libs.std) {
     requireArchive('std', STD_ARCHIVE, STD_ROOT, 'std');
+  }
+  if (libs.interp) {
+    requireArchive('interpreter', INTERP_ARCHIVE, INTERP_ROOT, 'interp');
   }
 }
 
@@ -937,7 +961,7 @@ function link(
   out: string,
   opt: OptLevel,
   externFlags: readonly string[],
-  std: boolean,
+  libs: LinkedLibraries,
   runtime: Runtime,
   gateFlavor: RuntimeFlavor,
 ): void {
@@ -948,12 +972,12 @@ function link(
       `the gate admitted the ${gateFlavor} runtime surface but the link uses the ${runtime.flavor} archive`,
     );
   }
-  requireLinkArchives(std, runtime);
+  requireLinkArchives(libs, runtime);
 
   // conda-clang 21.1.8's Darwin ASan runtime deadlocks during dyld's early malloc
   // initialization on the current macOS host (see selectCC above).
   const cc = selectCC(runtime);
-  const args = linkArguments(inputs, out, opt, externFlags, std, runtime);
+  const args = linkArguments(inputs, out, opt, externFlags, libs, runtime);
   const first = runClangCaptured(cc, args);
   const startError = clangStartError(cc, first);
   if (startError !== undefined) {

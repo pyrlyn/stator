@@ -2,9 +2,10 @@
 //! in, the corpus walk, and the per-directory pass counts ratcheted against a JSON baseline in
 //! the package.
 //!
-//! <driver> --package=<dir> [--corpus=<dir>] [--filter=<text>] [--failures] [--update]
+//! <driver> --package=<dir> [--corpus=<dir>] [--host=<file>] [--filter=<text>] [--failures] [--update]
 //! The corpus defaults to `$STATOR_TEST262`, then to `packages/tests/test262/corpus`, where
-//! `pnpm run test262:fetch` puts the pinned one.
+//! `pnpm run test262:fetch` puts the pinned one. The host (exec.zig's) defaults to
+//! `<package>/build/test262-host`, where `pnpm run test262:interp-exec` compiles it.
 
 const std = @import("std");
 const Io = std.Io;
@@ -145,6 +146,7 @@ pub const Options = struct {
     tool: []const u8,
     package: []const u8,
     corpus: []const u8,
+    host: []const u8 = "",
     filter: ?[]const u8 = null,
     failures: bool = false,
     update: bool = false,
@@ -162,6 +164,8 @@ pub fn parseArgs(init: std.process.Init, tool: []const u8) !?Options {
             package = arg["--package=".len..];
         } else if (std.mem.startsWith(u8, arg, "--corpus=")) {
             corpus = arg["--corpus=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--host=")) {
+            o.host = arg["--host=".len..];
         } else if (std.mem.startsWith(u8, arg, "--filter=")) {
             o.filter = arg["--filter=".len..];
         } else if (std.mem.eql(u8, arg, "--failures")) {
@@ -178,6 +182,7 @@ pub fn parseArgs(init: std.process.Init, tool: []const u8) !?Options {
         return null;
     };
     o.corpus = corpus orelse try std.fs.path.join(a, &.{ o.package, "..", "tests", "test262", "corpus" });
+    if (o.host.len == 0) o.host = try std.fs.path.join(a, &.{ o.package, "build", "test262-host" });
     return o;
 }
 

@@ -1,91 +1,30 @@
-//! Test262's `test/language/` run by the interpreter (plan T14.2). Each test runs in each mode
-//! its flags ask for (common.zig), in a child process of its own: a fresh realm every time, and a
-//! crash or a hang (`timeout_s`) costs one test, not the run. The harness files go in front of the
-//! test's source — `assert.js`, `sta.js`, `doneprintHandle.js` for `async`, then its `includes` —
-//! except under `raw`. A test passes when it completes, or when it throws the error its `negative`
-//! metadata names; an `async` test passes when it prints `Test262:AsyncTestComplete` once the
-//! microtask queue drains. A construct the interpreter does not run yet fails the test and is
-//! counted apart, by construct. Pass counts per directory are ratcheted against
-//! `test262-exec.json`; `--update` records them. The command line is common.zig's. Unix only.
+//! Test262's `test/language/` run by the interpreter (plan T14.2, T14.3). Each test runs in each
+//! mode its flags ask for (common.zig), in a process of its own: a fresh realm every time, and a
+//! crash or a hang (`timeout_s`) costs one test, not the run. The process is the compiled host
+//! (`test262/host.ts`, docs/INTERPRETER.md §8), which hands the composed script to an indirect
+//! `eval`, so the harness's `$262` and `print` are compiled code. The harness files go in front of
+//! the test's source — `assert.js`, `sta.js`, `doneprintHandle.js` for `async`, then its
+//! `includes` — except under `raw`. A test passes when it completes, or when it throws the error
+//! its `negative` metadata names; an `async` test passes when it prints
+//! `Test262:AsyncTestComplete` before the host's event loop drains. A construct the interpreter
+//! does not run yet fails the test and is counted apart, by construct. Pass counts per directory
+//! are ratcheted against `test262-exec.json`; `--update` records them. The command line is
+//! common.zig's. Unix only.
 
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
-const interp = @import("stator_interp");
-const rt = interp.rt;
-const c = rt.c;
 const common = @import("common.zig");
 
 const timeout_s = 10;
 /// What a child may print before the rest is dropped.
 const output_cap = 16 * 1024;
 
+// The host's exit codes (host.ts).
 const exit_pass = 0;
-const exit_fail = 1;
 const exit_unsupported = 3;
 
 extern "c" fn fork() c_int;
-
-// ---------------------------------------------------------------------- the child
-
-/// The name of the thrown value's constructor, or "" when it has none.
-fn errorName(e: rt.Value, buf: []u8) []const u8 {
-    if (!rt.isObjectLike(e)) return "";
-    const ctor = interp.vm.getProp(e, "constructor", null);
-    if (rt.pending()) {
-        _ = c.jsrt_take_exception();
-        return "";
-    }
-    return text(interp.vm.getProp(ctor, "name", null), buf);
-}
-
-fn text(v: rt.Value, buf: []u8) []const u8 {
-    const s = c.jsrt_to_string(v);
-    if (rt.pending()) {
-        _ = c.jsrt_take_exception();
-        return "<unprintable>";
-    }
-    return rt.copyText(s, buf);
-}
-
-fn say(comptime fmt: []const u8, args: anytype) void {
-    var buf: [1024]u8 = undefined;
-    const line = std.fmt.bufPrint(&buf, fmt ++ "\n", args) catch return;
-    _ = std.c.write(1, line.ptr, line.len);
-}
-
-/// Runs one test in this (child) process and answers its exit code.
-fn child(src: []const u8, m: common.Meta) u8 {
-    c.jsrt_init();
-    const out = interp.interp.runScript(src, false);
-    switch (out) {
-        .unsupported => |u| {
-            // An early error the parser leaves to the compiler is not a construct it lacks.
-            if (m.negativeParse()) {
-                say("compiled ({s} unsupported), expected a parse-time {s}", .{ u.what, m.negative_type });
-                return exit_fail;
-            }
-            say("UNSUPPORTED {s}", .{u.what});
-            return exit_unsupported;
-        },
-        .value => {},
-    }
-    if (!rt.pending() and m.is_async) c.jsrt_run_microtasks();
-    if (!rt.pending()) {
-        if (m.negative_phase.len != 0) {
-            say("completed, expected a {s} {s}", .{ m.negative_phase, m.negative_type });
-            return exit_fail;
-        }
-        return exit_pass;
-    }
-    const e = c.jsrt_take_exception();
-    var name_buf: [64]u8 = undefined;
-    var msg_buf: [512]u8 = undefined;
-    const name = errorName(e, &name_buf);
-    if (m.negative_phase.len != 0 and std.mem.eql(u8, name, m.negative_type)) return exit_pass;
-    say("threw {s}", .{text(e, &msg_buf)});
-    return exit_fail;
-}
 
 // ---------------------------------------------------------------------- the pool
 
@@ -102,6 +41,9 @@ const Slot = struct {
     test_index: usize,
     mode: common.Mode,
     is_async: bool,
+    negative_parse: bool,
+    /// The composed script, removed once the host exits.
+    script: [:0]const u8,
     out: std.ArrayList(u8) = .empty,
 };
 
@@ -118,6 +60,9 @@ const Runner = struct {
     unsupported_tests: u32 = 0,
     timeouts: u32 = 0,
     crashes: u32 = 0,
+    /// Where the composed scripts go, one file per running host.
+    scratch: []const u8 = "",
+    runs: usize = 0,
 
     fn harnessFile(r: *Runner, name: []const u8) ![]const u8 {
         if (r.harness.get(name)) |bytes| return bytes;
@@ -145,6 +90,12 @@ const Runner = struct {
     fn start(r: *Runner, test_index: usize, mode: common.Mode, src: []const u8, m: common.Meta) !void {
         const script = try r.source(src, m, mode);
         defer r.gpa.free(script);
+        r.runs += 1;
+        const path = try std.fmt.allocPrintSentinel(r.a, "{s}/{d}.js", .{ r.scratch, r.runs }, 0);
+        try Io.Dir.cwd().writeFile(r.io, .{ .sub_path = path, .data = script });
+        const host = try r.a.dupeSentinel(u8, r.o.host, 0);
+        const negative = try r.a.dupeSentinel(u8, if (m.negative_phase.len != 0) m.negative_type else "", 0);
+        const argv = [_:null]?[*:0]const u8{ host, path, negative };
         var fds: [2]c_int = undefined;
         if (std.c.pipe(&fds) != 0) return error.PipeFailed;
         const pid = fork();
@@ -154,10 +105,21 @@ const Runner = struct {
             _ = std.c.dup2(fds[1], 1);
             _ = std.c.dup2(fds[1], 2);
             _ = std.c.alarm(timeout_s);
-            std.c._exit(child(script, m));
+            _ = std.c.execve(host, &argv, @ptrCast(std.c.environ));
+            const why = "cannot run the host; build it with `pnpm run test262:interp-exec`\n";
+            _ = std.c.write(1, why.ptr, why.len);
+            std.c._exit(127);
         }
         _ = std.c.close(fds[1]);
-        try r.slots.append(r.a, .{ .pid = pid, .fd = fds[0], .test_index = test_index, .mode = mode, .is_async = m.is_async });
+        try r.slots.append(r.a, .{
+            .pid = pid,
+            .fd = fds[0],
+            .test_index = test_index,
+            .mode = mode,
+            .is_async = m.is_async,
+            .negative_parse = m.negativeParse(),
+            .script = path,
+        });
     }
 
     /// Reads what the children wrote, reaps the ones that finished.
@@ -181,6 +143,7 @@ const Runner = struct {
             _ = std.c.close(s.fd);
             var status: c_int = 0;
             _ = std.c.waitpid(s.pid, &status, 0);
+            _ = std.c.unlink(s.script);
             try r.reap(s.*, @bitCast(status));
             s.out.deinit(r.gpa);
             _ = r.slots.swapRemove(i);
@@ -198,7 +161,10 @@ const Runner = struct {
                     ok = !s.is_async or std.mem.indexOf(u8, output, "Test262:AsyncTestComplete") != null;
                     if (!ok) why = if (output.len == 0) "async test never called $DONE" else output;
                 },
-                exit_unsupported => {
+                // An early error the parser leaves to the compiler is not a construct it lacks.
+                exit_unsupported => if (s.negative_parse) {
+                    why = try std.fmt.allocPrint(r.a, "compiled ({s}), expected a parse-time error", .{output});
+                } else {
                     p.unsupported = true;
                     const marker = "UNSUPPORTED ";
                     const at = std.mem.lastIndexOf(u8, output, marker);
@@ -242,6 +208,8 @@ pub fn main(init: std.process.Init) !u8 {
     defer corpus.close(io);
 
     var r: Runner = .{ .a = a, .gpa = init.gpa, .io = io, .o = o, .tally = .{ .a = a } };
+    r.scratch = try std.fs.path.join(a, &.{ o.package, "build", "test262-scripts" });
+    try Io.Dir.cwd().createDirPath(io, r.scratch);
     const jobs = std.Thread.getCpuCount() catch 4;
     var modules: u32 = 0;
     while (try corpus.next(io)) |e| {
@@ -250,7 +218,7 @@ pub fn main(init: std.process.Init) !u8 {
         const ms = common.modes(m);
         try r.tests.append(a, .{ .path = try a.dupe(u8, e.path), .modes_left = @intCast(ms.len) });
         if (m.module) {
-            // Modules are T14.3's: no child runs one yet.
+            // The interpreter has no module goal yet, so no host runs one.
             modules += 1;
             try r.tally.record(e.path, false);
             continue;

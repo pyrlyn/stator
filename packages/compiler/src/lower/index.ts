@@ -36,6 +36,7 @@ import {
 } from '../frontend/gate.ts';
 import {
   builtinValueOf,
+  dynamicCodeGeneration,
   isPlainFunctionValue,
   isSelfBoundCallApply,
   globalFunctionOf,
@@ -129,6 +130,9 @@ import type {
   Module,
   NewExpr,
   NewValue,
+  InterpretGlobal,
+  DirectEval,
+  EvalBinding,
   ObjectEntry,
   ObjectLiteral,
   ObjectStaticCall,
@@ -1753,6 +1757,89 @@ function collectDynamicReturnsPass(
  * it in rather than synthesising a VariableStatement matters: a factory-made node has no source
  * position, and asking one for its start is a hard failure inside the TypeScript API. */
 
+/** What the interpreter answers (docs/INTERPRETER.md §3): a direct `eval`, `new Function(...)`,
+ * and `eval` or `Function` read as a value. `undefined` for anything else. The gate admits these
+ * in js mode only, so ts mode never reaches here with one. */
+function lowerInterpreted(
+  node: ts.Expression,
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  bindings: Scope,
+  diagnostics: Diagnostic[],
+): Expression | null | undefined {
+  const span = (): Span =>
+    makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
+  if (ts.isCallExpression(node)) {
+    // A spread call keeps the indirect path: its source is not known to be the first argument.
+    if (
+      !frontendTypes.isDirectEval(node, checker) ||
+      node.arguments.some((a) => ts.isSpreadElement(a))
+    ) {
+      return undefined;
+    }
+    const args = lowerArguments(node.arguments, sourceFile, checker, bindings, diagnostics);
+    if (args === null) {
+      return null;
+    }
+    // Each name once, resolved where the eval stands: an inner binding shadows an outer one.
+    const seen: EvalBinding[] = [];
+    const names = new Set<string>();
+    for (const decl of frontendTypes.evalVisibleDeclarations(node, checker)) {
+      names.add(decl.name.getText(sourceFile));
+    }
+    for (const source of names) {
+      const decl = checker.resolveName(source, node, ts.SymbolFlags.Value, false)?.valueDeclaration;
+      if (
+        decl === undefined ||
+        !(ts.isVariableDeclaration(decl) || ts.isParameter(decl)) ||
+        bindings.get(source) === undefined
+      ) {
+        continue;
+      }
+      const constant =
+        ts.isVariableDeclaration(decl) &&
+        ts.isVariableDeclarationList(decl.parent) &&
+        (decl.parent.flags & ts.NodeFlags.Const) !== 0;
+      seen.push({ source, name: bindings.hirName(source), constant });
+    }
+    // The caller's `this` where the lowering binds one; an arrow's is its enclosing function's,
+    // which it holds only when it reads `this` itself, so there it is `undefined` too.
+    const owner = enclosingFunction(node);
+    const receiver: Expression | null =
+      owner !== undefined && !ts.isArrowFunction(owner) && bindings.get(RECEIVER) !== undefined
+        ? receiverIdentifier(node, sourceFile, bindings, diagnostics)
+        : { kind: 'undefined-literal', type: H_UNDEFINED, span: span() };
+    if (receiver === null) {
+      return null;
+    }
+    const evaluated: DirectEval = {
+      kind: 'direct-eval',
+      type: hUnknown(false),
+      span: span(),
+      receiver,
+      args,
+      bindings: seen,
+    };
+    return evaluated;
+  }
+  if (ts.isNewExpression(node)) {
+    return dynamicCodeGeneration(node.expression, checker) === 'function'
+      ? lowerNewValue(node, hUnknown(false), sourceFile, checker, bindings, diagnostics)
+      : undefined;
+  }
+  const named = dynamicCodeGeneration(node, checker);
+  if (named === undefined) {
+    return undefined;
+  }
+  const value: InterpretGlobal = {
+    kind: 'interpret-global',
+    type: hUnknown(false),
+    span: span(),
+    name: named === 'eval' ? 'eval' : 'Function',
+  };
+  return value;
+}
+
 /** `new` through a VALUE (`jsrt_construct`): a function value, or a class value whose
  * descriptor is only known at run time. */
 function lowerNewValue(
@@ -2602,6 +2689,46 @@ function lowerForOf(
   }
 
   const binding = declaration.name.text;
+  const elementType = forOfElementType(
+    dispatched.type,
+    peeled === undefined ? 'identity' : peeled.view,
+  );
+  // A header binding seeded dynamic (a direct `eval` in the body can write it) cannot hold the
+  // loop's typed element: the loop walks a temporary, and the body opens by declaring the
+  // binding Unknown from it, so the evaluated code may store anything there.
+  if (elementType.kind !== 'unknown' && isDynamicBinding(declaration.name, checker, bindings)) {
+    const span = makeSpan(node.getStart(sourceFile), node.getWidth(sourceFile), sourceFile);
+    const temp = nextBindTemp();
+    const outerScope = bindings.child();
+    outerScope.set(temp, elementType);
+    const inner = outerScope.child();
+    const hirName = inner.declare(binding, hUnknown(false));
+    hirNameOfDeclaration.set(declaration, hirName);
+    const body = lowerBody(node.statement, sourceFile, checker, inner, diagnostics);
+    if (!body) {
+      return null;
+    }
+    const declared: Declaration = {
+      kind: 'declaration',
+      type: hUnknown(false),
+      span,
+      name: hirName,
+      declKind: (list.flags & ts.NodeFlags.Const) !== 0 ? 'const' : 'let',
+      value: { kind: 'identifier', type: elementType, span, name: temp },
+    };
+    return {
+      kind: 'for-of-statement',
+      type: H_UNDEFINED,
+      span,
+      binding: temp,
+      declKind: 'const',
+      iterable: dispatched,
+      view: peeled === undefined ? 'identity' : peeled.view,
+      body: { ...body, statements: [declared, ...body.statements] },
+      ...(label !== undefined && { label }),
+      ...(loopNeedsPerIterationEnv(node, checker) && { perIterationEnv: true as const }),
+    };
+  }
   // In scope for the body, and only for the body: a fresh binding each iteration is exactly what
   // `let`/`const` in a for-of header means.
   //
@@ -2614,10 +2741,7 @@ function lowerForOf(
   // The header binding is a declaration of the loop's scope, so it shadows the enclosing name (if
   // there is one) rather than sharing its slot -- and the HIR's own `binding` is the renamed name,
   // because that is what the emitter allocates the slot under.
-  const hirBinding = inner.declare(
-    binding,
-    forOfElementType(dispatched.type, peeled === undefined ? 'identity' : peeled.view),
-  );
+  const hirBinding = inner.declare(binding, elementType);
   hirNameOfDeclaration.set(declaration, hirBinding);
 
   const body = lowerBody(node.statement, sourceFile, checker, inner, diagnostics);
@@ -4138,19 +4262,20 @@ function loopNeedsPerIterationEnv(loop: ts.IterationStatement, checker: ts.TypeC
       ts.forEachChild(node, (child) => visit(child, true));
       return;
     }
+    const perIteration = (decl: ts.Declaration | undefined): boolean =>
+      decl !== undefined &&
+      loopScopeOf(decl) === loop &&
+      !(
+        ts.isVariableDeclaration(decl) &&
+        ts.isVariableDeclarationList(decl.parent) &&
+        isVarDeclarationList(decl.parent)
+      );
     if (nested && ts.isIdentifier(node)) {
-      const decl = checker.getSymbolAtLocation(node)?.valueDeclaration;
-      if (
-        decl !== undefined &&
-        loopScopeOf(decl) === loop &&
-        !(
-          ts.isVariableDeclaration(decl) &&
-          ts.isVariableDeclarationList(decl.parent) &&
-          isVarDeclarationList(decl.parent)
-        )
-      ) {
-        captured = true;
-      }
+      captured = perIteration(checker.getSymbolAtLocation(node)?.valueDeclaration);
+    }
+    // A direct `eval` can make a closure over any binding it sees, which is a capture too.
+    if (ts.isCallExpression(node) && frontendTypes.isDirectEval(node, checker)) {
+      captured = frontendTypes.evalVisibleDeclarations(node, checker).some(perIteration);
     }
     ts.forEachChild(node, (child) => visit(child, nested));
   };
@@ -5321,6 +5446,13 @@ function lowerExpression(
   // every other case, since a parenthesized anything can appear wherever an expression can.
   if (ts.isParenthesizedExpression(node)) {
     return lowerExpression(node.expression, sourceFile, checker, bindings, diagnostics);
+  }
+
+  // Ahead of every global and call arm: `eval` and `Function` are globals too, and only the
+  // interpreter answers them (docs/INTERPRETER.md §3).
+  const interpreted = lowerInterpreted(node, sourceFile, checker, bindings, diagnostics);
+  if (interpreted !== undefined) {
+    return interpreted;
   }
 
   // A builtin constructor or prototype read as a value (docs/VALUE.md §4.24): one interned
@@ -7970,7 +8102,8 @@ function lowerExpression(
     // and the call passes the receiver when the loaded closure declares one. Every specialized
     // arm above (arrays, collections, strings, class instances, ...) keeps priority -- what
     // reaches here is genuinely dynamic, which the gate accepted in those exact words.
-    if (specialized === undefined) {
+    // `globalThis.eval(...)` calls the interpreter's function, not a property of a value.
+    if (specialized === undefined && dynamicCodeGeneration(expr, checker) === undefined) {
       const dynCall = lowerDynMethodCall(node, expr, sourceFile, checker, bindings, diagnostics);
       if (dynCall !== undefined) {
         return dynCall;
@@ -11575,6 +11708,23 @@ function checkerTypeAt(node: ts.Node, checker: ts.TypeChecker): ts.Type {
   return checker.getTypeAtLocation(node);
 }
 
+/** Whether the binding `node` names (an identifier, or a parameter or function declaration through
+ * its name) was seeded dynamic: a suppressed type error widened it, or a direct `eval` sees it. */
+function isDynamicBinding(node: ts.Node, checker: ts.TypeChecker, bindings: Scope): boolean {
+  if (!hasRuntimeDynamicSymbols) {
+    return false;
+  }
+  const symbol =
+    ts.isParameter(node) && ts.isIdentifier(node.name)
+      ? checker.getSymbolAtLocation(node.name)
+      : ts.isFunctionDeclaration(node) && node.name !== undefined
+        ? checker.getSymbolAtLocation(node.name)
+        : checker.getSymbolAtLocation(node);
+  return (
+    symbol !== undefined && bindings.has(`\u0000dynamic:${checker.getFullyQualifiedName(symbol)}`)
+  );
+}
+
 function typeAt(node: ts.Node, checker: ts.TypeChecker, bindings: Scope): HType {
   // Parameters join identifiers here: step 44c widens a fixed-shape parameter that may receive
   // a dynamic value, and the widening must reach the declaration (which `lowerFunction` types
@@ -11592,19 +11742,8 @@ function typeAt(node: ts.Node, checker: ts.TypeChecker, bindings: Scope): HType 
     // the qualified-name computation and the key allocation entirely (plan-notes 249: ~26% of
     // checker time on big files). `hasRuntimeDynamicSymbols` is set from the same set the
     // seeding loop reads, so skipping here agrees with probing there by construction.
-    if (hasRuntimeDynamicSymbols) {
-      const symbol =
-        ts.isParameter(node) && ts.isIdentifier(node.name)
-          ? checker.getSymbolAtLocation(node.name)
-          : ts.isFunctionDeclaration(node) && node.name !== undefined
-            ? checker.getSymbolAtLocation(node.name)
-            : checker.getSymbolAtLocation(node);
-      if (
-        symbol !== undefined &&
-        bindings.has(`\u0000dynamic:${checker.getFullyQualifiedName(symbol)}`)
-      ) {
-        return hUnknown(false);
-      }
+    if (isDynamicBinding(node, checker, bindings)) {
+      return hUnknown(false);
     }
   }
   // Step 45: a call to a function whose declared object/array return can arrive dynamic

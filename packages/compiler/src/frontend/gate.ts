@@ -57,7 +57,12 @@ import {
   isExternDeclaration,
   linkPragmasOf,
 } from './extern.ts';
-import { isFreeCommonJsName, isPackageSpecifier, isSyntaxFreeEsModule } from './vendor.ts';
+import {
+  isCommonJsFile,
+  isFreeCommonJsName,
+  isPackageSpecifier,
+  isSyntaxFreeEsModule,
+} from './vendor.ts';
 import {
   type CommonJsBinding,
   commonJsVerdict,
@@ -965,18 +970,8 @@ function isSymbolIteratorComputedBase(node: ts.Identifier, checker: ts.TypeCheck
   );
 }
 
-/** One not-yet for both dynamic-code-generation constructs — they land together in Phase 8. */
-function jsDynamicCode(): GateResult {
-  return {
-    kind: 'not-yet',
-    code: 'STA1206',
-    message:
-      'eval() and new Function() are not yet supported in js mode; planned for Phase 8 (dynamic tier)',
-    phase: 8,
-  };
-}
-
-/** `eval` in ts mode is a permanent never; in js mode it waits on Phase 8's interpreter tier. */
+/** `eval` in ts mode is a permanent never; in js mode the interpreter runs it (docs/INTERPRETER.md
+ * §3). */
 function evalResult(mode: Mode): GateResult {
   return mode === 'ts'
     ? {
@@ -985,7 +980,34 @@ function evalResult(mode: Mode): GateResult {
         message:
           'eval() is not allowed in ts mode — it prevents static analysis and is a permanent design choice',
       }
-    : jsDynamicCode();
+    : { kind: 'accept' };
+}
+
+/** Whether `node` is sloppy code (ECMA-262 §11.2.2): only a CommonJS file can hold any, outside
+ * a class and every "use strict" prologue. The interpreter runs a direct `eval` as strict eval
+ * code (docs/INTERPRETER.md §3), which is right everywhere else. */
+function isSloppyAt(node: ts.Node, checker: ts.TypeChecker): boolean {
+  if (!isCommonJsFile(node.getSourceFile(), checker)) return false;
+  for (let at: ts.Node | undefined = node; at !== undefined; at = at.parent) {
+    if (ts.isClassLike(at)) return false;
+    if (ts.isSourceFile(at)) return !hasUseStrict(at.statements);
+    if (ts.isFunctionLike(at) && 'body' in at && at.body !== undefined && ts.isBlock(at.body)) {
+      if (hasUseStrict(at.body.statements)) return false;
+    }
+  }
+  return true;
+}
+
+/** A "use strict" directive in the prologue of `statements`. */
+function hasUseStrict(statements: readonly ts.Statement[]): boolean {
+  for (const statement of statements) {
+    if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) {
+      return false;
+    }
+    // A directive is its exact source text: an escaped spelling is not one.
+    if (statement.expression.getText().slice(1, -1) === 'use strict') return true;
+  }
+  return false;
 }
 
 /** `new Function` / `Function(...)` — same split, different ts-mode code. */
@@ -996,7 +1018,7 @@ function functionCtorResult(mode: Mode): GateResult {
         code: 'STA1103',
         message: 'new Function() is not allowed in ts mode — code generation is not supported',
       }
-    : jsDynamicCode();
+    : { kind: 'accept' };
 }
 
 /** The two spellings of dynamic code generation: a bare/`globalThis` `eval`, or the `Function` ctor.
@@ -1005,7 +1027,7 @@ function functionCtorResult(mode: Mode): GateResult {
  * `class Function` stays on the ordinary class path. `eval` is the same test; it is also recognized
  * as `globalThis.eval`, which is the other form DIAGNOSTICS.md names. A user method named `eval`
  * is not this — only `globalThis` as the receiver. */
-function dynamicCodeGeneration(
+export function dynamicCodeGeneration(
   expression: ts.Expression,
   checker: ts.TypeChecker,
 ): 'eval' | 'function' | undefined {
@@ -1345,6 +1367,16 @@ function gateIdentifier(
     // user binding, whatever else merges into it.
     const declarations = symbol.declarations ?? [];
     if (declarations.every((d) => d.getSourceFile().isDeclarationFile)) {
+      // The receiver of `globalThis.eval` / `globalThis.Function`, which the access arm decided:
+      // the lowering answers the pair with the interpreter's function and never reads it.
+      if (
+        node.text === 'globalThis' &&
+        ts.isPropertyAccessExpression(node.parent) &&
+        node.parent.expression === node &&
+        dynamicCodeGeneration(node.parent, typeChecker) !== undefined
+      ) {
+        return mode === 'js' ? { kind: 'accept' } : evalResult(mode);
+      }
       // `eval` and `Function` as VALUES are the same constructs as the call/`new` forms — aliasing
       // them (`const e = eval`) is how a program hides a dynamic-code site from a callee check.
       if (node.text === 'eval') {
@@ -2759,11 +2791,24 @@ function optionalChainElementReceiver(
 
 function gateCall(call: ts.CallExpression, typeChecker: ts.TypeChecker, mode: Mode): GateResult {
   // Dynamic code generation — `eval(...)` and `Function(...)` — own dedicated codes that split by
-  // mode (STA1101/STA1103 never in ts, STA1206 not-yet Phase 8 in js). Asked before anything else
+  // mode (STA1101/STA1103 never in ts, the interpreter in js). Asked before anything else
   // because the identifier `eval` is also a GLOBAL, and the global catch-all would otherwise
   // swallow it as STA1214 "the global 'eval'" (plan.md §8 step 2, plan-notes 141).
   const dynamicCode = dynamicCodeGeneration(call.expression, typeChecker);
   if (dynamicCode !== undefined) {
+    if (
+      mode === 'js' &&
+      frontendTypes.isDirectEval(call, typeChecker) &&
+      isSloppyAt(call, typeChecker)
+    ) {
+      return {
+        kind: 'not-yet',
+        code: 'STA1206',
+        message:
+          'a direct eval() in sloppy (CommonJS) code is not yet supported: its `var`s would ' +
+          'have to join the caller\'s scope; add "use strict" or use an indirect eval',
+      };
+    }
     return dynamicCode === 'eval' ? evalResult(mode) : functionCtorResult(mode);
   }
 

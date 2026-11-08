@@ -246,6 +246,12 @@ class Scope {
       : resolved.binding;
   }
 
+  /** Whether `name` has storage here, initialized or not: a direct `eval` inside a binding's own
+   * initializer (`const r = eval(s)`) holds its address, as a closure would. */
+  declared(name: string): Binding | undefined {
+    return this.resolve(name)?.binding;
+  }
+
   private resolve(name: string, deferred = false): Resolved | undefined {
     const binding = this.own.get(name);
     if (binding !== undefined) {
@@ -1612,6 +1618,39 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
     }
 
     case 'class-value': {
+      break;
+    }
+
+    case 'interpret-global': {
+      break;
+    }
+
+    // Each binding is a name the interpreter reaches through its address, so it must name live
+    // storage, and storage holding a boxed value: a typed slot would be overwritten by whatever
+    // the evaluated code assigns (the frontend widens every one it sees to Unknown).
+    case 'direct-eval': {
+      verifyExpression(expr.receiver, problems, bindings);
+      for (const arg of expr.args) {
+        verifyExpression(arg, problems, bindings);
+      }
+      for (const seen of expr.bindings) {
+        const binding = bindings.declared(seen.name);
+        if (binding === undefined) {
+          problems.push({
+            kind: 'direct-eval',
+            span: expr.span,
+            code: 'STA4002',
+            message: `eval binding '${seen.name}' is not defined`,
+          });
+        } else if (binding.type.kind !== 'unknown') {
+          problems.push({
+            kind: 'direct-eval',
+            span: expr.span,
+            code: 'STA4010',
+            message: `eval binding '${seen.name}' has type '${hTypeName(binding.type)}', not Unknown`,
+          });
+        }
+      }
       break;
     }
 

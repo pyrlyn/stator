@@ -75,20 +75,28 @@ function buildAndRun(
   });
 }
 
-test('the link line names libjsrt_std.a only when asked to', () => {
-  const plain = linkArguments('main.c', 'main', 2, [], false);
-  const std = linkArguments('main.c', 'main', 2, [], true);
-  assert.equal(plain.filter((arg) => arg.endsWith('libjsrt_std.a')).length, 0);
-  const archives = std.filter((arg) => arg.endsWith('libjsrt_std.a'));
+function archiveOnly(name: string, libs: { std: boolean; interp: boolean }): void {
+  const plain = linkArguments('main.c', 'main', 2, [], { std: false, interp: false });
+  const linked = linkArguments('main.c', 'main', 2, [], libs);
+  assert.equal(plain.filter((arg) => arg.endsWith(name)).length, 0);
+  const archives = linked.filter((arg) => arg.endsWith(name));
   assert.equal(archives.length, 1);
   // Before `-ljsrt`: a static archive only satisfies references the objects before it made.
   const archive = archives[0] ?? '';
-  assert.ok(std.indexOf(archive) < std.indexOf('-ljsrt'), 'std archive precedes the runtime');
+  assert.ok(linked.indexOf(archive) < linked.indexOf('-ljsrt'), `${name} precedes the runtime`);
   assert.deepEqual(
-    std.filter((arg) => arg !== archive),
+    linked.filter((arg) => arg !== archive),
     plain,
     'the archive is the only difference',
   );
+}
+
+test('the link line names libjsrt_std.a only when asked to', () => {
+  archiveOnly('libjsrt_std.a', { std: true, interp: false });
+});
+
+test('the link line names libjsrt_interp.a only when a module interprets', () => {
+  archiveOnly('libjsrt_interp.a', { std: false, interp: true });
 });
 
 async function compiledStdC(

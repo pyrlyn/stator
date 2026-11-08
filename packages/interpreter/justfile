@@ -1,0 +1,33 @@
+# The interpreter (docs/INTERPRETER.md §9) → packages/interpreter/build/lib/libjsrt_interp.a. The
+# compiler links this archive only into programs whose HIR holds an `Interpret` node; every other
+# program's link line never names it.
+#
+# One flavor for every runtime flavor, as packages/std/justfile reasons: ReleaseSafe Zig over the
+# runtime's C ABI, which the sanitized runtime exports unchanged.
+
+set minimum-version := "1.50.0"
+set shell := ["bash", "-cu"]
+
+cc := env("CC", "clang")
+
+default:
+    @just --list
+
+# packages/interpreter/build/lib/libjsrt_interp.a (zig build lib -Doptimize=ReleaseSafe)
+interp:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    CC='{{cc}}'
+    # Zig's native macOS target is the running OS release; clang's is its deployment target, and
+    # linking objects from both warns on every program link (the std and runtime recipes' rule).
+    TARGET=()
+    if [[ "$(uname -s)" == 'Darwin' ]]; then
+      MACOS_MIN="$(${CC} -### -x c -c /dev/null 2>&1 | grep -oE 'apple-macosx[0-9.]+' | head -1)"
+      TARGET=(-Dtarget="native-macos.${MACOS_MIN#apple-macosx}")
+    fi
+    zig fmt --check src test262 build.zig
+    zig build lib -Doptimize=ReleaseSafe -Dcpu=baseline "${TARGET[@]}" --prefix build --cache-dir build/zig-cache
+    echo "interpreter built: build/lib/libjsrt_interp.a"
+
+interp-clean:
+    rm -rf build zig-out

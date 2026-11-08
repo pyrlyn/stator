@@ -112,6 +112,15 @@ one is evaluated.
 - `OptionalBase` — the guarded value of the enclosing `OptionalChain`: a leaf resolving to the
   chain's frame temp. It names no binding and captures nothing; outside a chain it has no
   meaning, and the emitter refuses one.
+- `InterpretGlobal` — `eval` or `Function` read as a value (plan/T14.3, docs/INTERPRETER.md §3):
+  the interpreter's global function, typed `Unknown`. Calling it is an ordinary dynamic call,
+  which is how an indirect `eval`, `Function(...)` and `new Function(...)` reach the interpreter.
+- `DirectEval` — a direct `eval(...)`: the caller's receiver, the arguments, and one
+  `{ source, name, constant }` row per binding the eval code can name, inner names shadowing outer
+  ones. The verifier holds each row to a declared binding (`STA4002`) of type `Unknown`
+  (`STA4010`), because the eval code may write any value through it. The emitter passes the rows
+  as `JSRTEvalBinding` cell addresses to `jsrt_interp_eval_direct`, and generated C that holds
+  either node includes `jsrt_interp.h`, which is what links `libjsrt_interp.a`.
 
 **Statement union** (current scope):
 - `Declaration` — `let` or `const` binding with required initializer. `var` is desugared by the lowering into a hoisted `let` initialized `undefined` plus an assignment at the original site (plan.md §8 step 3); it is not a third `declKind`.

@@ -6,6 +6,7 @@
 # the human/CI entry point via `pnpm run ci`).
 projects:
   compiler: 'packages/compiler'
+  interpreter: 'packages/interpreter'
   node: 'packages/node'
   runtime: 'packages/runtime'
   std: 'packages/std'

@@ -14760,3 +14760,49 @@ references. No new `ci` repository exists under `pyrlyn`.
 `dependabot.yml`, `sync-docs.yml`, `infra.yml`, `jactionlint.yaml`) and in `docs/TOOLCHAIN.md` and
 `docs/sonarcloud-setup.md` now names `pyrlyn-archive/ci-old`, still at `@main` (notes 361, 362, 375).
 Historical notes and `done.md` keep the old name.
+
+## 406. T14.3: compiled code calls the interpreter; STA1206 narrowed; the Test262 host is compiled (2026-11-08)
+
+**STA1206 narrowed, not retired.** A direct `eval` in `js` mode now runs in the interpreter against
+the caller's bindings (docs/INTERPRETER.md §3, "As built"). One case stays refused: a direct `eval`
+in sloppy code would have to add its `var`s to the caller's scope, and compiled scopes are fixed at
+compile time. ES modules are always strict, so only sloppy CommonJS reaches it: a `.cjs` file (or a
+`.js` file the package treats as CommonJS) outside a class and outside any `"use strict"` prologue.
+That case keeps STA1206 with a narrowed message (docs/DIAGNOSTICS.md); `packages/tests/subset/`
+`subset_eval_sloppy_js.cjs` and `subset_eval_strict_cjs_js.cjs` pin both sides. STA1101 and STA1103
+in `ts` mode are unchanged.
+
+**Programs that never interpret are unchanged.** The compiler links `libjsrt_interp.a` only when the
+generated C includes `jsrt_interp.h`. 18 golden fixtures (10 `js`, 8 `ts`), each built by the base
+commit's compiler (fc5b912e) and by this change's under the same output name, are byte-identical on
+macOS arm64. Under different output names the sizes still match; the bytes differ only because the
+ad-hoc code signature embeds the name.
+
+**Test262 through a compiled host.** `packages/interpreter/test262/host.ts` is strict TS compiled
+`--mode=js --node`; it runs each composed test through an indirect `eval`, and `print` and `$262`
+are compiled functions rather than interpreter builtins (those were deleted from `builtins.zig`).
+`test262/exec.zig` no longer links the interpreter: it writes the script to a file and execs the
+host. On the pinned corpus (Apple M3 Max, macOS arm64):
+
+| Run | Passed | Of | Crashes |
+| --- | ---: | ---: | ---: |
+| T14.2's in-process driver (baseline at fc5b912e) | 8,105 | 23,726 | — |
+| Compiled host, first run | 8,160 | 23,726 | 16 |
+| Compiled host, eval source as WTF-8 (recorded) | 8,160 | 23,726 | 8 |
+
+The gain is mostly `expressions/instanceof` (17 → 30) and `directive-prologue` (43 → 46): the
+compiled harness functions behave like the host's own. Half the first run's crashes were eval
+source holding U+0000, which went through a property-key helper that refuses it; `rt.sourceText`
+now encodes the source directly. The remaining crashes are runtime panics outside this card
+(STA2005 for a U+0000 property key and an invalid regexp group name, STA2004 for a static shape
+growing). 817 module tests are not run: the interpreter has no module goal yet.
+
+**Known gaps, left for later cards.**
+
+- `'constructor' in e` is false in compiled code for the runtime's own error objects, although the
+  constructor is inherited; the host falls back to `e.name`.
+- The interpreter's `Promise` has no statics yet (`Promise.resolve(1).then` throws).
+- A direct eval sees the caller's local bindings, not its imports, function declarations or
+  classes. `this` is the caller's only in a non-arrow function that binds a receiver. `eval(...xs)`
+  is indirect. There is no TDZ check for an eval reading a `let` before its declaration
+  (docs/INTERPRETER.md §3).
