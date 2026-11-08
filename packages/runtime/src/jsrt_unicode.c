@@ -12,6 +12,7 @@
 
 #include "jsrt.h"
 #include "jsrt_value.h"
+#include "jsrt_utf.h"
 
 #include "libunicode.h"
 
@@ -32,14 +33,7 @@ static uint32_t *to_code_points(const JSString *s, uint32_t *out_len) {
   }
   uint32_t n = 0;
   for (uint32_t i = 0; i < s->length; i++) {
-    const uint32_t unit = s->data[i];
-    if (unit >= 0xD800u && unit <= 0xDBFFu && i + 1 < s->length && s->data[i + 1] >= 0xDC00u &&
-        s->data[i + 1] <= 0xDFFFu) {
-      cps[n++] = 0x10000u + ((unit - 0xD800u) << 10) + (s->data[i + 1] - 0xDC00u);
-      i++;
-    } else {
-      cps[n++] = unit;
-    }
+    cps[n++] = jsrt_utf16_code_point(s->data, s->length, &i);
   }
   *out_len = n;
   return cps;
@@ -61,9 +55,7 @@ static jsrt_value units_to_string(const uint16_t *units, uint32_t len) {
   return jsrt_string_from_units(units, len);
 }
 
-/* ============================================================================
- * Case mapping (§22.1.3.28, §22.1.3.30)
- * ============================================================================ */
+/* --- Case mapping (§22.1.3.28, §22.1.3.30) --- */
 
 /* Unicode SpecialCasing's Final_Sigma condition, the one context-dependent rule ECMA-262 keeps
  * (§22.1.3.28 defers to the Unicode Default Case Conversion, which includes it): a capital sigma
@@ -125,9 +117,7 @@ jsrt_value jsrt_unicode_case(jsrt_value s, bool upper) {
   return result;
 }
 
-/* ============================================================================
- * Normalization (§22.1.3.15)
- * ============================================================================ */
+/* --- Normalization (§22.1.3.15) --- */
 
 static UnicodeNormalizationEnum form_of(jsrt_value form) {
   /* An absent form is NFC. The lowering pads the omitted argument with `undefined`, which the spec

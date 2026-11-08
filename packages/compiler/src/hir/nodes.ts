@@ -719,6 +719,37 @@ export interface CollectionOp extends Node {
   readonly args: readonly Expression[];
 }
 
+/** The Map and Set surface the subset compiles, with the argument count each operation takes.
+ *
+ * A closed list, not a lookup on the lib declarations: everything here is one runtime function, and
+ * `keys`/`values`/`entries` box a JSRTIterator (Phase 5 step 8). Reading the list off the lib
+ * would turn a missing name into an internal error instead of a `not-yet`.
+ *
+ * `forEach` IS here, and was previously grouped with them by mistake: it takes a callback, not an
+ * iterator, and the runtime calls it through `jsrt_call` exactly as the `Array.prototype` callback
+ * methods already do — no protocol the subset lacks (plan-notes 97). The verifier adds the `size`
+ * read, which lowers to the same node. */
+export const COLLECTION_OPS: Readonly<Record<'map' | 'set', Readonly<Record<string, number>>>> = {
+  map: { get: 1, set: 2, has: 1, delete: 1, clear: 0, forEach: 1, keys: 0, values: 0, entries: 0 },
+  set: {
+    add: 1,
+    has: 1,
+    delete: 1,
+    clear: 0,
+    forEach: 1,
+    keys: 0,
+    values: 0,
+    entries: 0,
+    union: 1,
+    intersection: 1,
+    difference: 1,
+    symmetricDifference: 1,
+    isSubsetOf: 1,
+    isSupersetOf: 1,
+    isDisjointFrom: 1,
+  },
+};
+
 /** The String.prototype surface Task 4.2 has landed, with each operation's post-lowering arity
  * (optional arguments are PADDED with undefined-literals by the lowering — for every method here
  * the spec gives an explicit undefined the same meaning as an absent argument) and its result

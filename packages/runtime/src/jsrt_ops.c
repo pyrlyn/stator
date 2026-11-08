@@ -16,9 +16,7 @@
 #include <math.h>
 #include <stdbool.h>
 
-/* ============================================================================
- * ToPrimitive — ECMA-262 §7.1.1, docs/NUMERIC.md §7
- * ============================================================================ */
+/* --- ToPrimitive — ECMA-262 §7.1.1, docs/NUMERIC.md §7 --- */
 
 /* Every operator below is defined on primitives; an object reaches one only through here.
  *
@@ -78,9 +76,7 @@ jsrt_value jsrt_to_primitive(jsrt_value v, jsrt_hint hint) {
   return JSRT_UNDEFINED; /* never read: the exception is pending */
 }
 
-/* ============================================================================
- * Addition operator (+) — ECMA-262 §12.8.3
- * ============================================================================ */
+/* --- Addition operator (+) — ECMA-262 §12.8.3 --- */
 
 jsrt_value jsrt_op_add(jsrt_value a, jsrt_value b) {
   /* ToPrimitive BOTH, THEN ask about strings. The order is the whole operator: `[1] + [2]` is
@@ -122,9 +118,7 @@ jsrt_value jsrt_op_add(jsrt_value a, jsrt_value b) {
   return jsrt_number(da + db);
 }
 
-/* ============================================================================
- * Relational comparison operators — ECMA-262 §12.10
- * ============================================================================ */
+/* --- Relational comparison operators — ECMA-262 §12.10 --- */
 
 /* Abstract Relational Comparison answers less-than, greater-than, equal, or UNDEFINED, and each
  * of the four operators maps undefined to false. Modelling that fourth outcome explicitly is what
@@ -182,12 +176,13 @@ bool jsrt_op_lt(jsrt_value a, jsrt_value b) { return jsrt_compare(a, b) == JSRT_
 
 bool jsrt_op_gt(jsrt_value a, jsrt_value b) { return jsrt_compare(a, b) == JSRT_ORDER_GT; }
 
-bool jsrt_op_le(jsrt_value a, jsrt_value b) {
-  jsrt_order o = jsrt_compare(a, b);
-  return o == JSRT_ORDER_LT || o == JSRT_ORDER_EQ;
+/* <= and >= answer `strict` or equal -- never "not the other way", which an unordered (NaN)
+ * comparison would satisfy. */
+static bool ordered_or_equal(jsrt_value a, jsrt_value b, jsrt_order strict) {
+  const jsrt_order o = jsrt_compare(a, b);
+  return o == strict || o == JSRT_ORDER_EQ;
 }
 
-bool jsrt_op_ge(jsrt_value a, jsrt_value b) {
-  jsrt_order o = jsrt_compare(a, b);
-  return o == JSRT_ORDER_GT || o == JSRT_ORDER_EQ;
-}
+bool jsrt_op_le(jsrt_value a, jsrt_value b) { return ordered_or_equal(a, b, JSRT_ORDER_LT); }
+
+bool jsrt_op_ge(jsrt_value a, jsrt_value b) { return ordered_or_equal(a, b, JSRT_ORDER_GT); }

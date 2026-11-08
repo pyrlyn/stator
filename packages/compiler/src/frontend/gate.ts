@@ -8,7 +8,7 @@ import type {
   ErrorClass,
   RegExpOperation,
 } from '../hir/nodes.ts';
-import { GLOBAL_CALLS, NUMBER_OPS } from '../hir/nodes.ts';
+import { COLLECTION_OPS, GLOBAL_CALLS, NUMBER_OPS } from '../hir/nodes.ts';
 import type { GlobalCallName } from '../hir/nodes.ts';
 import type { HType } from '../hir/types.ts';
 import { accessorName, hTypeName, objectFieldsPrefix } from '../hir/types.ts';
@@ -71,6 +71,7 @@ import {
   nodeLocationModule,
 } from './node.ts';
 import { classifyStdSpecifier } from './std.ts';
+import { syntaxKindSet } from './syntax-kinds.ts';
 
 type Mode = 'ts' | 'js';
 
@@ -252,6 +253,109 @@ type GateResult =
    * number the user cannot act on. */
   | { kind: 'not-yet'; code: string; message: string; phase?: number };
 
+/** Constructs accepted outright: statements and structure the HIR models one to one, and the
+ * parts of a construct whose own case vetted the whole (a class, an object literal), reached on
+ * the way down. Their children are gated normally. */
+const ACCEPTED_NODE_KINDS: ReadonlySet<ts.SyntaxKind> = syntaxKindSet(
+  // Structure that maps 1:1 onto HIR statements.
+  'SourceFile',
+  'VariableStatement',
+  'ExpressionStatement',
+  'Block',
+  'IfStatement',
+  'WhileStatement',
+  'DoStatement',
+  'ForStatement',
+  // A switch and its parts. CaseBlock/CaseClause/DefaultClause are nodes rather than tokens, so
+  // each needs a case of its own -- the same trap TemplateSpan sprang (plan-notes 37).
+  'SwitchStatement',
+  'CaseBlock',
+  'CaseClause',
+  'DefaultClause',
+
+  'BreakStatement',
+  'ContinueStatement',
+
+  // Task 3.10: `throw e;` and `try/catch/finally` lower to landing pads in the emitter.
+  'ThrowStatement',
+  'TryStatement',
+
+  'ObjectBindingPattern',
+  'ArrayBindingPattern',
+  'BindingElement',
+  'OmittedExpression',
+
+  // `interface X { ... }` and `type X = ...` erase: they bind no value and emit no code
+  // (docs/SUBSET.md). Accepted so the declaration is not a diagnostic; the lowering drops
+  // them, and uses of the name are ordinary annotations the checker resolves. `enum` and
+  // `namespace` stay refused in gateConstruct: unlike these two, they HAVE runtime meaning the HIR
+  // does not model.
+  'InterfaceDeclaration',
+  'TypeAliasDeclaration',
+
+  // `outer: for (…)`. Only a loop or switch may carry a label here, because those are the only
+  // HIR nodes with a place to put one. `foo: { … }` is legal JavaScript but would need a label
+  // that is not attached to anything the HIR models.
+  'LabeledStatement',
+
+  // `;` on its own lowers to nothing at all -- accepted so it is not a diagnostic, dropped by
+  // the lowering rather than given an HIR node.
+  'EmptyStatement',
+
+  // Parentheses are pure grouping: the HIR tree already encodes the precedence they expressed,
+  // so the lowering unwraps them instead of modelling them.
+  'ParenthesizedExpression',
+
+  // `extends A` / `implements I`. gateClass vetted the whole clause -- that there is one base,
+  // that it is a class declaration, and that nothing is overridden -- and these two nodes are
+  // what the walker then descends through on its way to the base's NAME.
+  'HeritageClause',
+  'ExpressionWithTypeArguments',
+  // Template literals. The no-substitution form is just a string; the substitution form is
+  // TemplateLiteral, whose children (spans, head, middles, tail) are tokens, which gateConstruct skips.
+  'NoSubstitutionTemplateLiteral',
+  'TemplateExpression',
+  // A TemplateSpan is the pairing of one hole with the literal chunk that follows it. It is a
+  // node rather than a token, so it needs an explicit case; its children are gated normally.
+  'TemplateSpan',
+
+  // A `name: value` pair of an accepted literal. gateObjectLiteral vetted the whole literal --
+  // these are its children, reached on the way down, and the values are gated normally.
+  'PropertyAssignment',
+  // `{ x }`, whose name IS its value. Same reasoning: gateObjectLiteral vetted the literal, and the
+  // identifier underneath is gated as the ordinary identifier it desugars to.
+  'ShorthandPropertyAssignment',
+  // `{ ...a }`. gateObjectLiteral already held the operand to a variable of fixed shape; the
+  // identifier underneath is gated as the ordinary read the expansion makes of it.
+  'SpreadAssignment',
+  // `...x` in an array literal. gateArrayLiteral vetted the operand type; the expression
+  // underneath is gated normally.
+  'SpreadElement',
+  // A member of a TYPE literal (`let p: { x: number }`, `{ [k: string]: n }`). The enclosing
+  // TypeLiteral is a type node and skipped as one, but its members are not type nodes themselves,
+  // so the walk reaches them; they carry no runtime construct, exactly as the annotation around
+  // them does not. A class index signature is refused in gateClass instead.
+  'PropertySignature',
+  'IndexSignature',
+
+  // The members of an accepted class. gateClass already vetted the class as a whole -- these are
+  // its children, reached on the way down, and their own children are gated normally. A static
+  // block's statements are gated as the ordinary statements they lower to.
+  'PropertyDeclaration',
+  'MethodDeclaration',
+  'GetAccessor',
+  'SetAccessor',
+  'Constructor',
+  'ClassStaticBlockDeclaration',
+
+  // `/ab+c/gi` -- pattern and flags travel to the runtime as TEXT, so nothing here parses them
+  // and nothing here can disagree with the vendored engine about what they mean. An invalid
+  // pattern is settled where it is compiled: at run time, loudly (STA2005 pattern).
+  'RegularExpressionLiteral',
+
+  'ForInStatement',
+);
+
 /** Decide whether one construct is in the Phase 2 micro-subset.
  *
  * THE INVARIANT: this accept set must equal the vocabulary of `src/hir/nodes.ts`, exactly. A
@@ -313,33 +417,11 @@ function gateConstruct(
     return { kind: 'accept' };
   }
 
+  if (ACCEPTED_NODE_KINDS.has(kind)) {
+    return { kind: 'accept' };
+  }
+
   switch (kind) {
-    // Structure that maps 1:1 onto HIR statements.
-    case ts.SyntaxKind.SourceFile:
-    case ts.SyntaxKind.VariableStatement:
-    case ts.SyntaxKind.ExpressionStatement:
-    case ts.SyntaxKind.Block:
-    case ts.SyntaxKind.IfStatement:
-    case ts.SyntaxKind.WhileStatement:
-    case ts.SyntaxKind.DoStatement:
-    case ts.SyntaxKind.ForStatement:
-    // A switch and its parts. CaseBlock/CaseClause/DefaultClause are nodes rather than tokens, so
-    // each needs a case of its own -- the same trap TemplateSpan sprang (plan-notes 37).
-    case ts.SyntaxKind.SwitchStatement:
-    case ts.SyntaxKind.CaseBlock:
-    case ts.SyntaxKind.CaseClause:
-    case ts.SyntaxKind.DefaultClause:
-      return { kind: 'accept' };
-
-    case ts.SyntaxKind.BreakStatement:
-    case ts.SyntaxKind.ContinueStatement:
-      return { kind: 'accept' };
-
-    // Task 3.10: `throw e;` and `try/catch/finally` lower to landing pads in the emitter.
-    case ts.SyntaxKind.ThrowStatement:
-    case ts.SyntaxKind.TryStatement:
-      return { kind: 'accept' };
-
     // `catch (e)` / `catch {`. The binding must be a plain name -- `catch ({ message })`
     // destructures, and the HIR has one name per binding, the same rule gateDeclaration applies.
     // The binding's TYPE needs no rule here: unannotated it is `unknown` (strict mode's
@@ -362,12 +444,6 @@ function gateConstruct(
         typeChecker,
       );
 
-    case ts.SyntaxKind.ObjectBindingPattern:
-    case ts.SyntaxKind.ArrayBindingPattern:
-    case ts.SyntaxKind.BindingElement:
-    case ts.SyntaxKind.OmittedExpression:
-      return { kind: 'accept' };
-
     case ts.SyntaxKind.Parameter:
       return gateParameter(node as ts.ParameterDeclaration, typeChecker);
 
@@ -378,15 +454,6 @@ function gateConstruct(
     // constrained or defaulted it (plan.md §8 step 12(f)).
     case ts.SyntaxKind.TypeParameter:
       return gateTypeParameter(node as ts.TypeParameterDeclaration);
-
-    // `interface X { ... }` and `type X = ...` erase: they bind no value and emit no code
-    // (docs/SUBSET.md). Accepted so the declaration is not a diagnostic; the lowering drops
-    // them, and uses of the name are ordinary annotations the checker resolves. `enum` and
-    // `namespace` stay refused below: unlike these two, they HAVE runtime meaning the HIR
-    // does not model.
-    case ts.SyntaxKind.InterfaceDeclaration:
-    case ts.SyntaxKind.TypeAliasDeclaration:
-      return { kind: 'accept' };
 
     // `return;` and `return e;`. That a return sits inside a function is a structural fact the
     // HIR verifier checks; the gate only decides the construct is in the subset. Out-slots
@@ -418,22 +485,6 @@ function gateConstruct(
       return { kind: 'accept' };
     }
 
-    // `outer: for (…)`. Only a loop or switch may carry a label here, because those are the only
-    // HIR nodes with a place to put one. `foo: { … }` is legal JavaScript but would need a label
-    // that is not attached to anything the HIR models.
-    case ts.SyntaxKind.LabeledStatement:
-      return { kind: 'accept' };
-
-    // `;` on its own lowers to nothing at all -- accepted so it is not a diagnostic, dropped by
-    // the lowering rather than given an HIR node.
-    case ts.SyntaxKind.EmptyStatement:
-      return { kind: 'accept' };
-
-    // Parentheses are pure grouping: the HIR tree already encodes the precedence they expressed,
-    // so the lowering unwraps them instead of modelling them.
-    case ts.SyntaxKind.ParenthesizedExpression:
-      return { kind: 'accept' };
-
     case ts.SyntaxKind.Identifier:
       return gateIdentifier(node as ts.Identifier, typeChecker, mode, onNode);
 
@@ -452,17 +503,18 @@ function gateConstruct(
     case ts.SyntaxKind.PostfixUnaryExpression:
       return gateUpdate(node, typeChecker, mode);
 
+    // The other operators, whose operands are gated normally. `e satisfies T` checks `e` against
+    // `T` without changing its type: nothing to run, so it erases to its operand exactly like a
+    // widening `as`.
     case ts.SyntaxKind.TypeOfExpression:
+    case ts.SyntaxKind.VoidExpression:
+    case ts.SyntaxKind.ConditionalExpression:
+    case ts.SyntaxKind.AsExpression:
+    case ts.SyntaxKind.SatisfiesExpression:
       return { kind: 'accept' };
 
     case ts.SyntaxKind.DeleteExpression:
       return gateDelete(node as ts.DeleteExpression, typeChecker, mode);
-
-    case ts.SyntaxKind.AsExpression:
-    // `e satisfies T` checks `e` against `T` without changing its type: nothing to run, so it
-    // erases to its operand exactly like a widening `as`.
-    case ts.SyntaxKind.SatisfiesExpression:
-      return { kind: 'accept' };
 
     case ts.SyntaxKind.CallExpression:
       return gateCall(node as ts.CallExpression, typeChecker, mode);
@@ -479,20 +531,6 @@ function gateConstruct(
       return ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node
         ? { kind: 'accept' }
         : notYet('super as a value is not yet supported', 5);
-
-    // `extends A` / `implements I`. gateClass vetted the whole clause -- that there is one base,
-    // that it is a class declaration, and that nothing is overridden -- and these two nodes are
-    // what the walker then descends through on its way to the base's NAME.
-    case ts.SyntaxKind.HeritageClause:
-    case ts.SyntaxKind.ExpressionWithTypeArguments:
-    // Template literals. The no-substitution form is just a string; the substitution form is
-    // TemplateLiteral, whose children (spans, head, middles, tail) are tokens and accepted above.
-    case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
-    case ts.SyntaxKind.TemplateExpression:
-    // A TemplateSpan is the pairing of one hole with the literal chunk that follows it. It is a
-    // node rather than a token, so it needs an explicit case; its children are gated normally.
-    case ts.SyntaxKind.TemplateSpan:
-      return { kind: 'accept' };
 
     // Three shapes only: the callee of an accepted `console.log` (gateCall already vetted the whole
     // call, and this node is its child), and `.length` on a string, an array, or a function.
@@ -542,43 +580,6 @@ function gateConstruct(
 
     case ts.SyntaxKind.ObjectLiteralExpression:
       return gateObjectLiteral(node as ts.ObjectLiteralExpression, typeChecker);
-
-    // A `name: value` pair of an accepted literal. gateObjectLiteral vetted the whole literal --
-    // these are its children, reached on the way down, and the values are gated normally.
-    case ts.SyntaxKind.PropertyAssignment:
-    // `{ x }`, whose name IS its value. Same reasoning: the literal was vetted above, and the
-    // identifier underneath is gated as the ordinary identifier it desugars to.
-    case ts.SyntaxKind.ShorthandPropertyAssignment:
-    // `{ ...a }`. gateObjectLiteral already held the operand to a variable of fixed shape; the
-    // identifier underneath is gated as the ordinary read the expansion makes of it.
-    case ts.SyntaxKind.SpreadAssignment:
-    // `...x` in an array literal. gateArrayLiteral vetted the operand type; the expression
-    // underneath is gated normally.
-    case ts.SyntaxKind.SpreadElement:
-    // A member of a TYPE literal (`let p: { x: number }`, `{ [k: string]: n }`). The enclosing
-    // TypeLiteral is a type node and skipped as one, but its members are not type nodes themselves,
-    // so the walk reaches them; they carry no runtime construct, exactly as the annotation around
-    // them does not. A class index signature is refused in gateClass instead.
-    case ts.SyntaxKind.PropertySignature:
-    case ts.SyntaxKind.IndexSignature:
-      return { kind: 'accept' };
-
-    // The members of an accepted class. gateClass already vetted the class as a whole -- these are
-    // its children, reached on the way down, and their own children are gated normally. A static
-    // block's statements are gated as the ordinary statements they lower to.
-    case ts.SyntaxKind.PropertyDeclaration:
-    case ts.SyntaxKind.MethodDeclaration:
-    case ts.SyntaxKind.GetAccessor:
-    case ts.SyntaxKind.SetAccessor:
-    case ts.SyntaxKind.Constructor:
-    case ts.SyntaxKind.ClassStaticBlockDeclaration:
-      return { kind: 'accept' };
-
-    // `/ab+c/gi` -- pattern and flags travel to the runtime as TEXT, so nothing here parses them
-    // and nothing here can disagree with the vendored engine about what they mean. An invalid
-    // pattern is settled where it is compiled: at run time, loudly (STA2005 pattern).
-    case ts.SyntaxKind.RegularExpressionLiteral:
-      return { kind: 'accept' };
 
     case ts.SyntaxKind.NewExpression:
       return gateNew(node as ts.NewExpression, typeChecker, mode);
@@ -633,11 +634,6 @@ function gateConstruct(
         ? { kind: 'accept' }
         : notYet('a computed property name is not yet supported', 5);
 
-    case ts.SyntaxKind.ConditionalExpression:
-    case ts.SyntaxKind.VoidExpression:
-    case ts.SyntaxKind.ForInStatement:
-      return { kind: 'accept' };
-
     default:
       return notYet(`${describeKind(kind)} is not yet supported`, 5);
   }
@@ -674,13 +670,13 @@ function gateModuleSyntax(node: ts.Node, typeChecker: ts.TypeChecker): GateResul
 }
 
 /** The clauses that only hold an import's or an export's names; each name is gated on its own. */
-const MODULE_CLAUSE_KINDS: ReadonlySet<ts.SyntaxKind> = new Set([
-  ts.SyntaxKind.ImportClause,
-  ts.SyntaxKind.NamedImports,
-  ts.SyntaxKind.NamedExports,
-  ts.SyntaxKind.NamespaceImport,
-  ts.SyntaxKind.NamespaceExport,
-]);
+const MODULE_CLAUSE_KINDS: ReadonlySet<ts.SyntaxKind> = syntaxKindSet(
+  'ImportClause',
+  'NamedImports',
+  'NamedExports',
+  'NamespaceImport',
+  'NamespaceExport',
+);
 
 /** `import(s)`. A string literal names a file already in the whole-program graph. Anything
  * else needs runtime resolution, which is Phase 8 (plan.md §8 step 10c). */
@@ -1946,6 +1942,49 @@ export function brandDeclaringClass(
     : undefined;
 }
 
+/** The arithmetic operators that coerce their operands (gateBinary). */
+const COERCING_ARITHMETIC: ReadonlySet<ts.SyntaxKind> = syntaxKindSet(
+  'MinusToken',
+  'AsteriskToken',
+  'SlashToken',
+  'PercentToken',
+  'AsteriskAsteriskToken',
+  'MinusEqualsToken',
+  'AsteriskEqualsToken',
+  'SlashEqualsToken',
+  'PercentEqualsToken',
+  'AsteriskAsteriskEqualsToken',
+);
+
+/** Every operator BinaryOp and LogicalOp model, plus plain assignment. Loose equality is here
+ * rather than deferred because docs/NUMERIC.md §6.3 defines it for primitives without any object
+ * model: the `ToPrimitive` half of the table is unreachable while the only values are primitives,
+ * and the lowering emits a runtime call that will grow that half in place. */
+const ACCEPTED_BINARY_OPERATORS: ReadonlySet<ts.SyntaxKind> = syntaxKindSet(
+  'PlusToken',
+  'MinusToken',
+  'AsteriskToken',
+  'SlashToken',
+  'PercentToken',
+  'LessThanToken',
+  'GreaterThanToken',
+  'LessThanEqualsToken',
+  'GreaterThanEqualsToken',
+  'EqualsEqualsEqualsToken',
+  'ExclamationEqualsEqualsToken',
+  'EqualsEqualsToken',
+  'ExclamationEqualsToken',
+  'AmpersandToken',
+  'BarToken',
+  'CaretToken',
+  'LessThanLessThanToken',
+  'GreaterThanGreaterThanToken',
+  'GreaterThanGreaterThanGreaterThanToken',
+  'AmpersandAmpersandToken',
+  'BarBarToken',
+  'QuestionQuestionToken',
+);
+
 function gateBinary(bin: ts.BinaryExpression, typeChecker: ts.TypeChecker, mode: Mode): GateResult {
   // Arithmetic that coerces (`- * / % **` and the compounds that fold to them): a composite
   // operand reaches ToPrimitive, which runs user `valueOf`/`toString` — the dynamic tier's work,
@@ -1955,19 +1994,7 @@ function gateBinary(bin: ts.BinaryExpression, typeChecker: ts.TypeChecker, mode:
   // rather than coerces (plan.md §8 step 37). In `ts` mode the checker's own TS2362/TS2363 owns
   // every one of these programs, so refusing here too would report one mistake twice — and
   // `explain` would answer not-yet where the build answers error.
-  if (
-    mode === 'js' &&
-    (bin.operatorToken.kind === ts.SyntaxKind.MinusToken ||
-      bin.operatorToken.kind === ts.SyntaxKind.AsteriskToken ||
-      bin.operatorToken.kind === ts.SyntaxKind.SlashToken ||
-      bin.operatorToken.kind === ts.SyntaxKind.PercentToken ||
-      bin.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskToken ||
-      bin.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken ||
-      bin.operatorToken.kind === ts.SyntaxKind.AsteriskEqualsToken ||
-      bin.operatorToken.kind === ts.SyntaxKind.SlashEqualsToken ||
-      bin.operatorToken.kind === ts.SyntaxKind.PercentEqualsToken ||
-      bin.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken)
-  ) {
+  if (mode === 'js' && COERCING_ARITHMETIC.has(bin.operatorToken.kind)) {
     for (const operand of [bin.left, bin.right]) {
       const operandType = frontendTypes.tsTypeToHType(
         typeChecker.getTypeAtLocation(operand),
@@ -2002,35 +2029,10 @@ function gateBinary(bin: ts.BinaryExpression, typeChecker: ts.TypeChecker, mode:
     }
     return gateUpdate(bin, typeChecker, mode);
   }
+  if (ACCEPTED_BINARY_OPERATORS.has(op)) {
+    return { kind: 'accept' };
+  }
   switch (bin.operatorToken.kind) {
-    // Every operator BinaryOp and LogicalOp model, plus plain assignment. Loose equality is here
-    // rather than deferred because docs/NUMERIC.md §6.3 defines it for primitives without any
-    // object model: the `ToPrimitive` half of the table is unreachable while the only values are
-    // primitives, and the lowering emits a runtime call that will grow that half in place.
-    case ts.SyntaxKind.PlusToken:
-    case ts.SyntaxKind.MinusToken:
-    case ts.SyntaxKind.AsteriskToken:
-    case ts.SyntaxKind.SlashToken:
-    case ts.SyntaxKind.PercentToken:
-    case ts.SyntaxKind.LessThanToken:
-    case ts.SyntaxKind.GreaterThanToken:
-    case ts.SyntaxKind.LessThanEqualsToken:
-    case ts.SyntaxKind.GreaterThanEqualsToken:
-    case ts.SyntaxKind.EqualsEqualsEqualsToken:
-    case ts.SyntaxKind.ExclamationEqualsEqualsToken:
-    case ts.SyntaxKind.EqualsEqualsToken:
-    case ts.SyntaxKind.ExclamationEqualsToken:
-    case ts.SyntaxKind.AmpersandToken:
-    case ts.SyntaxKind.BarToken:
-    case ts.SyntaxKind.CaretToken:
-    case ts.SyntaxKind.LessThanLessThanToken:
-    case ts.SyntaxKind.GreaterThanGreaterThanToken:
-    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken:
-    case ts.SyntaxKind.AmpersandAmpersandToken:
-    case ts.SyntaxKind.BarBarToken:
-    case ts.SyntaxKind.QuestionQuestionToken:
-      return { kind: 'accept' };
-
     // `x instanceof C`, and only where `C` is a class this compiler modelled. The right operand is
     // a class NAME, not a value: the emitter compares against a specific `JSRTClass` descriptor,
     // and `x instanceof (cond ? A : B)` has no descriptor to name. The left operand is anything at
@@ -2683,24 +2685,7 @@ function singleClassMethod(
   name: string,
   typeChecker: ts.TypeChecker,
 ): ts.ClassDeclaration | undefined {
-  let found: ts.ClassDeclaration | undefined;
-  for (const constituent of live) {
-    if ((constituent.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) {
-      return undefined;
-    }
-    const declaration = classDeclarationOf(constituent);
-    if (declaration === undefined || declaration.name === undefined) {
-      return undefined;
-    }
-    if (declaration.typeParameters !== undefined && declaration.typeParameters.length > 0) {
-      return undefined;
-    }
-    if (found === undefined) {
-      found = declaration;
-    } else if (found !== declaration) {
-      return undefined;
-    }
-  }
+  const found = frontendTypes.singleClassOf(live);
   if (found === undefined) {
     return undefined;
   }
@@ -3238,7 +3223,7 @@ function gateCall(call: ts.CallExpression, typeChecker: ts.TypeChecker, mode: Mo
       // carries, and `reduce` tells an absent initial value from an `undefined` one by count the
       // bound entry does not keep. `toSpliced` reads a fixed pair and drops its insertion tail.
       if (call.arguments.some((a) => ts.isSpreadElement(a))) {
-        return Object.hasOwn(CALLBACK_ARRAY_OPS, op) || op === 'toSpliced'
+        return CALLBACK_ARRAY_OPS.has(op) || op === 'toSpliced'
           ? notYet(`a spread argument to Array.prototype.${op} is not yet supported`, 5)
           : { kind: 'accept' };
       }
@@ -3259,10 +3244,10 @@ function gateCall(call: ts.CallExpression, typeChecker: ts.TypeChecker, mode: Mo
         if (call.arguments.length !== 2) {
           return notYet(`${op} without an initial value is not yet supported`, 5);
         }
-      } else if (Object.hasOwn(CALLBACK_ARRAY_OPS, op) && call.arguments.length !== 1) {
+      } else if (CALLBACK_ARRAY_OPS.has(op) && call.arguments.length !== 1) {
         return notYet(`${op} with a thisArg is not yet supported`, 5);
       }
-      if (Object.hasOwn(CALLBACK_ARRAY_OPS, op)) {
+      if (CALLBACK_ARRAY_OPS.has(op)) {
         const cb = call.arguments[0];
         // A callback the checker cannot type as callable would reach jsrt_call as a non-closure
         // and die there; in js mode an `any`-typed callback lands here too, and refusing it is
@@ -4420,7 +4405,7 @@ function gateClass(
       if (
         !ts.isIdentifier(member.name) &&
         !ts.isPrivateIdentifier(member.name) &&
-        classMemberStaticName(member, checker) === undefined
+        frontendTypes.memberStaticName(member, checker) === undefined
       ) {
         return notYet('a computed accessor name is not yet supported', 5);
       }
@@ -4430,7 +4415,7 @@ function gateClass(
         // Shadowing an inherited static follows the shared same-kind rule below: a complete pair
         // over anything keeps one working pair per class, while a lone half would split the pair
         // across the chain.
-        const staticOk = classMemberStaticName(member, checker);
+        const staticOk = frontendTypes.memberStaticName(member, checker);
         if (staticOk === undefined) {
           return notYet('a static #private accessor name is not yet supported', 5);
         }
@@ -4474,7 +4459,7 @@ function gateClass(
       // §8 step 12(d)). The pair must stay WHOLE across the override, and the family needs one
       // table per class, which is the method rule's module-scope limit.
       {
-        const overrideName = classMemberStaticName(member, checker);
+        const overrideName = frontendTypes.memberStaticName(member, checker);
         if (overrideName !== undefined && inheritedInstance.has(overrideName)) {
           if (!accessorOverrideKeepsPair(overrideName, declaration, checker)) {
             return notYet(
@@ -4681,7 +4666,7 @@ function gateClass(
         member.initializer === undefined &&
         !ts.isIdentifier(member.name) &&
         !ts.isPrivateIdentifier(member.name) &&
-        classMemberStaticName(member, checker) === undefined
+        frontendTypes.memberStaticName(member, checker) === undefined
       ) {
         return notYet('an optional class field is not yet supported', 5);
       }
@@ -4906,7 +4891,7 @@ function ancestorMembers(
         frontendTypes.isStaticMember(member) === wantStatic
           ? ts.isIdentifier(member.name)
             ? member.name.text
-            : classMemberStaticName(member, checker)
+            : frontendTypes.memberStaticName(member, checker)
           : undefined;
       if (declared !== undefined) {
         names.add(declared);
@@ -4946,7 +4931,7 @@ function inheritedShadowIsSameKind(
     name === undefined ||
     member.name === undefined ||
     ts.isPrivateIdentifier(member.name) ||
-    (!ts.isIdentifier(member.name) && classMemberStaticName(member, checker) === undefined)
+    (!ts.isIdentifier(member.name) && frontendTypes.memberStaticName(member, checker) === undefined)
   ) {
     return false;
   }
@@ -4966,7 +4951,8 @@ function inheritedShadowIsSameKind(
         frontendTypes.isStaticMember(m) === wantStatic &&
         m.name !== undefined &&
         !ts.isPrivateIdentifier(m.name) &&
-        (ts.isIdentifier(m.name) ? m.name.text : classMemberStaticName(m, checker)) === name,
+        (ts.isIdentifier(m.name) ? m.name.text : frontendTypes.memberStaticName(m, checker)) ===
+          name,
     );
     if (found === undefined) {
       continue;
@@ -4989,40 +4975,19 @@ function inheritedShadowIsSameKind(
           (m) =>
             ts.isGetAccessorDeclaration(m) &&
             frontendTypes.isStaticMember(m) &&
-            classMemberStaticName(m, checker) === name,
+            frontendTypes.memberStaticName(m, checker) === name,
         ) &&
         declaration.members.some(
           (m) =>
             ts.isSetAccessorDeclaration(m) &&
             frontendTypes.isStaticMember(m) &&
-            classMemberStaticName(m, checker) === name,
+            frontendTypes.memberStaticName(m, checker) === name,
         )
       );
     }
     return false;
   }
   return false;
-}
-
-/** The name a class member declares when it is an identifier, a `#private` name, or a
- * literal-typed computed key (`[k]` with `k: "m"` -- the step-22 computed-literal rule).
- * `undefined` for anything wider, and for string/numeric literal spellings, which keep their
- * own verdict: this helper learns exactly the computed case, never a second spelling for
- * what the member arms already refuse. */
-function classMemberStaticName(
-  member: ts.ClassElement,
-  checker: ts.TypeChecker,
-): string | undefined {
-  if (member.name === undefined) {
-    return undefined;
-  }
-  if (ts.isIdentifier(member.name) || ts.isPrivateIdentifier(member.name)) {
-    return member.name.text;
-  }
-  if (ts.isComputedPropertyName(member.name)) {
-    return frontendTypes.computedKeyStaticName(member.name, checker) ?? undefined;
-  }
-  return undefined;
 }
 
 /** Whether `declaration` (or any ancestor) declares an index signature.
@@ -5146,7 +5111,7 @@ function accessorOverrideKeepsPair(
   let get = false;
   let set = false;
   for (const m of declaration.members) {
-    if (frontendTypes.isStaticMember(m) || classMemberStaticName(m, checker) !== name) {
+    if (frontendTypes.isStaticMember(m) || frontendTypes.memberStaticName(m, checker) !== name) {
       continue;
     }
     if (ts.isGetAccessorDeclaration(m)) {
@@ -5467,36 +5432,6 @@ function readsThisOrSuper(node: ts.Node): boolean {
 
 /** `new C(…)`, admitted only when `C` resolves to a class this subset models. `new (pick())()` and
  * `new Date()` are the same syntax reaching something the emitter cannot name. */
-/** The Map and Set surface the subset compiles, with the argument count each operation takes.
- *
- * A closed list, not a lookup on the lib declarations: everything here is one runtime function, and
- * `keys`/`values`/`entries` box a JSRTIterator (Phase 5 step 8). Reading the list off the lib
- * would turn a missing name into an internal error instead of a `not-yet`.
- *
- * `forEach` IS here, and was previously grouped with them by mistake: it takes a callback, not an
- * iterator, and the runtime calls it through `jsrt_call` exactly as the `Array.prototype` callback
- * methods already do — no protocol the subset lacks (plan-notes 97). */
-const COLLECTION_OPS: Readonly<Record<'map' | 'set', Readonly<Record<string, number>>>> = {
-  map: { get: 1, set: 2, has: 1, delete: 1, clear: 0, forEach: 1, keys: 0, values: 0, entries: 0 },
-  set: {
-    add: 1,
-    has: 1,
-    delete: 1,
-    clear: 0,
-    forEach: 1,
-    keys: 0,
-    values: 0,
-    entries: 0,
-    union: 1,
-    intersection: 1,
-    difference: 1,
-    symmetricDifference: 1,
-    isSubsetOf: 1,
-    isSupersetOf: 1,
-    isDisjointFrom: 1,
-  },
-};
-
 /** `'map'`, `'set'`, or undefined for anything that is not one — the receiver test every rule
  * below shares. It asks the TYPE, so a `Map` the checker resolved through an alias or a type
  * parameter answers the same as one written out. */
@@ -6985,22 +6920,22 @@ export function isGlobalPromise(node: ts.Expression, checker: ts.TypeChecker): b
 /** The `ARRAY_OPS` entries whose FIRST argument is a callback: the gate holds that argument to a
  * function type, refuses the thisArg form of the single-callback methods, and requires
  * `reduce`/`reduceRight`'s explicit initial value. */
-export const CALLBACK_ARRAY_OPS = {
-  every: true,
-  sort: true,
-  reduce: true,
-  reduceRight: true,
-  filter: true,
-  flatMap: true,
-  find: true,
-  findIndex: true,
-  findLast: true,
-  findLastIndex: true,
-  toSorted: true,
-  forEach: true,
-  map: true,
-  some: true,
-} as const;
+export const CALLBACK_ARRAY_OPS: ReadonlySet<string> = new Set([
+  'every',
+  'sort',
+  'reduce',
+  'reduceRight',
+  'filter',
+  'flatMap',
+  'find',
+  'findIndex',
+  'findLast',
+  'findLastIndex',
+  'toSorted',
+  'forEach',
+  'map',
+  'some',
+]);
 
 /** The `JSON` namespace, by the same test. */
 export function isGlobalJson(node: ts.Expression, checker: ts.TypeChecker): boolean {

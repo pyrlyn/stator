@@ -25,6 +25,7 @@ import { hUnknown, substituteHType } from '../hir/types.ts';
 // cycle; re-exported here so every existing import site keeps working.
 export { specializationName, substituteHType } from '../hir/types.ts';
 import { tsTypeToHType } from './types.ts';
+import { syntaxKindSet } from './syntax-kinds.ts';
 
 /** What a call to a generic function resolves to.
  *
@@ -564,26 +565,26 @@ export function capturesEnclosingScope(
 /** Declaration and member forms whose `name` is the spelling the node BINDS (so that name is
  * not a value read). Property access / property assignment names are member labels and are
  * excluded by the caller. */
-const SELF_NAMED_KINDS: ReadonlySet<ts.SyntaxKind> = new Set([
-  ts.SyntaxKind.FunctionDeclaration,
-  ts.SyntaxKind.FunctionExpression,
-  ts.SyntaxKind.ClassDeclaration,
-  ts.SyntaxKind.ClassExpression,
-  ts.SyntaxKind.VariableDeclaration,
-  ts.SyntaxKind.Parameter,
-  ts.SyntaxKind.TypeParameter,
-  ts.SyntaxKind.InterfaceDeclaration,
-  ts.SyntaxKind.TypeAliasDeclaration,
-  ts.SyntaxKind.EnumDeclaration,
-  ts.SyntaxKind.ModuleDeclaration,
-  ts.SyntaxKind.MethodDeclaration,
-  ts.SyntaxKind.GetAccessor,
-  ts.SyntaxKind.SetAccessor,
-  ts.SyntaxKind.PropertyDeclaration,
-  ts.SyntaxKind.MethodSignature,
-  ts.SyntaxKind.PropertySignature,
-  ts.SyntaxKind.EnumMember,
-]);
+const SELF_NAMED_KINDS: ReadonlySet<ts.SyntaxKind> = syntaxKindSet(
+  'FunctionDeclaration',
+  'FunctionExpression',
+  'ClassDeclaration',
+  'ClassExpression',
+  'VariableDeclaration',
+  'Parameter',
+  'TypeParameter',
+  'InterfaceDeclaration',
+  'TypeAliasDeclaration',
+  'EnumDeclaration',
+  'ModuleDeclaration',
+  'MethodDeclaration',
+  'GetAccessor',
+  'SetAccessor',
+  'PropertyDeclaration',
+  'MethodSignature',
+  'PropertySignature',
+  'EnumMember',
+);
 
 function bindsOwnName(parent: ts.Node, child: ts.Node): boolean {
   return SELF_NAMED_KINDS.has(parent.kind) && (parent as ts.NamedDeclaration).name === child;
@@ -680,29 +681,29 @@ function containsNode(ancestor: ts.Node, descendant: ts.Node): boolean {
  * class shape, every block shape, and the declaration forms that scope their contents. Loop
  * statements are here for their headers — `for (const y of …)` scopes `y` to the loop, not
  * to any block under it. */
-const SCOPE_BOUNDARY_KINDS: ReadonlySet<ts.SyntaxKind> = new Set([
-  ts.SyntaxKind.FunctionDeclaration,
-  ts.SyntaxKind.FunctionExpression,
-  ts.SyntaxKind.ArrowFunction,
-  ts.SyntaxKind.MethodDeclaration,
-  ts.SyntaxKind.Constructor,
-  ts.SyntaxKind.GetAccessor,
-  ts.SyntaxKind.SetAccessor,
-  ts.SyntaxKind.ClassDeclaration,
-  ts.SyntaxKind.ClassExpression,
-  ts.SyntaxKind.EnumDeclaration,
-  ts.SyntaxKind.ModuleDeclaration,
-  ts.SyntaxKind.Block,
-  ts.SyntaxKind.CaseBlock,
-  ts.SyntaxKind.ModuleBlock,
-  ts.SyntaxKind.CatchClause,
-  ts.SyntaxKind.ForStatement,
-  ts.SyntaxKind.ForInStatement,
-  ts.SyntaxKind.ForOfStatement,
-  ts.SyntaxKind.WhileStatement,
-  ts.SyntaxKind.DoStatement,
-  ts.SyntaxKind.SwitchStatement,
-]);
+const SCOPE_BOUNDARY_KINDS: ReadonlySet<ts.SyntaxKind> = syntaxKindSet(
+  'FunctionDeclaration',
+  'FunctionExpression',
+  'ArrowFunction',
+  'MethodDeclaration',
+  'Constructor',
+  'GetAccessor',
+  'SetAccessor',
+  'ClassDeclaration',
+  'ClassExpression',
+  'EnumDeclaration',
+  'ModuleDeclaration',
+  'Block',
+  'CaseBlock',
+  'ModuleBlock',
+  'CatchClause',
+  'ForStatement',
+  'ForInStatement',
+  'ForOfStatement',
+  'WhileStatement',
+  'DoStatement',
+  'SwitchStatement',
+);
 
 function isScopeBoundary(node: ts.Node): boolean {
   return SCOPE_BOUNDARY_KINDS.has(node.kind);

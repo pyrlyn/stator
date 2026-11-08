@@ -5,14 +5,13 @@
 #include "jsrt.h"
 
 #include "jsrt_mem.h"
+#include "jsrt_utf.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-/* ============================================================================
- * Shadow stack frame management — rooting protocol for the GC
- * ============================================================================ */
+/* --- Shadow stack frame management — rooting protocol for the GC --- */
 
 _Thread_local JSRTFrame *jsrt_frame_top = NULL;
 
@@ -25,9 +24,7 @@ void jsrt_frame_init(JSRTFrame *frame) {
   }
 }
 
-/* ============================================================================
- * Strict equality — NaN !== NaN, +0 === -0, number cross-representation
- * ============================================================================ */
+/* --- Strict equality — NaN !== NaN, +0 === -0, number cross-representation --- */
 
 bool jsrt_strict_equals(jsrt_value a, jsrt_value b) {
   /* Numbers compare by VALUE, not by bits, and in both directions: two representations of the
@@ -50,9 +47,7 @@ bool jsrt_strict_equals(jsrt_value a, jsrt_value b) {
   return a == b;
 }
 
-/* ============================================================================
- * Initialization — assert 48-bit pointer assumption and set up GC
- * ============================================================================ */
+/* --- Initialization — assert 48-bit pointer assumption and set up GC --- */
 
 void jsrt_init(void) {
   /* Verify the 48-bit pointer assumption against a real heap allocation.
@@ -313,26 +308,13 @@ static void iterable_name(jsrt_value value, char *buf, size_t buflen) {
     (void)snprintf(buf, buflen, "undefined");
     return;
   }
-  if (jsrt_is_number(value) || jsrt_is(value, JSRT_TAG_BOOL)) {
-    const jsrt_value text = jsrt_to_string(value);
-    const uint32_t len = jsrt_string_length(text);
-    size_t i = 0;
-    for (; i < len && i + 1 < buflen; i++) {
-      buf[i] = (char)jsrt_string_char(text, i);
-    }
-    buf[i] = '\0';
+  const bool primitive = jsrt_is_number(value) || jsrt_is(value, JSRT_TAG_BOOL);
+  if (!primitive && !jsrt_is(value, JSRT_TAG_STRING)) {
+    (void)snprintf(buf, buflen, "object");
     return;
   }
-  if (jsrt_is(value, JSRT_TAG_STRING)) {
-    const uint32_t len = jsrt_string_length(value);
-    size_t i = 0;
-    for (; i < len && i + 1 < buflen; i++) {
-      buf[i] = (char)jsrt_string_char(value, i);
-    }
-    buf[i] = '\0';
-    return;
-  }
-  (void)snprintf(buf, buflen, "object");
+  const JSString *text = (const JSString *)jsrt_ptr(primitive ? jsrt_to_string(value) : value);
+  jsrt_utf16_to_ascii(text->data, text->length, buf, buflen);
 }
 
 void jsrt_throw_not_iterable(jsrt_value value) {

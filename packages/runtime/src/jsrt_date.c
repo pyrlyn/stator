@@ -92,9 +92,7 @@ static Civil civil_from_days(double z) {
   return out;
 }
 
-/* ============================================================================
- * Construction and the time value
- * ============================================================================ */
+/* --- Construction and the time value --- */
 
 static JSRTDate *as_date(jsrt_value v) {
   if (!jsrt_is_date(v)) {
@@ -137,9 +135,7 @@ jsrt_value jsrt_date_set_time(jsrt_value v, jsrt_value ms) {
   return jsrt_number(d->time);
 }
 
-/* ============================================================================
- * The UTC field getters (§21.4.4.x)
- * ============================================================================
+/* --- The UTC field getters (§21.4.4.x) ---
  *
  * Every one answers NaN for an Invalid Date -- the spec's "If t is NaN, return NaN" -- which is
  * why the NaN check is here once rather than in eight places. */
@@ -183,9 +179,7 @@ static double field_of(double t, DateField which) {
   jsrt_panic("STA4093: a Date field the runtime does not know");
 }
 
-/* ============================================================================
- * Local time (§21.4.1.7, §21.4.1.25-26) -- slice B
- * ============================================================================
+/* --- Local time (§21.4.1.7, §21.4.1.25-26) -- slice B ---
  *
  * The ONLY part of Date that consults the outside world. libc owns the tz database, so the offset
  * comes from `localtime_r`'s `tm_gmtoff` rather than from rules this file would have to keep in
@@ -298,9 +292,7 @@ jsrt_value jsrt_date_get_timezone_offset(jsrt_value v) {
 
 DATE_GETTER_FIELDS(DATE_GETTER)
 
-/* ============================================================================
- * MakeDay / MakeTime / MakeDate (§21.4.1.27-29), which the setters and Date.UTC share
- * ============================================================================ */
+/* --- MakeDay / MakeTime / MakeDate (§21.4.1.27-29), which the setters and Date.UTC share --- */
 
 /* The spec normalizes out-of-range components rather than rejecting them: month 12 is January of
  * the next year, day 0 is the last day of the previous month, hour 25 is 1am tomorrow. That falls
@@ -332,26 +324,40 @@ static double make_date(double day, double time) {
   return day * MS_PER_DAY + time;
 }
 
+/* An optional component arrives as `undefined`, which reads as `absent` -- the spec's default, or
+ * for a setter "keep the current value", since each step is conditional on the argument being
+ * present. `jsrt_to_number(undefined)` is NaN, so absence is checked rather than converted. */
+static double number_or(jsrt_value given, double absent) {
+  return given == JSRT_UNDEFINED ? absent : jsrt_to_number(given);
+}
+
+/* The arithmetic `Date.UTC` and the component constructor share, from the components after the
+ * month: day defaults to 1, the rest to zero. The caller converts year and month first, so every
+ * ToNumber still runs in argument order. */
+static double components_date(double y, double mo, jsrt_value day, jsrt_value hours,
+                              jsrt_value minutes, jsrt_value seconds, jsrt_value ms) {
+  const double d = number_or(day, 1);
+  const double h = number_or(hours, 0);
+  const double mi = number_or(minutes, 0);
+  const double s = number_or(seconds, 0);
+  const double milli = number_or(ms, 0);
+  /* §21.4.3.4 step 8: a two-digit year means 19xx, and ONLY here -- in `Date.UTC` and the local
+   * constructor: `new Date(95, 0)` is 1995, `new Date(Date.UTC(95, 0))` is too, but
+   * `setUTCFullYear(95)` is 95. */
+  const double yr = !isnan(y) && trunc(y) >= 0 && trunc(y) <= 99 ? 1900 + trunc(y) : y;
+  return make_date(make_day(yr, mo, d), make_time(h, mi, s, milli));
+}
+
 /* Date.UTC (§21.4.3.4). The spec's defaults are month 0, day 1, and zero for the rest; a missing
  * YEAR makes the result NaN, which is what `jsrt_to_number(JSRT_UNDEFINED)` already answers. */
 jsrt_value jsrt_date_utc(jsrt_value year, jsrt_value month, jsrt_value day, jsrt_value hours,
                         jsrt_value minutes, jsrt_value seconds, jsrt_value ms) {
   const double y = jsrt_to_number(year);
-  const double mo = month == JSRT_UNDEFINED ? 0 : jsrt_to_number(month);
-  const double d = day == JSRT_UNDEFINED ? 1 : jsrt_to_number(day);
-  const double h = hours == JSRT_UNDEFINED ? 0 : jsrt_to_number(hours);
-  const double mi = minutes == JSRT_UNDEFINED ? 0 : jsrt_to_number(minutes);
-  const double s = seconds == JSRT_UNDEFINED ? 0 : jsrt_to_number(seconds);
-  const double milli = ms == JSRT_UNDEFINED ? 0 : jsrt_to_number(ms);
-  /* §21.4.3.4 step 8: a two-digit year means 19xx, and ONLY here and in the local constructor --
-   * `new Date(95, 0)` is 1995, `new Date(Date.UTC(95, 0))` is too, but `setUTCFullYear(95)` is 95. */
-  const double yr = !isnan(y) && trunc(y) >= 0 && trunc(y) <= 99 ? 1900 + trunc(y) : y;
-  return jsrt_number(time_clip(make_date(make_day(yr, mo, d), make_time(h, mi, s, milli))));
+  const double mo = number_or(month, 0);
+  return jsrt_number(time_clip(components_date(y, mo, day, hours, minutes, seconds, ms)));
 }
 
-/* ============================================================================
- * The UTC field setters (§21.4.4.2x)
- * ============================================================================ */
+/* --- The UTC field setters (§21.4.4.2x) --- */
 
 /* Every setter rebuilds the time value from the fields it is NOT changing, which is what makes
  * `setUTCMonth(13)` roll into the next year rather than clamping. A setter on an Invalid Date
@@ -377,7 +383,7 @@ static jsrt_value set_fields(jsrt_value v, DateField first, const double *values
     for (size_t i = 0; i < 8; i++) {
       /* Only the fields the CALLER did not supply come from +0 -- and "did not supply" has to be
        * passed in, because by the time this runs an omitted argument and an explicit `undefined`
-       * have both become NaN through `or_current` (the spec reads an absent component and an
+       * have both become NaN through `number_or` (the spec reads an absent component and an
        * undefined one the same way, so the two really are the same thing). What is NOT the same is
        * an explicit NaN argument: ToNumber(NaN) is NaN and the result must be NaN. Without the
        * mask, `new Date(NaN).setUTCFullYear(NaN)` recovered into year 0 and answered
@@ -397,13 +403,6 @@ static jsrt_value set_fields(jsrt_value v, DateField first, const double *values
    * which has to be turned back into an instant before it can be stored. */
   d->time = time_clip(local ? utc_from_local(built) : built);
   return jsrt_number(d->time);
-}
-
-/* The setters take their optional trailing components as `undefined`, which reads as "keep the
- * current value" -- the spec's own wording, since each step is conditional on the argument being
- * present. `jsrt_to_number(undefined)` is NaN, so absence is checked rather than converted. */
-static double or_current(jsrt_value given, double current) {
-  return given == JSRT_UNDEFINED ? current : jsrt_to_number(given);
 }
 
 /* Fourteen setters over four shapes, generated rather than written out: the UTC family and the
@@ -431,15 +430,15 @@ static double or_current(jsrt_value given, double current) {
 #define DATE_SETTER_2(name, f0, f1, local)                                                         \
   jsrt_value jsrt_date_set_##name(jsrt_value v, jsrt_value a, jsrt_value b) {                      \
     const double t = reading(v, local);                                                            \
-    const double values[2] = {jsrt_to_number(a), or_current(b, field_of(t, f1))};                   \
+    const double values[2] = {jsrt_to_number(a), number_or(b, field_of(t, f1))};                    \
     return set_fields(v, f0, values, 2, DATE_SUPPLIED_2(f0, f1, b), local);                        \
   }
 
 #define DATE_SETTER_3(name, f0, f1, f2, local)                                                     \
   jsrt_value jsrt_date_set_##name(jsrt_value v, jsrt_value a, jsrt_value b, jsrt_value c) {        \
     const double t = reading(v, local);                                                            \
-    const double values[3] = {jsrt_to_number(a), or_current(b, field_of(t, f1)),                    \
-                              or_current(c, field_of(t, f2))};                                      \
+    const double values[3] = {jsrt_to_number(a), number_or(b, field_of(t, f1)),                     \
+                              number_or(c, field_of(t, f2))};                                       \
     return set_fields(v, f0, values, 3, DATE_SUPPLIED_3(f0, f1, f2, b, c), local);                 \
   }
 
@@ -447,8 +446,8 @@ static double or_current(jsrt_value given, double current) {
   jsrt_value jsrt_date_set_##name(jsrt_value v, jsrt_value a, jsrt_value b, jsrt_value c,          \
                                   jsrt_value d) {                                                  \
     const double t = reading(v, local);                                                            \
-    const double values[4] = {jsrt_to_number(a), or_current(b, field_of(t, f1)),                    \
-                              or_current(c, field_of(t, f2)), or_current(d, field_of(t, f3))};      \
+    const double values[4] = {jsrt_to_number(a), number_or(b, field_of(t, f1)),                     \
+                              number_or(c, field_of(t, f2)), number_or(d, field_of(t, f3))};        \
     return set_fields(v, f0, values, 4, DATE_SUPPLIED_4(f0, f1, f2, f3, b, c, d), local);          \
   }
 
@@ -477,19 +476,10 @@ jsrt_value jsrt_date_from_components(jsrt_value year, jsrt_value month, jsrt_val
                                      jsrt_value ms) {
   const double y = jsrt_to_number(year);
   const double mo = jsrt_to_number(month);
-  const double d = day == JSRT_UNDEFINED ? 1 : jsrt_to_number(day);
-  const double h = hours == JSRT_UNDEFINED ? 0 : jsrt_to_number(hours);
-  const double mi = minutes == JSRT_UNDEFINED ? 0 : jsrt_to_number(minutes);
-  const double sec = seconds == JSRT_UNDEFINED ? 0 : jsrt_to_number(seconds);
-  const double milli = ms == JSRT_UNDEFINED ? 0 : jsrt_to_number(ms);
-  const double yr = !isnan(y) && trunc(y) >= 0 && trunc(y) <= 99 ? 1900 + trunc(y) : y;
-  const double wall = make_date(make_day(yr, mo, d), make_time(h, mi, sec, milli));
-  return jsrt_date_new(utc_from_local(wall));
+  return jsrt_date_new(utc_from_local(components_date(y, mo, day, hours, minutes, seconds, ms)));
 }
 
-/* ============================================================================
- * The string forms that do not need a locale
- * ============================================================================ */
+/* --- The string forms that do not need a locale --- */
 
 /* §21.4.1.33's expanded year: four digits inside [0, 9999], and a SIGNED six-digit form outside it
  * -- `+275760-09-13T00:00:00.000Z` and `-000001-01-01T00:00:00.000Z`, both of which Node prints. */
@@ -561,22 +551,28 @@ static void write_year(char *out, size_t size, double year) {
   }
 }
 
+/* DateString (§21.4.4.41.2), `Thu Jan 01 1970`, of the reading `t`: all of `toDateString`, and the
+ * head of `toString`. */
+static void write_date_string(char *out, size_t n, double t) {
+  const Civil c = civil_from_days(floor_div(t, MS_PER_DAY));
+  char year[10];
+  write_year(year, sizeof year, c.year);
+  snprintf(out, n, "%s %s %02d %s", DAYS[(size_t)field_of(t, F_DAY)], MONTHS[(size_t)c.month - 1],
+           (int)c.day, year);
+}
+
+/* `00:00:00`, the clock of TimeString (§21.4.4.41.1) that `toString` and `toUTCString` print. */
+static void write_clock(char *out, size_t n, double t) {
+  snprintf(out, n, "%02d:%02d:%02d", (int)field_of(t, F_HOURS), (int)field_of(t, F_MINUTES),
+           (int)field_of(t, F_SECONDS));
+}
+
 /* `toDateString` (§21.4.4.35): the LOCAL calendar date with no time and no zone in it. That last
  * part is what makes it landable while `toString` and `toTimeString` are not -- those two append
  * the zone's long display name (`(Central European Summer Time)`), which Node reads from ICU and
  * libc cannot produce; `%Z` gives the abbreviation `CEST` instead. */
-jsrt_value jsrt_date_to_date_string(jsrt_value v) {
-  const double t = local_time(as_date(v)->time);
-  if (isnan(t)) {
-    return jsrt_string_from_utf8("Invalid Date", 12);
-  }
-  const Civil c = civil_from_days(floor_div(t, MS_PER_DAY));
-  char year[10];
-  write_year(year, sizeof year, c.year);
-  char text[48];
-  snprintf(text, sizeof text, "%s %s %02d %s", DAYS[(size_t)field_of(t, F_DAY)],
-           MONTHS[(size_t)c.month - 1], (int)c.day, year);
-  return jsrt_string_from_utf8(text, strlen(text));
+static void write_local_date_string(char *out, size_t n, double t) {
+  write_date_string(out, n, local_time(t));
 }
 
 /* The short zone name libc reports for the instant `t` (`UTC`, `EST`, ...), for the one string
@@ -609,16 +605,12 @@ static void zone_abbrev(double t, char *out, size_t n) {
  * so this special-cases exactly `UTC` (the golden pin's whole world) to Node's
  * `Coordinated Universal Time` and prints the abbreviation elsewhere -- a documented divergence
  * outside UTC, and strictly closer than the `[object Object]` it replaces. */
-jsrt_value jsrt_date_to_string(jsrt_value v) {
-  const double t = as_date(v)->time;
-  if (isnan(t)) {
-    return jsrt_string_from_utf8("Invalid Date", 12);
-  }
+static void write_to_string(char *out, size_t n, double t) {
   const double local = local_time(t);
-  const double day = floor_div(local, MS_PER_DAY);
-  const Civil c = civil_from_days(day);
-  char year[10];
-  write_year(year, sizeof year, c.year);
+  char date[48];
+  write_date_string(date, sizeof date, local);
+  char clock[40];
+  write_clock(clock, sizeof clock, local);
   const double off = offset_at(t);
   const char sign = off < 0 ? '-' : '+';
   const long mins = (long)(fabs(off) / MS_PER_MINUTE);
@@ -628,36 +620,38 @@ jsrt_value jsrt_date_to_string(jsrt_value v) {
   if (strcmp(name, "UTC") == 0) {
     name = "Coordinated Universal Time";
   }
-  char text[128];
-  snprintf(text, sizeof text, "%s %s %02d %s %02d:%02d:%02d GMT%c%02ld%02ld (%s)",
-           DAYS[(size_t)floor_mod(day + 4, 7)], MONTHS[(size_t)c.month - 1], (int)c.day, year,
-           (int)floor_mod(floor_div(local, MS_PER_HOUR), 24),
-           (int)floor_mod(floor_div(local, MS_PER_MINUTE), 60),
-           (int)floor_mod(floor_div(local, MS_PER_SECOND), 60), sign, mins / 60, mins % 60, name);
-  return jsrt_string_from_utf8(text, strlen(text));
+  snprintf(out, n, "%s %s GMT%c%02ld%02ld (%s)", date, clock, sign, mins / 60, mins % 60, name);
 }
 
-jsrt_value jsrt_date_to_utc_string(jsrt_value v) {
+static void write_utc_string(char *out, size_t n, double t) {
+  const Civil c = civil_from_days(floor_div(t, MS_PER_DAY));
+  char year[10];
+  write_year(year, sizeof year, c.year);
+  char clock[40];
+  write_clock(clock, sizeof clock, t);
+  snprintf(out, n, "%s, %02d %s %s %s GMT", DAYS[(size_t)field_of(t, F_DAY)], (int)c.day,
+           MONTHS[(size_t)c.month - 1], year, clock);
+}
+
+/* The human string forms share their edges: "Invalid Date" for a NaN time value, otherwise what
+ * `write` formats from the (UTC) time value. */
+static jsrt_value date_text(jsrt_value v, void (*write)(char *out, size_t n, double t)) {
   const double t = as_date(v)->time;
   if (isnan(t)) {
     return jsrt_string_from_utf8("Invalid Date", 12);
   }
-  const double day = floor_div(t, MS_PER_DAY);
-  const Civil c = civil_from_days(day);
-  char text[64];
-  char year[10];
-  write_year(year, sizeof year, c.year);
-  snprintf(text, sizeof text, "%s, %02d %s %s %02d:%02d:%02d GMT",
-           DAYS[(size_t)floor_mod(day + 4, 7)], (int)c.day, MONTHS[(size_t)c.month - 1], year,
-           (int)floor_mod(floor_div(t, MS_PER_HOUR), 24),
-           (int)floor_mod(floor_div(t, MS_PER_MINUTE), 60),
-           (int)floor_mod(floor_div(t, MS_PER_SECOND), 60));
+  char text[192];
+  write(text, sizeof text, t);
   return jsrt_string_from_utf8(text, strlen(text));
 }
 
-/* ============================================================================
- * Date.parse, ISO 8601 only
- * ============================================================================ */
+jsrt_value jsrt_date_to_date_string(jsrt_value v) { return date_text(v, write_local_date_string); }
+
+jsrt_value jsrt_date_to_string(jsrt_value v) { return date_text(v, write_to_string); }
+
+jsrt_value jsrt_date_to_utc_string(jsrt_value v) { return date_text(v, write_utc_string); }
+
+/* --- Date.parse, ISO 8601 only --- */
 
 /* §21.4.3.2 lets an implementation accept other formats; this accepts exactly the Date Time String
  * Format of §21.4.1.32 and answers NaN for everything else. Guessing at Node's fallback parser

@@ -28,9 +28,7 @@ const JSRTClass jsrt_class_set = {"Set", 0, NULL, NULL, 0, NULL, NULL, NULL, NUL
 const JSRTClass jsrt_class_weakmap = {"WeakMap", 0, NULL, NULL, 0, NULL, NULL, NULL, NULL};
 const JSRTClass jsrt_class_weakset = {"WeakSet", 0, NULL, NULL, 0, NULL, NULL, NULL, NULL};
 
-/* ============================================================================
- * Keys — SameValueZero and a hash that agrees with it
- * ============================================================================ */
+/* --- Keys — SameValueZero and a hash that agrees with it --- */
 
 /* Two keys that are equal MUST hash equally, and the two functions below are the only place that
  * pairing is stated. Every case where they could drift is a number: `-0` and `+0` are one key with
@@ -90,9 +88,7 @@ static bool same_value_zero(jsrt_value a, jsrt_value b) {
   return a == b;
 }
 
-/* ============================================================================
- * Storage
- * ============================================================================ */
+/* --- Storage --- */
 
 JSRT_GC_TRACE(map_trace, JSRTMap, m) {
   for (uint32_t i = 0; i < m->used; i++) {
@@ -226,9 +222,7 @@ static void grow(JSRTMap *m) {
   }
 }
 
-/* ============================================================================
- * Operations
- * ============================================================================ */
+/* --- Operations --- */
 
 jsrt_value jsrt_map_get(jsrt_value map, jsrt_value key) {
   uint32_t slot;
@@ -389,9 +383,7 @@ jsrt_value jsrt_map_size(jsrt_value map) {
   return jsrt_number((double)jsrt_as_map(map)->size);
 }
 
-/* ============================================================================
- * The ES2025 set operations (§24.2.4)
- * ============================================================================
+/* --- The ES2025 set operations (§24.2.4) ---
  *
  * The spec takes a SET-LIKE argument -- any object with a numeric `size`, a callable `has` and a
  * callable `keys` -- and reads it through GetSetRecord, iterating it with `keys()`. The gate

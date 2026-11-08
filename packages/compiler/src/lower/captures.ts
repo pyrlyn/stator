@@ -16,6 +16,7 @@
  * exactly where the intermediate function sits. */
 
 import * as ts from 'typescript';
+import { syntaxKindSet } from '../frontend/syntax-kinds.ts';
 import {
   evalVisibleDeclarations,
   isClassAliasUse,
@@ -79,15 +80,15 @@ export type EnvOwner = FunctionLike | ts.ClassLikeDeclaration | ts.SourceFile;
 
 export type CaptureMap = ReadonlyMap<EnvOwner, CaptureInfo>;
 
-const FUNCTION_KINDS: ReadonlySet<ts.SyntaxKind> = new Set([
-  ts.SyntaxKind.FunctionDeclaration,
-  ts.SyntaxKind.FunctionExpression,
-  ts.SyntaxKind.ArrowFunction,
-  ts.SyntaxKind.MethodDeclaration,
-  ts.SyntaxKind.Constructor,
-  ts.SyntaxKind.GetAccessor,
-  ts.SyntaxKind.SetAccessor,
-]);
+const FUNCTION_KINDS: ReadonlySet<ts.SyntaxKind> = syntaxKindSet(
+  'FunctionDeclaration',
+  'FunctionExpression',
+  'ArrowFunction',
+  'MethodDeclaration',
+  'Constructor',
+  'GetAccessor',
+  'SetAccessor',
+);
 
 export function isFunctionLike(node: ts.Node): node is FunctionLike {
   return FUNCTION_KINDS.has(node.kind);

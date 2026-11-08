@@ -21,6 +21,7 @@
 
 #include "jsrt.h"
 #include "jsrt_index_util.h"
+#include "jsrt_utf.h"
 #include "jsrt_value.h"
 
 static JSString *str_of(jsrt_value v) { return (JSString *)jsrt_ptr(v); }
@@ -31,13 +32,8 @@ static JSString *str_of(jsrt_value v) { return (JSString *)jsrt_ptr(v); }
  * of the argument. Every such rendering is ASCII, copied out through the string accessors rather
  * than reaching into the struct. */
 static void count_to_ascii(jsrt_value n, char *buf, size_t buflen) {
-  const jsrt_value text = jsrt_to_string(n);
-  const uint32_t len = jsrt_string_length(text);
-  size_t i = 0;
-  for (; i < len && i + 1 < buflen; i++) {
-    buf[i] = (char)jsrt_string_char(text, i);
-  }
-  buf[i] = '\0';
+  const JSString *text = str_of(jsrt_to_string(n));
+  jsrt_utf16_to_ascii(text->data, text->length, buf, buflen);
 }
 
 
@@ -54,27 +50,9 @@ static jsrt_value substr(const JSString *s, uint32_t from, uint32_t to) {
   return box_str(out);
 }
 
-/* Absolute code-unit index from `i`, or -1 out of range. charAt / charCodeAt / codePointAt share
- * the ToIntegerOrInfinity-or-zero position rule and the same open range. */
-static int64_t char_index(const JSString *str, jsrt_value i) {
-  const double pos = jsrt_int_or_inf(i, 0.0);
-  if (pos < 0.0 || pos >= (double)str->length) {
-    return -1;
-  }
-  return (int64_t)pos;
-}
-
-/* Relative code-unit index (`at`), or -1 out of range: a negative position counts back from the
- * length, then the same open range as `char_index`. */
-static int64_t relative_char_index(const JSString *str, jsrt_value i) {
-  double pos = jsrt_int_or_inf(i, 0.0);
-  if (pos < 0.0) {
-    pos += (double)str->length;
-  }
-  if (pos < 0.0 || pos >= (double)str->length) {
-    return -1;
-  }
-  return (int64_t)pos;
+/* The one code unit at `p` as a string: what charAt and `at` answer in range. */
+static jsrt_value unit_string(const JSString *str, int64_t p) {
+  return substr(str, (uint32_t)p, (uint32_t)p + 1);
 }
 
 static bool match_at(const JSString *hay, const JSString *needle, uint32_t at) {
@@ -121,43 +99,31 @@ static jsrt_value substr_range(const JSString *str, jsrt_value a, jsrt_value b, 
   return substr(str, from, to);
 }
 
-jsrt_value jsrt_string_char_at(jsrt_value s, jsrt_value i) {
+static jsrt_value unit_string_at(jsrt_value s, jsrt_value i, bool relative) {
   const JSString *str = str_of(s);
-  const int64_t p = char_index(str, i);
+  const int64_t p = jsrt_element_index(i, str->length, relative);
   if (p < 0) {
-    return box_str(alloc_str(0));
+    return relative ? JSRT_UNDEFINED : box_str(alloc_str(0));
   }
-  return substr(str, (uint32_t)p, (uint32_t)p + 1);
+  return unit_string(str, p);
 }
+
+jsrt_value jsrt_string_char_at(jsrt_value s, jsrt_value i) { return unit_string_at(s, i, false); }
 
 /* `at` is charAt with a RELATIVE index and an honest out-of-range answer: undefined, where
  * charAt answers the empty string (§22.1.3.1 vs §22.1.3.2). */
-jsrt_value jsrt_string_at(jsrt_value s, jsrt_value i) {
-  const JSString *str = str_of(s);
-  const int64_t p = relative_char_index(str, i);
-  if (p < 0) {
-    return JSRT_UNDEFINED;
-  }
-  return substr(str, (uint32_t)p, (uint32_t)p + 1);
-}
+jsrt_value jsrt_string_at(jsrt_value s, jsrt_value i) { return unit_string_at(s, i, true); }
 
 /* Unlike charCodeAt this answers undefined out of range (not NaN), and combines a valid
  * surrogate pair into its code point (§22.1.3.4). */
 jsrt_value jsrt_string_code_point_at(jsrt_value s, jsrt_value i) {
   const JSString *str = str_of(s);
-  const int64_t at = char_index(str, i);
+  const int64_t at = jsrt_element_index(i, str->length, false);
   if (at < 0) {
     return JSRT_UNDEFINED;
   }
-  const uint32_t p = (uint32_t)at;
-  const uint16_t lead = str->data[p];
-  if (lead >= 0xd800 && lead <= 0xdbff && p + 1 < str->length) {
-    const uint16_t trail = str->data[p + 1];
-    if (trail >= 0xdc00 && trail <= 0xdfff) {
-      return jsrt_number((double)(0x10000 + ((lead - 0xd800) << 10) + (trail - 0xdc00)));
-    }
-  }
-  return jsrt_number((double)lead);
+  uint32_t p = (uint32_t)at;
+  return jsrt_number((double)jsrt_utf16_code_point(str->data, str->length, &p));
 }
 
 /* Identity on a primitive receiver, both of them -- the object-wrapper cases the spec unwraps
@@ -168,15 +134,16 @@ jsrt_value jsrt_string_value_of(jsrt_value s) { return s; }
 
 jsrt_value jsrt_string_char_code_at(jsrt_value s, jsrt_value i) {
   const JSString *str = str_of(s);
-  const int64_t p = char_index(str, i);
-  if (p < 0) {
-    return jsrt_number(NAN);
-  }
-  return jsrt_number((double)str->data[(uint32_t)p]);
+  const int64_t p = jsrt_element_index(i, str->length, false);
+  return jsrt_number(p < 0 ? NAN : (double)str->data[(uint32_t)p]);
 }
 
 jsrt_value jsrt_string_index_of(jsrt_value s, jsrt_value search, jsrt_value from) {
   return jsrt_number((double)search_from(s, search, from));
+}
+
+jsrt_value jsrt_string_includes(jsrt_value s, jsrt_value search, jsrt_value from) {
+  return jsrt_bool(search_from(s, search, from) >= 0);
 }
 
 jsrt_value jsrt_string_last_index_of(jsrt_value s, jsrt_value search, jsrt_value from) {
@@ -205,22 +172,25 @@ jsrt_value jsrt_string_last_index_of(jsrt_value s, jsrt_value search, jsrt_value
   return jsrt_number(-1.0);
 }
 
-jsrt_value jsrt_string_includes(jsrt_value s, jsrt_value search, jsrt_value from) {
-  return jsrt_bool(search_from(s, search, from) >= 0);
+/* startsWith tests `search` starting at `pos` (default 0); endsWith, ending there (default the
+ * length) -- §22.1.3.24 and §22.1.3.7. */
+static jsrt_value affix_match(jsrt_value s, jsrt_value search, jsrt_value pos, bool ends) {
+  const JSString *hay = str_of(s);
+  const JSString *needle = str_of(search);
+  const double absent = ends ? (double)hay->length : 0.0;
+  const uint32_t at = jsrt_clamp_index(jsrt_int_or_inf(pos, absent), hay->length);
+  if (ends) {
+    return jsrt_bool(at >= needle->length && match_at(hay, needle, at - needle->length));
+  }
+  return jsrt_bool(at + needle->length <= hay->length && match_at(hay, needle, at));
 }
 
 jsrt_value jsrt_string_starts_with(jsrt_value s, jsrt_value search, jsrt_value from) {
-  const JSString *hay = str_of(s);
-  const JSString *needle = str_of(search);
-  uint32_t start = jsrt_clamp_index(jsrt_int_or_inf(from, 0.0), hay->length);
-  return jsrt_bool(start + needle->length <= hay->length && match_at(hay, needle, start));
+  return affix_match(s, search, from, false);
 }
 
 jsrt_value jsrt_string_ends_with(jsrt_value s, jsrt_value search, jsrt_value end) {
-  const JSString *hay = str_of(s);
-  const JSString *needle = str_of(search);
-  uint32_t stop = jsrt_clamp_index(jsrt_int_or_inf(end, (double)hay->length), hay->length);
-  return jsrt_bool(stop >= needle->length && match_at(hay, needle, stop - needle->length));
+  return affix_match(s, search, end, true);
 }
 
 jsrt_value jsrt_string_slice(jsrt_value s, jsrt_value a, jsrt_value b) {

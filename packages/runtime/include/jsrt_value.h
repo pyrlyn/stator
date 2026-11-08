@@ -455,9 +455,7 @@ jsrt_value jsrt_object_set_order(jsrt_value dst, const uint32_t *order, uint32_t
 /* One spread fragment into a dynamic result, in the source's order; answers the result. */
 jsrt_value jsrt_dynobj_spread(jsrt_value dst, jsrt_value src);
 
-/* ============================================================================
- * Dynamic objects -- the shape table (hidden classes), docs/VALUE.md §4.10
- * ============================================================================
+/* --- Dynamic objects -- the shape table (hidden classes), docs/VALUE.md §4.10 ---
  *
  * A dynamic object is the representation for an object whose property SET is not a compile-time
  * layout: optional properties, index signatures, and (from Phase 5) untyped receivers. Its

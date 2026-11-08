@@ -1,9 +1,9 @@
 ---
-status: todo
+status: in progress
 priority: P2
 complexity: 3
 readiness: 100%
-agent:
+agent: Claude Code / claude-opus-5-5
 ---
 
 # T30. Task 6.16 — clone baseline to zero
@@ -22,3 +22,18 @@ Steps:
 
 **Check:** `pnpm run dupes` exits 0 with no baseline file (or an empty one); the clone count in
 its output is 0; `pnpm run test` still green.
+
+## Execution plan
+
+1. List every clone (`cpd` with the baseline removed from the config, in a scratch copy).
+2. Runtime C (`packages/runtime/src/`): extract shared static helpers or internal header
+   helpers at the owning layer (`jsrt_*.h`), no behavior change; verify with
+   `pnpm run runtime`, `test:runtime`, `test:golden`, `test:asan`.
+3. Compiler (`packages/compiler/src/`): extract shared helpers in `frontend/`, `lower/`,
+   `hir/`; verify with `pnpm run test`, `test:subset`, `test:golden`, `test:selfhost`.
+   `src/cli/cc.ts` and `src/cli/config.ts` are being edited elsewhere; leave clones there.
+4. Docs/examples (`docs/research/node-mode/scan.ts`, `examples/ffi/stat/stat_shim.c`).
+5. After each step `pnpm run dupes:baseline`; the baseline only shrinks. Clones that cannot
+   go without making the code worse stay, each listed with a reason in `done.md`; at zero,
+   delete the baseline and document it in `AGENTS.md` golden rule 10.
+6. `pnpm run ci`, then `done.md`, strike the heading in `plan.md`.
