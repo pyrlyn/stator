@@ -20,7 +20,7 @@ truth (plan.md §11c T11.7).
 
 **Total: 128 / 2370 members covered (5%) across 58 modules.**
 **Slice N1 (`tsc`): 33 / 37 (89%).**
-**Node tests: 0 / 17 selected files pass.**
+**Node tests: 2 / 17 selected files pass.**
 
 | Module | Covered | Members | % | Corpus uses | tsc members | Node tests |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -50,7 +50,7 @@ truth (plan.md §11c T11.7).
 | [`node:net`](#nodenet) | 0 | 79 | 0% | 6 | 0 |  |
 | [`node:os`](#nodeos) | 14 | 23 | 61% | 43 | 2 |  |
 | [`node:path`](#nodepath) | 14 | 16 | 88% | 402 | 3 | 0 / 13 |
-| [`node:path/posix`](#nodepathposix) | 14 | 16 | 88% | 0 | 0 | 0 / 2 |
+| [`node:path/posix`](#nodepathposix) | 14 | 16 | 88% | 0 | 0 | 2 / 2 |
 | [`node:path/win32`](#nodepathwin32) | 0 | 16 | 0% | 2 | 0 | 0 / 2 |
 | [`node:perf_hooks`](#nodeperf_hooks) | 16 | 69 | 23% | 61 | 1 |  |
 | [`node:process`](#nodeprocess) | 17 | 68 | 25% | 822 | 10 |  |
