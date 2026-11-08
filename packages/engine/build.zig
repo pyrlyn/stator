@@ -5,13 +5,16 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // stator-ts's `lib.zig` exports the checker's modules but not the parser, so the parser is a
-    // module of its own, rooted at its file: everything it reaches is imported relative to it, and
-    // nothing it reaches needs a module stator-ts's own build adds (docs/INTERPRETER.md §1).
+    // module of its own, rooted at `erase.zig`: the parser, and the type erasure TypeScript input
+    // goes through (docs/ENGINE.md §2). Everything it reaches is imported relative to it; the
+    // emitter needs jstext (docs/INTERPRETER.md §1).
     const stator_ts = b.dependency("stator_ts", .{ .target = target, .optimize = optimize });
+    const jstext = b.dependency("jstext", .{ .target = target, .optimize = optimize }).module("jstext");
     const parser = b.createModule(.{
-        .root_source_file = stator_ts.path("src/parser.zig"),
+        .root_source_file = stator_ts.path("src/erase.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{.{ .name = "jstext", .module = jstext }},
     });
 
     // The runtime's headers, translated the way its memory core translates them, so the VM reads
@@ -24,6 +27,10 @@ pub fn build(b: *std.Build) void {
     jsrt_h.addIncludePath(b.path("../runtime/include"));
     jsrt_h.addIncludePath(b.path("../runtime/src"));
 
+    // pyrlyn/jit's IR, register allocator and backends: the JIT tier lowers bytecode into its IR
+    // (src/jit/, docs/ENGINE.md §3).
+    const pyrlyn_jit = b.dependency("pyrlyn_jit", .{ .target = target, .optimize = optimize }).module("pyrlyn_jit");
+
     const interp = b.addModule("stator_interp", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -31,6 +38,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "parser", .module = parser },
             .{ .name = "jsrt_c", .module = jsrt_h.createModule() },
+            .{ .name = "pyrlyn_jit", .module = pyrlyn_jit },
         },
     });
     // What executes JavaScript links the runtime it calls: the archive `pnpm run runtime` builds,
@@ -50,6 +58,15 @@ pub fn build(b: *std.Build) void {
     const install_lib = b.addInstallArtifact(lib, .{});
     b.getInstallStep().dependOn(&install_lib.step);
     b.step("lib", "Build libjsrt_interp.a").dependOn(&install_lib.step);
+
+    // The engine's command line (docs/ENGINE.md §5): runs a .js or .ts file in either mode.
+    const cli = b.addExecutable(.{ .name = "stator-engine", .root_module = over(b, interp, "src/cli.zig") });
+    linkRuntime(b, cli.root_module, runtime);
+    const install_cli = b.addInstallArtifact(cli, .{});
+    b.step("cli", "Build the stator-engine command line").dependOn(&install_cli.step);
+    const run_cli = b.addRunArtifact(cli);
+    run_cli.addPassthruArgs();
+    b.step("run", "Run stator-engine with the arguments after --").dependOn(&run_cli.step);
 
     const driver = b.addExecutable(.{ .name = "test262-parse", .root_module = over(b, interp, "test262/parse.zig") });
     // The execution driver only spawns the compiled host (test262/host.ts), so it links neither

@@ -5,6 +5,11 @@
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .stator_ts = .{ .path = "../transpiler" },
+        .jstext = .{ .path = "../jstext" },
+        .pyrlyn_jit = .{
+            .url = "git+https://github.com/pyrlyn/jit#20d0ed4e4618d6ee040943644f5521db5fb91353",
+            .hash = "N-V-__8AAN6qCAG2O0Tn8Qk3yrHeTc1Bdk8Bx4pbjPDMpIay",
+        },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src", "test262" },
 }

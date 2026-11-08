@@ -10,6 +10,7 @@ const c = rt.c;
 const bc = @import("bytecode.zig");
 const compile = @import("compile.zig");
 const builtins = @import("builtins.zig");
+const jit = @import("jit/jit.zig");
 const Value = rt.Value;
 const Op = bc.Op;
 const Template = bc.Template;
@@ -216,7 +217,7 @@ fn closureGet(f: Value, key: [*:0]const u8) Value {
     return c.jsrt_get_prop(builtins.objectPrototype(), key, null);
 }
 
-fn setProp(obj: Value, key: [*:0]const u8, v: Value, ic: ?*c.JSRTIC) void {
+pub fn setProp(obj: Value, key: [*:0]const u8, v: Value, ic: ?*c.JSRTIC) void {
     if (c.jsrt_is_nullish(obj)) {
         throwFmt(&c.jsrt_class_type_error, "Cannot set properties of {s} (setting '{s}')", .{ if (obj == rt.null_value) "null" else "undefined", keyText(key) });
         return;
@@ -238,7 +239,7 @@ pub fn getElem(obj: Value, k: Value) Value {
     return c.jsrt_dyn_index_get(obj, k, null);
 }
 
-fn setElem(obj: Value, k: Value, v: Value) void {
+pub fn setElem(obj: Value, k: Value, v: Value) void {
     if (c.jsrt_is_nullish(obj)) {
         var buf: [128]u8 = undefined;
         throwFmt(&c.jsrt_class_type_error, "Cannot set properties of {s} (setting '{s}')", .{ if (obj == rt.null_value) "null" else "undefined", describe(k, &buf) });
@@ -627,7 +628,7 @@ fn templateEnv(t: *Template, scope: ?*Env) *Env {
     return fe;
 }
 
-fn makeClosure(t: *Template, scope: ?*Env) Value {
+pub fn makeClosure(t: *Template, scope: ?*Env) Value {
     const fe = templateEnv(t, scope);
     // No allocation between making the closure and storing it: a boxed value in a Zig local is
     // not a root.
@@ -671,7 +672,7 @@ fn classSetup(heritage: Value, ctor: Value, has_heritage: bool) ?Value {
 // ---------------------------------------------------------------------- the machine
 
 /// The environment `hops` levels out from `e`.
-fn outward(e: *Env, hops: u8) *Env {
+pub fn outward(e: *Env, hops: u8) *Env {
     var at = e;
     for (0..hops) |_| at = at.parent;
     return at;
@@ -719,7 +720,7 @@ const Stop = enum(u8) {
     await,
 };
 
-const header = 3;
+pub const header = 3;
 
 fn windowSize(t: *const Template) usize {
     return header + t.nlocals + t.max_stack;
@@ -1092,6 +1093,8 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
         },
     }
 
+    if (entry == .call and state == null) if (jit.codeFor(t)) |native| return jit.enter(native, t, fe, w.ptr, argv, &frame);
+
     while (true) {
         const at = pc;
         const o: Op = @fromBackingInt(@intCast(next8(code, &pc)));
@@ -1140,16 +1143,13 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
                 if (locals[slot] == rt.uninitialized) tdzError(name) else locals[slot] = vs[top];
             },
             .load_env, .load_env_checked, .store_env, .store_env_checked => {
-                const e = outward(frame.env, next8(code, &pc));
+                const hops = next8(code, &pc);
                 const slot = next16(code, &pc);
                 const checked = o == .load_env_checked or o == .store_env_checked;
-                const name: [*:0]const u8 = if (checked) t.keys[next16(code, &pc)] else "";
-                const cell = &e.slots()[slot];
-                if (o == .load_env or o == .load_env_checked) {
-                    if (checked and cell.* == rt.uninitialized) tdzError(name) else push(vs, &top, cell.*);
-                } else {
+                const name: ?[*:0]const u8 = if (checked) t.keys[next16(code, &pc)] else null;
+                if (o == .load_env or o == .load_env_checked) push(vs, &top, envLoad(frame.env, hops, slot, name)) else {
                     top -= 1;
-                    if (checked and cell.* == rt.uninitialized) tdzError(name) else cell.* = vs[top];
+                    envStore(frame.env, hops, slot, name, vs[top]);
                 }
             },
             .load_ref, .store_ref => {
@@ -1160,32 +1160,17 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
                     cell.* = vs[top];
                 }
             },
-            .load_global, .typeof_global => {
-                const k = t.keys[next16(code, &pc)];
-                const g = builtins.global();
-                if (!c.jsrt_has_prop(g, k)) {
-                    if (o == .typeof_global) push(vs, &top, rt.string("undefined")) else throwFmt(&c.jsrt_class_reference_error, "{s} is not defined", .{keyText(k)});
-                } else {
-                    const v = c.jsrt_get_prop(g, k, null);
-                    push(vs, &top, if (o == .typeof_global) c.jsrt_typeof(v) else v);
-                }
-            },
+            .load_global, .typeof_global => push(vs, &top, loadGlobal(t.keys[next16(code, &pc)], o == .typeof_global)),
             .store_global => {
-                const g = builtins.global();
-                const k = t.keys[next16(code, &pc)];
-                const strict = next8(code, &pc) != 0;
                 top -= 1;
-                if (strict and !c.jsrt_has_prop(g, k)) throwFmt(&c.jsrt_class_reference_error, "{s} is not defined", .{keyText(k)}) else c.jsrt_set_prop(g, k, vs[top], null);
+                // Operands decode left to right: the key, then the strict flag.
+                storeGlobal(t.keys[next16(code, &pc)], next8(code, &pc) != 0, vs[top]);
             },
             .delete_global => {
                 const k = t.keys[next16(code, &pc)];
                 push(vs, &top, rt.boolean(c.jsrt_delete(builtins.global(), rt.string(keyText(k)))));
             },
-            .declare_global => {
-                const k = t.keys[next16(code, &pc)];
-                const g = builtins.global();
-                if (!c.jsrt_has_prop(g, k)) c.jsrt_set_prop(g, k, rt.undefined_value, null);
-            },
+            .declare_global => declareGlobal(t.keys[next16(code, &pc)]),
             .push_env => {
                 frame.env = c.jsrt_env_new(frame.env, next16(code, &pc));
             },
@@ -1208,17 +1193,13 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
                 const i = next16(code, &pc);
                 push(vs, &top, if (i < argv.len) argv[i] else rt.undefined_value);
             },
-            .rest => {
-                const i = next16(code, &pc);
-                const from = @min(i, argv.len);
-                push(vs, &top, c.jsrt_array_new(@intCast(argv.len - from), argv[from..].ptr));
-            },
-            .arguments => push(vs, &top, c.jsrt_array_new(@intCast(argv.len), argv.ptr)),
+            .rest => push(vs, &top, newArray(argv[@min(next16(code, &pc), argv.len)..])),
+            .arguments => push(vs, &top, newArray(argv)),
             .this_raw => push(vs, &top, w[1]),
-            .this_sloppy => push(vs, &top, if (c.jsrt_is_nullish(w[1])) builtins.global() else w[1]),
+            .this_sloppy => push(vs, &top, sloppyThis(w[1])),
             .new_target => push(vs, &top, w[2]),
             .callee => push(vs, &top, w[0]),
-            .home => push(vs, &top, if (fe) |e| e.slots()[compile.fnenv_home] else rt.undefined_value),
+            .home => push(vs, &top, homeOf(fe)),
 
             .get_prop => {
                 const site = nextSite(t, code, &pc);
@@ -1264,41 +1245,11 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
                 vs[top - 1] = if (c.jsrt_is_nullish(proto)) rt.undefined_value else getElem(proto, vs[top + 1]);
             },
 
-            inline .add, .bitand, .bitor, .bitxor, .shl, .shr, .ushr => |op| binop(vs, &top, @field(c, "jsrt_op_" ++ @tagName(op))),
-            .sub, .mul, .div, .mod => {
+            .add, .bitand, .bitor, .bitxor, .shl, .shr, .ushr, .sub, .mul, .div, .mod, .exp, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge => {
                 top -= 1;
-                const a = c.jsrt_to_number(vs[top - 1]);
-                const b = if (rt.pending()) 0 else c.jsrt_to_number(vs[top]);
-                vs[top - 1] = rt.number(switch (o) {
-                    .sub => a - b,
-                    .mul => a * b,
-                    .div => a / b,
-                    else => jsMod(a, b),
-                });
+                vs[top - 1] = binary(o, vs[top - 1], vs[top]);
             },
-            .exp => binop(vs, &top, c.jsrt_math_pow),
-            .neg => vs[top - 1] = rt.number(-c.jsrt_to_number(vs[top - 1])),
-            .plus => vs[top - 1] = rt.number(c.jsrt_to_number(vs[top - 1])),
-            .bitnot => vs[top - 1] = c.jsrt_op_bitnot(vs[top - 1]),
-            .not => vs[top - 1] = rt.boolean(!c.jsrt_truthy(vs[top - 1])),
-            .typeof => vs[top - 1] = c.jsrt_typeof(vs[top - 1]),
-            .inc => vs[top - 1] = rt.number(c.jsrt_to_number(vs[top - 1]) + 1),
-            .dec => vs[top - 1] = rt.number(c.jsrt_to_number(vs[top - 1]) - 1),
-            .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge => {
-                top -= 1;
-                const a = vs[top - 1];
-                const b = vs[top];
-                vs[top - 1] = rt.boolean(switch (o) {
-                    .eq => c.jsrt_loose_equals(a, b),
-                    .ne => !c.jsrt_loose_equals(a, b),
-                    .seq => c.jsrt_strict_equals(a, b),
-                    .sne => !c.jsrt_strict_equals(a, b),
-                    .lt => c.jsrt_op_lt(a, b),
-                    .gt => c.jsrt_op_gt(a, b),
-                    .le => c.jsrt_op_le(a, b),
-                    else => c.jsrt_op_ge(a, b),
-                });
-            },
+            .neg, .plus, .bitnot, .not, .typeof, .inc, .dec => vs[top - 1] = unary(o, vs[top - 1]),
             .to_string => vs[top - 1] = c.jsrt_to_string(vs[top - 1]),
             .to_key => vs[top - 1] = toKey(vs[top - 1]),
 
@@ -1374,14 +1325,8 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
             },
             .ret_ctor => {
                 top -= 2;
-                const v = vs[top];
-                const this = vs[top + 1];
-                if (w[2] == rt.undefined_value or rt.isObjectLike(v)) return v;
-                if (t.kind == .derived_ctor and v != rt.undefined_value) {
-                    rt.throwType("Derived constructors may only return object or undefined");
-                } else if (this == rt.uninitialized) {
-                    rt.throwReference("Must call super constructor in derived class before accessing 'this' or returning from derived constructor");
-                } else return this;
+                const r = ctorReturn(t, w[2], vs[top], vs[top + 1]);
+                if (!rt.pending()) return r;
             },
             .throw => {
                 top -= 1;
@@ -1395,7 +1340,7 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
             .new_object => push(vs, &top, c.jsrt_dynobj_new()),
             .new_array => {
                 const n = next16(code, &pc);
-                const arr = c.jsrt_array_new(n, vs[top - n ..].ptr);
+                const arr = newArray(vs[top - n .. top]);
                 top -= n;
                 push(vs, &top, arr);
             },
@@ -1656,6 +1601,112 @@ fn push(vs: []Value, top: *usize, v: Value) void {
     top.* += 1;
 }
 
+/// A binary operator's semantics: the dispatch loop's, and the JIT's slow path (src/jit/).
+pub fn binary(o: Op, a: Value, b: Value) Value {
+    return switch (o) {
+        inline .add, .bitand, .bitor, .bitxor, .shl, .shr, .ushr => |op| @field(c, "jsrt_op_" ++ @tagName(op))(a, b),
+        .exp => c.jsrt_math_pow(a, b),
+        .sub, .mul, .div, .mod => blk: {
+            const x = c.jsrt_to_number(a);
+            const y = if (rt.pending()) 0 else c.jsrt_to_number(b);
+            break :blk rt.number(switch (o) {
+                .sub => x - y,
+                .mul => x * y,
+                .div => x / y,
+                else => jsMod(x, y),
+            });
+        },
+        .eq => rt.boolean(c.jsrt_loose_equals(a, b)),
+        .ne => rt.boolean(!c.jsrt_loose_equals(a, b)),
+        .seq => rt.boolean(c.jsrt_strict_equals(a, b)),
+        .sne => rt.boolean(!c.jsrt_strict_equals(a, b)),
+        .lt => rt.boolean(c.jsrt_op_lt(a, b)),
+        .gt => rt.boolean(c.jsrt_op_gt(a, b)),
+        .le => rt.boolean(c.jsrt_op_le(a, b)),
+        .ge => rt.boolean(c.jsrt_op_ge(a, b)),
+        else => unreachable,
+    };
+}
+
+/// A unary operator's semantics, shared the same way.
+pub fn unary(o: Op, v: Value) Value {
+    return switch (o) {
+        .neg => rt.number(-c.jsrt_to_number(v)),
+        .plus => rt.number(c.jsrt_to_number(v)),
+        .bitnot => c.jsrt_op_bitnot(v),
+        .not => rt.boolean(!c.jsrt_truthy(v)),
+        .typeof => c.jsrt_typeof(v),
+        .inc => rt.number(c.jsrt_to_number(v) + 1),
+        .dec => rt.number(c.jsrt_to_number(v) - 1),
+        else => unreachable,
+    };
+}
+
+/// A global name's value (`typeof_` answers its `typeof` instead, never a ReferenceError).
+pub fn loadGlobal(k: [*:0]const u8, typeof_: bool) Value {
+    const g = builtins.global();
+    if (!c.jsrt_has_prop(g, k)) {
+        if (typeof_) return rt.string("undefined");
+        throwFmt(&c.jsrt_class_reference_error, "{s} is not defined", .{keyText(k)});
+        return rt.undefined_value;
+    }
+    const v = c.jsrt_get_prop(g, k, null);
+    return if (typeof_) c.jsrt_typeof(v) else v;
+}
+
+/// What a construction answers (§10.2.2 [[Construct]] steps 10–12): `nt` is new.target, `v`
+/// the returned value; undefined with an exception pending when the return is an error.
+pub fn ctorReturn(t: *const Template, nt: Value, v: Value, this: Value) Value {
+    if (nt == rt.undefined_value or rt.isObjectLike(v)) return v;
+    if (t.kind == .derived_ctor and v != rt.undefined_value) {
+        rt.throwType("Derived constructors may only return object or undefined");
+    } else if (this == rt.uninitialized) {
+        rt.throwReference("Must call super constructor in derived class before accessing 'this' or returning from derived constructor");
+    } else return this;
+    return rt.undefined_value;
+}
+
+/// The function's home object (methods): `super.x` starts at its prototype.
+pub fn homeOf(fe: ?*Env) Value {
+    return if (fe) |e| e.slots()[compile.fnenv_home] else rt.undefined_value;
+}
+
+/// `this` as a sloppy function sees it: the global object for undefined or null.
+pub fn sloppyThis(v: Value) Value {
+    return if (c.jsrt_is_nullish(v)) builtins.global() else v;
+}
+
+pub fn storeGlobal(k: [*:0]const u8, strict: bool, v: Value) void {
+    const g = builtins.global();
+    if (strict and !c.jsrt_has_prop(g, k)) throwFmt(&c.jsrt_class_reference_error, "{s} is not defined", .{keyText(k)}) else c.jsrt_set_prop(g, k, v, null);
+}
+
+/// A global `var` or function's property, made undefined when the object lacks it.
+pub fn declareGlobal(k: [*:0]const u8) void {
+    const g = builtins.global();
+    if (!c.jsrt_has_prop(g, k)) c.jsrt_set_prop(g, k, rt.undefined_value, null);
+}
+
+pub fn newArray(items: []const Value) Value {
+    return c.jsrt_array_new(@intCast(items.len), items.ptr);
+}
+
+/// A binding `hops` scopes out; `name` is set when a read must check the TDZ.
+pub fn envLoad(env: *Env, hops: u8, slot: u16, name: ?[*:0]const u8) Value {
+    const v = outward(env, hops).slots()[slot];
+    if (name) |n| if (v == rt.uninitialized) {
+        tdzError(n);
+        return rt.undefined_value;
+    };
+    return v;
+}
+
+pub fn envStore(env: *Env, hops: u8, slot: u16, name: ?[*:0]const u8, v: Value) void {
+    const cell = &outward(env, hops).slots()[slot];
+    if (name) |n| if (cell.* == rt.uninitialized) return tdzError(n);
+    cell.* = v;
+}
+
 fn binop(vs: []Value, top: *usize, comptime f: anytype) void {
     top.* -= 1;
     vs[top.* - 1] = f(vs[top.* - 1], vs[top.*]);
@@ -1679,7 +1730,7 @@ fn deleteKey(obj: Value, key: Value) Value {
     return rt.boolean(c.jsrt_delete(ownTable(obj), key));
 }
 
-fn tdzError(name: [*:0]const u8) void {
+pub fn tdzError(name: [*:0]const u8) void {
     const n = keyText(name);
     if (std.mem.eql(u8, n, "%this")) {
         rt.throwReference("Must call super constructor in derived class before accessing 'this' or returning from derived constructor");

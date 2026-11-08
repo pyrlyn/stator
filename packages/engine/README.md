@@ -14,6 +14,9 @@ through pyrlyn/jit. Until T67 this package was `packages/interpreter`.
 | `src/vm.zig` | The machine. Values are the runtime's `jsrt_value`, and every operation is a runtime helper. A generator or async function suspends by copying its window into a heap environment and resumes through the runtime's generator and promise machinery. |
 | `src/builtins.zig` | The global object an interpreted script runs against, plus the generator and async-generator prototypes. |
 | `src/interp.zig` | `runScript` and `evalScript`: parse, compile and run a script against the global object. |
+| `src/engine.zig` | `run`: a `.js` or `.ts` source (TypeScript erased by stator-ts's `erase.zig`) in `interp` or `jit` mode (`docs/ENGINE.md`). |
+| `src/cli.zig` | `stator-engine run [--mode=interp\|jit] [--lang=js\|ts\|wasm] <file>` (`docs/ENGINE.md` §5). |
+| `src/jit/` | The baseline JIT: `analyze.zig` (which templates, stack depths), `lower.zig` (bytecode → pyrlyn/jit IR), `helpers.zig` (the VM operations native code calls), `jit.zig` (compile on first call). |
 | `src/rt.zig` | The runtime's C ABI, translated from `packages/runtime/src/jsrt_c.h`. |
 | `test262/parse.zig` | Runs Test262's `test/language/` through the parse entry and ratchets the result against `test262-parse.json`. |
 | `test262/host.ts` | The Test262 host: strict TS compiled `--mode=js --node`, so a test runs in the interpreter through an indirect `eval`, and `print` and `$262` are compiled code. |
@@ -21,7 +24,8 @@ through pyrlyn/jit. Until T67 this package was `packages/interpreter`.
 | `test262/common.zig` | What the two drivers share: test metadata, modes, the corpus walk, the ratchet. |
 
 ```bash
-zig build test                    # unit tests (pnpm run interp:test)
+zig build test                    # unit tests, both modes (pnpm run interp:test)
+zig build cli -Doptimize=ReleaseFast   # zig-out/bin/stator-engine
 zig build lib -Doptimize=ReleaseFast   # zig-out/lib/libjsrt_interp.a
 zig build test262-parse -Doptimize=ReleaseFast -- [--corpus=<dir>] [--filter=<text>] [--failures] [--update]
 zig build test262-exec -Doptimize=ReleaseSafe -- [--corpus=<dir>] [--filter=<text>] [--host=<binary>] [--failures] [--update]
@@ -35,3 +39,6 @@ That host links `build/lib/libjsrt_interp.a`, so after changing `src/` rebuild i
 
 The Test262 corpus comes from `pnpm run test262:fetch`, or from `$STATOR_TEST262` when that is
 set. A `--filter` run checks a slice, so it neither gates nor records.
+
+The script corpus and the V8 benchmark live in `packages/tests/engine/` (`pnpm run engine:test`,
+`pnpm run engine:bench`).

@@ -248,6 +248,11 @@ pub const Op = enum(u8) {
     debugger,
 };
 
+pub const Native = struct {
+    state: enum(u8) { untried, rejected, compiled } = .untried,
+    code: ?*const anyopaque = null,
+};
+
 pub const Handler = struct {
     start: u32,
     end: u32,
@@ -303,6 +308,9 @@ pub const Template = struct {
     is_async: bool = false,
     /// Byte offset of the function in the source, for messages.
     start: u32,
+    /// The baseline JIT's native code for this template (src/jit/), made on its first call in `jit`
+    /// mode. Immortal like the template.
+    jit: Native = .{},
 
     /// [[Construct]]: generators and async functions have none (§15.5, §15.8).
     pub fn constructible(t: *const Template) bool {

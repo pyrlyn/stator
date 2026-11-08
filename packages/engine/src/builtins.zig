@@ -70,6 +70,28 @@ pub fn init() void {
     populate(g);
 }
 
+/// `console` for a script the engine runs on its own (src/engine.zig): the runtime's printing, the
+/// form compiled programs print with. A program that interprets code keeps its own console.
+pub fn installConsole() void {
+    const g = global();
+    if (c.jsrt_has_prop(g, "console")) return;
+    const con = c.jsrt_dynobj_new();
+    put(g, "console", con);
+    inline for (.{ "log", "info", "debug" }) |name| method(con, name, 0, printer(c.jsrt_print_many));
+    inline for (.{ "error", "warn" }) |name| method(con, name, 0, printer(c.jsrt_eprint_many));
+}
+
+/// A `console` method writing its arguments, space-separated, through `print`.
+fn printer(comptime print: anytype) Native {
+    return &struct {
+        fn f(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
+            const xs = args(argc, argv);
+            print(@intCast(xs.len), xs.ptr);
+            return rt.undefined_value;
+        }
+    }.f;
+}
+
 fn native(name: [*:0]const u8, arity: u32, f: Native) Value {
     return c.jsrt_closure_new(f, arity, name, null, true);
 }
@@ -227,7 +249,8 @@ fn populate(g: Value) void {
     method(array, "from", 1, &arrayFrom);
     forwarders(c.jsrt_builtin_proto("Array"), .array, &array_methods);
 
-    _ = wrapper(g, "String", native("String", 1, &stringCall));
+    const string = wrapper(g, "String", native("String", 1, &stringCall));
+    method(string, "fromCharCode", 1, &stringFromCharCode);
     forwarders(c.jsrt_builtin_proto("String"), .string, &string_methods);
     const number = wrapper(g, "Number", native("Number", 1, &numberCall));
     put(number, "MAX_SAFE_INTEGER", rt.number(9007199254740991));
@@ -651,6 +674,19 @@ fn arrayCall(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
 fn arrayOf(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
     const a = args(argc, argv);
     return c.jsrt_array_new(@intCast(a.len), a.ptr);
+}
+
+/// One UTF-16 unit per argument, each ToUint16 of its value.
+fn stringFromCharCode(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
+    const a = args(argc, argv);
+    const units = std.heap.c_allocator.alloc(u16, a.len) catch return outOfMemory();
+    defer std.heap.c_allocator.free(units);
+    for (a, units) |v, *u| {
+        const d = c.jsrt_to_number(v);
+        if (rt.pending()) return rt.undefined_value;
+        u.* = if (std.math.isFinite(d)) @truncate(@as(u64, @bitCast(@as(i64, @intFromFloat(@mod(@trunc(d), 65536.0)))))) else 0;
+    }
+    return c.jsrt_string_from_units(units.ptr, @intCast(units.len));
 }
 
 fn arrayFrom(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
