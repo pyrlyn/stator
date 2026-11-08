@@ -21,7 +21,7 @@
  * N worker processes of this same runner and merges their per-item records back by index, so the
  * merged report is byte-identical to the serial one. Both compose with `--filter`, which applies
  * first. In-process `explainFile` is single-threaded CPU, so `--shards` is what scales a local
- * iteration with cores; the default stays single-process.
+ * iteration with cores; full runs choose up to four workers automatically.
  */
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,6 +37,7 @@ import {
   parseShardArgs,
   pool,
   readOnlyList,
+  runnerShardCount,
   shardSlice,
   workerBaseArgs,
   writeShardFile,
@@ -258,7 +259,8 @@ async function main(): Promise<void> {
 
   // `--shards=N`: fan out to N workers of this same runner and merge by fixture index. The merge
   // passes `shard: undefined`, so the printed report is the serial one, byte for byte.
-  if (args.shards !== undefined) {
+  const shards = runnerShardCount(args, fixtures.length);
+  if (shards !== undefined) {
     const script = process.argv[1];
     if (script === undefined) {
       throw new Error('cannot fan out: no script path in process.argv');
@@ -268,12 +270,13 @@ async function main(): Promise<void> {
       await fanOutWorkers({
         script,
         baseArgs: workerBaseArgs(args),
-        shards: args.shards,
+        shards,
         dir,
+        ...(args.shards === undefined ? { sharedJobs: true } : {}),
       });
       const outcomes = mergeShardFiles({
         dir,
-        shards: args.shards,
+        shards,
         keys: fixtures,
         decode: decodeOutcome,
       });
