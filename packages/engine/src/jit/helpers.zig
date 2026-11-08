@@ -19,16 +19,84 @@ pub const Ctx = extern struct {
     t: *bc.Template,
     /// The function's own environment (vm.zig `fnEnv`), null for a script.
     fe: ?*c.JSRTEnv,
+    stack: *const Stack,
 };
 
-fn status() u64 {
-    return @intFromBool(rt.pending());
+/// The thread's call state, read from its thread-locals once where the interpreter enters native
+/// code and handed down every direct call, so a call between compiled functions reads none of
+/// them (each read is a function call on macOS).
+pub const Stack = struct {
+    /// vm.zig's `sp`: the first free slot of `values`.
+    sp: *usize,
+    /// The runtime's `jsrt_frame_top`.
+    top: *@TypeOf(c.jsrt_frame_top),
+    values: []Value,
+    /// The runtime's `jsrt_stack_limit`.
+    limit: usize,
+    /// The runtime's pending-exception flag (`jsrt_pending_flag`).
+    pending: *const volatile bool,
+};
+
+/// How many times native code has called helper `f`. Only test builds count: there `lower.zig`
+/// routes every helper call through `counted`, so tests can pin which fast paths still reach a
+/// helper and how often.
+pub fn Counter(comptime f: anytype) type {
+    return struct {
+        /// Makes the type depend on `f`: without it every counter would be one type.
+        pub const helper = f;
+        pub var n: usize = 0;
+    };
+}
+
+/// `f` behind a wrapper that counts its calls in `Counter(f)`.
+pub fn counted(comptime f: anytype) *const anyopaque {
+    const F = @typeInfo(@TypeOf(f)).@"fn";
+    const R = F.return_type.?;
+    const P = F.param_types;
+    const n = &Counter(f).n;
+    return switch (P.len) {
+        1 => &struct {
+            fn g(a: P[0].?) callconv(.c) R {
+                n.* += 1;
+                return f(a);
+            }
+        }.g,
+        2 => &struct {
+            fn g(a: P[0].?, b: P[1].?) callconv(.c) R {
+                n.* += 1;
+                return f(a, b);
+            }
+        }.g,
+        3 => &struct {
+            fn g(a: P[0].?, b: P[1].?, d: P[2].?) callconv(.c) R {
+                n.* += 1;
+                return f(a, b, d);
+            }
+        }.g,
+        4 => &struct {
+            fn g(a: P[0].?, b: P[1].?, d: P[2].?, e: P[3].?) callconv(.c) R {
+                n.* += 1;
+                return f(a, b, d, e);
+            }
+        }.g,
+        5 => &struct {
+            fn g(a: P[0].?, b: P[1].?, d: P[2].?, e: P[3].?, k: P[4].?) callconv(.c) R {
+                n.* += 1;
+                return f(a, b, d, e, k);
+            }
+        }.g,
+        else => @compileError("a helper takes one to five arguments"),
+    };
+}
+
+fn status(cx: *const Ctx) u64 {
+    return @intFromBool(cx.stack.pending.*);
 }
 
 /// Writes `v` to window slot `s` and answers the pending status.
 fn put(cx: *Ctx, s: u64, v: Value) u64 {
     cx.w[s] = v;
-    return status();
+    return status(cx);
 }
 
 fn op(o: u64) bc.Op {
@@ -59,8 +127,9 @@ pub fn getProp(cx: *Ctx, s: u64, key: u64, ic: u64) callconv(.c) u64 {
 /// callee this args… at `base` -> the result at `base`.
 pub fn call(cx: *Ctx, base: u64, argc: u64) callconv(.c) u64 {
     const w = cx.w;
-    w[base] = vm.call(w[base], w[base + 1], w[base + 2 .. base + 2 + argc]);
-    return status();
+    const args = w[base + 2 .. base + 2 + argc];
+    w[base] = vm.callCompiled(cx.stack, w[base], w[base + 1], args) orelse vm.call(w[base], w[base + 1], args);
+    return status(cx);
 }
 
 /// `key1` is the TDZ name's key index plus one, or 0 for a binding without the check.
@@ -74,7 +143,7 @@ pub fn loadEnv(cx: *Ctx, s: u64, hops: u64, slot: u64, key1: u64) callconv(.c) u
 
 pub fn storeEnv(cx: *Ctx, s: u64, hops: u64, slot: u64, key1: u64) callconv(.c) u64 {
     vm.envStore(cx.frame.env, @intCast(hops), @intCast(slot), name(cx, key1), cx.w[s]);
-    return status();
+    return status(cx);
 }
 
 pub fn str(cx: *Ctx, s: u64, index: u64) callconv(.c) u64 {
@@ -98,14 +167,10 @@ pub fn home(cx: *Ctx, s: u64) callconv(.c) u64 {
     return put(cx, s, vm.homeOf(cx.fe));
 }
 
-pub fn thisSloppy(cx: *Ctx, s: u64) callconv(.c) u64 {
-    return put(cx, s, vm.sloppyThis(cx.w[1]));
-}
-
 /// Makes `e` the frame's environment and answers the pending status.
 fn enterEnv(cx: *Ctx, e: ?*c.JSRTEnv) u64 {
     cx.frame.env = e;
-    return status();
+    return status(cx);
 }
 
 pub fn pushEnv(cx: *Ctx, n: u64) callconv(.c) u64 {
@@ -126,12 +191,12 @@ pub fn closure(cx: *Ctx, s: u64, index: u64) callconv(.c) u64 {
 
 pub fn declareGlobal(cx: *Ctx, key: u64) callconv(.c) u64 {
     vm.declareGlobal(cx.t.keys[key]);
-    return status();
+    return status(cx);
 }
 
 pub fn storeGlobal(cx: *Ctx, s: u64, key: u64, strict: u64) callconv(.c) u64 {
     vm.storeGlobal(cx.t, @intCast(key), strict != 0, cx.w[s]);
-    return status();
+    return status(cx);
 }
 
 /// obj value at `s` -> value at `s`.
@@ -161,14 +226,14 @@ pub fn newArray(cx: *Ctx, s: u64, n: u64) callconv(.c) u64 {
 /// obj value at `s` -> obj at `s`.
 pub fn define(cx: *Ctx, s: u64, key: u64) callconv(.c) u64 {
     vm.defineOwn(cx.w[s], cx.t.keys[key], cx.w[s + 1]);
-    return status();
+    return status(cx);
 }
 
 /// callee args… at `base` -> the object at `base`.
 pub fn construct(cx: *Ctx, base: u64, argc: u64) callconv(.c) u64 {
     const w = cx.w;
     w[base] = vm.construct(w[base], w[base + 1 .. base + 1 + argc], w[base]);
-    return status();
+    return status(cx);
 }
 
 pub fn throw(cx: *Ctx, s: u64) callconv(.c) u64 {

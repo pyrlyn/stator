@@ -7,12 +7,14 @@
 //! VM's own function for the operation (helpers.zig).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const pj = @import("pyrlyn_jit");
 const ir = pj.ir;
 const rt = @import("../rt.zig");
 const c = rt.c;
 const bc = @import("../bytecode.zig");
 const vm = @import("../vm.zig");
+const builtins = @import("../builtins.zig");
 const analyze = @import("analyze.zig");
 const h = @import("helpers.zig");
 const Op = bc.Op;
@@ -20,6 +22,13 @@ const VReg = ir.VReg;
 
 const mask: u64 = 0xFFF8_0000_0000_0000;
 const canonical_nan: u64 = 0x7FF8_0000_0000_0000;
+/// The sign, exponent, quiet bit and tag of a boxed value (docs/VALUE.md).
+const tag_bits: u64 = 0xFFFF_0000_0000_0000;
+const payload_mask: u64 = 0x0000_FFFF_FFFF_FFFF;
+
+fn boxTag(tag: u64) u64 {
+    return mask | tag << 48;
+}
 
 fn imm(v: u64) i64 {
     return @bitCast(v);
@@ -103,7 +112,8 @@ const Lowerer = struct {
     }
 
     fn callHelper(l: *Lowerer, comptime f: anytype, args: []const VReg) !VReg {
-        return l.def(.call, .{ .dst = undefined, .addr = @intFromPtr(&f), .args = try l.f.alloc().dupe(VReg, args) });
+        const addr = if (builtin.is_test) @intFromPtr(h.counted(f)) else @intFromPtr(&f);
+        return l.def(.call, .{ .dst = undefined, .addr = addr, .args = try l.f.alloc().dupe(VReg, args) });
     }
 
     /// Calls a helper and leaves through the exit block when it left an exception pending.
@@ -132,8 +142,11 @@ const Lowerer = struct {
     }
 
     /// The result's bits are left for a check that collapses every NaN into the canonical one,
-    /// as `jsrt_number` does: x86-64's default NaN is `undefined`'s bit pattern.
+    /// as `jsrt_number` does: x86-64's default NaN is `undefined`'s bit pattern. AArch64 needs no
+    /// check: its default NaN is the canonical one, and a NaN operand, canonical because every
+    /// boxed double is, propagates unchanged, sign included.
     fn canonicalize(l: *Lowerer, index: u32, join: u32) !void {
+        if (builtin.cpu.arch == .aarch64) return l.br(join);
         const bits = try l.load(index);
         const m = try l.konst(imm(mask));
         const tag = try l.arith(.@"and", bits, m);
@@ -206,6 +219,11 @@ const Lowerer = struct {
                 };
                 try l.typedF64(ta, x, k, s, join);
             },
+            // ToNumeric of a double is the double: `i++` starts with it.
+            .plus => {
+                try l.guardDouble(try l.load(s), slow);
+                try l.br(join);
+            },
             .not => {
                 const v = try l.load(s);
                 const f = try l.konst(imm(c.JSRT_FALSE));
@@ -219,6 +237,141 @@ const Lowerer = struct {
             else => try l.br(slow),
         }
         try l.slowPath(slow, join, h.unary, o, s);
+    }
+
+    /// Jumps to `no` unless `a` is `want`.
+    fn guardEq(l: *Lowerer, a: VReg, want: u64, no: u32) !void {
+        const yes = try l.block();
+        try l.cbr(.ne, a, try l.konst(imm(want)), no, yes);
+        l.cur = yes;
+    }
+
+    fn ptrOf(l: *Lowerer, v: VReg) !VReg {
+        return l.arith(.@"and", v, try l.konst(imm(payload_mask)));
+    }
+
+    /// The object pointer of `v` when it is a dynamic object, else on to `no`.
+    fn dynObj(l: *Lowerer, v: VReg, no: u32) !VReg {
+        try l.guardEq(try l.arith(.@"and", v, try l.konst(imm(tag_bits))), boxTag(c.JSRT_TAG_OBJECT), no);
+        const p = try l.ptrOf(v);
+        try l.guardEq(try l.def(.load, .{ .dst = undefined, .base = p, .disp = 0 }), @intFromPtr(&c.jsrt_class_dynamic), no);
+        return p;
+    }
+
+    /// The address of the slot of dynamic object `p` that the site's cache `ic` names, when `p` has
+    /// the shape the cache recorded; else on to `slow`. A cache is filled only from an
+    /// own-property hit on that shape, so a match is the site's key.
+    fn cachedSlot(l: *Lowerer, p: VReg, ic: *const c.JSRTIC, slow: u32) !VReg {
+        const icp = try l.konst(@intCast(@intFromPtr(ic)));
+        const shape = try l.def(.load, .{ .dst = undefined, .base = p, .disp = @offsetOf(c.JSRTDynObject, "shape") });
+        const want = try l.def(.load, .{ .dst = undefined, .base = icp, .disp = @offsetOf(c.JSRTIC, "shape") });
+        const hit = try l.block();
+        try l.cbr(.ne, shape, want, slow, hit);
+        l.cur = hit;
+        // `offset` is a u32 and the IR loads 64 bits: keep the low half.
+        const raw = try l.def(.load, .{ .dst = undefined, .base = icp, .disp = @offsetOf(c.JSRTIC, "offset") });
+        const off = try l.arith(.shl, try l.arith(.@"and", raw, try l.konst(0xFFFF_FFFF)), try l.konst(3));
+        const slots = try l.def(.load, .{ .dst = undefined, .base = p, .disp = @offsetOf(c.JSRTDynObject, "slots") });
+        return l.arith(.add, slots, off);
+    }
+
+    /// Goes on to `slow` when slot value `v` is an accessor cell, whose read or write is a call.
+    fn unlessAccessor(l: *Lowerer, v: VReg, slow: u32) !void {
+        const done = try l.block();
+        const object = try l.block();
+        try l.cbr(.eq, try l.arith(.@"and", v, try l.konst(imm(tag_bits))), try l.konst(imm(boxTag(c.JSRT_TAG_OBJECT))), object, done);
+        l.cur = object;
+        const cls = try l.def(.load, .{ .dst = undefined, .base = try l.ptrOf(v), .disp = 0 });
+        try l.cbr(.eq, cls, try l.konst(@intCast(@intFromPtr(&c.jsrt_class_accessor))), slow, done);
+        l.cur = done;
+    }
+
+    /// The value in the slot `cachedSlot` finds, when it is no accessor.
+    fn cachedRead(l: *Lowerer, p: VReg, ic: *const c.JSRTIC, slow: u32) !VReg {
+        const v = try l.def(.load, .{ .dst = undefined, .base = try l.cachedSlot(p, ic, slow), .disp = 0 });
+        try l.unlessAccessor(v, slow);
+        return v;
+    }
+
+    /// `obj.key = value` (obj value at `s` -> value at `s`) through the site's inline cache: an
+    /// unfrozen dynamic object of the cached shape whose slot holds no accessor is written in
+    /// place, after the collector's write barrier on the object.
+    fn setProp(l: *Lowerer, i: analyze.Insn) !void {
+        const s = l.slot(i.depth - 2);
+        const slow = try l.block();
+        const p = try l.dynObj(try l.load(s), slow);
+        const frozen = try l.def(.load, .{ .dst = undefined, .base = p, .disp = @offsetOf(c.JSRTDynObject, "frozen") });
+        try l.guardEq(try l.arith(.@"and", frozen, try l.konst(0xFF)), 0, slow);
+        const at = try l.cachedSlot(p, &l.t.ics[i.b], slow);
+        try l.unlessAccessor(try l.def(.load, .{ .dst = undefined, .base = at, .disp = 0 }), slow);
+        // The owner, not its slot buffer: an object already dirty and named by its own address is
+        // the barrier's lock-free case.
+        _ = try l.callHelper(c.jsrt_gc_write, &.{p});
+        const v = try l.load(s + 1);
+        try l.emit(.{ .store = .{ .base = at, .disp = 0, .src = v } });
+        try l.fastOrHelper(s, v, slow, h.setProp, &.{ s, i.a, i.b });
+    }
+
+    /// Ends a fast path that answered `v` into slot `s`; block `slow` answers through helper `f`.
+    fn fastOrHelper(l: *Lowerer, s: u32, v: VReg, slow: u32, comptime f: anytype, args: []const u64) !void {
+        const join = try l.block();
+        try l.store(s, v);
+        try l.br(join);
+        l.cur = slow;
+        try l.helper(f, args);
+        try l.br(join);
+        l.cur = join;
+    }
+
+    /// `obj.key` through the site's inline cache, the helper filling it on a miss.
+    fn getProp(l: *Lowerer, i: analyze.Insn) !void {
+        const s = l.slot(i.depth - 1);
+        // `constructor` has answers of its own before any shape is asked (vm.getProp).
+        if (std.mem.eql(u8, std.mem.span(l.t.keys[i.a]), "constructor")) return l.helper(h.getProp, &.{ s, i.a, i.b });
+        const slow = try l.block();
+        const v = try l.cachedRead(try l.dynObj(try l.load(s), slow), &l.t.ics[i.b], slow);
+        try l.fastOrHelper(s, v, slow, h.getProp, &.{ s, i.a, i.b });
+    }
+
+    /// A global name read from the global object through the key's cache, which the interpreter
+    /// and the helper fill (vm.loadGlobal).
+    fn globalLoad(l: *Lowerer, i: analyze.Insn) !void {
+        const s = l.slot(i.depth);
+        const slow = try l.block();
+        const g = try l.konst(imm(builtins.global() & payload_mask));
+        try l.fastOrHelper(s, try l.cachedRead(g, &l.t.global_ics[i.a], slow), slow, h.loadGlobal, &.{ s, i.a, 0 });
+    }
+
+    /// `this` in a sloppy function: the receiver, or the global object for undefined and null.
+    fn thisSloppy(l: *Lowerer, s: u32) !void {
+        const v = try l.load(1);
+        const global = try l.block();
+        const join = try l.block();
+        const not_undef = try l.block();
+        const ok = try l.block();
+        try l.cbr(.eq, v, try l.konst(imm(c.JSRT_UNDEFINED)), global, not_undef);
+        l.cur = not_undef;
+        try l.cbr(.eq, v, try l.konst(imm(c.JSRT_NULL)), global, ok);
+        l.cur = ok;
+        try l.store(s, v);
+        try l.br(join);
+        l.cur = global;
+        try l.storeConst(s, builtins.global());
+        try l.br(join);
+        l.cur = join;
+    }
+
+    /// A constructible function's return: a plain call (no new.target) answers the value as is.
+    fn retCtor(l: *Lowerer, s: u32) !void {
+        const plain = try l.block();
+        const construct = try l.block();
+        try l.cbr(.eq, try l.load(2), try l.konst(imm(c.JSRT_UNDEFINED)), plain, construct);
+        l.cur = plain;
+        try l.emit(.{ .ret = try l.load(s) });
+        l.cur = construct;
+        try l.helper(h.retCtor, &.{s});
+        try l.emit(.{ .ret = try l.load(s) });
+        l.cur = null;
     }
 
     fn condJump(l: *Lowerer, i: analyze.Insn) !void {
@@ -288,16 +441,12 @@ const Lowerer = struct {
             .callee => try l.store(l.slot(d), try l.load(0)),
             .this_raw => try l.store(l.slot(d), try l.load(1)),
             .new_target => try l.store(l.slot(d), try l.load(2)),
-            .this_sloppy => try l.helper(h.thisSloppy, &.{l.slot(d)}),
+            .this_sloppy => try l.thisSloppy(l.slot(d)),
             .home => try l.helper(h.home, &.{l.slot(d)}),
             .str => try l.helper(h.str, &.{ l.slot(d), i.a }),
             .rest => try l.helper(h.rest, &.{ l.slot(d), i.a }),
             .arguments => try l.helper(h.arguments, &.{l.slot(d)}),
-            .ret_ctor => {
-                try l.helper(h.retCtor, &.{l.slot(d - 2)});
-                try l.emit(.{ .ret = try l.load(l.slot(d - 2)) });
-                l.cur = null;
-            },
+            .ret_ctor => try l.retCtor(l.slot(d - 2)),
             .jump_if_nullish, .jump_if_not_undef => try l.undefJump(i),
             .push_env => try l.helper(h.pushEnv, &.{i.a}),
             .pop_env => try l.helper(h.popEnv, &.{}),
@@ -305,7 +454,7 @@ const Lowerer = struct {
             .closure => try l.helper(h.closure, &.{ l.slot(d), i.a }),
             .declare_global => try l.helper(h.declareGlobal, &.{i.a}),
             .store_global => try l.helper(h.storeGlobal, &.{ l.slot(d - 1), i.a, i.b }),
-            .set_prop => try l.helper(h.setProp, &.{ l.slot(d - 2), i.a, i.b }),
+            .set_prop => try l.setProp(i),
             .get_elem => try l.helper(h.getElem, &.{l.slot(d - 2)}),
             .set_elem => try l.helper(h.setElem, &.{l.slot(d - 3)}),
             .new_object => try l.helper(h.newObject, &.{l.slot(d)}),
@@ -337,12 +486,13 @@ const Lowerer = struct {
                 try l.store(vm.header + i.a, try l.load(l.slot(d - 1)));
             },
             .arg => try l.arg(i),
-            .load_global, .typeof_global => try l.helper(h.loadGlobal, &.{ l.slot(d), i.a, @intFromBool(i.op == .typeof_global) }),
+            .load_global => try l.globalLoad(i),
+            .typeof_global => try l.helper(h.loadGlobal, &.{ l.slot(d), i.a, 1 }),
             .load_env => try l.helper(h.loadEnv, &.{ l.slot(d), i.a, i.b, 0 }),
             .load_env_checked => try l.helper(h.loadEnv, &.{ l.slot(d), i.a, i.b, i.c + 1 }),
             .store_env => try l.helper(h.storeEnv, &.{ l.slot(d - 1), i.a, i.b, 0 }),
             .store_env_checked => try l.helper(h.storeEnv, &.{ l.slot(d - 1), i.a, i.b, i.c + 1 }),
-            .get_prop => try l.helper(h.getProp, &.{ l.slot(d - 1), i.a, i.b }),
+            .get_prop => try l.getProp(i),
             .call => try l.helper(h.call, &.{ l.slot(d - i.a - 2), i.a }),
             .add, .sub, .mul, .div, .mod, .exp, .bitand, .bitor, .bitxor, .shl, .shr, .ushr, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge => try l.binaryOp(i.op, l.slot(d - 2)),
             .neg, .plus, .bitnot, .not, .typeof, .inc, .dec => try l.unaryOp(i.op, l.slot(d - 1)),
@@ -375,12 +525,38 @@ pub fn lower(f: *ir.Func, t: *const bc.Template, plan: analyze.Plan) !void {
     try l.emit(.{ .load = .{ .dst = l.argv, .base = ctx, .disp = @offsetOf(h.Ctx, "argv") } });
     try l.emit(.{ .load = .{ .dst = l.argc, .base = ctx, .disp = @offsetOf(h.Ctx, "argc") } });
 
-    for (plan.insns) |i| {
+    const dead = try deadStores(f.alloc(), t, plan.insns);
+    for (plan.insns, dead) |i, skip| {
         if (i.leader) {
             const b = try l.blockAt(i.pc);
             if (l.cur != null) try l.br(b);
             l.cur = b;
         }
-        try l.insn(i);
+        if (!skip) try l.insn(i);
     }
+}
+
+/// Pairs of a push without effects and a store into a local nothing reads, both left out: the
+/// prologue's `this`, `new.target`, home object and callee in a function that names none of them.
+fn deadStores(alloc: std.mem.Allocator, t: *const bc.Template, insns: []const analyze.Insn) ![]bool {
+    const read = try alloc.alloc(bool, t.nlocals);
+    @memset(read, false);
+    for (insns) |i| switch (i.op) {
+        .load, .load_checked, .store_checked => read[i.a] = true,
+        else => {},
+    };
+    const dead = try alloc.alloc(bool, insns.len);
+    @memset(dead, false);
+    if (insns.len < 2) return dead;
+    for (insns[0 .. insns.len - 1], insns[1..], 0..) |x, y, k| {
+        const pure = switch (x.op) {
+            .undef, .null, .true, .false, .int, .num, .this_raw, .this_sloppy, .new_target, .home, .callee => true,
+            else => false,
+        };
+        if (pure and y.op == .store and !y.leader and y.pc == x.next and !read[y.a]) {
+            dead[k] = true;
+            dead[k + 1] = true;
+        }
+    }
+    return dead;
 }

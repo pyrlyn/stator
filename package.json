@@ -40,6 +40,7 @@
     "interp:test": "zig build test --build-file packages/engine/build.zig",
     "engine:test": "node packages/tests/engine/run.ts",
     "engine:bench": "node packages/tests/engine/bench.ts",
+    "engine:bench:zig": "zig build bench -Doptimize=ReleaseFast --build-file packages/engine/build.zig -- \"$PWD\"/packages/tests/engine/bench/*.js",
     "test262:interp-parse": "zig build test262-parse -Doptimize=ReleaseFast --build-file packages/engine/build.zig --",
     "test262:interp-exec": "node packages/compiler/src/cli/main.ts build packages/engine/test262/host.ts -o packages/engine/build/test262-host --mode=js --node && zig build test262-exec -Doptimize=ReleaseSafe --build-file packages/engine/build.zig --",
     "test:builtins": "node packages/tests/golden/builtins.ts",

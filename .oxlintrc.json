@@ -97,6 +97,7 @@
     "packages/tests/golden/ts",
     "packages/tests/golden/js",
     "packages/tests/engine/scripts",
+    "packages/tests/engine/bench",
     // stator-ts (plan-notes 397): a Zig program whose TypeScript files are checker fixtures that
     // exercise invalid and unusual code on purpose, plus Node harness scripts it owns.
     "packages/transpiler",

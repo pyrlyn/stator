@@ -7,6 +7,7 @@ const compile = @import("compile.zig");
 const builtins = @import("builtins.zig");
 const vm = @import("vm.zig");
 const jit = @import("jit/jit.zig");
+const helpers = @import("jit/helpers.zig");
 const Value = rt.Value;
 const c = rt.c;
 
@@ -168,6 +169,83 @@ test "the JIT compiles numeric functions and calls them" {
     try expectRuns("function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); } fib(20)", "6765");
     try expectRuns("function sum(n) { let s = 0; for (let i = 0; i < n; i++) s += i * 0.5; return s; } sum(1000)", "249750");
     try std.testing.expect(jit.compiled >= before + 2);
+}
+
+/// The calls helper `fs[k]` has received so far (helpers.Counter; test builds only).
+fn helperCalls(comptime fs: anytype) [fs.len]usize {
+    var out: [fs.len]usize = undefined;
+    inline for (fs, 0..) |f, k| out[k] = helpers.Counter(f).n;
+    return out;
+}
+
+/// What `src` cost under the JIT: templates compiled and calls into each of `fs`.
+/// `entries` counts native code entered from the interpreter, which a call between compiled
+/// functions skips.
+fn jitCost(src: []const u8, comptime fs: anytype) !struct { compiled: usize, entries: usize, calls: [fs.len]usize } {
+    jit.mode = .jit;
+    defer jit.mode = .interp;
+    const compiled = jit.compiled;
+    const entries = jit.entries;
+    const before = helperCalls(fs);
+    _ = try runOk(src);
+    var calls = helperCalls(fs);
+    for (&calls, before) |*n, b| n.* -= b;
+    return .{ .compiled = jit.compiled - compiled, .entries = jit.entries - entries, .calls = calls };
+}
+
+test "a JS call reaches the call helper once and nothing else per call" {
+    if (!jit.available) return error.SkipZigTest;
+    const r = try jitCost(
+        "function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); } fib(20)",
+        .{ helpers.call, helpers.loadGlobal, helpers.retCtor, helpers.binary, helpers.home },
+    );
+    // The script and fib, each compiled on its first call and never again.
+    try std.testing.expectEqual(2, r.compiled);
+    // The interpreter enters the script and fib's first call, which compiles it; every
+    // recursive call goes from compiled code straight into compiled code.
+    try std.testing.expectEqual(2, r.entries);
+    // fib(20) makes 21891 calls; each one is exactly one helper call.
+    try std.testing.expectEqual(21891, r.calls[0]);
+    // The cache is per template and key: fib's two reads share one, which misses once. The
+    // script's read hits, its declaration of `fib` having filled the script's cache.
+    try std.testing.expectEqual(1, r.calls[1]);
+    // A plain call returns inline and doubles add and compare inline. The one home object is
+    // the script prologue's; fib's is never read, so it is never fetched.
+    try std.testing.expectEqual([3]usize{ 0, 0, 1 }, r.calls[2..5].*);
+}
+
+test "a numeric loop runs without a helper" {
+    if (!jit.available) return error.SkipZigTest;
+    const r = try jitCost(
+        "function f() { let s = 0; for (let i = 0; i < 1000; i++) { s += i * 0.5; s -= 1; s = -s; } return s; } f()",
+        .{ helpers.unary, helpers.binary, helpers.call },
+    );
+    try std.testing.expectEqual(2, r.compiled);
+    // `i++`, `+=`, `*`, `-=`, unary `-` and `<` on doubles are all inline; the one call is f's.
+    try std.testing.expectEqual([3]usize{ 0, 0, 1 }, r.calls);
+}
+
+test "a cached property read misses once per site" {
+    if (!jit.available) return error.SkipZigTest;
+    const r = try jitCost(
+        "function f(o) { let s = 0; for (let i = 0; i < 1000; i++) s += o.a + o.b; return s; } f({ a: 1, b: 2 })",
+        .{ helpers.getProp, helpers.call, helpers.binary },
+    );
+    try std.testing.expectEqual(2, r.compiled);
+    // Two sites, 1000 reads each: the first read of each fills its cache.
+    try std.testing.expectEqual([3]usize{ 2, 1, 0 }, r.calls);
+}
+
+test "a global name is looked up once per function" {
+    if (!jit.available) return error.SkipZigTest;
+    const r = try jitCost(
+        "function g() { return 1; } function f() { let s = 0; for (let i = 0; i < 1000; i++) s += g(); return s; } f()",
+        .{ helpers.loadGlobal, helpers.call },
+    );
+    try std.testing.expectEqual(3, r.compiled);
+    // `g` in f's loop misses once; `f` in the script hits the cache its declaration filled.
+    // 1000 calls of g and one of f.
+    try std.testing.expectEqual([2]usize{ 1, 1001 }, r.calls);
 }
 
 test "arithmetic and bindings" {
