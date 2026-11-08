@@ -1,0 +1,179 @@
+Analysis of sampling steady-before (pid 68033) every 1 millisecond
+Process:         steady-before [68033]
+Path:            /Users/USER/*/steady-before
+Load Address:    0x104800000
+Identifier:      steady-before
+Version:         ???
+Code Type:       ARM64
+Parent Process:  Python [68024]
+Target Type:     live task
+
+Date/Time:       2026-11-08 21:13:26.018 +0200
+Launch Time:     2026-11-08 21:13:25.970 +0200
+OS Version:      macOS 27.0.1 (26A434)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+
+Physical footprint:         10.3M
+Physical footprint (peak):  10.3M
+Idle exit:                  untracked
+----
+
+Call graph:
+    202 Thread_64682015: Main Thread
+    + 196 _dyld_start  (in dyld) + 0  [0x104db0bf0]
+    + 5 start  (in dyld) + 6596  [0x193a37e24]
+    + ! 4 dyld4::start(dyld4::KernelArgs*, void*, void*, unsigned long long)::$_1::operator()() const  (in dyld) + 320  [0x193a38a84]
+    + ! : 3 dyld4::prepare(dyld4::APIs&, mach_o::UnsafeHeader const*)  (in dyld) + 4500  [0x193a39c34]
+    + ! : | 3 dyld4::RuntimeState::notifyDebuggerLoad(std::span<dyld4::Loader const*, 18446744073709551615ul> const&)  (in dyld) + 592  [0x193a4a4cc]
+    + ! : |   3 dyld4::ExternallyViewableState::addImages(lsl::Allocator&, lsl::Allocator&, std::span<dyld4::ExternallyViewableState::ImageInfo, 18446744073709551615ul> const&)  (in dyld) + 1280  [0x193a55ef8]
+    + ! : |     2 dyld4::ExternallyViewableState::triggerNotifications(dyld_image_mode, unsigned int, dyld_image_info const*)  (in dyld) + 304  [0x193a55704]
+    + ! : |     + 2 dyld4::RemoteNotificationResponder::blockOnSynchronousEvent(unsigned int)  (in dyld) + 48  [0x193a7a20c]
+    + ! : |     +   2 dyld4::RemoteNotificationResponder::sendMessage(int, unsigned int, mach_msg_header_t*)  (in dyld) + 244  [0x193a79e54]
+    + ! : |     +     2 mach_msg_overwrite  (in dyld) + 244  [0x193a867e8]
+    + ! : |     +       2 mach_msg2_internal  (in dyld) + 76  [0x193a86640]
+    + ! : |     +         2 mach_msg2_trap  (in dyld) + 8  [0x193a0772c]
+    + ! : |     1 dyld4::ExternallyViewableState::triggerNotifications(dyld_image_mode, unsigned int, dyld_image_info const*)  (in dyld) + 816  [0x193a55904]
+    + ! : |       1 dyld4::RemoteNotificationResponder::notifyMonitorOfImageListChanges(bool, unsigned int, mach_header const**, char const**, unsigned long long)  (in dyld) + 440  [0x193a7a0d0]
+    + ! : |         1 mach_o::UnsafeHeader::getUuid(unsigned char*) const  (in dyld) + 136  [0x193aa53e4]
+    + ! : |           1 mach_o::UnsafeHeader::forEachLoadCommand(void (load_command const*, bool&) block_pointer) const  (in dyld) + 208  [0x193aa3d00]
+    + ! : |             1 invocation function for block in mach_o::UnsafeHeader::getUuid(unsigned char*) const  (in dyld) + 12  [0x193aa5440]
+    + ! : 1 dyld4::prepare(dyld4::APIs&, mach_o::UnsafeHeader const*)  (in dyld) + 2508  [0x193a3946c]
+    + ! :   1 dyld4::JustInTimeLoader::applyFixups(Diagnostics&, dyld4::RuntimeState&, dyld4::DyldCacheDataConstLazyScopedWriter&, bool, lsl::Vector<std::pair<dyld4::Loader const*, char const*>>*) const  (in dyld) + 616  [0x193a5b8cc]
+    + ! :     1 dyld4::Loader::forEachBindTarget(Diagnostics&, dyld4::RuntimeState&, void (unsigned int, unsigned int, dyld4::Loader::ResolvedSymbol const&) block_pointer, bool, void (dyld4::Loader::ResolvedSymbol const&, bool&) block_pointer, void (dyld4::Loader::ResolvedSymbol const&, bool&) block_pointer) const  (in dyld) + 308  [0x193a65014]
+    + ! :       1 mach_o::Image::forEachBindTarget(void (mach_o::Fixup::BindTarget const&, bool&) block_pointer, void (mach_o::Fixup::BindTarget const&, bool&) block_pointer) const  (in dyld) + 148  [0x193a9bcbc]
+    + ! :         1 mach_o::BindOpcodes::forEachBindTarget(void (mach_o::Fixup::BindTarget const&, bool&) block_pointer) const  (in dyld) + 196  [0x193a8b0a4]
+    + ! :           1 mach_o::BindOpcodes::forEachBind(void (CString, int, bool, unsigned char, unsigned long long, bool, int, CString, bool, long long, bool, bool&) block_pointer) const  (in dyld) + 656  [0x193a8a810]
+    + ! :             1 invocation function for block in mach_o::BindOpcodes::forEachBindTarget(void (mach_o::Fixup::BindTarget const&, bool&) block_pointer) const  (in dyld) + 264  [0x193a8b1ec]
+    + ! :               1 invocation function for block in dyld4::Loader::forEachBindTarget(Diagnostics&, dyld4::RuntimeState&, void (unsigned int, unsigned int, dyld4::Loader::ResolvedSymbol const&) block_pointer, bool, void (dyld4::Loader::ResolvedSymbol const&, bool&) block_pointer, void (dyld4::Loader::ResolvedSymbol const&, bool&) block_pointer) const  (in dyld) + 180  [0x193a650e4]
+    + ! :                 1 dyld4::Loader::resolveSymbol(Diagnostics&, dyld4::RuntimeState&, int, char const*, bool, bool, void (unsigned int, unsigned int, dyld4::Loader::ResolvedSymbol const&) block_pointer, bool) const  (in dyld) + 552  [0x193a634ec]
+    + ! :                   1 dyld4::Loader::hasExportedSymbol(Diagnostics&, dyld4::RuntimeState&, char const*, dyld4::Loader::ExportedSymbolMode, dyld4::Loader::ResolverMode, dyld4::Loader::ResolvedSymbol*, bool, dyld3::Array<dyld4::Loader const*>*) const  (in dyld) + 1672  [0x193a66070]
+    + ! :                     1 dyld4::Loader::hasExportedSymbol(Diagnostics&, dyld4::RuntimeState&, char const*, dyld4::Loader::ExportedSymbolMode, dyld4::Loader::ResolverMode, dyld4::Loader::ResolvedSymbol*, bool, dyld3::Array<dyld4::Loader const*>*) const  (in dyld) + 644  [0x193a65c6c]
+    + ! :                       1 mach_o::ExportsTrie::hasExportedSymbol(CString, mach_o::Symbol&, bool) const  (in dyld) + 48  [0x193a8f20c]
+    + ! :                         1 mach_o::GenericTrie::find(CString, bool) const  (in dyld) + 416  [0x193a8ec58]
+    + ! 1 dyld4::start(dyld4::KernelArgs*, void*, void*, unsigned long long)::$_1::operator()() const  (in dyld) + 80  [0x193a38994]
+    + !   1 dyld4::ProcessConfig::ProcessConfig(dyld4::KernelArgs const*, dyld4::SyscallDelegate&, lsl::Allocator&)  (in dyld) + 112  [0x193a3b300]
+    + !     1 dyld4::ProcessConfig::DyldCache::DyldCache(dyld4::ProcessConfig::Process&, dyld4::ProcessConfig::Security const&, dyld4::ProcessConfig::Logging const&, dyld4::SyscallDelegate&, lsl::Allocator&, dyld4::ProcessConfig const&)  (in dyld) + 128  [0x193a3da54]
+    + !       1 dyld4::CacheFinder::CacheFinder(dyld4::ProcessConfig::Process const&, dyld4::ProcessConfig::Logging const&, dyld4::SyscallDelegate&)  (in dyld) + 236  [0x193a3d43c]
+    + !         1 ignite  (in dyld) + 704  [0x193a80f78]
+    + !           1 boot_boot  (in dyld) + 64  [0x193a816a4]
+    + !             1 open  (in dyld) + 40  [0x193a08634]
+    + !               1 __open  (in dyld) + 8  [0x193a0c0a8]
+    + 1 start  (in dyld) + 6112  [0x104dddc40]
+    +   1 dyld4::ExternallyViewableState::createMinimalInfo(lsl::Allocator&, unsigned long long, char const*, unsigned long long, char const*, DyldSharedCache const*)  (in dyld) + 1528  [0x104dfae70]
+    +     1 dyld4::ExternallyViewableState::triggerNotifications(dyld_image_mode, unsigned int, dyld_image_info const*)  (in dyld) + 304  [0x104dfb704]
+    +       1 dyld4::RemoteNotificationResponder::blockOnSynchronousEvent(unsigned int)  (in dyld) + 48  [0x104e2020c]
+    +         1 dyld4::RemoteNotificationResponder::sendMessage(int, unsigned int, mach_msg_header_t*)  (in dyld) + 244  [0x104e1fe54]
+    +           1 mach_msg_overwrite  (in dyld) + 244  [0x104e2c7e8]
+    +             1 mach_msg2_internal  (in dyld) + 76  [0x104e2c640]
+    +               1 mach_msg2_trap  (in dyld) + 8  [0x104dad72c]
+    1048 Thread_64682015   DispatchQueue_1: com.apple.main-thread  (serial)
+      976 start  (in dyld) + 6688  [0x193a37e80]
+      ! 975 main  (in steady-before) + 5460  [0x10483c940]
+      ! : 975 interp.runScript  (in steady-before) + 2232  [0x10483e2a4]
+      ! :   974 vm.exec  (in steady-before) + 8172  [0x104840408]
+      ! :   | 974 vm.callInterpreted  (in steady-before) + 1068  [0x1048438fc]
+      ! :   |   974 vm.exec  (in steady-before) + 1016  [0x10483e814]
+      ! :   |     974 ???  (in <unknown binary>)  [0x104ad036c]
+      ! :   |       974 jit.helpers.call  (in steady-before) + 400  [0x1048cdabc]
+      ! :   |         474 ???  (in <unknown binary>)  [0x104ad43d0]
+      ! :   |         + 266 jit.helpers.binary  (in steady-before) + 44  [0x1048cd908]
+      ! :   |         + ! 266 vm.binary  (in steady-before) + 4,0,...  [0x1048423d4,0x1048423d0,...]
+      ! :   |         + 189 jit.helpers.binary  (in steady-before) + 32,4,...  [0x1048cd8fc,0x1048cd8e0,...]
+      ! :   |         + 19 vm.binary  (in steady-before) + 1048  [0x1048427e8]
+      ! :   |         45 ???  (in <unknown binary>)  [0x104ad43c0]
+      ! :   |         39 ???  (in <unknown binary>)  [0x104ad4530]
+      ! :   |         33 ???  (in <unknown binary>)  [0x104ad43cc]
+      ! :   |         31 ???  (in <unknown binary>)  [0x104ad43e4]
+      ! :   |         28 ???  (in <unknown binary>)  [0x104ad41e8]
+      ! :   |         27 ???  (in <unknown binary>)  [0x104ad4408]
+      ! :   |         21 ???  (in <unknown binary>)  [0x104ad42fc]
+      ! :   |         20 ???  (in <unknown binary>)  [0x104ad43c4]
+      ! :   |         19 ???  (in <unknown binary>)  [0x104ad453c]
+      ! :   |         18 ???  (in <unknown binary>)  [0x104ad4358]
+      ! :   |         18 ???  (in <unknown binary>)  [0x104ad4484]
+      ! :   |         15 ???  (in <unknown binary>)  [0x104ad4138]
+      ! :   |         15 ???  (in <unknown binary>)  [0x104ad43fc]
+      ! :   |         15 ???  (in <unknown binary>)  [0x104ad44ec]
+      ! :   |         13 ???  (in <unknown binary>)  [0x104ad4438]
+      ! :   |         11 ???  (in <unknown binary>)  [0x104ad421c]
+      ! :   |         10 ???  (in <unknown binary>)  [0x104ad4404]
+      ! :   |         10 jit.helpers.binary  (in steady-before) + 72  [0x1048cd924]
+      ! :   |         9 ???  (in <unknown binary>)  [0x104ad4344]
+      ! :   |         8 ???  (in <unknown binary>)  [0x104ad41a8]
+      ! :   |         8 ???  (in <unknown binary>)  [0x104ad439c]
+      ! :   |         8 ???  (in <unknown binary>)  [0x104ad43d0]
+      ! :   |         7 ???  (in <unknown binary>)  [0x104ad41a4]
+      ! :   |         7 ???  (in <unknown binary>)  [0x104ad427c]
+      ! :   |         7 ???  (in <unknown binary>)  [0x104ad433c]
+      ! :   |         6 ???  (in <unknown binary>)  [0x104ad419c]
+      ! :   |         6 ???  (in <unknown binary>)  [0x104ad4230]
+      ! :   |         5 ???  (in <unknown binary>)  [0x104ad443c]
+      ! :   |         5 ???  (in <unknown binary>)  [0x104ad4570]
+      ! :   |         4 ???  (in <unknown binary>)  [0x104ad4194]
+      ! :   |         4 ???  (in <unknown binary>)  [0x104ad428c]
+      ! :   |         3 ???  (in <unknown binary>)  [0x104ad4220]
+      ! :   |         3 ???  (in <unknown binary>)  [0x104ad4228]
+      ! :   |         3 ???  (in <unknown binary>)  [0x104ad4284]
+      ! :   |         3 ???  (in <unknown binary>)  [0x104ad43a8]
+      ! :   |         3 ???  (in <unknown binary>)  [0x104ad44f0]
+      ! :   |         3 ???  (in <unknown binary>)  [0x104ad456c]
+      ! :   |         2 ???  (in <unknown binary>)  [0x104ad4340]
+      ! :   |         2 ???  (in <unknown binary>)  [0x104ad4444]
+      ! :   |         2 ???  (in <unknown binary>)  [0x104ad4560]
+      ! :   |         1 ???  (in <unknown binary>)  [0x104ad4300]
+      ! :   |         1 ???  (in <unknown binary>)  [0x104ad43d8]
+      ! :   |         1 ???  (in <unknown binary>)  [0x104ad4544]
+      ! :   |         1 ???  (in <unknown binary>)  [0x104ad4574]
+      ! :   1 vm.exec  (in steady-before) + 156  [0x10483e4b8]
+      ! :     1 vm.exec  (in steady-before) + 204  [0x10483e4e8]
+      ! :       1 _platform_memset_pattern16  (in libsystem_platform.dylib) + 84  [0x193e15854]
+      ! 1 main  (in steady-before) + 0  [0x10483b3ec]
+      56 ???  (in <unknown binary>)  [0x1000]
+      ! 56 vm.binary  (in steady-before) + 844  [0x10484271c]
+      !   56 vm.jsMod  (in steady-before) + 12,28,...  [0x1048427fc,0x10484280c,...]
+      10 vm.binary  (in steady-before) + 844  [0x10484271c]
+      ! 10 vm.jsMod  (in steady-before) + 72,12,...  [0x104842838,0x1048427fc,...]
+      6 ???  (in <unknown binary>)  [0x16b5fb1f0]
+        6 ???  (in <unknown binary>)  [0x12]
+          6 vm.binary  (in steady-before) + 844  [0x10484271c]
+            6 vm.jsMod  (in steady-before) + 28,12,...  [0x10484280c,0x1048427fc,...]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        vm.binary  (in steady-before)        285
+        jit.helpers.binary  (in steady-before)        199
+        _dyld_start  (in dyld)        196
+        vm.jsMod  (in steady-before)        72
+        ???  (in <unknown binary>)  [0x104ad43c0]        45
+        ???  (in <unknown binary>)  [0x104ad4530]        39
+        ???  (in <unknown binary>)  [0x104ad43cc]        33
+        ???  (in <unknown binary>)  [0x104ad43e4]        31
+        ???  (in <unknown binary>)  [0x104ad41e8]        28
+        ???  (in <unknown binary>)  [0x104ad4408]        27
+        ???  (in <unknown binary>)  [0x104ad42fc]        21
+        ???  (in <unknown binary>)  [0x104ad43c4]        20
+        ???  (in <unknown binary>)  [0x104ad453c]        19
+        ???  (in <unknown binary>)  [0x104ad4358]        18
+        ???  (in <unknown binary>)  [0x104ad4484]        18
+        ???  (in <unknown binary>)  [0x104ad4138]        15
+        ???  (in <unknown binary>)  [0x104ad43fc]        15
+        ???  (in <unknown binary>)  [0x104ad44ec]        15
+        ???  (in <unknown binary>)  [0x104ad4438]        13
+        ???  (in <unknown binary>)  [0x104ad421c]        11
+        ???  (in <unknown binary>)  [0x104ad4404]        10
+        ???  (in <unknown binary>)  [0x104ad4344]        9
+        ???  (in <unknown binary>)  [0x104ad41a8]        8
+        ???  (in <unknown binary>)  [0x104ad439c]        8
+        ???  (in <unknown binary>)  [0x104ad43d0]        8
+        ???  (in <unknown binary>)  [0x104ad41a4]        7
+        ???  (in <unknown binary>)  [0x104ad427c]        7
+        ???  (in <unknown binary>)  [0x104ad433c]        7
+        ???  (in <unknown binary>)  [0x104ad419c]        6
+        ???  (in <unknown binary>)  [0x104ad4230]        6
+        ???  (in <unknown binary>)  [0x104ad443c]        5
+        ???  (in <unknown binary>)  [0x104ad4570]        5
+
+Binary images description not available
+

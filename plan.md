@@ -1588,6 +1588,8 @@ JavaScript kernels, checked results and monotonic-clock driver in each engine. I
 `docs/ENGINE.md` §4.1. Cold process measurements remain separate. Instrumented GC runs never
 supply throughput numbers; GC event durations alone are not evidence of beating V8's GC.
 
+### ~~T71. Measure V8 and optimize a hot JavaScript engine path~~ → [`plan/T71`](plan/T71/done.md)
+
 ---
 
 ## 12. Make it better — the optimization ladder (post-MVP, in this order)

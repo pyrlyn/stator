@@ -236,6 +236,22 @@ test "a cached property read misses once per site" {
     try std.testing.expectEqual([3]usize{ 2, 1, 0 }, r.calls);
 }
 
+test "exact integer remainder stays in native code and other operands use the VM" {
+    if (!jit.available) return error.SkipZigTest;
+    const fast = try jitCost(
+        "function rem(a, b) { return a % b; } for (let i = -500; i < 500; i++) rem(i, -7); rem(-0, 3); rem(9007199254740991, 3)",
+        .{helpers.binary},
+    );
+    try std.testing.expectEqual(2, fast.compiled);
+    try std.testing.expectEqual(0, fast.calls[0]);
+    const slow = try jitCost(
+        "function rem(a, b) { return a % b; } rem(1.5, 1); rem(1, 0.5); rem(1, 0); rem(1, -0); rem(Infinity, 1); rem(1, Infinity); rem(NaN, 1); rem(1, NaN); rem(9007199254740992, 3); rem(3, 9007199254740992); rem('7', 3)",
+        .{helpers.binary},
+    );
+    try std.testing.expectEqual(2, slow.compiled);
+    try std.testing.expectEqual(11, slow.calls[0]);
+}
+
 test "a global name is looked up once per function" {
     if (!jit.available) return error.SkipZigTest;
     const r = try jitCost(
