@@ -1,26 +1,17 @@
-//! The C ABI the runtime calls (docs/INTERPRETER.md §1). Errors are thrown the runtime's way: the
-//! exception is left pending and the call answers a value the caller checks.
+//! The C ABI generated code and the runtime call (docs/INTERPRETER.md §3, §4), declared in
+//! `packages/runtime/include/jsrt_interp.h`. Errors are thrown the runtime's way: the exception is
+//! left pending and the call answers a value the caller checks.
 
-const std = @import("std");
 const interp = @import("stator_interp");
+const rt = interp.rt;
+const Value = rt.Value;
 
-/// `JSRTClass` (jsrt_value.h), only ever passed by address.
-const JSRTClass = opaque {};
-extern const jsrt_class_syntax_error: JSRTClass;
-extern fn jsrt_throw_error(cls: *const JSRTClass, message: [*:0]const u8) void;
+/// `eval` and `Function` as values: compiled code calls the interpreter's own.
+export fn jsrt_interp_global(name: [*:0]const u8) Value {
+    return rt.c.jsrt_get_prop(interp.builtins.global(), name, null);
+}
 
-/// Parses `src` with the Script goal: true, or false with a `SyntaxError` pending. T14.3 compiles
-/// the tree instead of dropping it.
-export fn jsrt_interp_parse_script(src: [*]const u8, len: usize) bool {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    switch (interp.parse.parseScript(arena.allocator(), src[0..len])) {
-        .tree => return true,
-        .syntax_error => |e| {
-            const message = arena.allocator().dupeSentinel(u8, e.message, 0) catch @panic("out of memory");
-            // jsrt_throw_error copies the message into a string before the arena goes.
-            jsrt_throw_error(&jsrt_class_syntax_error, message);
-            return false;
-        },
-    }
+/// A direct `eval` from compiled code (jsrt_interp.h).
+export fn jsrt_interp_eval_direct(source: Value, this: Value, count: u32, bindings: [*]const interp.interp.Binding) Value {
+    return interp.interp.evalDirect(source, this, bindings[0..count]);
 }

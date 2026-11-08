@@ -490,6 +490,37 @@ export function isGlobalNamed(node: ts.Expression, checker: ts.TypeChecker, name
   return declarations.length > 0 && declarations.every((d) => d.getSourceFile().isDeclarationFile);
 }
 
+/** Whether `call` is a direct `eval` (ECMA-262 §13.3.6.1): the global `eval` called by its bare
+ * name. Every other spelling (`(0, eval)(s)`, `globalThis.eval(s)`, an alias) is indirect. */
+export function isDirectEval(call: ts.CallExpression, checker: ts.TypeChecker): boolean {
+  return isGlobalNamed(call.expression, checker, 'eval');
+}
+
+/** The caller's bindings a direct `eval` at `call` can name: every variable and parameter of the
+ * same file in scope there, module-level ones included (docs/INTERPRETER.md §3). The frontend
+ * types them Unknown and the capture analysis moves the function-local ones into a heap
+ * environment, so the interpreter can read and write them through their cells for as long as a
+ * closure the eval made outlives the call. Functions, classes and imports are not handed over. */
+export function evalVisibleDeclarations(
+  call: ts.CallExpression,
+  checker: ts.TypeChecker,
+): readonly (ts.VariableDeclaration | ts.ParameterDeclaration)[] {
+  const file = call.getSourceFile();
+  const found: (ts.VariableDeclaration | ts.ParameterDeclaration)[] = [];
+  for (const symbol of checker.getSymbolsInScope(call, ts.SymbolFlags.Variable)) {
+    const decl = symbol.valueDeclaration;
+    if (
+      decl !== undefined &&
+      decl.getSourceFile() === file &&
+      (ts.isVariableDeclaration(decl) || ts.isParameter(decl)) &&
+      ts.isIdentifier(decl.name)
+    ) {
+      found.push(decl);
+    }
+  }
+  return found;
+}
+
 /** `null` means "not an object literal's shape" — the caller falls through to Unknown.
  *
  * An object literal has no declaration to be a layout OF, so its layout comes from the type: the

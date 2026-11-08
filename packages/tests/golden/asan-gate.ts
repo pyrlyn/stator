@@ -1,7 +1,7 @@
 /* The ASan golden gate (plan.md §9 Task 6.8, option (a): content-hash skip).
  *
- * `test:asan` is three stages: (1) `just runtime-asan` plus the std archive (`just std`, the
- * one flavor every runtime flavor links), (2) `just runtime-test-asan` plus the `--emit=lib`
+ * `test:asan` is three stages: (1) `just runtime-asan` plus the std and interpreter archives
+ * (`just std`, `just interp`, the one flavor every runtime flavor links), (2) `just runtime-test-asan` plus the `--emit=lib`
  * Check (`ffi/example-c-consumer/static-lib.ts`, Task 7.4), (3) the golden suite
  * linked against the sanitized archive. Stages 1-2 are seconds
  * (incremental objects behind the justfile's `stale()` walk); stage 3 re-runs every
@@ -13,8 +13,8 @@
  * - the sanitized archive, by member content (see below);
  * - `build-asan/link-flags.txt` + `build-asan/cflags.txt` (toolchain/flag key);
  * - the working-tree bytes of every tracked file under the compiler, the golden and
- *   support harnesses, the runtime sources/headers/tests/justfile and the std sources/Zig
- *   backings/justfile (sorted, no
+ *   support harnesses, the runtime sources/headers/tests/justfile, the std sources/Zig
+ *   backings/justfile and the interpreter's sources/build/justfile (sorted, no
  *   mtimes — `git ls-files` names, bytes off disk, so uncommitted edits count);
  * - the resolved CC's `--version` (same fallback as the justfile and `build.ts`);
  * - the resolved oracle's `node --version` (the same `nodePath()` the golden runner
@@ -66,6 +66,11 @@ const TRACKED_SCOPES: readonly string[] = [
   'packages/std/src',
   'packages/std/zig',
   'packages/std/justfile',
+  // The interpreter archive likewise (packages/interpreter/justfile): `eval_*` fixtures link it.
+  'packages/interpreter/src',
+  'packages/interpreter/build.zig',
+  'packages/interpreter/build.zig.zon',
+  'packages/interpreter/justfile',
 ];
 
 export interface ArchiveMember {
@@ -300,8 +305,8 @@ export function collectGateInputs(): GateInputs {
 }
 
 function runJust(
-  pkg: 'runtime' | 'std',
-  recipe: 'runtime-asan' | 'runtime-test-asan' | 'std',
+  pkg: 'runtime' | 'std' | 'interpreter',
+  recipe: 'runtime-asan' | 'runtime-test-asan' | 'std' | 'interp',
 ): void {
   const dir = join(REPO, 'packages', pkg);
   const justfile = join(dir, 'justfile');
@@ -389,6 +394,7 @@ function main(): void {
   // and the hash below is only meaningful against the archive they just produced.
   runJust('runtime', 'runtime-asan');
   runJust('std', 'std');
+  runJust('interpreter', 'interp');
   runJust('runtime', 'runtime-test-asan');
   runStaticLibAsan();
   runThreadsAsan();

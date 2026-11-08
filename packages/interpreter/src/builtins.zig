@@ -8,6 +8,7 @@ const std = @import("std");
 const rt = @import("rt.zig");
 const c = rt.c;
 const vm = @import("vm.zig");
+const interp = @import("interp.zig");
 const Value = rt.Value;
 const Env = c.JSRTEnv;
 
@@ -136,7 +137,8 @@ fn populate(g: Value) void {
     method(fproto, "apply", 2, &fnApply);
     method(fproto, "bind", 1, &fnBind);
     method(fproto, "toString", 0, &fnToString);
-    _ = wrapper(g, "Function", native("Function", 1, &functionCall));
+    // Constructible, so compiled code's `new Function(…)` reaches it through `jsrt_construct`.
+    _ = c.jsrt_closure_constructible(wrapper(g, "Function", native("Function", 1, &functionCall)));
 
     const object = wrapper(g, "Object", native("Object", 1, &objectCall));
     method(object, "create", 2, &objectCreate);
@@ -218,13 +220,7 @@ fn populate(g: Value) void {
     method(g, "isFinite", 1, fixed(c.jsrt_global_is_finite));
     method(g, "parseInt", 2, fixed(c.jsrt_global_parse_int));
     method(g, "parseFloat", 1, fixed(c.jsrt_global_parse_float));
-    method(g, "print", 1, &printNative);
-
-    const host = c.jsrt_dynobj_new();
-    put(g, "$262", host);
-    put(host, "global", g);
-    method(host, "evalScript", 1, &evalScriptNative);
-    method(host, "gc", 0, &noop);
+    // `print` and `$262` are the Test262 host's (test262/host.ts), compiled code, not globals.
 }
 
 // ---------------------------------------------------------------------- errors
@@ -291,8 +287,27 @@ pub fn instanceOf(v: Value, f: Value) ?bool {
 
 // ---------------------------------------------------------------------- Function
 
-fn functionCall(_: u32, _: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    c.jsrt_throw_error(&c.jsrt_class_error, "new Function is not supported by the interpreter yet (T14.3)");
+/// `Function(p…, body)` and `new Function(p…, body)` (§20.2.1.1): the parameters joined by
+/// commas, the last argument the body.
+fn functionCall(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
+    const xs = args(argc, argv);
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(std.heap.c_allocator);
+    var params_len: usize = 0;
+    for (xs, 0..) |x, i| {
+        const last = i + 1 == xs.len;
+        if (last) params_len = text.items.len else if (i > 0) text.append(std.heap.c_allocator, ',') catch return outOfMemory();
+        const s = c.jsrt_to_string(x);
+        if (rt.pending()) return rt.undefined_value;
+        const p = c.jsrt_shape_key_ephemeral(s);
+        defer std.c.free(p);
+        text.appendSlice(std.heap.c_allocator, std.mem.span(p)) catch return outOfMemory();
+    }
+    return interp.newFunction(text.items[0..params_len], text.items[params_len..]);
+}
+
+fn outOfMemory() Value {
+    rt.throwRange("out of memory");
     return rt.undefined_value;
 }
 
@@ -409,9 +424,12 @@ fn evalNative(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
 }
 
 fn evalString(s: Value) Value {
-    const p = c.jsrt_shape_key_ephemeral(s);
-    defer std.c.free(p);
-    return @import("interp.zig").evalScript(std.mem.span(p), false);
+    const text = rt.sourceText(s) orelse {
+        rt.throwRange("out of memory reading the eval source");
+        return rt.undefined_value;
+    };
+    defer std.c.free(text.ptr);
+    return interp.evalScript(text, false);
 }
 
 // ---------------------------------------------------------------------- Object
@@ -724,28 +742,6 @@ fn reflected(comptime f: anytype, comptime symbols: ?bool) Native {
             return if (symbols) |want| keysWhere(r, want) else r;
         }
     }.call);
-}
-
-// ---------------------------------------------------------------------- host
-
-fn printNative(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    const s = c.jsrt_to_string(arg(argc, argv, 0));
-    if (rt.pending()) return rt.undefined_value;
-    const p = c.jsrt_shape_key_ephemeral(s);
-    defer std.c.free(p);
-    const text = std.mem.span(p);
-    _ = std.c.write(1, text.ptr, text.len);
-    _ = std.c.write(1, "\n", 1);
-    return rt.undefined_value;
-}
-
-fn evalScriptNative(argc: u32, argv: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    const s = c.jsrt_to_string(arg(argc, argv, 0));
-    return if (rt.pending()) rt.undefined_value else evalString(s);
-}
-
-fn noop(_: u32, _: [*c]const Value, _: [*c]Env) callconv(.c) Value {
-    return rt.undefined_value;
 }
 
 // ---------------------------------------------------------------------- string methods

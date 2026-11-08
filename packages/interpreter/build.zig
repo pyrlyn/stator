@@ -37,15 +37,29 @@ pub fn build(b: *std.Build) void {
     // or another flavor's (`-Druntime=packages/runtime/build-asan/libjsrt.a`).
     const runtime = b.option([]const u8, "runtime", "libjsrt.a to link") orelse "../runtime/build/libjsrt.a";
 
-    // The runtime links this archive; its `jsrt_*` imports resolve there (T14.3).
-    const lib = b.addLibrary(.{ .name = "jsrt_interp", .root_module = over(b, interp, "src/capi.zig") });
+    // A program with an `Interpret` node links this archive beside the runtime's, whose `jsrt_*`
+    // symbols its imports resolve to (docs/INTERPRETER.md §9). Position-independent, because it
+    // links into PIE executables; split into sections, so the program link dead-strips what the
+    // program never reaches. The packages/interpreter justfile builds it for the compiler.
+    const lib_root = over(b, interp, "src/capi.zig");
+    lib_root.pic = true;
+    lib_root.stack_check = false;
+    const lib = b.addLibrary(.{ .name = "jsrt_interp", .root_module = lib_root });
+    lib.link_function_sections = true;
+    lib.link_data_sections = true;
     const install_lib = b.addInstallArtifact(lib, .{});
     b.getInstallStep().dependOn(&install_lib.step);
     b.step("lib", "Build libjsrt_interp.a").dependOn(&install_lib.step);
 
     const driver = b.addExecutable(.{ .name = "test262-parse", .root_module = over(b, interp, "test262/parse.zig") });
-    const exec = b.addExecutable(.{ .name = "test262-exec", .root_module = over(b, interp, "test262/exec.zig") });
-    linkRuntime(b, exec.root_module, runtime);
+    // The execution driver only spawns the compiled host (test262/host.ts), so it links neither
+    // the interpreter nor the runtime.
+    const exec = b.addExecutable(.{ .name = "test262-exec", .root_module = b.createModule(.{
+        .root_source_file = b.path("test262/exec.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    }) });
     const unit = b.addTest(.{ .root_module = interp });
     linkRuntime(b, unit.root_module, runtime);
     const test_step = b.step("test", "Run the interpreter's tests");
@@ -70,7 +84,7 @@ pub fn build(b: *std.Build) void {
 }
 
 /// The runtime archive and the system libraries it records in `link-flags.txt` (SYS_LIBS in
-/// packages/runtime/justfile): the collector is compiled into the archive (plan-notes 406).
+/// packages/runtime/justfile): the collector is compiled into the archive (plan-notes 407).
 fn linkRuntime(b: *std.Build, m: *std.Build.Module, archive: []const u8) void {
     m.addObjectFile(b.path(archive));
     m.link_libc = true;

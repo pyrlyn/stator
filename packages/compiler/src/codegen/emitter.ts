@@ -107,6 +107,9 @@ export class Emitter {
    * first-seen call order, deduplicated. Recorded per NODE at counting time like the errno
    * flag, so the prologue — emitted before any unit — already knows every one. */
   externHeaders: string[] = [];
+  /* Whether a node calls into the interpreter (docs/INTERPRETER.md §3): only then does the
+   * prologue include its header, and the link its archive. Set at counting time. */
+  interprets: boolean = false;
   /* C symbols a binding header declares (docs/FFI.md §9): no forward declaration is emitted
    * for these, however the headerless and header-carrying calls interleave at counting time. */
   externHeaderCovered: Set<string> = new Set();

@@ -1,5 +1,5 @@
 //! The collector: pyrlyn/gc driven as coalesced deferred reference counting (docs/VALUE.md §4,
-//! plan-notes 406).
+//! plan-notes 407).
 //!
 //! Every collected block sits behind a hidden 16-byte prefix in the layout pyrlyn/gc's kxgc.h
 //! defines: a header word (count in bits 0-31, color 32-33, buffered bit 34) and a vtable pointer.

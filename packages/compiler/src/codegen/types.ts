@@ -9,6 +9,7 @@ import type {
   DateNew,
   DateOp,
   DateStaticCall,
+  DirectEval,
   DynMethodCall,
   DynObjectLiteral,
   ErrorNew,
@@ -71,6 +72,7 @@ export type CallSlotted =
   | ArrayOp
   | InstanceOfValue
   | NewValue
+  | DirectEval
   | CallExpr
   | ConsoleLogCall
   | JsonParse

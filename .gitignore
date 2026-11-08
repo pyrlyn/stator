@@ -56,3 +56,4 @@ packages/runtime/zig-pkg/
 packages/interpreter/.zig-cache/
 packages/interpreter/zig-out/
 packages/interpreter/zig-pkg/
+packages/interpreter/build/

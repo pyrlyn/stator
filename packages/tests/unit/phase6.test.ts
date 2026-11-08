@@ -126,14 +126,14 @@ test('classify skips unsupported features and flags without compiling', () => {
 
 test('withDiagnosticCapture stores plain diagnostic text instead of printing via ink', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'stator-capture-'));
-  const entry = join(dir, 'bad.js');
-  // `eval` is never / not-yet depending on mode; in js mode it is a not-yet diagnostic.
+  const entry = join(dir, 'bad.ts');
+  // `eval` is never in ts mode (STA1101); js mode hands it to the interpreter.
   writeFileSync(entry, 'eval("1");\n', 'utf8');
   const out = join(dir, 'out');
   const { result, stderr } = await withDiagnosticCapture(() =>
-    build({ entry, out, mode: 'js', emitCOnly: false, keepC: false }),
+    build({ entry, out, mode: 'ts', emitCOnly: false, keepC: false }),
   );
   assert.equal(result, 1);
-  assert.match(stderr, /STA12\d{2}|STA11\d{2}|eval/);
+  assert.match(stderr, /STA1101/);
   assert.ok(!stderr.includes('\u001b['), 'capture must not contain ANSI from ink');
 });

@@ -3,7 +3,7 @@
 import type { Emitter } from './emitter.ts';
 import type { Module, Span, StaticProp } from '../hir/nodes.ts';
 import type { LibraryEmit } from './types.ts';
-import { cNameLiteral, closureMeta, descriptorName } from './helpers.ts';
+import { cNameLiteral, closureMeta, descriptorName, INTERP_INCLUDE } from './helpers.ts';
 import type { ExportedFunction } from '../frontend/export.ts';
 import { exportInitName, exportLastErrorName } from '../frontend/export.ts';
 
@@ -92,6 +92,9 @@ export function emit(emitter: Emitter, module: Module, library?: LibraryEmit): s
   }
   for (const header of emitter.externHeaders) {
     out.push(`#include ${header}`);
+  }
+  if (emitter.interprets) {
+    out.push(INTERP_INCLUDE);
   }
   out.push('', `JSRT_GLOBALS(${globalSlots});`, '');
   // Forward declarations ahead of every definition, so a function can call itself, or one

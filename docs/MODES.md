@@ -123,7 +123,8 @@ Inside checked `ts` code, types are trusted fully. At boundaries where typed and
 
 ### Not yet (Phase 8)
 
-- `eval`, `new Function`: `STA1206` — both land with the interpreter tier, so they share one code.
+- `eval`, `new Function`: dynamic since T14.3 — the interpreter runs them
+  (`docs/INTERPRETER.md` §3). A direct `eval` in sloppy CommonJS code stays `STA1206`.
 - `Proxy`: `STA1203`. Prototype mutation: `STA1204`. `delete` on a class field: `STA1205`.
 
 These are the same five constructs `ts` mode rejects permanently, which is the clearest

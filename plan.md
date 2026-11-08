@@ -1188,7 +1188,7 @@ T9.1 proceeds independently. §15.1's top-down rule does not apply here.
 
 The Zig modules export the same C ABI and link into `libjsrt.a`. `jsrt_value.h` stays the
 codegen↔runtime contract, and generated code stays C. The collector is pyrlyn/gc, a Zig package
-driven as deferred reference counting (plan/T66, plan-notes 406; Boehm before it). Zig 0.17.1 is pinned in stator's `mise.toml`; a global 0.14.1 (if present) is
+driven as deferred reference counting (plan/T66, plan-notes 407; Boehm before it). Zig 0.17.1 is pinned in stator's `mise.toml`; a global 0.14.1 (if present) is
 untouched. This reopens the settled C11-runtime decision (§15.4) on the creator's direction.
 
 ### ~~T9.1. Runtime memory core in Zig~~ → [`plan/T9.1`](plan/T9.1/done.md)
@@ -1981,4 +1981,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.88** (2026-11-02): **T41 opens: the compiler moves to Zig on stator-ts** (plan-notes 393). `packages/compiler` stays on `typescript` 6.0.3 as the oracle; Zig goes to 0.17.0 project-wide; `test:typediff` measures stator-ts against the checker.
 - **v4.89** (2026-11-06): **T14.0: the interpreter is Zig in the runtime, on stator-ts's parser, running bytecode** (plan-notes 396, `docs/INTERPRETER.md`). The creator chose the parser and the language from the spike's numbers; §11f and plan/T14.1–T14.4 follow.
 - **v4.90** (2026-11-07): **T14.1: `packages/interpreter`'s parser front** (plan-notes 401). The parse entry, the C ABI and a Test262 `language/` parse driver land in Zig on stator-ts's parser as it stands; 80.76% pass at the pin, ratcheted, and the rest is listed for stator-ts's owners.
-- **v4.91** (2026-11-07): **T66: Boehm is replaced by pyrlyn/gc as coalesced deferred reference counting** (plan-notes 406, `docs/VALUE.md` §4.12). No system GC library; each `--emit=lib` library carries its own collector; Zig moves to 0.17.1.
+- **v4.91** (2026-11-07): **T66: Boehm is replaced by pyrlyn/gc as coalesced deferred reference counting** (plan-notes 407, `docs/VALUE.md` §4.12). No system GC library; each `--emit=lib` library carries its own collector; Zig moves to 0.17.1.

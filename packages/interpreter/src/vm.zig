@@ -462,9 +462,15 @@ pub fn arrayItems(arr: Value) []Value {
 
 // ---------------------------------------------------------------------- closures and classes
 
-fn makeClosure(t: *Template, scope: ?*Env) Value {
+/// The environment an activation of `t` owns, whose parent is the scope it closes over.
+fn templateEnv(t: *Template, scope: ?*Env) *Env {
     const fe = c.jsrt_env_new(scope, compile.fnenv_size);
     fe.*.slots()[compile.fnenv_template] = boxPtr(t);
+    return fe;
+}
+
+fn makeClosure(t: *Template, scope: ?*Env) Value {
+    const fe = templateEnv(t, scope);
     // No allocation between making the closure and storing it: a boxed value in a Zig local is
     // not a root.
     const f = c.jsrt_closure_new(&trampoline, t.arity, t.name, fe, true);
@@ -505,6 +511,28 @@ fn classSetup(heritage: Value, ctor: Value, has_heritage: bool) ?Value {
 }
 
 // ---------------------------------------------------------------------- the machine
+
+/// The environment `hops` levels out from `e`.
+fn outward(e: *Env, hops: u8) *Env {
+    var at = e;
+    for (0..hops) |_| at = at.parent;
+    return at;
+}
+
+/// Runs a direct eval's code (docs/INTERPRETER.md §3): `cells` are the caller's bindings, each a
+/// pointer into an environment or a module global, and the outermost scope the code resolves
+/// against. `this` is the caller's.
+pub fn runEval(t: *Template, cells: []const *Value, this: Value) Value {
+    const refs = c.jsrt_env_new(null, @intCast(cells.len));
+    for (refs.*.slots()[0..cells.len], cells) |*slot, cell| slot.* = boxPtr(cell);
+    // The script's own environment is this one's child, as a closure's is its scope's.
+    return run(t, templateEnv(t, refs), rt.undefined_value, this, &.{}, rt.undefined_value);
+}
+
+/// `new Function(…)`'s result: a closure over `t` in the global scope.
+pub fn globalClosure(t: *Template) Value {
+    return makeClosure(t, null);
+}
 
 /// Runs one activation of `t`. `fe` is the closure's environment (null for a script).
 pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const Value, nt: Value) Value {
@@ -581,9 +609,7 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 if (locals[slot] == rt.uninitialized) tdzError(name) else locals[slot] = vs[top];
             },
             .load_env, .load_env_checked, .store_env, .store_env_checked => {
-                var e: *Env = frame.env;
-                var hops = next8(code, &pc);
-                while (hops > 0) : (hops -= 1) e = e.parent;
+                const e = outward(frame.env, next8(code, &pc));
                 const slot = next16(code, &pc);
                 const checked = o == .load_env_checked or o == .store_env_checked;
                 const name: [*:0]const u8 = if (checked) t.keys[next16(code, &pc)] else "";
@@ -593,6 +619,14 @@ pub fn run(t: *Template, fe: ?*Env, callee: Value, this_in: Value, argv: []const
                 } else {
                     top -= 1;
                     if (checked and cell.* == rt.uninitialized) tdzError(name) else cell.* = vs[top];
+                }
+            },
+            .load_ref, .store_ref => {
+                const e = outward(frame.env, next8(code, &pc));
+                const cell = unboxPtr(Value, e.slots()[next16(code, &pc)]).?;
+                if (o == .load_ref) push(vs, &top, cell.*) else {
+                    top -= 1;
+                    cell.* = vs[top];
                 }
             },
             .load_global, .typeof_global => {

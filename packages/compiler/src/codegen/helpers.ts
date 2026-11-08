@@ -386,6 +386,11 @@ export function escapeBytes(bytes: readonly number[]): string {
 /** The `JSRT_ITER_*` kinds (runtime/include/jsrt_value.h), numbered here because generated C
  * spells them as numbers: three per source, array then map then set; `matchAll` sits at 9 and
  * the string code-point walk at 10. */
+/** The interpreter's ABI (docs/INTERPRETER.md §3), included only by a program that calls it. The
+ * build reads the same line to decide whether the link owes `libjsrt_interp.a`, so the header
+ * and the archive cannot disagree. */
+export const INTERP_INCLUDE = '#include "jsrt_interp.h"';
+
 export const ITER_KINDS = {
   array: { keys: 0, values: 1, entries: 2 },
   map: { keys: 3, values: 4, entries: 5 },

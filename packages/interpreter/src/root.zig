@@ -4,6 +4,7 @@ pub const parse = @import("parse.zig");
 pub const rt = @import("rt.zig");
 pub const interp = @import("interp.zig");
 pub const vm = @import("vm.zig");
+pub const builtins = @import("builtins.zig");
 
 test {
     _ = parse;

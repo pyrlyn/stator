@@ -49,22 +49,39 @@ pub const Compiled = union(enum) {
     syntax_error: struct { offset: u32, message: [:0]const u8 },
 };
 
+/// A binding of the compiled code around a direct `eval` (docs/INTERPRETER.md §3). The eval
+/// code reaches it through a pointer held in slot `i` of the outermost environment, for the
+/// binding at index `i` of the list.
+pub const Outer = struct { name: []const u8, constant: bool };
+
 /// Compiles a parsed script. `perm` owns the templates, which outlive the compile.
 pub fn compileScript(a: Allocator, perm: Allocator, file: *parse.File, strict: bool) Error!Compiled {
+    return compileCode(a, perm, file, strict, null);
+}
+
+/// Compiles direct-eval code: strict (every caller is a module), its `var`s and functions its
+/// own, and its free names resolved first against `outer`.
+pub fn compileEval(a: Allocator, perm: Allocator, file: *parse.File, outer: []const Outer) Error!Compiled {
+    return compileCode(a, perm, file, true, outer);
+}
+
+/// Compiles the one function `parse.parseFunction` made, in the global scope (`new Function`).
+pub fn compileDynamicFunction(a: Allocator, perm: Allocator, file: *parse.File, n: *Node) Error!Compiled {
     var comp: Compiler = .{ .a = a, .perm = perm, .src = file.src };
-    const t = comp.script(file.root.data.source_file.stmts, strict) catch |e| switch (e) {
-        error.Unsupported => return if (comp.early) |msg|
-            .{ .syntax_error = .{ .offset = comp.bad_offset, .message = msg } }
-        else
-            .{ .unsupported = .{ .offset = comp.bad_offset, .what = comp.bad_what } },
-        error.OutOfMemory => return error.OutOfMemory,
-    };
+    const t = compileFunction(&comp, null, n, n.data.func, .function, "anonymous", false, null) catch |e| return comp.failed(e);
+    return .{ .template = t };
+}
+
+fn compileCode(a: Allocator, perm: Allocator, file: *parse.File, strict: bool, outer: ?[]const Outer) Error!Compiled {
+    var comp: Compiler = .{ .a = a, .perm = perm, .src = file.src };
+    const t = comp.script(file.root.data.source_file.stmts, strict, outer) catch |e| return comp.failed(e);
     return .{ .template = t };
 }
 
 const BKind = enum { var_, let_, const_, class_, func, param, callee, special };
 
-const Loc = union(enum) { local: u16, env: u16, global: []const u8 };
+/// `ref` is a slot holding a pointer to a compiled caller's binding (`Outer`).
+const Loc = union(enum) { local: u16, env: u16, global: []const u8, ref: u16 };
 
 const Binding = struct {
     loc: Loc,
@@ -117,6 +134,16 @@ const Compiler = struct {
     bad_what: []const u8 = "",
     early: ?[:0]const u8 = null,
 
+    fn failed(comp: *Compiler, e: Error) Error!Compiled {
+        return switch (e) {
+            error.Unsupported => if (comp.early) |msg|
+                .{ .syntax_error = .{ .offset = comp.bad_offset, .message = msg } }
+            else
+                .{ .unsupported = .{ .offset = comp.bad_offset, .what = comp.bad_what } },
+            error.OutOfMemory => error.OutOfMemory,
+        };
+    }
+
     fn syntaxError(comp: *Compiler, n: *const Node, message: [:0]const u8) Error {
         comp.early = message;
         return comp.stopAt(n);
@@ -132,11 +159,13 @@ const Compiler = struct {
         return error.Unsupported;
     }
 
-    fn script(comp: *Compiler, stmts: []*Node, strict_in: bool) Error!*Template {
+    fn script(comp: *Compiler, stmts: []*Node, strict_in: bool, outer: ?[]const Outer) Error!*Template {
         const strict = strict_in or hasUseStrict(stmts);
         var fs: Fn = .{ .comp = comp, .kind = .script, .strict = strict, .env_mode = containsFunctionList(stmts) };
-        const scope = try fs.newScope(null, true);
-        scope.script = true;
+        const refs = if (outer) |o| try fs.refScope(o) else null;
+        const scope = try fs.newScope(refs, true);
+        // Strict eval code keeps its `var`s and functions to itself (§19.2.1.3 step 16).
+        scope.script = outer == null;
         try fs.declareSpecials(scope);
         try fs.hoistVars(scope, stmts);
         try fs.hoistLexical(scope, stmts);
@@ -315,8 +344,8 @@ const Fn = struct {
         try fs.operand(u16, slot);
         if (name) |n| try fs.operand(u16, try fs.keyIndex(n));
         fs.adjust(switch (o) {
-            .load_env, .load_env_checked => 1,
-            .store_env, .store_env_checked => -1,
+            .load_env, .load_env_checked, .load_ref => 1,
+            .store_env, .store_env_checked, .store_ref => -1,
             else => unreachable,
         });
     }
@@ -382,6 +411,15 @@ const Fn = struct {
         return s;
     }
 
+    /// The scope of a direct eval's caller: one environment of pointers, already made by the
+    /// caller of the code, so nothing pushes it.
+    fn refScope(fs: *Fn, outer: []const Outer) Error!*Scope {
+        const s = try fs.alloc().create(Scope);
+        s.* = .{ .parent = null, .env = true, .count = @intCast(outer.len) };
+        for (outer, 0..) |o, i| try s.names.put(fs.alloc(), o.name, .{ .loc = .{ .ref = @intCast(i) }, .kind = if (o.constant) .const_ else .var_ });
+        return s;
+    }
+
     fn declare(fs: *Fn, scope: *Scope, name: []const u8, kind: BKind) Error!void {
         if (scope.names.getPtr(name)) |existing| {
             // A function declaration replaces a `var` of the same name; a later `var` keeps it.
@@ -439,6 +477,7 @@ const Fn = struct {
             .local => |l| if (checked) try fs.localOp(.load_checked, l, name) else try fs.op16(.load, l),
             .env => |slot| try fs.envOp(if (checked) .load_env_checked else .load_env, r.hops, slot, if (checked) name else null),
             .global => |g| try fs.op16(.load_global, try fs.keyIndex(g)),
+            .ref => |slot| try fs.envOp(.load_ref, r.hops, slot, null),
         }
     }
 
@@ -448,7 +487,7 @@ const Fn = struct {
         switch (r.b.loc) {
             .local => |l| try fs.op16(.load, l),
             .env => |slot| try fs.envOp(.load_env, r.hops, slot, null),
-            .global => unreachable,
+            .global, .ref => unreachable,
         }
     }
 
@@ -462,6 +501,7 @@ const Fn = struct {
                 try fs.byte(0);
                 fs.adjust(-1);
             },
+            .ref => |slot| try fs.envOp(.store_ref, hops, slot, null),
         }
         _ = name;
     }
@@ -504,7 +544,7 @@ const Fn = struct {
             .let_, .class_ => switch (r.b.loc) {
                 .local => |l| return fs.localOp(.store_checked, l, name),
                 .env => |slot| return fs.envOp(.store_env_checked, r.hops, slot, name),
-                .global => unreachable,
+                .global, .ref => unreachable,
             },
             else => try fs.storeLoc(r.b.loc, r.hops, name),
         }
