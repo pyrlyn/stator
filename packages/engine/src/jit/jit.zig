@@ -33,6 +33,7 @@ const host = switch (builtin.cpu.arch) {
 pub const available = host != void;
 
 pub const Native = *const fn (*helpers.Ctx) callconv(.c) Value;
+pub const Stack = helpers.Stack;
 
 /// The native code for `t`, compiling it on its first call; null to interpret it.
 pub fn codeFor(t: *Template) ?Native {
@@ -47,16 +48,20 @@ pub fn codeFor(t: *Template) ?Native {
         break :blk null;
     };
     if (native) |n| {
-        t.jit = .{ .state = .compiled, .code = @ptrCast(n) };
+        t.jit = .{ .state = .compiled, .code = @ptrCast(n), .direct = !t.kind.ctor() and !t.is_async and !t.generator };
         compiled += 1;
     } else t.jit.state = .rejected;
     return native;
 }
 
-/// Runs `native` on the frame `vm.exec` set up for it: the window is published as a GC root and
-/// its call values are in place.
-pub fn enter(native: Native, t: *Template, fe: ?*c.JSRTEnv, w: [*]Value, argv: []const Value, frame: *c.JSRTFrame) Value {
-    var cx: helpers.Ctx = .{ .w = w, .argv = argv.ptr, .argc = argv.len, .frame = frame, .t = t, .fe = fe };
+/// Native code entered from the interpreter, for the tests: a call between compiled functions
+/// does not count.
+pub var entries: usize = 0;
+
+/// Runs `native` on the frame `vm.exec` or `vm.callCompiled` set up for it: the window is
+/// published as a GC root and its call values are in place.
+pub fn enter(native: Native, t: *Template, fe: ?*c.JSRTEnv, w: [*]Value, argv: []const Value, frame: *c.JSRTFrame, stack: *const helpers.Stack) Value {
+    var cx: helpers.Ctx = .{ .w = w, .argv = argv.ptr, .argc = argv.len, .frame = frame, .t = t, .fe = fe, .stack = stack };
     return native(&cx);
 }
 

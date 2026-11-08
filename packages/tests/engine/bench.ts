@@ -1,5 +1,6 @@
-/* V8 against the stator engine (plan/T67): the bench programs under the pinned Node and under
- * `stator-engine run` in `interp` and `jit` mode, built ReleaseFast.
+/* V8 against the stator engine's JIT (plan/T67, plan/T67.1): the TypeScript bench programs and
+ * the JavaScript ones in engine/bench/ under the pinned Node and under `stator-engine run
+ * --mode=jit`, built ReleaseFast. V8 is the only reference: the goal is to beat it.
  *
  *   node packages/tests/engine/bench.ts [--runs=N]
  *
@@ -8,7 +9,7 @@
  * is the largest seen. Results go to engine/results/ (ignored) and the table to stdout, with the
  * host, versions and flags they hold for. */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { arch, cpus, hostname, platform, release } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +27,10 @@ const PROGRAMS = [
   join(BENCH, 'memory', 'programs', 'hello.ts'),
   join(BENCH, 'memory', 'programs', 'objects-churn.ts'),
   join(BENCH, 'memory', 'programs', 'objects-retained.ts'),
+  ...readdirSync(join(HERE, 'bench'))
+    .filter((f) => f.endsWith('.js'))
+    .sort()
+    .map((f) => join(HERE, 'bench', f)),
 ];
 
 const runsFlag = process.argv.find((a) => a.startsWith('--runs='));
@@ -47,7 +52,6 @@ const engine = engineBinary('ReleaseFast');
 const node = nodePath();
 const tools: readonly Tool[] = [
   { name: 'node (V8)', command: node, args: [] },
-  { name: 'engine interp', command: engine, args: ['run', '--mode=interp'] },
   { name: 'engine jit', command: engine, args: ['run', '--mode=jit'] },
 ];
 
@@ -70,7 +74,7 @@ function measure(tool: Tool, program: string, expected: string): Measurement {
 const rows = PROGRAMS.map((program) => {
   const expected = timedRun(node, [program]).stdout;
   return {
-    program: basename(program, '.ts'),
+    program: basename(program),
     results: tools.map((t) => measure(t, program, expected)),
   };
 });
@@ -94,7 +98,7 @@ const lines = [
   `|---|${tools.map(() => '---:').join('|')}|---:|${tools.map(() => '---:').join('|')}|`,
   ...rows.map((r) => {
     const v8 = r.results[0]?.ms ?? Number.NaN;
-    const jit = r.results[2]?.ms ?? Number.NaN;
+    const jit = r.results[1]?.ms ?? Number.NaN;
     return `| ${r.program} | ${r.results.map((m) => fmt(m.ms)).join(' | ')} | ${(jit / v8).toFixed(2)}x | ${r.results.map((m) => fmt(m.rssMb)).join(' | ')} |`;
   }),
 ];

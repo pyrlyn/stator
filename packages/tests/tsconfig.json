@@ -17,6 +17,7 @@
     "differential",
     // Engine corpus scripts (engine/run.ts): plain scripts sharing one global scope, run as written.
     "engine/scripts",
+    "engine/bench",
     // Concatenated raw into Test262 sources (Task 6.15). A type annotation here is a syntax error
     // in those tests, so the file stays annotation-free and out of this program.
     "test262/harness"

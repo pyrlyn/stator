@@ -73,6 +73,13 @@ pub fn build(b: *std.Build) void {
     const install_steady = b.addInstallArtifact(steady, .{});
     b.step("steady", "Build the warmed benchmark host").dependOn(&install_steady.step);
 
+    // In-process timing of the JavaScript bench programs (src/bench.zig, docs/ENGINE.md §4).
+    const bench = b.addExecutable(.{ .name = "stator-engine-bench", .root_module = over(b, interp, "src/bench.zig") });
+    linkRuntime(b, bench.root_module, runtime);
+    const run_bench = b.addRunArtifact(bench);
+    run_bench.addPassthruArgs();
+    b.step("bench", "Time the bench programs after -- in-process").dependOn(&run_bench.step);
+
     const driver = b.addExecutable(.{ .name = "test262-parse", .root_module = over(b, interp, "test262/parse.zig") });
     // The execution driver only spawns the compiled host (test262/host.ts), so it links neither
     // the interpreter nor the runtime.

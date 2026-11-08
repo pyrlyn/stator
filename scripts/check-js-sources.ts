@@ -44,6 +44,8 @@ function isExempt(path: string): boolean {
   // stator-ts checker fixtures: inputs its differential tests feed to tsc and to stator-ts.
   if (path.startsWith('packages/transpiler/tests/fixtures/')) return true;
   if (path === 'packages/tests/leak/keys.js') return true;
+  // stator-engine's JavaScript bench programs, run as-is by Node and by the engine.
+  if (path.startsWith('packages/tests/engine/bench/')) return true;
   if (path.startsWith('examples/')) return true;
   return false;
 }

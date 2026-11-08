@@ -1577,6 +1577,8 @@ rule 9, §11a), and it compiles to bytecode (the spike: 2.9× faster than a tree
 
 ### T67.3. A WebAssembly runtime in the engine: `.wasm` modules run from JavaScript and TypeScript → [`plan/T67.3`](plan/T67.3/task.md)
 
+### ~~T68. Make the engine's interpreter faster~~ → [`plan/T68`](plan/T68/done.md)
+
 ### T67.4. `stator-engine build --target=zig`: JavaScript and TypeScript to Zig source → [`plan/T67.4`](plan/T67.4/task.md)
 
 ### ~~T69. Compare the JIT with warmed V8 and measure full GC pauses~~ → [`plan/T69`](plan/T69/done.md)

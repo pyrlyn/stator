@@ -11,21 +11,32 @@ const bc = @import("bytecode.zig");
 const compile = @import("compile.zig");
 const builtins = @import("builtins.zig");
 const jit = @import("jit/jit.zig");
+const builtin = @import("builtin");
 const Value = rt.Value;
 const Op = bc.Op;
 const Template = bc.Template;
 const Env = c.JSRTEnv;
 
 const stack_values = 1 << 20;
-threadlocal var stack: []Value = &.{};
-threadlocal var sp: usize = 0;
 
-fn valueStack() []Value {
-    if (stack.len == 0) {
-        stack = std.heap.page_allocator.alloc(Value, stack_values) catch @panic("out of memory");
-        @memset(stack, rt.undefined_value);
+/// The machine's per-thread state in one thread-local, so an activation pays one thread-local
+/// lookup rather than one per field (each is a call on macOS).
+const Machine = struct {
+    stack: []Value = &.{},
+    sp: usize = 0,
+    /// The runtime's pending-exception flag for this thread, read after every instruction.
+    pending: *const volatile bool = undefined,
+};
+threadlocal var machine: Machine = .{};
+
+fn thisMachine() *Machine {
+    const m = &machine;
+    if (m.stack.len == 0) {
+        m.stack = std.heap.page_allocator.alloc(Value, stack_values) catch @panic("out of memory");
+        @memset(m.stack, rt.undefined_value);
+        m.pending = c.jsrt_pending_flag();
     }
-    return stack;
+    return m;
 }
 
 // ---------------------------------------------------------------------- internal pointers
@@ -114,6 +125,33 @@ fn callInterpreted(fe: *Env, callee: Value, this: Value, args: []const Value) Va
     return run(t, fe, callee, this, args, rt.undefined_value);
 }
 
+/// A call from compiled code to a compiled plain function (jit/helpers.zig `call`): the callee's
+/// window opens where `exec` would open it and its code runs with no interpreter layer between.
+/// Null when `callee` needs [[Call]]'s full path.
+pub fn callCompiled(st: *const jit.Stack, callee: Value, this: Value, args: []const Value) ?Value {
+    if (!isInterpreted(callee)) return null;
+    const fe = fnEnv(callee);
+    const t = templateOf(fe);
+    if (!t.jit.direct) return null;
+    if (@frameAddress() < st.limit) return c.jsrt_stack_overflow();
+    const base = st.sp.*;
+    const window = windowSize(t);
+    if (base + window > st.values.len) {
+        rt.throwRange("Maximum call stack size exceeded");
+        return rt.undefined_value;
+    }
+    st.sp.* = base + window;
+    defer st.sp.* = base;
+    const w = st.values[base .. base + window];
+    @memset(w, rt.undefined_value);
+    w[0] = callee;
+    w[1] = this;
+    var frame: c.JSRTFrame = .{ .prev = st.top.*, .count = @intCast(window), .slots = w.ptr, .env = fe.parent };
+    st.top.* = &frame;
+    defer st.top.* = frame.prev;
+    return jit.enter(@ptrCast(@alignCast(t.jit.code.?)), t, fe, w.ptr, args, &frame, st);
+}
+
 /// Calls any value with a receiver; a non-function is the TypeError Node raises.
 pub fn call(callee: Value, this: Value, args: []const Value) Value {
     if (!rt.is(callee, c.JSRT_TAG_CLOSURE)) return throwAbout(callee, "{s} is not a function");
@@ -171,6 +209,7 @@ pub fn construct(callee: Value, args: []const Value, nt: Value) Value {
 
 /// [[Get]], with the reads the runtime cannot answer for an interpreted program.
 pub fn getProp(obj: Value, key: [*:0]const u8, ic: ?*c.JSRTIC) Value {
+    if (ic) |site| if (isDyn(obj)) if (cachedSlot(dynObj(obj), key, site)) |slot| return slot.*;
     if (c.jsrt_is_error(obj) and std.mem.eql(u8, keyText(key), "constructor")) return builtins.errorConstructorOf(obj);
     if (rt.is(obj, c.JSRT_TAG_CLOSURE)) return closureGet(obj, key);
     // The runtime's generator object keeps no properties; its methods are the prototype's.
@@ -223,10 +262,42 @@ pub fn setProp(obj: Value, key: [*:0]const u8, v: Value, ic: ?*c.JSRTIC) void {
         return;
     }
     if (!rt.isObjectLike(obj)) return; // a primitive's property write is dropped
+    if (ic) |site| if (isDyn(obj) and !dynObj(obj).frozen) if (cachedSlot(dynObj(obj), key, site)) |slot| return writeSlot(dynObj(obj), slot, v);
     c.jsrt_set_prop(obj, key, v, ic);
 }
 
+/// The own data slot a site's inline cache names on `o`, when the cache holds: `o` is on the shape
+/// the runtime filled it from, which fixes the key's offset. Only a data property is answered here;
+/// an accessor runs code, and `constructor` has getProp's own answer, so both take the full path.
+fn cachedSlot(o: *c.JSRTDynObject, key: [*:0]const u8, ic: *const c.JSRTIC) ?*Value {
+    if (ic.shape != @as(?*const c.JSRTShape, o.shape)) return null;
+    if (key[0] == 'c' and std.mem.orderZ(u8, key, "constructor") == .eq) return null;
+    const slot = &o.slots[ic.offset];
+    return if (c.jsrt_is_accessor_cell(slot.*)) null else slot;
+}
+
+/// A store into `owner`'s own slot, behind the collector's write barrier. The barrier is given the
+/// owner, not the slot: an object already dirty and named by its own address is its lock-free case.
+fn writeSlot(owner: *c.JSRTDynObject, slot: *Value, v: Value) void {
+    c.jsrt_gc_write(owner);
+    slot.* = v;
+}
+
+/// `index` as an array index below `len`, or null: the read and write fast paths take only a
+/// number naming an existing element, so holes, growth and string keys stay the runtime's.
+fn denseIndex(index: Value, len: u32) ?u32 {
+    if (!c.jsrt_is_number(index)) return null;
+    const d = c.jsrt_number_value(index);
+    if (!(d >= 0 and d < @as(f64, @floatFromInt(len)))) return null;
+    const i: u32 = @intFromFloat(d);
+    return if (@as(f64, @floatFromInt(i)) == d) i else null;
+}
+
 pub fn getElem(obj: Value, k: Value) Value {
+    if (rt.is(obj, c.JSRT_TAG_ARRAY)) {
+        const a = c.jsrt_as_array(obj);
+        if (denseIndex(k, a.*.length)) |i| return c.jsrt_unhole(a.*.elements[i]);
+    }
     if (c.jsrt_is_nullish(obj)) {
         var buf: [128]u8 = undefined;
         throwFmt(&c.jsrt_class_type_error, "Cannot read properties of {s} (reading '{s}')", .{ if (obj == rt.null_value) "null" else "undefined", describe(k, &buf) });
@@ -246,6 +317,14 @@ pub fn setElem(obj: Value, k: Value, v: Value) void {
         return;
     }
     if (!rt.isObjectLike(obj)) return;
+    if (rt.is(obj, c.JSRT_TAG_ARRAY)) {
+        const a = c.jsrt_as_array(obj);
+        if (denseIndex(k, a.*.length)) |i| {
+            c.jsrt_gc_write(a);
+            a.*.elements[i] = v;
+            return;
+        }
+    }
     c.jsrt_dyn_index_set(obj, k, v, null);
 }
 
@@ -1035,15 +1114,16 @@ fn suspendAt(state: *?*Env, w: []Value, nlocals: usize, depth: usize, pc: usize,
 
 fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
     if (stackExhausted()) return c.jsrt_stack_overflow();
-    const vs = valueStack();
-    const base = sp;
+    const mach = thisMachine();
+    const vs = mach.stack;
+    const base = mach.sp;
     const window = windowSize(t);
     if (base + window > vs.len) {
         rt.throwRange("Maximum call stack size exceeded");
         return rt.undefined_value;
     }
-    sp = base + window;
-    defer sp = base;
+    mach.sp = base + window;
+    defer mach.sp = base;
     const w = vs[base .. base + window];
     @memset(w, rt.undefined_value);
     const locals = w[header .. header + t.nlocals];
@@ -1093,7 +1173,14 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
         },
     }
 
-    if (entry == .call and state == null) if (jit.codeFor(t)) |native| return jit.enter(native, t, fe, w.ptr, argv, &frame);
+    if (entry == .call and state == null) if (jit.codeFor(t)) |native| {
+        if (builtin.is_test) jit.entries += 1;
+        const st: jit.Stack = .{ .sp = &mach.sp, .top = &c.jsrt_frame_top, .values = vs, .limit = c.jsrt_stack_limit, .pending = mach.pending };
+        return jit.enter(native, t, fe, w.ptr, argv, &frame, &st);
+    };
+    // Read in place after every instruction: jsrt_pending() would cost a call and a thread-local
+    // lookup each time.
+    const pending = mach.pending;
 
     while (true) {
         const at = pc;
@@ -1160,11 +1247,11 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
                     cell.* = vs[top];
                 }
             },
-            .load_global, .typeof_global => push(vs, &top, loadGlobal(t.keys[next16(code, &pc)], o == .typeof_global)),
+            .load_global, .typeof_global => push(vs, &top, loadGlobal(t, next16(code, &pc), o == .typeof_global)),
             .store_global => {
                 top -= 1;
                 // Operands decode left to right: the key, then the strict flag.
-                storeGlobal(t.keys[next16(code, &pc)], next8(code, &pc) != 0, vs[top]);
+                storeGlobal(t, next16(code, &pc), next8(code, &pc) != 0, vs[top]);
             },
             .delete_global => {
                 const k = t.keys[next16(code, &pc)];
@@ -1247,7 +1334,14 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
 
             .add, .bitand, .bitor, .bitxor, .shl, .shr, .ushr, .sub, .mul, .div, .mod, .exp, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge => {
                 top -= 1;
-                vs[top - 1] = binary(o, vs[top - 1], vs[top]);
+                const a = vs[top - 1];
+                const b = vs[top];
+                // Arithmetic on two numbers cannot throw, so it skips the exception check.
+                if (c.jsrt_is_number(a) and c.jsrt_is_number(b)) if (numeric(o, c.jsrt_number_value(a), c.jsrt_number_value(b))) |r| {
+                    vs[top - 1] = r;
+                    continue;
+                };
+                vs[top - 1] = binary(o, a, b);
             },
             .neg, .plus, .bitnot, .not, .typeof, .inc, .dec => vs[top - 1] = unary(o, vs[top - 1]),
             .to_string => vs[top - 1] = c.jsrt_to_string(vs[top - 1]),
@@ -1258,8 +1352,8 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
                 top -= 1;
                 const v = vs[top];
                 const taken = switch (o) {
-                    .jump_if_false => !c.jsrt_truthy(v),
-                    .jump_if_true => c.jsrt_truthy(v),
+                    .jump_if_false => !truthy(v),
+                    .jump_if_true => truthy(v),
                     .jump_if_nullish => c.jsrt_is_nullish(v),
                     else => v != rt.undefined_value,
                 };
@@ -1561,7 +1655,7 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
                 if (!rt.isObjectLike(vs[top])) _ = throwAbout(vs[top], "Iterator result {s} is not an object");
             },
         }
-        if (rt.pending()) {
+        if (pending.*) {
             const h = findHandler(t, at) orelse return rt.undefined_value;
             const exc = c.jsrt_take_exception();
             top = op_base;
@@ -1603,6 +1697,7 @@ fn push(vs: []Value, top: *usize, v: Value) void {
 
 /// A binary operator's semantics: the dispatch loop's, and the JIT's slow path (src/jit/).
 pub fn binary(o: Op, a: Value, b: Value) Value {
+    if (c.jsrt_is_number(a) and c.jsrt_is_number(b)) if (numeric(o, c.jsrt_number_value(a), c.jsrt_number_value(b))) |r| return r;
     return switch (o) {
         inline .add, .bitand, .bitor, .bitxor, .shl, .shr, .ushr => |op| @field(c, "jsrt_op_" ++ @tagName(op))(a, b),
         .exp => c.jsrt_math_pow(a, b),
@@ -1628,8 +1723,37 @@ pub fn binary(o: Op, a: Value, b: Value) Value {
     };
 }
 
+/// Two numbers need no coercion, so the operator is the IEEE operation itself; null leaves the
+/// bitwise operators and `**` to the runtime, whose ToInt32 and pow are the specified ones.
+inline fn numeric(o: Op, x: f64, y: f64) ?Value {
+    return switch (o) {
+        .add => rt.number(x + y),
+        .sub => rt.number(x - y),
+        .mul => rt.number(x * y),
+        .div => rt.number(x / y),
+        .mod => rt.number(jsMod(x, y)),
+        .eq, .seq => rt.boolean(x == y),
+        .ne, .sne => rt.boolean(x != y),
+        .lt => rt.boolean(x < y),
+        .gt => rt.boolean(x > y),
+        .le => rt.boolean(x <= y),
+        .ge => rt.boolean(x >= y),
+        else => null,
+    };
+}
+
 /// A unary operator's semantics, shared the same way.
 pub fn unary(o: Op, v: Value) Value {
+    if (c.jsrt_is_number(v)) {
+        const x = c.jsrt_number_value(v);
+        switch (o) {
+            .inc => return rt.number(x + 1),
+            .dec => return rt.number(x - 1),
+            .neg => return rt.number(-x),
+            .plus => return v,
+            else => {},
+        }
+    }
     return switch (o) {
         .neg => rt.number(-c.jsrt_to_number(v)),
         .plus => rt.number(c.jsrt_to_number(v)),
@@ -1642,8 +1766,11 @@ pub fn unary(o: Op, v: Value) Value {
     };
 }
 
-/// A global name's value (`typeof_` answers its `typeof` instead, never a ReferenceError).
-pub fn loadGlobal(k: [*:0]const u8, typeof_: bool) Value {
+/// A global name's value (`typeof_` answers its `typeof` instead, never a ReferenceError). The
+/// key's cache, `t.global_ics[ki]`, is the one the JIT's inline read checks too.
+pub fn loadGlobal(t: *Template, ki: u16, typeof_: bool) Value {
+    if (cachedGlobal(t, ki)) |slot| return if (typeof_) c.jsrt_typeof(slot.*) else slot.*;
+    const k = t.keys[ki];
     const g = builtins.global();
     if (!c.jsrt_has_prop(g, k)) {
         if (typeof_) return rt.string("undefined");
@@ -1672,13 +1799,28 @@ pub fn homeOf(fe: ?*Env) Value {
 }
 
 /// `this` as a sloppy function sees it: the global object for undefined or null.
-pub fn sloppyThis(v: Value) Value {
+fn sloppyThis(v: Value) Value {
     return if (c.jsrt_is_nullish(v)) builtins.global() else v;
 }
 
-pub fn storeGlobal(k: [*:0]const u8, strict: bool, v: Value) void {
+pub fn storeGlobal(t: *Template, ki: u16, strict: bool, v: Value) void {
     const g = builtins.global();
+    if (!dynObj(g).frozen) if (cachedGlobal(t, ki)) |slot| return writeSlot(dynObj(g), slot, v);
+    const k = t.keys[ki];
     if (strict and !c.jsrt_has_prop(g, k)) throwFmt(&c.jsrt_class_reference_error, "{s} is not defined", .{keyText(k)}) else c.jsrt_set_prop(g, k, v, null);
+}
+
+/// The global object's own data slot for `t`'s key `ki`: the key's cache, refilled by one shape
+/// walk when the object's shape has moved on (a global added or deleted). What the runtime's
+/// has-then-get would find for an own data property; anything else returns null for that path.
+fn cachedGlobal(t: *Template, ki: u16) ?*Value {
+    const o = dynObj(builtins.global());
+    const ic = &t.global_ics[ki];
+    if (ic.shape != @as(?*const c.JSRTShape, o.shape)) {
+        const hit = c.jsrt_shape_find(o.shape, t.keys[ki]) orelse return null;
+        ic.* = .{ .shape = o.shape, .offset = hit.*.offset };
+    }
+    return cachedSlot(o, t.keys[ki], ic);
 }
 
 /// A global `var` or function's property, made undefined when the object lacks it.
@@ -1707,6 +1849,13 @@ pub fn envStore(env: *Env, hops: u8, slot: u16, name: ?[*:0]const u8, v: Value) 
     cell.* = v;
 }
 
+/// ToBoolean, with the booleans comparisons push answered without the runtime call.
+fn truthy(v: Value) bool {
+    if (v == rt.true_value) return true;
+    if (v == rt.false_value) return false;
+    return c.jsrt_truthy(v);
+}
+
 fn binop(vs: []Value, top: *usize, comptime f: anytype) void {
     top.* -= 1;
     vs[top.* - 1] = f(vs[top.* - 1], vs[top.*]);
@@ -1717,6 +1866,13 @@ fn instanceOfValue(v: Value, target: Value) Value {
 }
 
 fn jsMod(a: f64, b: f64) f64 {
+    // Integers below 2^53 are exact in both representations, so the integer remainder is the
+    // float one without fmod; only a zero result needs the dividend's sign put back.
+    const exact = 9007199254740992.0;
+    if (@abs(a) < exact and @abs(b) < exact and b != 0 and @trunc(a) == a and @trunc(b) == b) {
+        const r = @rem(@as(i64, @intFromFloat(a)), @as(i64, @intFromFloat(b)));
+        return if (r == 0) std.math.copysign(@as(f64, 0), a) else @floatFromInt(r);
+    }
     if (std.math.isInf(b) and std.math.isFinite(a)) return a;
     if (b == 0 or std.math.isNan(a) or std.math.isNan(b) or std.math.isInf(a)) return std.math.nan(f64);
     const r = @rem(a, b);
