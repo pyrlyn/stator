@@ -101,6 +101,18 @@ static inline uint64_t mulShift(const uint64_t m, const uint64_t* const mul, con
 
 static inline uint64_t mulShiftAll(const uint64_t m, const uint64_t* const mul, const int32_t j,
   uint64_t* const vp, uint64_t* const vm, const uint32_t mmShift) {
+//  m <<= 2;
+//  uint128_t b0 = ((uint128_t) m) * mul[0]; // 0
+//  uint128_t b2 = ((uint128_t) m) * mul[1]; // 64
+//
+//  uint128_t hi = (b0 >> 64) + b2;
+//  uint128_t lo = b0 & 0xffffffffffffffffull;
+//  uint128_t factor = (((uint128_t) mul[1]) << 64) + mul[0];
+//  uint128_t vpLo = lo + (factor << 1);
+//  *vp = (uint64_t) ((hi + (vpLo >> 64)) >> (j - 64));
+//  uint128_t vmLo = lo - (factor << mmShift);
+//  *vm = (uint64_t) ((hi + (vmLo >> 64) - (((uint128_t) 1ull) << 64)) >> (j - 64));
+//  return (uint64_t) (hi >> (j - 64));
   *vp = mulShift(4 * m + 2, mul, j);
   *vm = mulShift(4 * m - 1 - mmShift, mul, j);
   return mulShift(4 * m, mul, j);
@@ -220,8 +232,9 @@ static inline floating_decimal_64 d2d(const uint64_t ieeeMantissa, const uint32_
   const uint64_t mv = 4 * m2;
   // Implicit bool -> int conversion. True is 1, false is 0.
   const uint32_t mmShift = ieeeMantissa != 0 || ieeeExponent <= 1;
-  // Conceptually, the upper and lower bounds are derived from
-  // (4 * m2 + 2) and (mv - 1 - mmShift), respectively.
+  // We would compute mp and mm like this:
+  // uint64_t mp = 4 * m2 + 2;
+  // uint64_t mm = mv - 1 - mmShift;
 
   // Step 3: Convert to a decimal power base using 128-bit arithmetic.
   uint64_t vr, vp, vm;
@@ -437,9 +450,12 @@ static inline int to_chars(const floating_decimal_64 v, const bool sign, char* c
 #endif
 
   // Print the decimal digits.
-  // This block writes the mantissa digits into `result` from right to left,
-  // extracting base-10 chunks and emitting characters using lookup-table-assisted paths.
-  // The logic below is optimized but produces the same decimal digit sequence.
+  // The following code is equivalent to:
+  // for (uint32_t i = 0; i < olength - 1; ++i) {
+  //   const uint32_t c = output % 10; output /= 10;
+  //   result[index + olength - i] = (char) ('0' + c);
+  // }
+  // result[index] = '0' + output % 10;
 
   uint32_t i = 0;
   // We prefer 32-bit operations, even on 64-bit platforms.

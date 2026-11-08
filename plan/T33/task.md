@@ -1,9 +1,9 @@
 ---
-status: todo
+status: in progress
 priority: P3
 complexity: 2
 readiness: 100%
-agent:
+agent: Claude Code / claude-opus-5-5
 ---
 
 # T33. Vendor Ryū for number printing
@@ -21,3 +21,8 @@ Steps:
 **Check:** `pnpm run test:runtime` and `pnpm run test:golden` pass; `docs/TOOLCHAIN.md`'s Ryū
 row flips from "fetchable and unfetched" to "vendored at <commit>"; the vendor script
 regenerates from the pin without network drift.
+
+Execution plan (closing): Steps 1–3 landed in #194 (plan-notes 385). Re-vendor from the pin with
+`node packages/runtime/vendor/update.ts ryu` and check `git status` for drift; restore upstream
+bytes if the tree differs; run `pnpm run runtime`, `test:runtime` and `test:golden`; write
+`done.md`.
