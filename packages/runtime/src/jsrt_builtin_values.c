@@ -316,43 +316,55 @@ bool jsrt_is_bound_function(jsrt_value fn) { return bound_env(fn) != NULL; }
 
 jsrt_value jsrt_bound_target(jsrt_value fn) { return bound_env(fn)->slots[BOUND_TARGET]; }
 
-/* The bound arguments, then the call's own, built in the caller's rooted `slot`. */
-static void bound_arguments(const JSRTEnv *env, uint32_t argc, const jsrt_value *argv,
-                            jsrt_value *slot) {
+/* The bound arguments, then the call's own, as a GC array for a caller that roots it. */
+static jsrt_value bound_arguments(const JSRTEnv *env, uint32_t argc, const jsrt_value *argv) {
   const JSRTArray *bound = jsrt_as_array(env->slots[BOUND_ARGS]);
-  *slot = jsrt_array_new(bound->length, bound->elements);
+  const jsrt_value all = jsrt_array_new(bound->length, bound->elements);
   for (uint32_t i = 0; i < argc; i++) {
-    (void)jsrt_array_push(*slot, argv[i]);
+    (void)jsrt_array_push(all, argv[i]);
   }
+  return all;
+}
+
+/* The same list as a malloc'd vector the caller frees. It needs no rooting: the bound env and the
+ * caller's argv already hold every value in it, and neither changes during the call. */
+static jsrt_value *bound_vector(const JSRTEnv *env, uint32_t argc, const jsrt_value *argv,
+                                uint32_t *count) {
+  const JSRTArray *bound = jsrt_as_array(env->slots[BOUND_ARGS]);
+  *count = bound->length + argc;
+  jsrt_value *all = malloc(((size_t)*count + 1U) * sizeof *all);
+  if (all == NULL) {
+    jsrt_panic("out of memory calling a bound function");
+  }
+  for (uint32_t i = 0; i < bound->length; i++) {
+    all[i] = bound->elements[i];
+  }
+  for (uint32_t i = 0; i < argc; i++) {
+    all[bound->length + i] = argv[i];
+  }
+  return all;
 }
 
 static jsrt_value bound_call(uint32_t argc, const jsrt_value *argv, JSRTEnv *env) {
-  JSRT_FRAME(2);
-  bound_arguments(env, argc, argv, &JSRT_LOCAL(0));
-  const JSRTArray *all = jsrt_as_array(JSRT_LOCAL(0));
-  JSRT_LOCAL(1) = jsrt_call_with_this(env->slots[BOUND_TARGET], env->slots[BOUND_THIS],
-                                      all->length, all->elements);
-  const jsrt_value out = JSRT_LOCAL(1);
-  JSRT_FRAME_POP();
+  uint32_t count = 0;
+  jsrt_value *all = bound_vector(env, argc, argv, &count);
+  const jsrt_value out =
+      jsrt_call_with_this(env->slots[BOUND_TARGET], env->slots[BOUND_THIS], count, all);
+  free(all);
   return out;
 }
 
 jsrt_value jsrt_bound_arguments(jsrt_value fn, uint32_t argc, const jsrt_value *argv) {
-  JSRT_FRAME(1);
-  bound_arguments(bound_env(fn), argc, argv, &JSRT_LOCAL(0));
-  const jsrt_value out = JSRT_LOCAL(0);
-  JSRT_FRAME_POP();
-  return out;
+  return bound_arguments(bound_env(fn), argc, argv);
 }
 
 /* §10.4.1.2 [[Construct]]: the bound receiver is ignored and the target constructs. */
 jsrt_value jsrt_bound_construct(jsrt_value fn, uint32_t argc, const jsrt_value *argv) {
   const JSRTEnv *env = bound_env(fn);
-  JSRT_FRAME(1);
-  bound_arguments(env, argc, argv, &JSRT_LOCAL(0));
-  const JSRTArray *all = jsrt_as_array(JSRT_LOCAL(0));
-  const jsrt_value out = jsrt_construct(env->slots[BOUND_TARGET], all->length, all->elements);
-  JSRT_FRAME_POP();
+  uint32_t count = 0;
+  jsrt_value *all = bound_vector(env, argc, argv, &count);
+  const jsrt_value out = jsrt_construct(env->slots[BOUND_TARGET], count, all);
+  free(all);
   return out;
 }
 
@@ -388,16 +400,13 @@ static jsrt_value function_bind_call(uint32_t argc, const jsrt_value *argv, JSRT
   const uint32_t extra = argc > 0 ? argc - 1U : 0U;
   const char *name = bound_name(target);
   const uint32_t length = bound_length(target, extra);
-  JSRT_FRAME(1);
-  JSRT_LOCAL(0) = jsrt_array_new(extra, argc > 0 ? argv + 1 : argv);
+  const jsrt_value args = jsrt_array_new(extra, argc > 0 ? argv + 1 : argv);
   /* Until jsrt_closure_new returns, only this C frame names the env, as in jsrt_bound_method. */
   JSRTEnv *bound = jsrt_env_new(NULL, BOUND_SLOTS);
   bound->slots[BOUND_THIS] = jsrt_arg(argc, argv, 0);
   bound->slots[BOUND_TARGET] = target;
-  bound->slots[BOUND_ARGS] = JSRT_LOCAL(0);
-  const jsrt_value out = jsrt_closure_new(bound_call, length, name, bound, false);
-  JSRT_FRAME_POP();
-  return out;
+  bound->slots[BOUND_ARGS] = args;
+  return jsrt_closure_new(bound_call, length, name, bound, false);
 }
 
 jsrt_value jsrt_function_bind_method(jsrt_value fn) {

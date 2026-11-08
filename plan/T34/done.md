@@ -44,3 +44,8 @@
   - `pnpm run interp:test` passes.
   - `pnpm run test262:interp-exec` is unchanged at `14638 / 23726 pass`.
   - The golden suite was re-run (523/523).
+- Review follow-up. CodeQL flagged `cpp/stack-address-escape` on the `JSRT_FRAME` uses in the new runtime code. A bound call and a bound construction now pass a malloc'd argument vector. That needs no rooting, because the bound env and the caller already hold every value in it. `bind` itself keeps its locals unframed, since the native stack is scanned conservatively. After this change:
+  - `pnpm run test:asan` gives 523/523.
+  - The bind goldens also pass under `JSRT_GC_STRESS=1`.
+  - `interp:test` passes.
+- `js/bind_receiver` is its own js-mode program (plain functions, prototype methods, untyped receivers), not a stripped copy of the ts fixture.
