@@ -70,7 +70,7 @@ pub fn build(b: *std.Build) void {
 }
 
 /// The runtime archive and the system libraries it records in `link-flags.txt` (SYS_LIBS in
-/// packages/runtime/justfile): the collector is compiled into the archive (plan-notes 405).
+/// packages/runtime/justfile): the collector is compiled into the archive (plan-notes 406).
 fn linkRuntime(b: *std.Build, m: *std.Build.Module, archive: []const u8) void {
     m.addObjectFile(b.path(archive));
     m.link_libc = true;

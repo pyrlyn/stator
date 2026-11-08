@@ -70,7 +70,7 @@ _runtime flavor:
     CFLAGS_VENDOR="-std=c11 -Wall ${VENDOR_POSIX} -Iinclude ${VENDOR_INC} -ffunction-sections -fdata-sections"
     DEPFLAGS='-MMD -MP'
 
-    # The collector is pyrlyn/gc (plan-notes 405), compiled into the Zig object below: nothing to
+    # The collector is pyrlyn/gc (plan-notes 406), compiled into the Zig object below: nothing to
     # probe and no library to link.
     GC_STATUS='pyrlyn/gc deferred RC (perceus)'
     SYS_LIBS='-lm -pthread'
