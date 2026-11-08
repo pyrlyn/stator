@@ -20,18 +20,26 @@ import { evalVisibleDeclarations, isDirectEval, tsTypeToHType } from './types.ts
 
 type Mode = 'ts' | 'js';
 
-function identifierAt(source: ts.SourceFile, position: number): ts.Identifier | undefined {
-  let found: ts.Identifier | undefined;
+/** The innermost node of the kind `is` admits whose span covers `position`. */
+function innermostAt<T extends ts.Node>(
+  source: ts.SourceFile,
+  position: number,
+  is: (node: ts.Node) => node is T,
+): T | undefined {
+  let found: T | undefined;
   const visit = (node: ts.Node): void => {
     if (position < node.getStart(source) || position >= node.getEnd()) return;
-    if (ts.isIdentifier(node)) {
+    if (is(node)) {
       found = node;
-      return;
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
   return found;
+}
+
+function identifierAt(source: ts.SourceFile, position: number): ts.Identifier | undefined {
+  return innermostAt(source, position, ts.isIdentifier);
 }
 
 /** The checker codes for an undeclared name — plain, with the `@types/node` hint (two spellings),
@@ -59,15 +67,7 @@ function isNodePathGlobalRead(diag: ts.Diagnostic): boolean {
  * diagnostic sits on one of the duplicate names; whichever occurrence it is, walking up to the
  * enclosing literal and counting data `__proto__` entries answers the question. */
 function isDuplicateProtoDataProperty(source: ts.SourceFile, position: number): boolean {
-  let literal: ts.ObjectLiteralExpression | undefined;
-  const visit = (node: ts.Node): void => {
-    if (position < node.getStart(source) || position >= node.getEnd()) return;
-    if (ts.isObjectLiteralExpression(node)) {
-      literal = node;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
+  const literal = innermostAt(source, position, ts.isObjectLiteralExpression);
   if (literal === undefined) {
     return false;
   }

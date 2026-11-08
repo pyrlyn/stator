@@ -34,6 +34,7 @@ import type {
 } from './nodes.ts';
 import {
   ARRAY_OPS,
+  COLLECTION_OPS,
   CONSOLE_METHODS,
   consoleEntryPoint,
   DATE_OPS,
@@ -903,6 +904,19 @@ function verifyFunction(fn: FunctionExpr, problems: VerifyProblem[], bindings: S
   verifyBlock(fn.body, problems, inner, [{ isLoop: false, isFunction: true }]);
 }
 
+/** A receiver call's operands, receiver first: the order they evaluate in. */
+function verifyOperands(
+  target: Expression,
+  args: readonly Expression[],
+  problems: VerifyProblem[],
+  bindings: Scope,
+): void {
+  verifyExpression(target, problems, bindings);
+  for (const arg of args) {
+    verifyExpression(arg, problems, bindings);
+  }
+}
+
 function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings: Scope): void {
   // Check expression has a type
   if (!expr.type) {
@@ -1504,10 +1518,7 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
     // The slot rule a field read follows; whether the loaded value is callable is the runtime's
     // question (STA2006), exactly as for an ordinary call of an Unknown callee.
     case 'field-call': {
-      verifyExpression(expr.target, problems, bindings);
-      for (const arg of expr.args) {
-        verifyExpression(arg, problems, bindings);
-      }
+      verifyOperands(expr.target, expr.args, problems, bindings);
       checkField(expr.target, expr.field, expr.slot, 'field-call', problems);
       break;
     }
@@ -1518,18 +1529,12 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
       break;
     }
     case 'method-call': {
-      verifyExpression(expr.target, problems, bindings);
-      for (const arg of expr.args) {
-        verifyExpression(arg, problems, bindings);
-      }
+      verifyOperands(expr.target, expr.args, problems, bindings);
       checkMethodReceiver(expr, problems);
       break;
     }
     case 'dyn-method-call': {
-      verifyExpression(expr.target, problems, bindings);
-      for (const arg of expr.args) {
-        verifyExpression(arg, problems, bindings);
-      }
+      verifyOperands(expr.target, expr.args, problems, bindings);
       // The lowering routes only Unknown receivers here, functions, whose own properties the
       // closure holds (plan-notes 310), and a fixed object's undeclared name, which its overflow
       // table holds (docs/VALUE.md §4.24); anything else is a call the typed arms own, and
@@ -1595,10 +1600,7 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
     }
 
     case 'new-value': {
-      verifyExpression(expr.target, problems, bindings);
-      for (const arg of expr.args) {
-        verifyExpression(arg, problems, bindings);
-      }
+      verifyOperands(expr.target, expr.args, problems, bindings);
       break;
     }
 
@@ -1835,10 +1837,7 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
     // missing parameter -- neither of which the C compiler can catch, because every argument has
     // the same type.
     case 'collection-op': {
-      verifyExpression(expr.target, problems, bindings);
-      for (const arg of expr.args) {
-        verifyExpression(arg, problems, bindings);
-      }
+      verifyOperands(expr.target, expr.args, problems, bindings);
       const arity = COLLECTION_ARITY[expr.collection][expr.op];
       if (expr.target.type.kind !== expr.collection) {
         problems.push({
@@ -1893,7 +1892,7 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
       for (const arg of expr.args) {
         verifyExpression(arg, problems, bindings);
       }
-      const arity = MATH_ARITY[expr.method];
+      const arity = MATH_ARITY.get(expr.method);
       if (arity === undefined || expr.args.length !== arity) {
         problems.push({
           kind: 'math-call',
@@ -1917,10 +1916,7 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
     // deliberately unchecked: a padded slot is undefined where the source position was a number
     // or a string, and the checker already vetted what the source wrote.
     case 'string-op': {
-      verifyExpression(expr.target, problems, bindings);
-      for (const arg of expr.args) {
-        verifyExpression(arg, problems, bindings);
-      }
+      verifyOperands(expr.target, expr.args, problems, bindings);
       const shape = STRING_OPS[expr.op];
       // `element` is unchecked, the array-op rule: the honest answer is Unknown.
       const want: HType | undefined =
@@ -1979,10 +1975,7 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
     // and `lastIndexOf` holds `arity..maxArity` — the emitter picks the runtime entry point by
     // count, so a short or long list is a gate bug, never a padding one.
     case 'array-op': {
-      verifyExpression(expr.target, problems, bindings);
-      for (const arg of expr.args) {
-        verifyExpression(arg, problems, bindings);
-      }
+      verifyOperands(expr.target, expr.args, problems, bindings);
       const shape = ARRAY_OPS[expr.op];
       const want: HType | undefined =
         shape.result === 'self'
@@ -2111,10 +2104,7 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
     // receiver is. The ARGUMENT is deliberately unchecked, for STA4081's reason: an untyped value
     // is the js-mode norm, and the runtime's tag check is the honest place to settle it.
     case 'regexp-op': {
-      verifyExpression(expr.target, problems, bindings);
-      for (const arg of expr.args) {
-        verifyExpression(arg, problems, bindings);
-      }
+      verifyOperands(expr.target, expr.args, problems, bindings);
       if (expr.target.type.kind !== 'regexp') {
         problems.push({
           kind: 'regexp-op',
@@ -2228,10 +2218,7 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
     // trailing components to the table's full count -- a short list is a lowering bug, never a
     // source property.
     case 'date-op': {
-      verifyExpression(expr.target, problems, bindings);
-      for (const arg of expr.args) {
-        verifyExpression(arg, problems, bindings);
-      }
+      verifyOperands(expr.target, expr.args, problems, bindings);
       const want = DATE_OPS[expr.op];
       if (expr.target.type.kind !== 'date') {
         problems.push({
@@ -2261,10 +2248,7 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
     // A `Number.prototype` call: the runtime reads the receiver as a number without a tag test,
     // and the lowering pads the one argument.
     case 'number-op': {
-      verifyExpression(expr.target, problems, bindings);
-      for (const arg of expr.args) {
-        verifyExpression(arg, problems, bindings);
-      }
+      verifyOperands(expr.target, expr.args, problems, bindings);
       if (
         expr.target.type.kind !== 'number' ||
         expr.args.length !== 1 ||
@@ -2423,10 +2407,7 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
     }
 
     case 'promise-method': {
-      verifyExpression(expr.target, problems, bindings);
-      for (const arg of expr.args) {
-        verifyExpression(arg, problems, bindings);
-      }
+      verifyOperands(expr.target, expr.args, problems, bindings);
       if (expr.target.type.kind !== 'promise' && expr.target.type.kind !== 'unknown') {
         problems.push({
           kind: 'promise-method',
@@ -2669,36 +2650,8 @@ function verifyExpression(expr: Expression, problems: VerifyProblem[], bindings:
 /** Which operations each collection answers, and with how many arguments. The emitter's C
  * signatures are the reason this is checked at all -- see the `collection-op` case. */
 const COLLECTION_ARITY: Readonly<Record<'map' | 'set', Readonly<Record<string, number>>>> = {
-  map: {
-    get: 1,
-    set: 2,
-    has: 1,
-    delete: 1,
-    clear: 0,
-    size: 0,
-    forEach: 1,
-    keys: 0,
-    values: 0,
-    entries: 0,
-  },
-  set: {
-    add: 1,
-    has: 1,
-    delete: 1,
-    clear: 0,
-    size: 0,
-    forEach: 1,
-    keys: 0,
-    values: 0,
-    entries: 0,
-    union: 1,
-    intersection: 1,
-    difference: 1,
-    symmetricDifference: 1,
-    isSubsetOf: 1,
-    isSupersetOf: 1,
-    isDisjointFrom: 1,
-  },
+  map: { ...COLLECTION_OPS.map, size: 0 },
+  set: { ...COLLECTION_OPS.set, size: 0 },
 };
 
 /** Post-lowering arity is EXACT: the lowering folded variadic min/max into nested binary nodes,
@@ -2732,41 +2685,46 @@ function objectStaticWant(result: 'array' | 'boolean' | 'strings' | 'unknown'): 
   return result === 'boolean' ? H_BOOLEAN : undefined;
 }
 
-const MATH_ARITY: Readonly<Record<string, number>> = {
-  abs: 1,
-  acos: 1,
-  acosh: 1,
-  asin: 1,
-  asinh: 1,
-  atan: 1,
-  atanh: 1,
-  cbrt: 1,
-  clz32: 1,
-  cos: 1,
-  cosh: 1,
-  exp: 1,
-  expm1: 1,
-  fround: 1,
-  log: 1,
-  log10: 1,
-  log1p: 1,
-  log2: 1,
-  sin: 1,
-  sinh: 1,
-  tan: 1,
-  tanh: 1,
-  ceil: 1,
-  floor: 1,
-  round: 1,
-  sign: 1,
-  sqrt: 1,
-  trunc: 1,
-  atan2: 2,
-  hypot: 2,
-  pow: 2,
-  imul: 2,
-  min: 2,
-  max: 2,
-  // Nondeterministic and nullary — the one Math node with no operand to type-check.
-  random: 0,
-};
+/** Each Math method by the operand count its C signature takes. */
+const MATH_ARITY: ReadonlyMap<string, number> = new Map(
+  (
+    [
+      [
+        1,
+        [
+          'abs',
+          'acos',
+          'acosh',
+          'asin',
+          'asinh',
+          'atan',
+          'atanh',
+          'cbrt',
+          'clz32',
+          'cos',
+          'cosh',
+          'exp',
+          'expm1',
+          'fround',
+          'log',
+          'log10',
+          'log1p',
+          'log2',
+          'sin',
+          'sinh',
+          'tan',
+          'tanh',
+          'ceil',
+          'floor',
+          'round',
+          'sign',
+          'sqrt',
+          'trunc',
+        ],
+      ],
+      [2, ['atan2', 'hypot', 'pow', 'imul', 'min', 'max']],
+      // Nondeterministic and nullary — the one Math node with no operand to type-check.
+      [0, ['random']],
+    ] as const
+  ).flatMap(([arity, methods]) => methods.map((method) => [method, arity] as const)),
+);
