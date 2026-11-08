@@ -40,7 +40,7 @@ pub fn build(b: *std.Build) void {
     // A program with an `Interpret` node links this archive beside the runtime's, whose `jsrt_*`
     // symbols its imports resolve to (docs/INTERPRETER.md §9). Position-independent, because it
     // links into PIE executables; split into sections, so the program link dead-strips what the
-    // program never reaches. The packages/interpreter justfile builds it for the compiler.
+    // program never reaches. The packages/engine justfile builds it for the compiler.
     const lib_root = over(b, interp, "src/capi.zig");
     lib_root.pic = true;
     lib_root.stack_check = false;

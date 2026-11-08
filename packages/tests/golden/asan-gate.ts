@@ -66,11 +66,11 @@ const TRACKED_SCOPES: readonly string[] = [
   'packages/std/src',
   'packages/std/zig',
   'packages/std/justfile',
-  // The interpreter archive likewise (packages/interpreter/justfile): `eval_*` fixtures link it.
-  'packages/interpreter/src',
-  'packages/interpreter/build.zig',
-  'packages/interpreter/build.zig.zon',
-  'packages/interpreter/justfile',
+  // The interpreter archive likewise (packages/engine/justfile): `eval_*` fixtures link it.
+  'packages/engine/src',
+  'packages/engine/build.zig',
+  'packages/engine/build.zig.zon',
+  'packages/engine/justfile',
 ];
 
 export interface ArchiveMember {
@@ -305,7 +305,7 @@ export function collectGateInputs(): GateInputs {
 }
 
 function runJust(
-  pkg: 'runtime' | 'std' | 'interpreter',
+  pkg: 'runtime' | 'std' | 'engine',
   recipe: 'runtime-asan' | 'runtime-test-asan' | 'std' | 'interp',
 ): void {
   const dir = join(REPO, 'packages', pkg);
@@ -394,7 +394,7 @@ function main(): void {
   // and the hash below is only meaningful against the archive they just produced.
   runJust('runtime', 'runtime-asan');
   runJust('std', 'std');
-  runJust('interpreter', 'interp');
+  runJust('engine', 'interp');
   runJust('runtime', 'runtime-test-asan');
   runStaticLibAsan();
   runThreadsAsan();

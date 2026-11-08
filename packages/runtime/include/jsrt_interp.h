@@ -1,6 +1,6 @@
 /* jsrt_interp.h — the interpreter's entry points for generated C (docs/INTERPRETER.md §3, §4).
  *
- * The definitions live in `libjsrt_interp.a` (packages/interpreter), which a program links only
+ * The definitions live in `libjsrt_interp.a` (packages/engine), which a program links only
  * when its HIR holds an `Interpret` node, and generated C includes this header only then. Errors
  * follow the runtime's protocol: the exception is left pending and the call answers a value the
  * caller checks with `jsrt_pending()`. */

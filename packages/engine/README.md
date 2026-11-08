@@ -1,7 +1,9 @@
-# packages/interpreter
+# packages/engine
 
-The Phase-14 interpreter: Zig code inside the runtime that runs `eval`, `new Function` and
-the `js`-mode code the compiler hands it. The design is in `docs/INTERPRETER.md`.
+Stator's JavaScript engine in Zig (plan/T67). Its `interp` mode is the Phase-14 interpreter: Zig
+code inside the runtime that runs `eval`, `new Function` and the `js`-mode code the compiler hands
+it, designed in `docs/INTERPRETER.md`. Its `jit` mode compiles the same bytecode to native code
+through pyrlyn/jit. Until T67 this package was `packages/interpreter`.
 
 | Path | Holds |
 | --- | --- |

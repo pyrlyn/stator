@@ -36,7 +36,7 @@ Done means:
    updated, and `pnpm run interp:test`, `pnpm run test262:interp-parse` and the golden fixtures
    that call the interpreter pass as before.
 2. `stator-engine run [--mode=interp|jit] [--lang=js|ts] <file>` runs a script; `--lang` is taken
-   from the extension when absent; `wasm` is a named, rejected language.
+   from the extension when absent; `wasm` is a named, rejected language until T67.3 runs it.
 3. In `jit` mode, a function whose opcodes the baseline JIT takes runs as native code (AArch64 and
    x86-64); any other function runs in the interpreter, with the same observable result.
 4. A benchmark runs the same scripts on the pinned Node (V8), `stator-engine --mode=interp` and
@@ -55,7 +55,17 @@ Done means:
    through the VM's own helpers), compile on first call in `jit` mode, cache on the template;
    functions with handlers, generators or async bodies stay interpreted.
 5. `src/engine.zig` (mode, language) and `src/cli.zig` (`stator-engine`); `transpile` in stator-ts.
-6. Tests: every unit script through both modes with equal results; the JIT's own tests.
+6. Tests (`zig build test`, run by `pnpm run interp:test`):
+   - `src/jit/` unit tests: stack-depth analysis, eligibility (handlers, generators, async and
+     unsupported opcodes stay interpreted), and compiled templates for arithmetic, comparisons,
+     branches, loops, locals and calls, each checked against the interpreter's result;
+   - double fast paths: NaN canonicalization, `-0`, int32 overflow into doubles, mixed
+     number/string operands falling back to helpers;
+   - exceptions thrown from a helper inside JIT code reach the interpreter's handler;
+   - a script corpus under `packages/engine/tests/` (`.js` and `.ts` with `.out` files) run by
+     `stator-engine` in `interp` and `jit` mode, both equal to the pinned Node's output;
+   - CLI tests: `--lang` from the extension, `wasm` rejected with its message, a missing file and
+     a syntax error exit non-zero with a diagnostic.
 7. `packages/engine/bench/`: scripts and a strict-TS runner vs Node; results recorded.
 8. Docs: `docs/ENGINE.md`, `docs/INTERPRETER.md` §9, `packages/engine/README.md`, architecture
    diagram if the package graph changes.

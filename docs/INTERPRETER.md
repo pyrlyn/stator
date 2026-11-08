@@ -66,7 +66,7 @@ Options measured (the creator chose (d), 2026-11-06):
   rule 5). 7–12 ms for 640 KB, and 66 KB in `ReleaseSmall`.
 
 The interpreter imports `parser.zig` as a Zig module of its own, because stator-ts's `lib.zig`
-does not export it (`packages/interpreter/src/parse.zig`, T14.1). `parse` reads `eval` code with
+does not export it (`packages/engine/src/parse.zig`, T14.1). `parse` reads `eval` code with
 the Script goal (ECMA-262 §19.2.1), or a module. `parseFunction` builds CreateDynamicFunction's
 source text (§20.2.1.1.1), `<prefix> anonymous(<params>\n) {\n<body>\n}`, and parses it once. It
 keeps the tree only when it is that one function with its parameters and its body where the text
@@ -82,7 +82,7 @@ fixtures print `e.name`, never the message, because message parity with Node is 
 **Parse rate** (plan-notes 401). `pnpm run test262:interp-parse` runs Test262's `test/language/`
 through `parse` in every mode a test's flags ask for. At the pin it passes 19,162 of 23,726 tests
 (80.76%), at about 190 MiB/s. The counts are ratcheted per directory in
-`packages/interpreter/test262-parse.json`. The rest is stator-ts's to close:
+`packages/engine/test262-parse.json`. The rest is stator-ts's to close:
 
 - 3,444 tests parse but must not. These are early errors stator-ts reports in its binder or
   checker, or not at all.
@@ -306,7 +306,7 @@ QuickJS-NG is not retired. Most of the 1,280 tests that still stop at a refused 
   own in the Task 6.3 dashboard. `pnpm run test262:interp-exec` compiles the host and runs
   `test262/exec.zig`, which runs the host once per test and mode its flags ask for, each in a
   process of its own with a 10 s timeout. It ratchets the pass counts per directory in
-  `packages/interpreter/test262-exec.json`, and `bench:record` sums that file into the dashboard.
+  `packages/engine/test262-exec.json`, and `bench:record` sums that file into the dashboard.
   It needs `pnpm run runtime` first. Module tests are not run, because the interpreter has no
   module goal yet, and they count as failures.
 - **Differential fuzzing** (Task 6.2): the fuzzer's programs also run as `eval` strings, against
@@ -317,7 +317,7 @@ QuickJS-NG is not retired. Most of the 1,280 tests that still stop at a refused 
 
 | Package | Holds | Must not |
 | --- | --- | --- |
-| `packages/interpreter` (Zig) | the parser front (`src/parse.zig`, T14.1); the entry points the runtime calls (`src/capi.zig`: `eval`, the `Function` constructor, the trampoline); the bytecode format, compiler and VM (`src/bytecode.zig`, `src/compile.zig`, `src/vm.zig`, T14.2); the global object (`src/builtins.zig`); the Test262 parse and execution drivers (`test262/parse.zig`, `test262/exec.zig`) and the execution driver's compiled host (`test262/host.ts`). It is built into `libjsrt_interp.a` and imports stator-ts's `parser.zig` | hold its own value model, object model or GC |
+| `packages/engine` (Zig) | the parser front (`src/parse.zig`, T14.1); the entry points the runtime calls (`src/capi.zig`: `eval`, the `Function` constructor, the trampoline); the bytecode format, compiler and VM (`src/bytecode.zig`, `src/compile.zig`, `src/vm.zig`, T14.2); the global object (`src/builtins.zig`); the Test262 parse and execution drivers (`test262/parse.zig`, `test262/exec.zig`) and the execution driver's compiled host (`test262/host.ts`). It is built into `libjsrt_interp.a` and imports stator-ts's `parser.zig` | hold its own value model, object model or GC |
 | `packages/transpiler` (stator-ts) | the parser | know the interpreter exists |
 | `packages/compiler` (and plan/T41's Zig port) | the `interpret-global` and `direct-eval` HIR nodes, the eval-visible cells and binding tables of §3, and linking `libjsrt_interp.a` only when generated C includes `jsrt_interp.h` (T14.3) | interpret anything at compile time |
 | `packages/runtime` | the C ABI the VM calls | grow a second dispatch path |
