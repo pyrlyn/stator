@@ -2,8 +2,8 @@
 status: in progress
 priority: P1
 complexity: 3
-readiness: 0%
-agent: Claude Code / opus-5-5
+readiness: 30%
+agent: Claude Code / claude-opus-5-5
 ---
 
 # T11.7. Node's own test suite, synced and run through vitest
@@ -51,6 +51,12 @@ Windows-only file). Every `fail` is a CommonJS file, which goes to the T12 bundl
 `fetch.ts` links the corpus's `test/common` to the strict-TS `common/`. The harness no longer
 imports `node:util` (N2); `common/inspect.ts` prints what its messages compare. Every `fail` now
 stops at `node:process` (the harness's `process.platform`, `exit`, `on` and `cwd`), then
-at Rolldown's `__commonJSMin` (STA4013, T12.3), and 13 of them at `path.win32`. **Next:** flip
-the `path` files as T11.6's `process` and `path.win32` slices and T12.3's interop helpers land,
-then follow T11.6's module order.
+at Rolldown's `__commonJSMin` (STA4013, T12.3), and 13 of them at `path.win32`. **Third slice landed** (plan-notes 404): an untyped read or write
+of a class accessor runs the class's `get`/`set` half, which the harness's `common` needed; two
+`path` files pass (2 / 17). Every remaining `fail` reason names where the file stops first.
+**Next:** `path.win32` (8 files stop there or after the CommonJS helpers), the helpers'
+`Object.defineProperty` (T12.3 over T11.4), then T11.6's module order.
+
+Execution plan: per slice, fix what the first stopping point needs at its own layer (runtime,
+lowering or `packages/node`), with a golden for it; run `pnpm run test:node-suite`, flip every
+file that passes and refresh the reasons of the rest; regenerate `docs/NODE.md`; `pnpm run ci`.

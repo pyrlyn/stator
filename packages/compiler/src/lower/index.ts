@@ -3972,8 +3972,11 @@ function memberAssignment(
     return null;
   } else if (
     privateWriteIsAccessor(targetNode, checker) ||
-    accessorOwner(targetNode.expression, targetNode.name.text, checker, bindings, sourceFile) !==
-      undefined
+    // An untyped receiver the checker narrows to a class by control flow (`let k; k = new K()`)
+    // has no layout to call the setter through; its write is the dynamic one, which runs it.
+    (target.type.kind === 'object' &&
+      accessorOwner(targetNode.expression, targetNode.name.text, checker, bindings, sourceFile) !==
+        undefined)
   ) {
     // `o.x = v` RUNS the setter. The gate refused the compound forms, so `current` is never read
     // here -- it is built anyway so the two halves of a place stay one shape.
