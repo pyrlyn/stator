@@ -65,14 +65,15 @@ void *lre_realloc(void *opaque, void *ptr, size_t size) {
  * is the right amount of machinery for the base. */
 #define LRE_STACK_BUDGET ((size_t)192 * 1024)
 
-/* An address, never dereferenced: kept as an integer so gcc's -Wdangling-pointer does not read
- * the recorded stack slot as a pointer that outlives its frame. */
+/* A depth mark, never dereferenced. It is the frame address rather than a local's address: a
+ * local's address kept past its frame is a dangling pointer to gcc (-Wdangling-pointer) and to
+ * static analysis alike. Every compiler family T35 admits (clang, Apple clang, gcc) has the
+ * builtin. */
 static uintptr_t lre_stack_base;
 
 bool lre_check_stack_overflow(void *opaque, size_t alloca_size) {
   (void)opaque;
-  const char here = 0;
-  const uintptr_t at = (uintptr_t)&here;
+  const uintptr_t at = (uintptr_t)__builtin_frame_address(0);
   if (lre_stack_base == 0) {
     lre_stack_base = at;
   }
