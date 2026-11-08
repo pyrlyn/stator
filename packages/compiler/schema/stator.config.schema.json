@@ -57,6 +57,11 @@
       "minLength": 1,
       "description": "js mode: \"vite\" (default; the vite-stator package), \"none\", or an adapter module — a path relative to this file when it starts with \".\", else a package name (docs/BUNDLER.md)."
     },
+    "cc": {
+      "type": "string",
+      "minLength": 1,
+      "description": "build: the C compiler, a name on PATH or a path (relative to this file when it starts with \".\"); clang, Apple clang or gcc. --cc overrides it, and it overrides CC (docs/TOOLCHAIN.md, C compiler). Default clang."
+    },
     "diagnostics": {
       "enum": ["text", "json"],
       "description": "explain: report format; \"json\" is --json (default \"text\")."

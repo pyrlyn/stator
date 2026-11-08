@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { telemetryInit, telemetryShutdown, withSpanAsync } from '../support/telemetry.ts';
 import { BuildError, build, internalErrorMessage, type OptLevel } from './build.ts';
 import { type BundlerChoice, bundlerChoice, DEFAULT_BUNDLER } from './bundler.ts';
+import type { CcChoice } from './cc.ts';
 import {
   type CliOptions,
   type ConfigChoice,
@@ -33,6 +34,7 @@ type Command =
       emitHeader: string | undefined;
       unitName: string | undefined;
       bundler: BundlerChoice;
+      cc: CcChoice | undefined;
       node: boolean;
     }
   | {
@@ -49,7 +51,7 @@ const USAGE = `stator — ahead-of-time compiler for TypeScript/JavaScript
 Usage:
   stator build <entry> -o <out> [--mode=ts|js] [--node] [--emit=c|lib] [--keep-c]
     [--opt=0|1|2|3] [--link=<flags>]... [--emit-header=<h> [--unit-name=<unit>]]
-    [--bundler=vite|none|<module>]
+    [--bundler=vite|none|<module>] [--cc=<name|path>]
   stator explain <entry> [--mode=ts|js] [--node] [--json] [--bundler=vite|none|<module>]
   stator <command> --help
   stator --version
@@ -75,7 +77,7 @@ const COMMAND_USAGE = {
   build: `Usage:
   stator build <entry> -o <out> [--mode=ts|js] [--node] [--emit=c|lib] [--keep-c]
     [--opt=0|1|2|3] [--link=<flags>]... [--emit-header=<h> [--unit-name=<unit>]]
-    [--bundler=vite|none|<module>]
+    [--bundler=vite|none|<module>] [--cc=<name|path>]
 
 Flags:
   -o, --out <out>  output path: native binary, or C with --emit=c
@@ -95,6 +97,8 @@ Flags:
   --bundler <b>    js mode: bundles package imports and CommonJS files;
                    vite (default), none, or an adapter module (BUNDLER.md)
   --emit=binary    build a binary (default; overrides "emit": "c" or "lib")
+  --cc <cc>        C compiler: clang, Apple clang or gcc, by name or path
+                   (default clang; or config "cc", then CC)
   --config <path>  read options from this JSON file (default:
                    ./stator.config.json when it exists; docs/CONFIG.md)
   --no-config      ignore stator.config.json
@@ -254,6 +258,13 @@ const FLAGS: Readonly<Record<string, FlagSpec>> = {
       s.cli.unitName = v;
     },
   },
+  '--cc': {
+    commands: BUILD,
+    value: { what: 'a value (C compiler name or path)', equals: true },
+    apply: (s, v) => {
+      s.cli.cc = v;
+    },
+  },
   '--bundler': {
     commands: BOTH,
     value: { what: 'a value (vite, none or a module)', equals: true },
@@ -376,6 +387,7 @@ function parse(argv: readonly string[]): Command {
       emitHeader: undefined,
       unitName: undefined,
       bundler: undefined,
+      cc: undefined,
       diagnostics: undefined,
       node: undefined,
     },
@@ -449,6 +461,7 @@ function parse(argv: readonly string[]): Command {
       emitHeader: options.emitHeader,
       unitName: options.unitName,
       bundler,
+      cc: options.cc,
       node: options.node,
     };
   }
@@ -503,6 +516,7 @@ async function runCommand(command: Command): Promise<void> {
         bundler: command.bundler,
         ...(command.emitHeader !== undefined && { emitHeader: command.emitHeader }),
         ...(command.unitName !== undefined && { unitName: command.unitName }),
+        ...(command.cc !== undefined && { cc: command.cc }),
         node: command.node,
       });
       return;

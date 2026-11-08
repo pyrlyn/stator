@@ -127,8 +127,10 @@ CI runs in two stages (plan-notes 292):
    plus the `-macos` twins of `runtime`, `asan`, `intl` and `ffi`. Each has
    `needs: [static, frontend-coverage]`, so none starts unless every stage-1 job passed.
 
-Other Linux jobs (`test262`, Linux arm64 `frontend`, Linux `runtime`/`asan`/`intl`/`ffi`) belong to
-neither stage and run ungated, in parallel with stage 1.
+Other Linux jobs (`test262`, Linux arm64 `frontend`, Linux `runtime`/`asan`/`intl`/`ffi`, and the
+non-required `compile jobs smoke` and `gcc goldens`) belong to neither stage and run ungated, in
+parallel with stage 1. `gcc goldens` builds the runtime and runs `test:golden` with `CC=gcc`
+(plan/T35, "C compiler" below).
 
 **Required to merge into `main`** (the `protect-main` ruleset; cloud-review T21, plan-notes 370):
 `pipeline / gate`, `static analysis`, `frontend (linux/x64)`, `frontend (windows/x64)` and
@@ -181,6 +183,53 @@ STATOR_COMPILE_TIMING=1 node packages/compiler/src/cli/main.ts build file.ts -o 
 `STATOR_COMPILE_TIMING=1` prints one `stator: timing` line on stderr (span name to
 milliseconds). It is also not a `.env` key.
 
+## C compiler (`--cc` / `CC`)
+
+`stator build` compiles and links the generated C with one C compiler, chosen once per build
+(plan/T35, `packages/compiler/src/cli/cc.ts`). Highest first:
+
+1. `--cc=<name|path>` on the command line;
+2. `"cc"` in `stator.config.json` (a value starting with `.` resolves against the file's
+   directory; docs/CONFIG.md);
+3. `CC` from the real environment (an empty `CC` is unset; a project `.env` may not set it,
+   below);
+4. `clang`, the pinned LLVM 21.1.8 from `mise install`.
+
+The config file sits above `CC` because `CC` is often set for a whole shell or CI image, while
+the file names the compiler the project was built and tested with. A config file can already make
+the build run another program through `link` (`-B<dir>`), so `cc` widens nothing a project file
+could not reach; `.env` stays excluded because it is read implicitly from the current directory.
+
+**Detection.** Before the first compile, `<cc> --version` runs once and its banner picks the
+family: `clang`, `apple-clang` or `gcc` (`zig cc` prints clang's banner and counts as clang). A
+missing binary, a failing probe, or any other banner is `STA0022`, naming the value, where it came
+from, and how to choose another. The chosen command, source and family are attributes of the
+`link/cc` trace span.
+
+**Flags per family.** Everything the build passes (`-std=c11`, `-O<n>`, `-g`,
+`-fsanitize=address,undefined`, the section and dead-strip flags, `--link` values) all three
+families take, with one exception refused by name (`STA0022`) instead of passed through: gcc and
+`-flto=thin`, which a runtime archive built by clang with ThinLTO records in its
+`link-flags.txt`, or which `--link`/`@statorLink` may ask for. Rebuild the runtime with the same
+compiler (`CC=gcc pnpm run runtime`), or drop the flag.
+
+```
+node packages/compiler/src/cli/main.ts build file.ts -o app --cc=gcc   # this build only
+CC=gcc pnpm run runtime                                                # runtime archives with gcc
+CC=gcc pnpm run test:golden                                            # the goldens with gcc (CI: `gcc goldens`)
+CC=/usr/bin/cc pnpm run test:golden                                    # macOS: Apple clang
+```
+
+To go back to the default, drop `--cc`, remove `"cc"` from the config and unset `CC`.
+
+**Limitations.** Supported families are clang, Apple clang and gcc; anything else is refused, and
+no compiler is bundled (no tcc). On macOS an ASan build (`STATOR_RUNTIME=asan`) defaults to
+`/usr/bin/clang`, because conda clang 21.1.8's ASan runtime deadlocks at startup; an explicit
+choice is kept under ASan and prints one `stator: warning:` line saying so. The macOS stale-`ld`
+retry (below) applies only to the default compiler, so a bare `cc` that PATH resolves to a conda
+clang with a stale bundled `ld` fails to link on a newer Xcode; name `/usr/bin/cc` instead.
+Windows is out of scope.
+
 ## Environment variables and `.env`
 
 `stator build` and `stator explain` read these from the environment:
@@ -190,7 +239,7 @@ milliseconds). It is also not a `.env` key.
 | `STATOR_OPT` | clang `-O` level (above) | yes |
 | `STATOR_RUNTIME` | runtime flavor: `asan` or `intl` archive, and the builtins the gate admits | yes |
 | `STATOR_OTEL` | turns tracing on (plan-notes 187) | yes |
-| `CC` | the C compiler Stator runs | **no** |
+| `CC` | the C compiler Stator runs, below `--cc` and config `cc` (C compiler, above). Empty is unset | **no** |
 | `STATOR_COMPILE_JOBS` | how many clang processes compile the generated C (plan.md §11b T10.3). `1` is one translation unit and one clang line; unset splits a large enough program across the host's cores; an explicit value above 1 splits whenever there are two functions. An invalid value is `STA0021` | **no** |
 | `STATOR_COMPILE_TIMING` | set to anything to print one `stator: timing …` line of per-span wall times on stderr (T10.3's measurement; does not change the output) | **no** |
 | `STATOR_RUNTIME_ROOT` (and `STATOR_STD_ROOT`, `STATOR_NODE_ROOT`) | where the runtime headers and archives live | **no** |
@@ -212,7 +261,7 @@ STATOR_RUNTIME, STATOR_OTEL may come from .env)`. Other keys in the file are not
 The runtime flavor and root are resolved once per `build()` call, after `.env` is applied, and
 the gate and the link use that one value: `STATOR_RUNTIME=intl` in `.env` either links the ICU
 archive or fails with `STA0011` when it is not built, exactly as the real variable does (QA audit
-F3). A `CC` that exits 0 without writing its output is `STA0009`, not a successful build.
+F3). A C compiler that exits 0 without writing its output is `STA0009`, not a successful build.
 
 ## Native libraries
 
@@ -259,7 +308,7 @@ Beyond Node/pnpm (pinned above), the build shells out to:
 
 `clang` (and the rest of LLVM) and `zig` 0.17.1 are `mise install` on Unix. The others still come from the Xcode
 command-line tools (`xcode-select --install`) on macOS and from `binutils`/`pkg-config`/
-`diffutils` on Debian/Ubuntu. A missing compiler is a diagnostic with the install hint (`STA0008`),
+`diffutils` on Debian/Ubuntu. A missing compiler is a diagnostic with the install hint (`STA0022`),
 not a crash.
 
 ### macOS SDK fallback for a stale bundled linker
@@ -270,7 +319,7 @@ fails. The CLI link (`packages/compiler/src/cli/build.ts`), the justfile's `runt
 corpus link, and the test-side consumer links (export-stubs, the FFI C-consumer) all handle
 this the same way — one retry under the newest Command Line Tools SDK the old parser can
 still read (`packages/compiler/src/support/toolchain.ts`), only after a failure carrying
-that exact signature, never for an explicit `CC`. Green-path cost is zero; nothing is
+that exact signature, never for an explicit `--cc`, config `cc` or `CC`. Green-path cost is zero; nothing is
 recorded in `link-flags.txt`. Do not rebuild the runtime archive (`just runtime`) while a
 golden run is linking against it — `ar` rewriting `libjsrt.a` mid-link surfaces as a
 transient `library not found for -ljsrt` in exactly one fixture.

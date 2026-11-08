@@ -607,6 +607,33 @@ jobs:
           STATOR_COMPILE_JOBS: '2'
         run: pnpm exec vitest run packages/tests/unit/compile-jobs.test.ts
 
+  # plan/T35: the goldens with gcc as the C compiler (`CC=gcc`), runtime archive included, so a
+  # clang-only flag or a gcc-only warning in the runtime or the emitted C fails here. Not a
+  # required check, like `compile jobs smoke`.
+  gcc-goldens:
+    name: gcc goldens
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    env:
+      CC: gcc
+    steps:
+      - *checkout
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
+      - *setup
+      - *pnpm-install
+      - name: gcc version
+        run: gcc --version
+      - name: Build runtime archive with gcc
+        run: pnpm run runtime
+      - name: tests skipped (SKIP_CI_TESTS)
+        if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
+        run: echo "::notice title=SKIP_CI_TESTS::tests skipped by SKIP_CI_TESTS"
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        name: golden tests with CC=gcc
+        run: pnpm run test:golden
+
   revert-on-failure:
     name: revert-on-failure
     needs:

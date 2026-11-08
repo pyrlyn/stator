@@ -1,9 +1,9 @@
 ---
-status: todo
+status: in progress
 priority: P2
 complexity: 2
-readiness: 0%
-agent:
+readiness: 90%
+agent: Claude Code / claude-opus-5-5
 ---
 
 # T35. Choose the C compiler: `--cc` / `CC` instead of hard-wired `clang`
@@ -45,3 +45,22 @@ exits non-zero with the new diagnostic and no stack trace; `rg -n "'clang'" pack
 shows only the default in the resolver and the ASan override.
 
 **Blocked on nothing.**
+
+## Execution plan
+
+1. `src/cli/cc.ts`: `chooseCC` (precedence + macOS ASan override and warning), `detectCC`
+   (`--version` probe, family, `STA0022`), the per-family refusal table.
+2. `src/cli/config.ts` + schema: the `cc` key (relative to the file when it starts with `.`);
+   `src/cli/main.ts`: `--cc` in FLAGS and `--help`.
+3. `src/cli/build.ts`: every compile/link/prelink call takes the resolved compiler; span
+   `link/clang` becomes `link/cc` with `cc.command`, `cc.source`, `cc.family`; runtime
+   `link-flags.txt` and `--link` flags pass the family table.
+4. Tests: `unit/cc.test.ts` (precedence, empty `CC`, override, classification, probe refusals),
+   `unit/cli.test.ts` (`--cc` missing, `CC=/usr/bin/false`, unknown banner, `--help`),
+   `unit/config.test.ts`.
+5. Docs: `docs/TOOLCHAIN.md` "C compiler", `docs/CONFIG.md` row, `docs/DIAGNOSTICS.md` STA0022.
+6. Verify: `pnpm run ci`; the Check's `--cc=nope` and `rg` commands; goldens with `CC=cc` on macOS;
+   `CC=gcc pnpm run test:golden` on Linux (Colima or CI).
+7. Linux gcc: the non-required `gcc goldens` CI job (`.github/workflows/ci.yml`) builds the
+   runtime and runs `test:golden` with `CC=gcc`. The task closes with `done.md` once that job is
+   green on the PR; until then the Check's first clause is unproven.
