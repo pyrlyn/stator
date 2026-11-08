@@ -1,9 +1,9 @@
 ---
-status: todo
+status: in progress
 priority: P2
 complexity: 4
 readiness: 100%
-agent:
+agent: Claude Code / claude-opus-5-5
 ---
 
 # T28. Generics residue: homeless arrows, self-application, `instanceof` a generic class
@@ -38,3 +38,20 @@ Steps:
 
 **Check:** `gate.ts` emits no unnamed `STA1214` for the shapes in this card's list; goldens for
 any landed slice match Node byte-for-byte; `docs/HIR.md` §on generics states the keying rule.
+
+## Execution plan
+
+Steps 1 to 3 landed with plan-notes 386. Step 3 is the refusal option: specializing per tuple was
+tried and reverted. What is left is step 4's goldens.
+
+1. Add golden `generics_block_homed`: `ts/generics_block_homed.ts`, plus a js-mode twin as a
+   folder fixture `js/generics_block_homed/main.ts`. It covers:
+   - two block-homed `const`s with the same name at different types;
+   - one block `const` called at two types;
+   - a single-assignment module `let` called directly and passed;
+   - a `const` homed in an `if` block.
+2. Confirm every refused shape's message names its blocker:
+   - homeless branch, spread and ctor-argument arrows (`explain`);
+   - `instanceof` against a generic class;
+   - self-application and a generic as a value (`gate.ts`).
+3. Run `pnpm run ci`, then write `done.md`.
