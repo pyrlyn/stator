@@ -16,6 +16,10 @@ Ahead-of-time compiler from TypeScript/JavaScript to native binaries. The spec i
 
 ### Card groups
 
+**Full local test throughput ([T72](T72/done.md)).** Creator-directed optimization of the
+complete local test run, preserving every fixture and comparison; uses the existing process
+sharding and records before/after timings.
+
 **The 2026-10-24 roadmap/ideas sweep (T27–T35).**
 
 `roadmap.md` held no unfiled approved work and `ideas.md` holds no unapproved ideas. What the

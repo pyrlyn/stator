@@ -357,6 +357,23 @@ recorded in `link-flags.txt`. Do not rebuild the runtime archive (`just runtime`
 golden run is linking against it — `ar` rewriting `libjsrt.a` mid-link surfaces as a
 transient `library not found for -ljsrt` in exactly one fixture.
 
+## Full local test runs
+
+`pnpm run ci` keeps its stage order and complete checks. Full `test:subset` and `test:golden`
+runs (including the golden stage of `test:asan`) automatically use up to four worker processes.
+The count is capped by available CPU parallelism, `STATOR_TEST_JOBS` when set, and one worker
+per 2 GiB of total RAM. Fewer than 32 fixtures run in-process to avoid process startup overhead.
+Automatic workers divide the subprocess pool budget among themselves instead of each spawning
+one subprocess per host core. Reports and exit statuses are the same as the serial run.
+
+- `STATOR_TEST_JOBS=1 pnpm run test:subset` disables automatic sharding and runs serially.
+- `node packages/tests/golden/run.ts --shards=1` selects one worker explicitly, preserving the
+  subprocess pool inside it; `--shards=N` selects N workers. Explicit sharding retains the
+  existing per-worker `STATOR_TEST_JOBS` pool width.
+- `--filter`, `--only`, a direct `--shard=N/M`, and `STATOR_IMPACT_RECORD` disable automatic
+  fan-out. An explicit `--shards=N` still takes precedence. Impact recording should use the
+  existing `test:impact:record` command, which sets its required serial environment.
+
 ## Not yet required
 
 These arrive with the phase that needs them; do not add them to CI before that:

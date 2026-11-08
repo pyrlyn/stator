@@ -883,6 +883,13 @@ prints different bytes while `explain` says `static`, so 6.27 comes first.
 ~~**Task 6.31 — SonarCloud through the shared pyrlyn/ci workflow (plan-notes 358, 361).**~~ ✅
 **landed 2026-10-19** — evidence in [done.md](done.md) → Phase 6 Task 6.31 (plan-notes 361, 362, 363).
 
+### ~~T72. Speed up the full local test run~~ → [`plan/T72`](plan/T72/done.md)
+
+Full subset and golden runs may use bounded automatic process sharding. Every fixture must
+still report exactly once, in the original order, with unchanged comparisons and failure exit
+status. Explicit shard selectors override automatic selection; filtered runs and test-impact
+recording retain their in-process behavior. `STATOR_TEST_JOBS=1` disables automatic sharding.
+
 **Standing decision — Bun is not a test runner (2026-09-14, plan-notes 241).** Measured on this host (Bun 1.3.14 vs pinned Node 26.x): subset −5%, spawn-heavy unit −37%, in-process parity — while adopting it silently redefines the oracle (`process.execPath`), breaks the lcov pipeline (Node-only flags), and weakens the `erasableSyntaxOnly` runtime guard (Bun transpiles what Node type-stripping refuses). Reopen only with new measured evidence per §15.4. Task 6.5 is the prerequisite that keeps the question askable.
 
 **Check:** Test262 % visible and monotonically tracked; fuzzer runs ≥1 h nightly with zero unexplained divergences; benchmark page auto-updates; a shell whose bare `node` is off-pin cannot run CI silently (Task 6.2a); the unit gate runs without coverage (Task 6.4); the oracle never resolves to the host (Task 6.5).

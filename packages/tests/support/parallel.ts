@@ -19,7 +19,7 @@
  */
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { availableParallelism } from 'node:os';
+import { availableParallelism, totalmem } from 'node:os';
 import { join } from 'node:path';
 
 export interface ProcessResult {
@@ -32,6 +32,11 @@ export interface RunOptions {
   readonly timeoutMs?: number;
   readonly env?: NodeJS.ProcessEnv;
   readonly cwd?: string;
+}
+
+function testJobs(env = process.env, cores = availableParallelism()): number {
+  const requested = Number.parseInt(env['STATOR_TEST_JOBS'] ?? '', 10);
+  return Number.isFinite(requested) && requested > 0 ? requested : cores;
 }
 
 /** Async `spawnSync`, so a pool can keep every core busy. */
@@ -92,10 +97,8 @@ export async function pool<T, R>(
   let next = 0;
   // `STATOR_TEST_JOBS` overrides pool width (default: os.availableParallelism()). `=1` forces
   // serial order when comparing against a serial report or when a shared box must not be saturated.
-  const requested = Number.parseInt(process.env['STATOR_TEST_JOBS'] ?? '', 10);
   // An explicit `jobs` (a driver that sizes its own fan-out) wins over both.
-  const cores =
-    jobs ?? (Number.isFinite(requested) && requested > 0 ? requested : availableParallelism());
+  const cores = jobs ?? testJobs();
   const width = Math.max(1, Math.min(cores, items.length));
   await Promise.all(
     Array.from({ length: width }, async (_unused, slot) => {
@@ -121,8 +124,8 @@ export async function pool<T, R>(
  * Node oracle runs) but CPU-bound items just interleave on one core. `--shard=N/M` slices the
  * item list round-robin and `--shards=N` fans out to N `process.execPath` workers of the same
  * runner, merging the per-item records back by INDEX — the same ordering invariant the pool
- * documents above. Default (no flags) never reaches this section, so the serial report is
- * byte-identical with or without it.
+ * documents above. Full runs choose bounded sharding automatically; focused runs remain
+ * in-process. The serial and merged reports stay byte-identical.
  */
 
 /** One slice of a `--shard=N/M` run: the Nth worker of M total, both 1-based. */
@@ -141,6 +144,28 @@ export interface ShardArgs {
   readonly shard: Shard | undefined;
   readonly shards: number | undefined;
   readonly jsonOut: string | undefined;
+}
+
+/** Full corpora amortize process startup; focused runs and coverage attribution stay in-process.
+ * Cap automatic workers at four and budget 2 GiB each for independent TypeScript heaps. */
+export function runnerShardCount(
+  args: ShardArgs,
+  itemCount: number,
+  resources = { cores: availableParallelism(), memory: totalmem(), env: process.env },
+): number | undefined {
+  if (args.shards !== undefined) return args.shards;
+  if (
+    args.shard !== undefined ||
+    args.filter !== undefined ||
+    args.only !== undefined ||
+    resources.env['STATOR_IMPACT_RECORD'] !== undefined ||
+    itemCount < 32
+  ) {
+    return undefined;
+  }
+  const jobs = testJobs(resources.env, resources.cores);
+  const count = Math.min(4, resources.cores, jobs, Math.floor(resources.memory / (2 * 1024 ** 3)));
+  return count > 1 ? count : undefined;
 }
 
 /** Parse the shared sharding flags; `policy` keeps each runner's historical behavior where the
@@ -305,14 +330,26 @@ export function readShardFile(path: string): ShardRecord[] {
  *
  * `baseArgs` is what the workers share (today: the normalized `--filter=`); the shard selectors
  * are appended here so the driver never re-spells them. Workers inherit this process's env, so
- * `STATOR_TEST_JOBS` (and `TZ`, `STATOR_RUNTIME`, …) apply per worker. A worker that exits
+ * `STATOR_TEST_JOBS` (and `TZ`, `STATOR_RUNTIME`, …) apply per worker unless `sharedJobs` divides
+ * the subprocess budget for an automatic full run. A worker that exits
  * nonzero is a fatal error — per-item failures are DATA in its shard file, never an exit code. */
 export async function fanOutWorkers(options: {
   readonly script: string;
   readonly baseArgs: readonly string[];
   readonly shards: number;
   readonly dir: string;
+  readonly sharedJobs?: boolean;
 }): Promise<void> {
+  const jobs = testJobs();
+  // Automatic sharding must not multiply the subprocess pool by the worker count.
+  const optionsForWorker: RunOptions = options.sharedJobs
+    ? {
+        env: {
+          ...process.env,
+          STATOR_TEST_JOBS: String(Math.max(1, Math.floor(jobs / options.shards))),
+        },
+      }
+    : {};
   const runs = await Promise.all(
     Array.from({ length: options.shards }, (_unused, slot) => {
       const index = slot + 1;
@@ -323,7 +360,7 @@ export async function fanOutWorkers(options: {
       ];
       // Compiler-host spawn: the runner is a `.ts` file the host type-strips, so this stays
       // `process.execPath`, never the `nodePath()` oracle (see support/node-path.ts).
-      return runProcess(process.execPath, [options.script, ...args]);
+      return runProcess(process.execPath, [options.script, ...args], optionsForWorker);
     }),
   );
   const failures: string[] = [];
