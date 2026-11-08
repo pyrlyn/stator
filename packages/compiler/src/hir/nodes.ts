@@ -318,6 +318,34 @@ export interface NewValue extends Node {
   readonly args: readonly Expression[];
 }
 
+/** `eval` or `Function` read as a value -- an alias, `globalThis.eval`, the callee of an indirect
+ * `(0, eval)(s)` or of `new Function(...)` -- which is the interpreter's own function object
+ * (docs/INTERPRETER.md §3). Calls and `new` on it go through the ordinary dynamic paths. A
+ * program holding one links the interpreter; every other program never names it. */
+export interface InterpretGlobal extends Node {
+  readonly kind: 'interpret-global';
+  readonly name: 'eval' | 'Function';
+}
+
+/** One caller binding a direct `eval` sees: `source` is what the evaluated code calls it, `name`
+ * the HIR name whose storage the interpreter reads and writes through its address. The frontend
+ * typed it Unknown, and the capture analysis gave a function-local one an environment slot. */
+export interface EvalBinding {
+  readonly source: string;
+  readonly name: string;
+  readonly constant: boolean;
+}
+
+/** `eval(s)` by its bare global name (docs/INTERPRETER.md §3): the interpreter runs `s` as strict
+ * code in a scope holding `bindings`, with `receiver` as its `this`. `args` are the call's, every
+ * one evaluated; only the first is the source, and a non-string comes back unchanged. */
+export interface DirectEval extends Node {
+  readonly kind: 'direct-eval';
+  readonly receiver: Expression;
+  readonly args: readonly Expression[];
+  readonly bindings: readonly EvalBinding[];
+}
+
 /** `x instanceof C`.
  *
  * `className` names the class for the same reason `new` does: the emitter reaches a specific
@@ -2132,6 +2160,8 @@ export type Expression =
   | IndexAccess
   | NewExpr
   | NewValue
+  | InterpretGlobal
+  | DirectEval
   | InstanceOf
   | InstanceOfValue
   | ClassValue

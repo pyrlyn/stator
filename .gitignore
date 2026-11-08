@@ -53,3 +53,4 @@ packages/jstext/zig-out/
 packages/interpreter/.zig-cache/
 packages/interpreter/zig-out/
 packages/interpreter/zig-pkg/
+packages/interpreter/build/

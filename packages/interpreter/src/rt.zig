@@ -55,6 +55,29 @@ pub fn coercible(v: Value) bool {
     return false;
 }
 
+/// A string value as source text: WTF-8, owned by the caller (`std.c.free`), or null when out
+/// of memory. Unlike a property key, source text may hold U+0000.
+pub fn sourceText(s: Value) ?[]u8 {
+    const std = @import("std");
+    const len = c.jsrt_string_length(s);
+    // Three bytes per code unit at most: an astral pair is four bytes for two units.
+    const buf: [*]u8 = @ptrCast(std.c.malloc(@as(usize, len) * 3 + 1) orelse return null);
+    var n: usize = 0;
+    var i: u32 = 0;
+    while (i < len) : (i += 1) {
+        var cp: u21 = c.jsrt_string_char(s, i);
+        if (cp >= 0xD800 and cp <= 0xDBFF and i + 1 < len) {
+            const trail = c.jsrt_string_char(s, i + 1);
+            if (trail >= 0xDC00 and trail <= 0xDFFF) {
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (trail - 0xDC00);
+                i += 1;
+            }
+        }
+        n += std.unicode.wtf8Encode(cp, buf[n .. n + 4]) catch unreachable;
+    }
+    return buf[0..n];
+}
+
 /// A string value's text, copied into `buf` (cut to fit).
 pub fn copyText(s: Value, buf: []u8) []const u8 {
     const p = c.jsrt_shape_key_ephemeral(s);

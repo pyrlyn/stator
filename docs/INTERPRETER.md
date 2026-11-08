@@ -74,7 +74,7 @@ put them: a piece that closes its own bracket early (`a) {}; f(b`) moves one of 
 what parsing the two pieces separately catches.
 
 Early errors become a `SyntaxError` thrown at run time through `jsrt_throw_error`
-(`jsrt_interp_parse_script` in `src/capi.zig`). The check is the error's TYPE, which is exactly
+(`src/interp.zig`). The check is the error's TYPE, which is exactly
 what Test262 negative tests ask. The message is stator-ts's diagnostic text, which is tsc's
 wording. Module syntax under the Script goal is the exception and uses Node's text. Golden
 fixtures print `e.name`, never the message, because message parity with Node is not settled.
@@ -133,7 +133,7 @@ and `src/vm.zig` runs it:
   a `TypeError` on a non-array instead of writing to a copy.
 - **What it refuses.** A construct the compiler does not take yet is reported as unsupported
   before anything runs: generators, async functions, `await`/`yield`, `for await` (T14.4),
-  modules and `import()` (T14.3), `with`, BigInt, `using`, computed class field names, decorators,
+  modules and `import()`, `with`, BigInt, `using`, computed class field names, decorators,
   `#x in o`, and `super` outside a call or a member.
 
 ## 3. Direct `eval`, indirect `eval`, and scopes
@@ -160,6 +160,29 @@ and `src/vm.zig` runs it:
 - **`new Function(p…, body)`** parses `p…` and `body` as one function and creates it in the
   global scope, like an indirect `eval`.
 
+**As built (T14.3).** Only the strict case exists. `STA1206` now means only a direct `eval` in
+sloppy code: a CommonJS file outside every "use strict" prologue and class body (plan-notes 405).
+
+- **The gate** accepts `eval` and `Function` in `js` mode, as a callee, as a value, and as
+  `globalThis.eval` / `globalThis.Function`. `ts` mode still refuses them (`STA1101`, `STA1103`).
+- **The frontend** (`seedDirectEvalBindings` in `src/frontend/program.ts`, over
+  `evalVisibleDeclarations` in `src/frontend/types.ts`) marks every `const`, `let`, `var` and
+  parameter visible at a direct `eval` dynamic, so it is Unknown wherever it is read.
+  `src/lower/captures.ts` puts each of them in its owner's environment, even when the `eval` is in
+  the same function, and a loop whose per-iteration bindings an `eval` sees gets a fresh
+  environment per iteration. A `for…of` binding of a typed element is copied into a dynamic one.
+- **Two HIR nodes** (docs/HIR.md): `interpret-global` is `eval` or `Function` as a value, and
+  `direct-eval` holds the call's receiver, its arguments and the table of visible bindings.
+- **The emitter** turns `direct-eval` into `jsrt_interp_eval_direct(source, this, n, table)`.
+  The table is a compound literal of `JSRTEvalBinding { name, &cell, constant }`, one row per
+  binding, inner names shadowing outer ones. The eval code reads and writes the caller's cells
+  through it, and a closure the eval code makes keeps them.
+- **What a direct `eval` does not see yet.** Imports, function declarations and classes are not
+  in the table, so the eval code reads them as globals; bind one to a `const` first. `this` is the
+  caller's only in a non-arrow function that binds a receiver, and `undefined` otherwise. A
+  spread call `eval(...xs)` is indirect. TDZ is not checked for an eval-visible binding: the
+  table's cell holds `undefined` before its declaration runs.
+
 ## 4. The boundary with compiled code
 
 - **Calls, compiled → interpreted.** An interpreted function is an ordinary `JSRTClosure` whose
@@ -177,8 +200,9 @@ and `src/vm.zig` runs it:
 - **GC roots.** Each interpreted call publishes its window of the value stack (§2, as built) as a
   `JSRTFrame`, so the collector traces locals and operands exactly like a compiled function's
   `JSRT_FRAME`. Environments are GC objects reachable from the closures that capture them.
-  Function templates, bytecode and IC tables live as long as the process. Nothing frees a
-  compiled `eval` string's template yet; T14.3 decides that when `eval` reaches compiled code.
+  Function templates, bytecode and IC tables live as long as the process. A compiled `eval`
+  string's template is never freed (T14.3): a closure the eval code made may still point at it,
+  and nothing tracks which ones do. A program that evaluates new strings in a loop grows.
 - **`this`, `new.target`, `arguments`.** `this` is the receiver slot of the call convention
   (`has_receiver`), `undefined` in strict code without one. `new.target` is passed by the construct
   path (`jsrt_construct` → the trampoline's construct entry) and is `undefined` on a plain call.
@@ -203,7 +227,7 @@ The interpreter uses the runtime's existing machinery, with no second event loop
 
 | Code | Construct | Owner after Phase 14 |
 | --- | --- | --- |
-| `STA1206` | `eval`, `new Function` in `js` mode | the interpreter, first (T14.3) |
+| `STA1206` | a direct `eval` in sloppy (CommonJS) code, since T14.3 narrowed it | the interpreter, with §3's sloppy case |
 | `STA1201` | generator methods, async generators, `for await` | the interpreter (T14.4), by interpreting the enclosing function |
 | `STA1202` | `arguments` in `js` mode | the interpreter (T14.4), same route |
 | `STA1214` | subset-boundary constructs, `js` mode only | the interpreter (T14.4), construct by construct; each one flips its decision tests |
@@ -216,8 +240,8 @@ The interpreter uses the runtime's existing machinery, with no second event loop
 "By interpreting the enclosing function" is the general fallback: in `js` mode, a function whose
 body holds a construct the interpreter takes is lowered to an `Interpret` node carrying the
 function's source span, and its captured bindings cross as §3's scope descriptor. `ts` mode never
-does this. No diagnostic code is allocated by T14.0; T14.3 allocates one in `docs/DIAGNOSTICS.md`
-if the sloppy `var` case of §3 stays out.
+does this. No diagnostic code is allocated by T14.0. T14.3 left the sloppy `var` case of §3 out and
+kept `STA1206` for it rather than allocating a new code.
 
 ## 7. QuickJS-NG (Phase 8) after this
 
@@ -239,15 +263,16 @@ question is measured again after T14.4.
 ## 8. Oracle
 
 - **Test262** (Task 6.1, `packages/tests/test262/pin.json`): a second runner mode runs each test
-  through the interpreter. Before T14.3 the host is a Zig test driver that calls the interpreter's
-  entry point directly; after T14.3 it is a compiled `js` program that hands the test source to an
-  indirect `eval`, so every test executes in the interpreter and the harness's `$262` helpers are
-  compiled code. The pass rate is a column of its own in the Task 6.3 dashboard.
-  `pnpm run test262:interp-exec` (`test262/exec.zig`) runs each test in a child process of its
-  own, once in each mode its flags ask for, with a 10 s timeout. It ratchets the pass counts per
-  directory in `packages/interpreter/test262-exec.json`, and `bench:record` sums that file into
-  the dashboard. The driver needs `libjsrt.a` from `pnpm run runtime`. Module tests are not run
-  before T14.3, and they count as failures.
+  through the interpreter. The host is a compiled `js` program, `test262/host.ts` (built with
+  `--mode=js --node`), that hands the composed test to an indirect `eval`. So every test executes
+  in the interpreter, and the harness's `$262` (`global`, `evalScript`, `gc`) and `print` are
+  compiled code installed on the interpreter's global object. The pass rate is a column of its
+  own in the Task 6.3 dashboard. `pnpm run test262:interp-exec` compiles the host and runs
+  `test262/exec.zig`, which runs the host once per test and mode its flags ask for, each in a
+  process of its own with a 10 s timeout. It ratchets the pass counts per directory in
+  `packages/interpreter/test262-exec.json`, and `bench:record` sums that file into the dashboard.
+  It needs `pnpm run runtime` first. Module tests are not run, because the interpreter has no
+  module goal yet, and they count as failures.
 - **Differential fuzzing** (Task 6.2): the fuzzer's programs also run as `eval` strings, against
   the pinned Node.
 - **Golden fixtures** (`packages/tests/golden/js/eval_*`): byte-for-byte against Node.
@@ -256,10 +281,11 @@ question is measured again after T14.4.
 
 | Package | Holds | Must not |
 | --- | --- | --- |
-| `packages/interpreter` (Zig) | the parser front (`src/parse.zig`, T14.1); the entry points the runtime calls (`src/capi.zig`: `eval`, the `Function` constructor, the trampoline); the bytecode format, compiler and VM (`src/bytecode.zig`, `src/compile.zig`, `src/vm.zig`, T14.2); the global object (`src/builtins.zig`); the Test262 parse and execution drivers (`test262/parse.zig`, `test262/exec.zig`). It is built into `libjsrt_interp.a` and imports stator-ts's `parser.zig` | hold its own value model, object model or GC |
+| `packages/interpreter` (Zig) | the parser front (`src/parse.zig`, T14.1); the entry points the runtime calls (`src/capi.zig`: `eval`, the `Function` constructor, the trampoline); the bytecode format, compiler and VM (`src/bytecode.zig`, `src/compile.zig`, `src/vm.zig`, T14.2); the global object (`src/builtins.zig`); the Test262 parse and execution drivers (`test262/parse.zig`, `test262/exec.zig`) and the execution driver's compiled host (`test262/host.ts`). It is built into `libjsrt_interp.a` and imports stator-ts's `parser.zig` | hold its own value model, object model or GC |
 | `packages/transpiler` (stator-ts) | the parser | know the interpreter exists |
-| `packages/compiler` (and plan/T41's Zig port) | the `Interpret` HIR node, the eval-visible cells and scope descriptors of §3, and linking `libjsrt_interp.a` only when an `Interpret` node exists | interpret anything at compile time |
+| `packages/compiler` (and plan/T41's Zig port) | the `interpret-global` and `direct-eval` HIR nodes, the eval-visible cells and binding tables of §3, and linking `libjsrt_interp.a` only when generated C includes `jsrt_interp.h` (T14.3) | interpret anything at compile time |
 | `packages/runtime` | the C ABI the VM calls | grow a second dispatch path |
 
 A binary without an `Interpret` node does not link `libjsrt_interp.a`, so its size is
-byte-identical to before; every `ts`-mode binary is in that set.
+byte-identical to before; every `ts`-mode binary is in that set. At T14.3, 18 golden fixtures
+(10 `js`, 8 `ts`) built byte-identical before and after (plan-notes 405).

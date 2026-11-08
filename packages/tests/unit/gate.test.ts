@@ -1408,21 +1408,21 @@ test('as any is explicit STA1001, not implicit STA1003', () => {
   assert.deepEqual(codesFor('const x = 1 as any;', 'js', '/test.ts'), []);
 });
 
-test('eval is STA1101 never in ts mode and STA1206 not-yet in js mode', () => {
+test('eval is STA1101 never in ts mode and accepted in js mode (the interpreter runs it)', () => {
   assert.deepEqual(codesFor('eval("1 + 1");'), ['STA1101']);
-  assert.deepEqual(codesFor('eval("1 + 1");', 'js'), ['STA1206']);
+  assert.deepEqual(codesFor('eval("1 + 1");', 'js'), []);
   assert.deepEqual(codesFor('globalThis.eval("1");'), ['STA1101']);
-  assert.deepEqual(codesFor('globalThis.eval("1");', 'js'), ['STA1206']);
+  assert.deepEqual(codesFor('globalThis.eval("1");', 'js'), []);
   // Aliasing is the same construct: a callee check that only looked at the call site would miss it.
   assert.deepEqual(codesFor('const e = eval;'), ['STA1101']);
-  assert.deepEqual(codesFor('const e = eval;', 'js'), ['STA1206']);
+  assert.deepEqual(codesFor('const e = eval;', 'js'), []);
 });
 
-test('Function and new Function are STA1103 in ts mode and STA1206 in js mode', () => {
+test('Function and new Function are STA1103 in ts mode and accepted in js mode', () => {
   assert.deepEqual(codesFor('const f = new Function("return 42");'), ['STA1103']);
-  assert.deepEqual(codesFor('const f = new Function("return 42");', 'js'), ['STA1206']);
+  assert.deepEqual(codesFor('const f = new Function("return 42");', 'js'), []);
   assert.deepEqual(codesFor('const f = Function("return 42");'), ['STA1103']);
-  assert.deepEqual(codesFor('const f = Function("return 42");', 'js'), ['STA1206']);
+  assert.deepEqual(codesFor('const f = Function("return 42");', 'js'), []);
 });
 
 test('a .js file under ts mode is STA1002 with a --mode=js hint', () => {

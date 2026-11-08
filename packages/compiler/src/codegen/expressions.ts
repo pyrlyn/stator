@@ -1387,6 +1387,36 @@ export function emitExpression(emitter: Emitter, expr: Expression): string {
       );
     }
 
+    // The interpreter's `eval` or `Function`: an object its global holds, so nothing to root.
+    case 'interpret-global': {
+      return `jsrt_interp_global("${expr.name}")`;
+    }
+
+    // The interpreter reads and writes each binding through its address (docs/INTERPRETER.md
+    // §3): an environment slot or a global, never a frame slot, so it outlives a closure the
+    // evaluated code makes. The table is a compound literal because the call is its only reader.
+    case 'direct-eval': {
+      const base = emitter.callSlots.get(expr);
+      if (base === undefined) {
+        throw new Error('direct-eval was not registered during counting');
+      }
+      const parts: string[] = [];
+      emitter.beginCall(parts, expr.receiver, expr.args, expr.span, base);
+      const source = expr.args.length === 0 ? 'JSRT_UNDEFINED' : emitter.slotAt(base + 1);
+      const entries = expr.bindings.map(
+        (b) =>
+          `{"${emitter.escapeCString(b.source)}", &${emitter.slotRef(b.name)}, ${b.constant ? 'true' : 'false'}}`,
+      );
+      const table =
+        entries.length === 0 ? 'NULL' : `(const JSRTEvalBinding[]){${entries.join(', ')}}`;
+      return emitter.finishStatement(
+        parts,
+        `${emitter.slotAt(base)} = jsrt_interp_eval_direct(${source}, ${emitter.slotAt(base)}, ${String(entries.length)}, ${table})`,
+        emitter.slotAt(base),
+        expr.span,
+      );
+    }
+
     // One file-scope constant per class (docs/VALUE.md §4.17): the closure-shaped class
     // object `classAt` registered, whose `fn` is the constructor `jsrt_construct` calls.
     case 'class-value': {

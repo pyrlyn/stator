@@ -16,7 +16,7 @@ import {
   nodePathMapping,
 } from './node.ts';
 import { classifyStdSpecifier, type StdSpecifier, stdPathMapping } from './std.ts';
-import { tsTypeToHType } from './types.ts';
+import { evalVisibleDeclarations, isDirectEval, tsTypeToHType } from './types.ts';
 
 type Mode = 'ts' | 'js';
 
@@ -1044,6 +1044,10 @@ function createProgramUncached(
     }
   }
 
+  if (mode === 'js') {
+    seedDirectEvalBindings(program, runtimeDynamicSymbols);
+  }
+
   return { program, diagnostics, parseDiagnostics, runtimeDynamicSymbols };
 }
 
@@ -1172,5 +1176,30 @@ function moduleSpecifierAt(file: ts.SourceFile, position: number): string | unde
 export function printDiagnostics(diagnostics: Diagnostic[]): void {
   for (const diag of diagnostics) {
     process.stderr.write(`${renderDiagnostic(diag)}\n`);
+  }
+}
+
+/** A direct `eval` can write any value into a binding it sees (docs/INTERPRETER.md §3), so none of
+ * them may keep a static type: each is seeded Unknown, the same widening a suppressed type error
+ * gets. Only js mode reaches here; ts mode refuses `eval` at the gate. The text probe keeps the
+ * walk off every file that never spells the name. */
+function seedDirectEvalBindings(program: ts.Program, into: Set<ts.Symbol>): void {
+  const checker = program.getTypeChecker();
+  for (const file of program.getSourceFiles()) {
+    if (file.isDeclarationFile || !file.text.includes('eval')) {
+      continue;
+    }
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && isDirectEval(node, checker)) {
+        for (const decl of evalVisibleDeclarations(node, checker)) {
+          const symbol = checker.getSymbolAtLocation(decl.name);
+          if (symbol !== undefined) {
+            into.add(symbol);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
   }
 }

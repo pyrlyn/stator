@@ -16,7 +16,12 @@
  * exactly where the intermediate function sits. */
 
 import * as ts from 'typescript';
-import { isClassAliasUse, isStaticMember } from '../frontend/types.ts';
+import {
+  evalVisibleDeclarations,
+  isClassAliasUse,
+  isDirectEval,
+  isStaticMember,
+} from '../frontend/types.ts';
 
 /** The receiver, as the lowering names it (`RECEIVER` in `src/lower/index.ts`): parameter zero of
  * a method, constructor or accessor, spelled with a space because no source identifier can be.
@@ -243,6 +248,34 @@ export function analyzeCaptures(sourceFile: ts.SourceFile, checker: ts.TypeCheck
     decl: ts.Declaration | undefined;
   }[] = [];
 
+  /* `ref` names `decl`. A module-level binding normally lives in the globals array, which every
+   * function can already reach, so it is never a capture. The exception is the per-iteration one:
+   * it needs an environment for the same reason a function-local capture does, and the module is
+   * what owns it (`isPerIterationBinding`). `own` keeps a same-function reference's binding in the
+   * environment too, which only a direct `eval` asks for. */
+  const reference = (ref: ts.Node, decl: ts.Declaration, own: boolean): void => {
+    const enclosing = enclosingFunction(decl);
+    const name = declarationName(decl);
+    const declFn: EnvOwner | undefined =
+      enclosing ?? (isPerIterationBinding(decl) ? sourceFile : undefined);
+    if (declFn === undefined || name === undefined) {
+      return;
+    }
+    const crosses = enclosingFunction(ref) !== enclosing;
+    if (!crosses && !own) {
+      return;
+    }
+    let owned = capturedByOwner.get(declFn);
+    if (owned === undefined) {
+      owned = new Map();
+      capturedByOwner.set(declFn, owned);
+    }
+    owned.set(decl, name);
+    if (crosses) {
+      references.push({ ref, declFn, name, decl });
+    }
+  };
+
   const visit = (node: ts.Node): void => {
     // `this` crossed by an ARROW. An arrow has no receiver of its own -- that is what makes it an
     // arrow -- so a `this` inside one is a read of the nearest enclosing non-arrow function's
@@ -296,23 +329,15 @@ export function analyzeCaptures(sourceFile: ts.SourceFile, checker: ts.TypeCheck
       }
       const decl = checker.getSymbolAtLocation(node)?.valueDeclaration;
       if (decl !== undefined && isCapturableDeclaration(decl) && !isDeclarationNameOf(node, decl)) {
-        const enclosing = enclosingFunction(decl);
-        const name = declarationName(decl);
-        // A module-level binding normally lives in the globals array, which every function can
-        // already reach, so it is never a capture. The exception is the per-iteration one: it
-        // needs an environment for the same reason a function-local capture does, and the module
-        // is what owns it (`isPerIterationBinding`).
-        const declFn: EnvOwner | undefined =
-          enclosing ?? (isPerIterationBinding(decl) ? sourceFile : undefined);
-        if (declFn !== undefined && name !== undefined && enclosingFunction(node) !== enclosing) {
-          let owned = capturedByOwner.get(declFn);
-          if (owned === undefined) {
-            owned = new Map();
-            capturedByOwner.set(declFn, owned);
-          }
-          owned.set(decl, name);
-          references.push({ ref: node, declFn, name, decl });
-        }
+        reference(node, decl, false);
+      }
+    }
+    // A direct `eval` reads and writes the bindings it sees through their addresses, which must
+    // outlive the call when the evaluated code makes a closure: so each one lives in its owner's
+    // environment even when the eval sits in that very function (docs/INTERPRETER.md §3).
+    if (ts.isCallExpression(node) && isDirectEval(node, checker)) {
+      for (const decl of evalVisibleDeclarations(node, checker)) {
+        reference(node, decl, true);
       }
     }
     ts.forEachChild(node, visit);

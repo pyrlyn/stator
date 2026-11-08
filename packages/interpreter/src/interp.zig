@@ -7,6 +7,7 @@ const compile = @import("compile.zig");
 const builtins = @import("builtins.zig");
 const vm = @import("vm.zig");
 const Value = rt.Value;
+const c = rt.c;
 
 pub const Outcome = union(enum) {
     /// The script's completion value, or undefined with the exception pending.
@@ -15,47 +16,115 @@ pub const Outcome = union(enum) {
     unsupported: struct { offset: u32, what: []const u8 },
 };
 
-/// ScriptEvaluation (§16.1.6). A syntax error is a pending SyntaxError, as `$262.evalScript`
+/// ScriptEvaluation (§16.1.6). A syntax error is a pending SyntaxError, as an indirect `eval`
 /// reports one; the tree is gone once the script is compiled, the templates stay for good.
 pub fn runScript(src: []const u8, strict: bool) Outcome {
+    return runCode(src, .script, .{ .strict = strict });
+}
+
+/// An indirect `eval`: an unsupported construct is an Error the script can see, never a silent
+/// success.
+pub fn evalScript(src: []const u8, strict: bool) Value {
+    return settle(runScript(src, strict));
+}
+
+/// A binding of the compiled caller of a direct `eval` (`JSRTEvalBinding`, jsrt_interp.h).
+pub const Binding = extern struct { name: [*:0]const u8, cell: *Value, constant: bool };
+
+/// PerformEval (§19.2.1.1) for a direct call from compiled code: `x` is the call's first
+/// argument, `this` the caller's, and `bindings` every binding the call can see.
+pub fn evalDirect(x: Value, this: Value, bindings: []const Binding) Value {
+    if (!rt.is(x, c.JSRT_TAG_STRING)) return x;
+    const text = rt.sourceText(x) orelse return outOfMemory();
+    defer std.c.free(text.ptr);
+    return settle(runCode(text, .direct_eval, .{ .this = this, .bindings = bindings }));
+}
+
+/// CreateDynamicFunction (§20.2.1.1.1) for `Function(…)` and `new Function(…)`: a sloppy
+/// function in the global scope, named `anonymous`.
+pub fn newFunction(params: []const u8, body: []const u8) Value {
+    builtins.init();
+    var arena: std.heap.ArenaAllocator = .init(std.heap.c_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const f = switch (parse.parseFunction(a, .normal, params, body)) {
+        .function => |f| f,
+        .syntax_error => |e| return syntaxError(a, e.message),
+    };
+    const compiled = compile.compileDynamicFunction(a, std.heap.c_allocator, f.file, f.node) catch return outOfMemory();
+    return switch (compiled) {
+        .template => |t| vm.globalClosure(t),
+        .unsupported => |u| unsupported(u.what),
+        .syntax_error => |e| syntaxError(a, e.message),
+    };
+}
+
+const Goal = enum { script, direct_eval };
+const Context = struct {
+    strict: bool = true,
+    this: Value = rt.undefined_value,
+    bindings: []const Binding = &.{},
+};
+
+fn runCode(src: []const u8, goal: Goal, cx: Context) Outcome {
     builtins.init();
     var arena: std.heap.ArenaAllocator = .init(std.heap.c_allocator);
     defer arena.deinit();
     const a = arena.allocator();
     const file = switch (parse.parseScript(a, src)) {
         .tree => |f| f,
-        .syntax_error => |e| {
-            const msg = std.fmt.allocPrintSentinel(a, "{s}", .{e.message}, 0) catch "syntax error";
-            rt.throwSyntax(msg.ptr);
-            return .{ .value = rt.undefined_value };
-        },
+        .syntax_error => |e| return .{ .value = syntaxError(a, e.message) },
     };
-    const compiled = compile.compileScript(a, std.heap.c_allocator, file, strict) catch {
-        rt.throwRange("out of memory compiling the script");
-        return .{ .value = rt.undefined_value };
-    };
+    const compiled = switch (goal) {
+        .script => compile.compileScript(a, std.heap.c_allocator, file, cx.strict),
+        .direct_eval => compileEval(a, file, cx.bindings),
+    } catch return .{ .value = outOfMemory() };
     return switch (compiled) {
-        .template => |t| .{ .value = vm.run(t, null, rt.undefined_value, builtins.global(), &.{}, rt.undefined_value) },
+        .template => |t| .{ .value = switch (goal) {
+            .script => vm.run(t, null, rt.undefined_value, builtins.global(), &.{}, rt.undefined_value),
+            .direct_eval => vm.runEval(t, cellsOf(a, cx.bindings) catch return .{ .value = outOfMemory() }, cx.this),
+        } },
         .unsupported => |u| .{ .unsupported = .{ .offset = u.offset, .what = u.what } },
-        .syntax_error => |e| {
-            rt.throwSyntax(e.message.ptr);
-            return .{ .value = rt.undefined_value };
-        },
+        .syntax_error => |e| .{ .value = syntaxError(a, e.message) },
     };
 }
 
-/// `$262.evalScript`: an unsupported construct is an Error the script can see, never a
-/// silent success.
-pub fn evalScript(src: []const u8, strict: bool) Value {
-    return switch (runScript(src, strict)) {
+fn compileEval(a: std.mem.Allocator, file: *parse.File, bindings: []const Binding) compile.Error!compile.Compiled {
+    const outer = try a.alloc(compile.Outer, bindings.len);
+    for (outer, bindings) |*o, b| o.* = .{ .name = std.mem.span(b.name), .constant = b.constant };
+    return compile.compileEval(a, std.heap.c_allocator, file, outer);
+}
+
+fn cellsOf(a: std.mem.Allocator, bindings: []const Binding) ![]const *Value {
+    const cells = try a.alloc(*Value, bindings.len);
+    for (cells, bindings) |*cell, b| cell.* = b.cell;
+    return cells;
+}
+
+/// The value an outcome answers, an unsupported construct thrown as an Error.
+fn settle(out: Outcome) Value {
+    return switch (out) {
         .value => |v| v,
-        .unsupported => |u| {
-            var buf: [160]u8 = undefined;
-            const msg = std.fmt.bufPrintSentinel(&buf, "not supported by the interpreter yet: {s}", .{u.what}, 0) catch "not supported by the interpreter yet";
-            rt.c.jsrt_throw_error(&rt.c.jsrt_class_error, msg.ptr);
-            return rt.undefined_value;
-        },
+        .unsupported => |u| unsupported(u.what),
     };
+}
+
+fn unsupported(what: []const u8) Value {
+    var buf: [160]u8 = undefined;
+    const msg = std.fmt.bufPrintSentinel(&buf, "not supported by the interpreter yet: {s}", .{what}, 0) catch "not supported by the interpreter yet";
+    rt.c.jsrt_throw_error(&rt.c.jsrt_class_error, msg.ptr);
+    return rt.undefined_value;
+}
+
+fn syntaxError(a: std.mem.Allocator, message: []const u8) Value {
+    const msg = a.dupeSentinel(u8, message, 0) catch "syntax error";
+    rt.throwSyntax(msg.ptr);
+    return rt.undefined_value;
+}
+
+fn outOfMemory() Value {
+    rt.throwRange("out of memory compiling the script");
+    return rt.undefined_value;
 }
 
 fn expectRuns(src: []const u8, want: []const u8) !void {
@@ -168,4 +237,42 @@ test "prototype methods called through call" {
     try expectRuns("Array.prototype.map.call({ length: 2, 0: 'a', 1: 'b' }, (x) => x + x).join() + String.prototype.slice.call(123, 1)", "aa,bb23");
     try expectRuns("const s = Symbol('k'); const o = { a: 1, [s]: 2 }; Object.keys(o).length + ',' + Object.getOwnPropertySymbols(o).length + ',' + (Object.getOwnPropertySymbols(o)[0] === s)", "1,1,true");
     try expectRuns("let m; try { Array.prototype.push.call({ length: 0 }, 1); } catch (e) { m = e instanceof TypeError; } m", "true");
+}
+
+test "a direct eval reads and writes its caller's bindings through their cells" {
+    rt.c.jsrt_init();
+    var x = rt.number(2);
+    var k = rt.string("k");
+    const bindings = [_]Binding{ .{ .name = "x", .cell = &x, .constant = false }, .{ .name = "k", .cell = &k, .constant = true } };
+    const out = evalDirect(rt.string("var local = 40; x = x * 10 + local; x + k"), rt.undefined_value, &bindings);
+    try std.testing.expect(!rt.pending());
+    try std.testing.expectEqual(@as(f64, 60), rt.c.jsrt_to_number(x));
+    try std.testing.expectEqualStrings("60k", std.mem.span(rt.c.jsrt_shape_key_ephemeral(out)));
+    // A closure the eval code makes keeps reading the cell after the eval returns.
+    const f = evalDirect(rt.string("() => x + 1"), rt.undefined_value, &bindings);
+    x = rt.number(7);
+    try std.testing.expectEqual(@as(f64, 8), rt.c.jsrt_to_number(vm.call(f, rt.undefined_value, &.{})));
+    // Strict eval code: its `var`s vanish, a constant is not assignable, and a non-string
+    // argument is the result.
+    _ = evalDirect(rt.string("k = 1"), rt.undefined_value, &bindings);
+    try std.testing.expect(rt.pending());
+    _ = rt.c.jsrt_take_exception();
+    try std.testing.expect(evalDirect(rt.number(5), rt.undefined_value, &bindings) == rt.number(5));
+    _ = evalDirect(rt.string("local"), rt.undefined_value, &bindings);
+    try std.testing.expect(rt.pending());
+    _ = rt.c.jsrt_take_exception();
+}
+
+test "eval source text may hold U+0000" {
+    rt.c.jsrt_init();
+    const src = [_]u16{ '"', 'a', 0, 'b', '"', '.', 'l', 'e', 'n', 'g', 't', 'h' };
+    const out = evalDirect(rt.c.jsrt_string_from_units(&src, src.len), rt.undefined_value, &.{});
+    try std.testing.expect(!rt.pending());
+    try std.testing.expectEqual(@as(f64, 3), rt.c.jsrt_to_number(out));
+}
+
+test "new Function builds a global function" {
+    try expectRuns("const f = new Function('a', 'b', 'return a + b'); f(2, 3) + f.name + f.length", "5anonymous2");
+    try expectRuns("Function('return typeof this')()", "object");
+    try expectRuns("let m; try { Function('a) {}; (function (b', ''); } catch (e) { m = e instanceof SyntaxError; } m", "true");
 }

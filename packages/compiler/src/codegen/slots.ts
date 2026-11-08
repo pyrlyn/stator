@@ -664,6 +664,14 @@ export function countExpression(emitter: Emitter, expr: Expression): void {
       break;
     case 'class-value':
       break;
+    case 'interpret-global':
+      emitter.interprets = true;
+      break;
+    // The call layout again: the receiver, then each argument, rooted in one contiguous run.
+    case 'direct-eval':
+      emitter.interprets = true;
+      emitter.countRooted(expr, expr.receiver, expr.args);
+      break;
     case 'dyn-field-access':
       emitter.tempSlots.set(expr, emitter.slotCount++);
       emitter.countExpression(expr.target);

@@ -431,8 +431,15 @@ function rebuildExpression(expr: Expression, rewriter: Rewriter): Expression {
       const ctor = sub(expr.ctor);
       return target === expr.target && ctor === expr.ctor ? expr : { ...expr, target, ctor };
     }
-    case 'class-value': {
+    case 'class-value':
+    case 'interpret-global': {
       return expr;
+    }
+    // The bindings are names, not reads: nothing a rewrite may replace.
+    case 'direct-eval': {
+      const receiver = sub(expr.receiver);
+      const args = rewriteEach(expr.args, sub);
+      return receiver === expr.receiver && args === expr.args ? expr : { ...expr, receiver, args };
     }
     case 'instanceof':
     case 'field-access':

@@ -619,6 +619,11 @@ function expressionHasUnknown(expr: Expression): boolean {
     // A file-scope constant per class (docs/VALUE.md §4.17): no subexpression can be dynamic.
     case 'class-value':
       return false;
+    // Both answer Unknown, so the type check above has already said true; listed for the switch.
+    case 'interpret-global':
+      return false;
+    case 'direct-eval':
+      return expressionHasUnknown(expr.receiver) || expr.args.some(expressionHasUnknown);
     // The object's own type stops the deep walk (hTypeHasUnknown does not recurse into a class,
     // since it can be cyclic), so the READ is where a dynamic field surfaces -- and the type check
     // at the top of this function has already answered it for this node.

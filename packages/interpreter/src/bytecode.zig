@@ -43,6 +43,10 @@ pub const Op = enum(u8) {
     /// u8 hops, u16 slot, u16 key.
     load_env_checked,
     store_env_checked,
+    /// u8 hops, u16 slot: the slot holds a pointer to a compiled caller's binding (a direct
+    /// `eval`'s scope, docs/INTERPRETER.md §3), read or written through.
+    load_ref,
+    store_ref,
     /// u16 key: the global object's property, a ReferenceError when absent.
     load_global,
     /// u16 key, u8 strict.
