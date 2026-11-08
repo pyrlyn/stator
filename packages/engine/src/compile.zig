@@ -220,6 +220,8 @@ const Fn = struct {
         const t = try p.create(Template);
         const ics = try p.alloc(c.JSRTIC, fs.nics);
         @memset(ics, .{ .shape = null, .offset = 0 });
+        const global_ics = try p.alloc(c.JSRTIC, fs.keys.items.len);
+        @memset(global_ics, .{ .shape = null, .offset = 0 });
         const strings = try p.alloc([]const u8, fs.strings.items.len);
         for (strings, fs.strings.items) |*d, s| d.* = try p.dupe(u8, s);
         t.* = .{
@@ -229,6 +231,7 @@ const Fn = struct {
             .keys = try p.dupe([*:0]const u8, fs.keys.items),
             .funcs = try p.dupe(*Template, fs.funcs.items),
             .ics = ics,
+            .global_ics = global_ics,
             .handlers = try p.dupe(bc.Handler, fs.handlers.items),
             .nlocals = fs.nlocals,
             .max_stack = @intCast(fs.max_depth + 2),

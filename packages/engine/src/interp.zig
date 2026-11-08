@@ -197,7 +197,7 @@ test "a JS call reaches the call helper once and nothing else per call" {
     if (!jit.available) return error.SkipZigTest;
     const r = try jitCost(
         "function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); } fib(20)",
-        .{ helpers.call, helpers.loadGlobalCached, helpers.retCtor, helpers.binary, helpers.home },
+        .{ helpers.call, helpers.loadGlobal, helpers.retCtor, helpers.binary, helpers.home },
     );
     // The script and fib, each compiled on its first call and never again.
     try std.testing.expectEqual(2, r.compiled);
@@ -206,8 +206,9 @@ test "a JS call reaches the call helper once and nothing else per call" {
     try std.testing.expectEqual(2, r.entries);
     // fib(20) makes 21891 calls; each one is exactly one helper call.
     try std.testing.expectEqual(21891, r.calls[0]);
-    // Three `fib` reads (one in the script, two in fib): one cache miss per site.
-    try std.testing.expectEqual(3, r.calls[1]);
+    // The cache is per template and key: fib's two reads share one, which misses once. The
+    // script's read hits, its declaration of `fib` having filled the script's cache.
+    try std.testing.expectEqual(1, r.calls[1]);
     // A plain call returns inline and doubles add and compare inline. The one home object is
     // the script prologue's; fib's is never read, so it is never fetched.
     try std.testing.expectEqual([3]usize{ 0, 0, 1 }, r.calls[2..5].*);
@@ -235,15 +236,16 @@ test "a cached property read misses once per site" {
     try std.testing.expectEqual([3]usize{ 2, 1, 0 }, r.calls);
 }
 
-test "a global name is looked up once per site" {
+test "a global name is looked up once per function" {
     if (!jit.available) return error.SkipZigTest;
     const r = try jitCost(
         "function g() { return 1; } function f() { let s = 0; for (let i = 0; i < 1000; i++) s += g(); return s; } f()",
-        .{ helpers.loadGlobalCached, helpers.call },
+        .{ helpers.loadGlobal, helpers.call },
     );
     try std.testing.expectEqual(3, r.compiled);
-    // `f` in the script and `g` in the loop; 1000 calls of g and one of f.
-    try std.testing.expectEqual([2]usize{ 2, 1001 }, r.calls);
+    // `g` in f's loop misses once; `f` in the script hits the cache its declaration filled.
+    // 1000 calls of g and one of f.
+    try std.testing.expectEqual([2]usize{ 1, 1001 }, r.calls);
 }
 
 test "arithmetic and bindings" {

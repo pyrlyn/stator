@@ -37,7 +37,7 @@ One key per flag. The schema is generated from `packages/compiler/src/cli/config
 | `emitHeader` | path | `--emit-header` | — | `build` |
 | `unitName` | string, letters, digits and `_` only (else `STA0004`) | `--unit-name` | entry basename, sanitized | `build` |
 | `bundler` | `"vite"` \| `"none"` \| module | `--bundler` | `"vite"` | both, `js` mode only (`STA0004` in `ts` mode) |
-| `cc` | C compiler name or path (clang, Apple clang or gcc) | `--cc`, env `CC` | `"clang"` | `build` |
+| `cc` | C compiler name or path (clang, Apple clang or gcc) | `--cc`, env `CC` | the clang mise pins (`conda:clang` 21.1.8; `clang` on PATH on Windows) | `build` |
 | `diagnostics` | `"text"` \| `"json"` | `--json`, `--diagnostics=text\|json` | `"text"` | `explain` |
 | `node` | boolean | `--node` | `false` | both |
 
@@ -82,8 +82,9 @@ Highest first:
 `link` is the exception: the file's flags and the command line's are **concatenated**, file
 first, so a project's libraries stay linked when a run adds one more.
 
-`cc` follows the same order (`--cc` > `CC` > `cc` > `clang`; docs/TOOLCHAIN.md, "C compiler"),
-except that a `.env` file may not set `CC`.
+`cc` follows the same order (`--cc` > `CC` > `cc` > the clang mise pins; docs/TOOLCHAIN.md, "C
+compiler"), except that a `.env` file may not set `CC`. With none of the three set and that clang
+not installed, `build` fails with `STA0022` rather than use another clang (plan-notes 410).
 
 ## Example
 

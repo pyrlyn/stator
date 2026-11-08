@@ -297,6 +297,8 @@ pub const Template = struct {
     keys: []const [*:0]const u8,
     funcs: []const *Template,
     ics: []c.JSRTIC,
+    /// One cache per key for the global object's own slot under that name (vm.zig `cachedGlobal`).
+    global_ics: []c.JSRTIC,
     handlers: []const Handler,
     nlocals: u32,
     max_stack: u32,

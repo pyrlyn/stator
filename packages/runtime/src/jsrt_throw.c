@@ -32,12 +32,12 @@ jsrt_value *jsrt_pending_slot(void) {
   return &pending_value;
 }
 
-const bool *jsrt_pending_flag(void) {
-  return &pending_flag;
-}
-
 bool jsrt_pending(void) {
   return pending_flag;
+}
+
+const volatile bool *jsrt_pending_flag(void) {
+  return &pending_flag;
 }
 
 jsrt_value jsrt_take_exception(void) {

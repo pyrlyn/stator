@@ -31,7 +31,7 @@ property plus `jsrt_get_prop` reaching its inline cache only after its string co
 Steps, each measured against V8 with `pnpm run engine:bench` before the next:
 
 1. Baseline-tier fast paths in `src/jit/`: inline shape-guarded loads from the site's inline
-   cache (`get_prop`, and a JIT-owned cache per `load_global` site), dead prologue specials
+   cache (`get_prop`, and `load_global` through the template's per-key cache), dead prologue specials
    dropped, `ret_ctor` inline for a plain call, a direct call into compiled code that skips the
    interpreter's call layers.
 2. Object literals: a cached shape transition per `define` site and slots sized for the literal.

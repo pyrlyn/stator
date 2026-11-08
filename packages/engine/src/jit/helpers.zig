@@ -34,7 +34,7 @@ pub const Stack = struct {
     /// The runtime's `jsrt_stack_limit`.
     limit: usize,
     /// The runtime's pending-exception flag (`jsrt_pending_flag`).
-    pending: *const bool,
+    pending: *const volatile bool,
 };
 
 /// How many times native code has called helper `f`. Only test builds count: there `lower.zig`
@@ -117,12 +117,7 @@ pub fn truthy(v: Value) callconv(.c) u64 {
 }
 
 pub fn loadGlobal(cx: *Ctx, s: u64, key: u64, typeof_: u64) callconv(.c) u64 {
-    return put(cx, s, vm.loadGlobal(cx.t.keys[key], typeof_ != 0, null));
-}
-
-/// A global read whose site has a JIT-owned cache (lower.zig `globalLoad`).
-pub fn loadGlobalCached(cx: *Ctx, s: u64, key: u64, ic: *c.JSRTIC) callconv(.c) u64 {
-    return put(cx, s, vm.loadGlobal(cx.t.keys[key], false, ic));
+    return put(cx, s, vm.loadGlobal(cx.t, @intCast(key), typeof_ != 0));
 }
 
 pub fn getProp(cx: *Ctx, s: u64, key: u64, ic: u64) callconv(.c) u64 {
@@ -200,7 +195,7 @@ pub fn declareGlobal(cx: *Ctx, key: u64) callconv(.c) u64 {
 }
 
 pub fn storeGlobal(cx: *Ctx, s: u64, key: u64, strict: u64) callconv(.c) u64 {
-    vm.storeGlobal(cx.t.keys[key], strict != 0, cx.w[s]);
+    vm.storeGlobal(cx.t, @intCast(key), strict != 0, cx.w[s]);
     return status(cx);
 }
 

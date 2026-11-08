@@ -260,8 +260,8 @@ const Lowerer = struct {
 
     /// The address of the slot of dynamic object `p` that the site's cache `ic` names, when `p` has
     /// the shape the cache recorded; else on to `slow`. A cache is filled only from an
-    /// own-property hit on that shape, so a match is the site's key. `slots` is the slot buffer.
-    fn cachedSlot(l: *Lowerer, p: VReg, ic: *const c.JSRTIC, slow: u32) !struct { slots: VReg, addr: VReg } {
+    /// own-property hit on that shape, so a match is the site's key.
+    fn cachedSlot(l: *Lowerer, p: VReg, ic: *const c.JSRTIC, slow: u32) !VReg {
         const icp = try l.konst(@intCast(@intFromPtr(ic)));
         const shape = try l.def(.load, .{ .dst = undefined, .base = p, .disp = @offsetOf(c.JSRTDynObject, "shape") });
         const want = try l.def(.load, .{ .dst = undefined, .base = icp, .disp = @offsetOf(c.JSRTIC, "shape") });
@@ -272,7 +272,7 @@ const Lowerer = struct {
         const raw = try l.def(.load, .{ .dst = undefined, .base = icp, .disp = @offsetOf(c.JSRTIC, "offset") });
         const off = try l.arith(.shl, try l.arith(.@"and", raw, try l.konst(0xFFFF_FFFF)), try l.konst(3));
         const slots = try l.def(.load, .{ .dst = undefined, .base = p, .disp = @offsetOf(c.JSRTDynObject, "slots") });
-        return .{ .slots = slots, .addr = try l.arith(.add, slots, off) };
+        return l.arith(.add, slots, off);
     }
 
     /// Goes on to `slow` when slot value `v` is an accessor cell, whose read or write is a call.
@@ -288,14 +288,14 @@ const Lowerer = struct {
 
     /// The value in the slot `cachedSlot` finds, when it is no accessor.
     fn cachedRead(l: *Lowerer, p: VReg, ic: *const c.JSRTIC, slow: u32) !VReg {
-        const v = try l.def(.load, .{ .dst = undefined, .base = (try l.cachedSlot(p, ic, slow)).addr, .disp = 0 });
+        const v = try l.def(.load, .{ .dst = undefined, .base = try l.cachedSlot(p, ic, slow), .disp = 0 });
         try l.unlessAccessor(v, slow);
         return v;
     }
 
     /// `obj.key = value` (obj value at `s` -> value at `s`) through the site's inline cache: an
     /// unfrozen dynamic object of the cached shape whose slot holds no accessor is written in
-    /// place, after the collector's write barrier on the slot buffer that owns it.
+    /// place, after the collector's write barrier on the object.
     fn setProp(l: *Lowerer, i: analyze.Insn) !void {
         const s = l.slot(i.depth - 2);
         const slow = try l.block();
@@ -303,10 +303,12 @@ const Lowerer = struct {
         const frozen = try l.def(.load, .{ .dst = undefined, .base = p, .disp = @offsetOf(c.JSRTDynObject, "frozen") });
         try l.guardEq(try l.arith(.@"and", frozen, try l.konst(0xFF)), 0, slow);
         const at = try l.cachedSlot(p, &l.t.ics[i.b], slow);
-        try l.unlessAccessor(try l.def(.load, .{ .dst = undefined, .base = at.addr, .disp = 0 }), slow);
-        _ = try l.callHelper(c.jsrt_gc_write, &.{at.slots});
+        try l.unlessAccessor(try l.def(.load, .{ .dst = undefined, .base = at, .disp = 0 }), slow);
+        // The owner, not its slot buffer: an object already dirty and named by its own address is
+        // the barrier's lock-free case.
+        _ = try l.callHelper(c.jsrt_gc_write, &.{p});
         const v = try l.load(s + 1);
-        try l.emit(.{ .store = .{ .base = at.addr, .disp = 0, .src = v } });
+        try l.emit(.{ .store = .{ .base = at, .disp = 0, .src = v } });
         try l.fastOrHelper(s, v, slow, h.setProp, &.{ s, i.a, i.b });
     }
 
@@ -331,15 +333,13 @@ const Lowerer = struct {
         try l.fastOrHelper(s, v, slow, h.getProp, &.{ s, i.a, i.b });
     }
 
-    /// A global name read from the global object through a cache of the JIT's own, one per site
-    /// and as immortal as the code that reads it.
+    /// A global name read from the global object through the key's cache, which the interpreter
+    /// and the helper fill (vm.loadGlobal).
     fn globalLoad(l: *Lowerer, i: analyze.Insn) !void {
         const s = l.slot(i.depth);
-        const ic = try std.heap.c_allocator.create(c.JSRTIC);
-        ic.* = std.mem.zeroes(c.JSRTIC);
         const slow = try l.block();
         const g = try l.konst(imm(builtins.global() & payload_mask));
-        try l.fastOrHelper(s, try l.cachedRead(g, ic, slow), slow, h.loadGlobalCached, &.{ s, i.a, @intFromPtr(ic) });
+        try l.fastOrHelper(s, try l.cachedRead(g, &l.t.global_ics[i.a], slow), slow, h.loadGlobal, &.{ s, i.a, 0 });
     }
 
     /// `this` in a sloppy function: the receiver, or the global object for undefined and null.

@@ -16,7 +16,7 @@
  *   support harnesses, the runtime sources/headers/tests/justfile, the std sources/Zig
  *   backings/justfile and the interpreter's sources/build/justfile (sorted, no
  *   mtimes — `git ls-files` names, bytes off disk, so uncommitted edits count);
- * - the resolved CC's `--version` (same fallback as the justfile and `build.ts`);
+ * - the `--version` of the C compiler `build.ts` links stage 3 with;
  * - the resolved oracle's `node --version` (the same `nodePath()` the golden runner
  *   uses for ground truth);
  * - `uname -sm`, the ambient `ASAN_OPTIONS`/`STATOR_RUNTIME`, and the `typescript`
@@ -36,10 +36,11 @@
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { version as typescriptVersion } from 'typescript';
+import { selectCC } from '../../compiler/src/cli/build.ts';
 import { nodePath } from '../support/node-path.ts';
 import { compareStrings } from '../support/order.ts';
 
@@ -203,17 +204,9 @@ export function formatSkipLine(record: AsanGreenRecord, hash: string): string {
   );
 }
 
-/* The same CC fallback the justfile and `build.ts` use for sanitized links, so the
- * hashed compiler is the one stage 3 links with. An explicit `CC` wins in all three. */
+/* The compiler stage 3 links with, so the hashed version is that one: `build.ts`'s own choice. */
 function resolveCC(): string {
-  const override = process.env['CC'];
-  if (override !== undefined && override !== '') {
-    return override;
-  }
-  if (process.platform === 'darwin' && existsSync('/usr/bin/clang')) {
-    return '/usr/bin/clang';
-  }
-  return 'clang';
+  return selectCC({ sanitized: true });
 }
 
 function resolveAR(): string {

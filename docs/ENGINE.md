@@ -65,7 +65,7 @@ collects needs no stack maps.
   compare and a slot load or store (with the write barrier on the slots buffer), falling to the
   helper when the object is frozen, the slot holds an accessor or the shape differs. The key
   `constructor` always takes the helper;
-- a global read through an inline cache of its own per site, on the global object's shape;
+- a global read inline, on the global object's shape, through the cache the interpreter keeps per template and key;
 - sloppy `this` (nullish becomes the global object) and a constructor's return on a plain call;
 - a call from compiled code to a plain function the JIT has compiled: the callee's window opens
   above the caller's and its code runs at once, with none of the interpreter's call layers
@@ -96,7 +96,7 @@ deoptimization) are the next steps.
 
 | Command | What it checks |
 | --- | --- |
-| `pnpm run interp:test` | The engine's Zig tests; every interpreter test runs in both modes, and the JIT tests assert the templates were compiled. In test builds every helper the JIT calls is counted (`helpers.counted`), and `jitCost` tests pin how often each runs: a numeric loop calls none, a cached property read misses once per site, a global read once per site; they also pin how often the interpreter enters native code, which a call between compiled functions does not |
+| `pnpm run interp:test` | The engine's Zig tests; every interpreter test runs in both modes, and the JIT tests assert the templates were compiled. In test builds every helper the JIT calls is counted (`helpers.counted`), and `jitCost` tests pin how often each runs: a numeric loop calls none, a cached property read misses once per site, a global read once per function and name; they also pin how often the interpreter enters native code, which a call between compiled functions does not |
 | `pnpm run engine:test` | `packages/tests/engine/run.ts`: every script in `packages/tests/engine/scripts/` under the pinned Node and `stator-engine run` in both modes, stdout and exit status byte-for-byte; an uncaught error's first line; the CLI's usage errors and not-yet targets |
 | `pnpm run engine:bench` | `packages/tests/engine/bench.ts`: the bench programs (`packages/tests/engine/scripts/` and the JavaScript ones in `packages/tests/engine/bench/`) under Node (V8) and `jit` mode, each output checked against Node's, best of N wall time and peak RSS; results in `packages/tests/engine/results/` (ignored). V8 is the only reference |
 | `pnpm run engine:bench:zig` | `src/bench.zig`: the `packages/tests/engine/bench/` programs run by the engine inside one process, best of N, with no process or runtime start-up; prints the milliseconds and the templates compiled. `--mode=interp` measures the interpreter |
