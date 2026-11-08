@@ -26,6 +26,9 @@ const Machine = struct {
     sp: usize = 0,
     /// The runtime's pending-exception flag for this thread, read after every instruction.
     pending: *const volatile bool = undefined,
+    frame_top: *[*c]c.JSRTFrame = undefined,
+    stack_limit: *usize = undefined,
+    global: Value = rt.undefined_value,
 };
 threadlocal var machine: Machine = .{};
 
@@ -35,6 +38,9 @@ fn thisMachine() *Machine {
         m.stack = std.heap.page_allocator.alloc(Value, stack_values) catch @panic("out of memory");
         @memset(m.stack, rt.undefined_value);
         m.pending = c.jsrt_pending_flag();
+        m.frame_top = &c.jsrt_frame_top;
+        m.stack_limit = &c.jsrt_stack_limit;
+        m.global = builtins.global();
     }
     return m;
 }
@@ -100,20 +106,16 @@ fn describe(v: Value, buf: []u8) []const u8 {
 
 threadlocal var depth_guard: usize = 0;
 
-fn stackExhausted() bool {
-    return @frameAddress() < c.jsrt_stack_limit;
-}
-
 /// The runtime's entry into an interpreted function: `argv[0]` is the receiver.
 fn trampoline(argc: u32, argv: [*c]const Value, env: [*c]Env) callconv(.c) Value {
     const fe: *Env = env;
     const this = if (argc > 0) argv[0] else rt.undefined_value;
     const args = if (argc > 1) argv[1..argc] else &[_]Value{};
-    return callInterpreted(fe, fe.slots()[compile.fnenv_self], this, args);
+    return callInterpreted(null, fe, fe.slots()[compile.fnenv_self], this, args);
 }
 
 /// [[Call]] of an interpreted function: a class constructor refuses it.
-fn callInterpreted(fe: *Env, callee: Value, this: Value, args: []const Value) Value {
+fn callInterpreted(mach: ?*Machine, fe: *Env, callee: Value, this: Value, args: []const Value) Value {
     const t = templateOf(fe);
     if (t.kind.ctor()) {
         throwFmt(&c.jsrt_class_type_error, "Class constructor {s} cannot be invoked without 'new'", .{std.mem.span(t.name)});
@@ -122,7 +124,7 @@ fn callInterpreted(fe: *Env, callee: Value, this: Value, args: []const Value) Va
     if (t.is_async and t.generator) return startAsyncGenerator(t, fe, callee, this, args);
     if (t.is_async) return startAsync(t, fe, callee, this, args);
     if (t.generator) return startGenerator(t, fe, callee, this, args);
-    return run(t, fe, callee, this, args, rt.undefined_value);
+    return execOn(mach orelse thisMachine(), t, fe, .{ .call = .{ .callee = callee, .this = this, .argv = args, .nt = rt.undefined_value } });
 }
 
 /// A call from compiled code to a compiled plain function (jit/helpers.zig `call`): the callee's
@@ -154,8 +156,12 @@ pub fn callCompiled(st: *const jit.Stack, callee: Value, this: Value, args: []co
 
 /// Calls any value with a receiver; a non-function is the TypeError Node raises.
 pub fn call(callee: Value, this: Value, args: []const Value) Value {
+    return callOn(null, callee, this, args);
+}
+
+fn callOn(mach: ?*Machine, callee: Value, this: Value, args: []const Value) Value {
     if (!rt.is(callee, c.JSRT_TAG_CLOSURE)) return throwAbout(callee, "{s} is not a function");
-    if (isInterpreted(callee)) return callInterpreted(fnEnv(callee), callee, this, args);
+    if (isInterpreted(callee)) return callInterpreted(mach, fnEnv(callee), callee, this, args);
     return c.jsrt_call_with_this(callee, this, @intCast(args.len), args.ptr);
 }
 
@@ -208,8 +214,13 @@ pub fn construct(callee: Value, args: []const Value, nt: Value) Value {
 // ---------------------------------------------------------------------- properties
 
 /// [[Get]], with the reads the runtime cannot answer for an interpreted program.
-pub fn getProp(obj: Value, key: [*:0]const u8, ic: ?*c.JSRTIC) Value {
+pub inline fn getProp(obj: Value, key: [*:0]const u8, ic: ?*c.JSRTIC) Value {
+    if (rt.is(obj, c.JSRT_TAG_ARRAY) and std.mem.eql(u8, keyText(key), "length")) return rt.number(@floatFromInt(c.jsrt_as_array(obj).*.length));
     if (ic) |site| if (isDyn(obj)) if (cachedSlot(dynObj(obj), key, site)) |slot| return slot.*;
+    return getPropSlow(obj, key, ic);
+}
+
+fn getPropSlow(obj: Value, key: [*:0]const u8, ic: ?*c.JSRTIC) Value {
     if (c.jsrt_is_error(obj) and std.mem.eql(u8, keyText(key), "constructor")) return builtins.errorConstructorOf(obj);
     if (rt.is(obj, c.JSRT_TAG_CLOSURE)) return closureGet(obj, key);
     // The runtime's generator object keeps no properties; its methods are the prototype's.
@@ -222,6 +233,24 @@ pub fn getProp(obj: Value, key: [*:0]const u8, ic: ?*c.JSRTIC) Value {
     const v = c.jsrt_get_prop(obj, key, ic);
     if (std.mem.eql(u8, keyText(key), "constructor")) return builtins.globalConstructor(v);
     return v;
+}
+
+/// A direct call cannot expose the runtime's freshly bound method value. Reuse it while the
+/// same array still has no own properties; an own override, getter, or another receiver takes
+/// the normal lookup. Both cache entries are slots in the activation's GC frame.
+fn getMethod(obj: Value, site: Site, cache: *[2]Value) Value {
+    if (rt.is(obj, c.JSRT_TAG_ARRAY) and
+        (c.jsrt_as_array(obj).*.shape == null or c.jsrt_as_array(obj).*.shape == &c.jsrt_shape_root) and
+        !std.mem.eql(u8, keyText(site.key), "constructor"))
+    {
+        if (cache[0] == obj) return cache[1];
+        const method = getProp(obj, site.key, site.ic);
+        if (rt.is(method, c.JSRT_TAG_CLOSURE)) {
+            cache.* = .{ obj, method };
+        }
+        return method;
+    }
+    return getProp(obj, site.key, site.ic);
 }
 
 /// Whether `f`'s own property table holds `key` (its `name`, `length` and `prototype` aside).
@@ -256,7 +285,7 @@ fn closureGet(f: Value, key: [*:0]const u8) Value {
     return c.jsrt_get_prop(builtins.objectPrototype(), key, null);
 }
 
-pub fn setProp(obj: Value, key: [*:0]const u8, v: Value, ic: ?*c.JSRTIC) void {
+pub inline fn setProp(obj: Value, key: [*:0]const u8, v: Value, ic: ?*c.JSRTIC) void {
     if (c.jsrt_is_nullish(obj)) {
         throwFmt(&c.jsrt_class_type_error, "Cannot set properties of {s} (setting '{s}')", .{ if (obj == rt.null_value) "null" else "undefined", keyText(key) });
         return;
@@ -269,7 +298,7 @@ pub fn setProp(obj: Value, key: [*:0]const u8, v: Value, ic: ?*c.JSRTIC) void {
 /// The own data slot a site's inline cache names on `o`, when the cache holds: `o` is on the shape
 /// the runtime filled it from, which fixes the key's offset. Only a data property is answered here;
 /// an accessor runs code, and `constructor` has getProp's own answer, so both take the full path.
-fn cachedSlot(o: *c.JSRTDynObject, key: [*:0]const u8, ic: *const c.JSRTIC) ?*Value {
+inline fn cachedSlot(o: *c.JSRTDynObject, key: [*:0]const u8, ic: *const c.JSRTIC) ?*Value {
     if (ic.shape != @as(?*const c.JSRTShape, o.shape)) return null;
     if (key[0] == 'c' and std.mem.orderZ(u8, key, "constructor") == .eq) return null;
     const slot = &o.slots[ic.offset];
@@ -802,7 +831,7 @@ const Stop = enum(u8) {
 pub const header = 3;
 
 fn windowSize(t: *const Template) usize {
-    return header + t.nlocals + t.max_stack;
+    return header + t.nlocals + t.max_stack + t.strings.len + 2 * t.ics.len;
 }
 
 /// The state the activation that suspended last saved, for its driver to take right after.
@@ -1113,8 +1142,11 @@ fn suspendAt(state: *?*Env, w: []Value, nlocals: usize, depth: usize, pc: usize,
 }
 
 fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
-    if (stackExhausted()) return c.jsrt_stack_overflow();
-    const mach = thisMachine();
+    return execOn(thisMachine(), t, fe, entry);
+}
+
+fn execOn(mach: *Machine, t: *Template, fe: ?*Env, entry: Entry) Value {
+    if (@frameAddress() < mach.stack_limit.*) return c.jsrt_stack_overflow();
     const vs = mach.stack;
     const base = mach.sp;
     const window = windowSize(t);
@@ -1128,9 +1160,9 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
     @memset(w, rt.undefined_value);
     const locals = w[header .. header + t.nlocals];
     const op_base = base + header + t.nlocals;
-    var frame: c.JSRTFrame = .{ .prev = c.jsrt_frame_top, .count = @intCast(window), .slots = w.ptr, .env = if (fe) |e| e.parent else null };
-    c.jsrt_frame_top = &frame;
-    defer c.jsrt_frame_top = frame.prev;
+    var frame: c.JSRTFrame = .{ .prev = mach.frame_top.*, .count = @intCast(window), .slots = w.ptr, .env = if (fe) |e| e.parent else null };
+    mach.frame_top.* = &frame;
+    defer mach.frame_top.* = frame.prev;
 
     const code = t.code;
     var pc: usize = 0;
@@ -1173,497 +1205,574 @@ fn exec(t: *Template, fe: ?*Env, entry: Entry) Value {
         },
     }
 
-    if (entry == .call and state == null) if (jit.codeFor(t)) |native| {
+    if (jit.mode == .jit and entry == .call and state == null) if (jit.codeFor(t)) |native| {
         if (builtin.is_test) jit.entries += 1;
-        const st: jit.Stack = .{ .sp = &mach.sp, .top = &c.jsrt_frame_top, .values = vs, .limit = c.jsrt_stack_limit, .pending = mach.pending };
+        const st: jit.Stack = .{ .sp = &mach.sp, .top = mach.frame_top, .values = vs, .limit = mach.stack_limit.*, .pending = mach.pending };
         return jit.enter(native, t, fe, w.ptr, argv, &frame, &st);
     };
     // Read in place after every instruction: jsrt_pending() would cost a call and a thread-local
     // lookup each time.
     const pending = mach.pending;
+    const global = mach.global;
 
-    while (true) {
-        const at = pc;
-        const o: Op = @fromBackingInt(@intCast(next8(code, &pc)));
-        switch (o) {
-            .undef => push(vs, &top, rt.undefined_value),
-            .null => push(vs, &top, rt.null_value),
-            .true => push(vs, &top, rt.true_value),
-            .false => push(vs, &top, rt.false_value),
-            .uninit => push(vs, &top, rt.uninitialized),
-            .int => {
-                const v: i32 = @bitCast(next32(code, &pc));
-                push(vs, &top, rt.number(@floatFromInt(v)));
-            },
-            .num => push(vs, &top, rt.number(t.numbers[next16(code, &pc)])),
-            .str => push(vs, &top, rt.string(t.strings[next16(code, &pc)])),
-            .pop => top -= 1,
-            .dup => push(vs, &top, vs[top - 1]),
-            .dup2 => {
-                vs[top] = vs[top - 2];
-                vs[top + 1] = vs[top - 1];
-                top += 2;
-            },
-            .swap => std.mem.swap(Value, &vs[top - 1], &vs[top - 2]),
-            // The top value sinks under the next two or three.
-            .insert3, .insert4 => {
-                const n: usize = if (o == .insert3) 3 else 4;
-                std.mem.rotate(Value, vs[top - n .. top], n - 1);
-            },
+    // Labeled dispatch gives each opcode its own successor branch; the inline capture also
+    // specializes the arithmetic operation instead of dispatching on the same opcode twice.
+    dispatch: switch (@as(Op, @fromBackingInt(next8(code, &pc)))) {
+        inline else => |o| {
+            const at = pc - 1;
+            switch (o) {
+                .undef => push(vs, &top, rt.undefined_value),
+                .null => push(vs, &top, rt.null_value),
+                .true => push(vs, &top, rt.true_value),
+                .false => push(vs, &top, rt.false_value),
+                .uninit => push(vs, &top, rt.uninitialized),
+                .int => {
+                    const v: i32 = @bitCast(next32(code, &pc));
+                    push(vs, &top, rt.number(@floatFromInt(v)));
+                },
+                .num => push(vs, &top, rt.number(t.numbers[next16(code, &pc)])),
+                .str => {
+                    const i = next16(code, &pc);
+                    // Primitive strings are immutable. Keep a lazy constant per activation in
+                    // its published frame, so reuse survives a collection without immortal roots.
+                    const slot = &w[header + t.nlocals + t.max_stack + i];
+                    if (slot.* == rt.undefined_value) slot.* = rt.string(t.strings[i]);
+                    push(vs, &top, slot.*);
+                },
+                .pop => top -= 1,
+                .dup => push(vs, &top, vs[top - 1]),
+                .dup2 => {
+                    vs[top] = vs[top - 2];
+                    vs[top + 1] = vs[top - 1];
+                    top += 2;
+                },
+                .swap => std.mem.swap(Value, &vs[top - 1], &vs[top - 2]),
+                // The top value sinks under the next two or three.
+                .insert3, .insert4 => {
+                    const n: usize = if (o == .insert3) 3 else 4;
+                    std.mem.rotate(Value, vs[top - n .. top], n - 1);
+                },
 
-            .load => {
-                push(vs, &top, locals[next16(code, &pc)]);
-            },
-            .store => {
-                top -= 1;
-                locals[next16(code, &pc)] = vs[top];
-            },
-            .load_checked => {
-                const v = locals[next16(code, &pc)];
-                const name = t.keys[next16(code, &pc)];
-                if (v == rt.uninitialized) tdzError(name) else push(vs, &top, v);
-            },
-            .store_checked => {
-                const slot = next16(code, &pc);
-                const name = t.keys[next16(code, &pc)];
-                top -= 1;
-                if (locals[slot] == rt.uninitialized) tdzError(name) else locals[slot] = vs[top];
-            },
-            .load_env, .load_env_checked, .store_env, .store_env_checked => {
-                const hops = next8(code, &pc);
-                const slot = next16(code, &pc);
-                const checked = o == .load_env_checked or o == .store_env_checked;
-                const name: ?[*:0]const u8 = if (checked) t.keys[next16(code, &pc)] else null;
-                if (o == .load_env or o == .load_env_checked) push(vs, &top, envLoad(frame.env, hops, slot, name)) else {
+                .load => {
+                    push(vs, &top, locals[next16(code, &pc)]);
+                },
+                .store => {
                     top -= 1;
-                    envStore(frame.env, hops, slot, name, vs[top]);
-                }
-            },
-            .load_ref, .store_ref => {
-                const e = outward(frame.env, next8(code, &pc));
-                const cell = unboxPtr(Value, e.slots()[next16(code, &pc)]).?;
-                if (o == .load_ref) push(vs, &top, cell.*) else {
+                    locals[next16(code, &pc)] = vs[top];
+                },
+                .load_checked => {
+                    const v = locals[next16(code, &pc)];
+                    const name = t.keys[next16(code, &pc)];
+                    if (v == rt.uninitialized) tdzError(name) else push(vs, &top, v);
+                },
+                .inc_local, .dec_local => {
+                    const slot = next16(code, &pc);
+                    const name = t.keys[next16(code, &pc)];
+                    if (c.jsrt_is_number(locals[slot])) {
+                        locals[slot] = unary(if (o == .inc_local) .inc else .dec, locals[slot]);
+                        continue :dispatch @fromBackingInt(next8(code, &pc));
+                    }
+                    if (locals[slot] == rt.uninitialized) {
+                        tdzError(name);
+                    } else {
+                        // Slow coercion can call JavaScript and collect; use the JIT's same
+                        // spare operand slot to root the input until the binding is written.
+                        vs[top] = locals[slot];
+                        const v = unary(if (o == .inc_local) .inc else .dec, locals[slot]);
+                        if (!pending.*) locals[slot] = v;
+                    }
+                },
+                .add_local_int, .sub_local_int, .lt_local_int, .le_local_int, .add_locals, .sub_locals, .lt_locals, .le_locals => {
+                    const rhs_local = comptime switch (o) {
+                        .add_locals, .sub_locals, .lt_locals, .le_locals => true,
+                        else => false,
+                    };
+                    const a = locals[next16(code, &pc)];
+                    const a_name = t.keys[next16(code, &pc)];
+                    const b = if (rhs_local) locals[next16(code, &pc)] else rt.number(@floatFromInt(@as(i32, @bitCast(next32(code, &pc)))));
+                    const b_name: ?[*:0]const u8 = if (rhs_local) t.keys[next16(code, &pc)] else null;
+                    const op = comptime bc.localOperator(o);
+                    if (c.jsrt_is_number(a) and (!rhs_local or c.jsrt_is_number(b))) {
+                        push(vs, &top, numeric(op, c.jsrt_number_value(a), c.jsrt_number_value(b)).?);
+                        continue :dispatch @fromBackingInt(next8(code, &pc));
+                    }
+                    if (a == rt.uninitialized) tdzError(a_name) else if (rhs_local and b == rt.uninitialized) tdzError(b_name.?) else {
+                        // Both operands must survive coercion of the first one.
+                        vs[top] = a;
+                        vs[top + 1] = b;
+                        push(vs, &top, binary(op, a, b));
+                    }
+                },
+                .store_checked => {
+                    const slot = next16(code, &pc);
+                    const name = t.keys[next16(code, &pc)];
                     top -= 1;
-                    cell.* = vs[top];
-                }
-            },
-            .load_global, .typeof_global => push(vs, &top, loadGlobal(t, next16(code, &pc), o == .typeof_global)),
-            .store_global => {
-                top -= 1;
-                // Operands decode left to right: the key, then the strict flag.
-                storeGlobal(t, next16(code, &pc), next8(code, &pc) != 0, vs[top]);
-            },
-            .delete_global => {
-                const k = t.keys[next16(code, &pc)];
-                push(vs, &top, rt.boolean(c.jsrt_delete(builtins.global(), rt.string(keyText(k)))));
-            },
-            .declare_global => declareGlobal(t.keys[next16(code, &pc)]),
-            .push_env => {
-                frame.env = c.jsrt_env_new(frame.env, next16(code, &pc));
-            },
-            .pop_env => frame.env = frame.env.*.parent,
-            .clone_env => frame.env = c.jsrt_env_clone(frame.env),
-            // Boxed as a reference so a suspended activation's saved copy keeps it alive.
-            .save_env => {
-                locals[next16(code, &pc)] = boxEnv(frame.env);
-            },
-            .const_assign => {
-                pc += 2;
-                rt.throwType("Assignment to constant variable.");
-            },
-            .assert_uninit => {
-                top -= 1;
-                if (vs[top] != rt.uninitialized) rt.throwReference("Super constructor may only be called once");
-            },
+                    if (locals[slot] == rt.uninitialized) tdzError(name) else locals[slot] = vs[top];
+                },
+                .load_env, .load_env_checked, .store_env, .store_env_checked => {
+                    const hops = next8(code, &pc);
+                    const slot = next16(code, &pc);
+                    const checked = o == .load_env_checked or o == .store_env_checked;
+                    const name: ?[*:0]const u8 = if (checked) t.keys[next16(code, &pc)] else null;
+                    if (o == .load_env or o == .load_env_checked) push(vs, &top, envLoad(frame.env, hops, slot, name)) else {
+                        top -= 1;
+                        envStore(frame.env, hops, slot, name, vs[top]);
+                    }
+                },
+                .load_ref, .store_ref => {
+                    const e = outward(frame.env, next8(code, &pc));
+                    const cell = unboxPtr(Value, e.slots()[next16(code, &pc)]).?;
+                    if (o == .load_ref) push(vs, &top, cell.*) else {
+                        top -= 1;
+                        cell.* = vs[top];
+                    }
+                },
+                .load_global, .typeof_global => push(vs, &top, loadGlobalFrom(global, t, next16(code, &pc), o == .typeof_global)),
+                .store_global => {
+                    top -= 1;
+                    // Operands decode left to right: the key, then the strict flag.
+                    storeGlobal(t, next16(code, &pc), next8(code, &pc) != 0, vs[top]);
+                },
+                .delete_global => {
+                    const k = t.keys[next16(code, &pc)];
+                    push(vs, &top, rt.boolean(c.jsrt_delete(builtins.global(), rt.string(keyText(k)))));
+                },
+                .declare_global => declareGlobal(t.keys[next16(code, &pc)]),
+                .push_env => {
+                    frame.env = c.jsrt_env_new(frame.env, next16(code, &pc));
+                },
+                .pop_env => frame.env = frame.env.*.parent,
+                .clone_env => frame.env = c.jsrt_env_clone(frame.env),
+                // Boxed as a reference so a suspended activation's saved copy keeps it alive.
+                .save_env => {
+                    locals[next16(code, &pc)] = boxEnv(frame.env);
+                },
+                .const_assign => {
+                    pc += 2;
+                    rt.throwType("Assignment to constant variable.");
+                },
+                .assert_uninit => {
+                    top -= 1;
+                    if (vs[top] != rt.uninitialized) rt.throwReference("Super constructor may only be called once");
+                },
 
-            .arg => {
-                const i = next16(code, &pc);
-                push(vs, &top, if (i < argv.len) argv[i] else rt.undefined_value);
-            },
-            .rest => push(vs, &top, newArray(argv[@min(next16(code, &pc), argv.len)..])),
-            .arguments => push(vs, &top, newArray(argv)),
-            .this_raw => push(vs, &top, w[1]),
-            .this_sloppy => push(vs, &top, sloppyThis(w[1])),
-            .new_target => push(vs, &top, w[2]),
-            .callee => push(vs, &top, w[0]),
-            .home => push(vs, &top, homeOf(fe)),
+                .arg => {
+                    const i = next16(code, &pc);
+                    push(vs, &top, if (i < argv.len) argv[i] else rt.undefined_value);
+                },
+                .arg_local => {
+                    const i = next16(code, &pc);
+                    locals[next16(code, &pc)] = if (i < argv.len) argv[i] else rt.undefined_value;
+                },
+                .rest => push(vs, &top, newArray(argv[@min(next16(code, &pc), argv.len)..])),
+                .arguments => push(vs, &top, newArray(argv)),
+                .this_raw => push(vs, &top, w[1]),
+                .this_sloppy => push(vs, &top, sloppyThis(w[1])),
+                .new_target => push(vs, &top, w[2]),
+                .callee => push(vs, &top, w[0]),
+                .home => push(vs, &top, homeOf(fe)),
 
-            .get_prop => {
-                const site = nextSite(t, code, &pc);
-                vs[top - 1] = getProp(vs[top - 1], site.key, site.ic);
-            },
-            .set_prop => {
-                const site = nextSite(t, code, &pc);
-                const v = vs[top - 1];
-                top -= 1;
-                setProp(vs[top - 1], site.key, v, site.ic);
-                vs[top - 1] = v;
-            },
-            .get_elem => binop(vs, &top, getElem),
-            .set_elem => {
-                const v = vs[top - 1];
-                top -= 2;
-                setElem(vs[top - 1], vs[top], v);
-                vs[top - 1] = v;
-            },
-            .delete_prop => {
-                const k = t.keys[next16(code, &pc)];
-                vs[top - 1] = deleteKey(vs[top - 1], rt.string(keyText(k)));
-            },
-            .delete_elem => binop(vs, &top, deleteKey),
-            .in => {
-                top -= 1;
-                const obj = vs[top];
-                vs[top - 1] = if (!rt.isObjectLike(obj))
-                    throwAbout(obj, "Cannot use 'in' operator to search for a key in {s}")
-                else
-                    rt.boolean(c.jsrt_in(toKey(vs[top - 1]), obj));
-            },
-            .instanceof => binop(vs, &top, instanceOfValue),
-            .super_get => {
-                const k = t.keys[next16(code, &pc)];
-                top -= 1;
-                const proto = protoOf(vs[top - 1]);
-                vs[top - 1] = if (c.jsrt_is_nullish(proto)) rt.undefined_value else getProp(proto, k, null);
-            },
-            .super_get_elem => {
-                top -= 2;
-                const proto = protoOf(vs[top - 1]);
-                vs[top - 1] = if (c.jsrt_is_nullish(proto)) rt.undefined_value else getElem(proto, vs[top + 1]);
-            },
+                .get_prop_local => {
+                    const obj = locals[next16(code, &pc)];
+                    const name = t.keys[next16(code, &pc)];
+                    const site = nextSite(t, code, &pc);
+                    if (obj == rt.uninitialized) tdzError(name) else {
+                        push(vs, &top, obj);
+                        vs[top - 1] = getProp(obj, site.key, site.ic);
+                    }
+                },
+                .get_prop, .get_method => {
+                    const site = nextSite(t, code, &pc);
+                    vs[top - 1] = if (o == .get_method)
+                        getMethod(vs[top - 1], site, w[header + t.nlocals + t.max_stack + t.strings.len + 2 * @as(usize, site.index) ..][0..2])
+                    else
+                        getProp(vs[top - 1], site.key, site.ic);
+                },
+                .set_prop => {
+                    const site = nextSite(t, code, &pc);
+                    const v = vs[top - 1];
+                    top -= 1;
+                    setProp(vs[top - 1], site.key, v, site.ic);
+                    vs[top - 1] = v;
+                },
+                .get_elem => binop(vs, &top, getElem),
+                .set_elem => {
+                    const v = vs[top - 1];
+                    top -= 2;
+                    setElem(vs[top - 1], vs[top], v);
+                    vs[top - 1] = v;
+                },
+                .delete_prop => {
+                    const k = t.keys[next16(code, &pc)];
+                    vs[top - 1] = deleteKey(vs[top - 1], rt.string(keyText(k)));
+                },
+                .delete_elem => binop(vs, &top, deleteKey),
+                .in => {
+                    top -= 1;
+                    const obj = vs[top];
+                    vs[top - 1] = if (!rt.isObjectLike(obj))
+                        throwAbout(obj, "Cannot use 'in' operator to search for a key in {s}")
+                    else
+                        rt.boolean(c.jsrt_in(toKey(vs[top - 1]), obj));
+                },
+                .instanceof => binop(vs, &top, instanceOfValue),
+                .super_get => {
+                    const k = t.keys[next16(code, &pc)];
+                    top -= 1;
+                    const proto = protoOf(vs[top - 1]);
+                    vs[top - 1] = if (c.jsrt_is_nullish(proto)) rt.undefined_value else getProp(proto, k, null);
+                },
+                .super_get_elem => {
+                    top -= 2;
+                    const proto = protoOf(vs[top - 1]);
+                    vs[top - 1] = if (c.jsrt_is_nullish(proto)) rt.undefined_value else getElem(proto, vs[top + 1]);
+                },
 
-            .add, .bitand, .bitor, .bitxor, .shl, .shr, .ushr, .sub, .mul, .div, .mod, .exp, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge => {
-                top -= 1;
-                const a = vs[top - 1];
-                const b = vs[top];
-                // Arithmetic on two numbers cannot throw, so it skips the exception check.
-                if (c.jsrt_is_number(a) and c.jsrt_is_number(b)) if (numeric(o, c.jsrt_number_value(a), c.jsrt_number_value(b))) |r| {
+                .add, .bitand, .bitor, .bitxor, .shl, .shr, .ushr, .sub, .mul, .div, .mod, .exp, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge => {
+                    top -= 1;
+                    const a = vs[top - 1];
+                    const b = vs[top];
+                    // Arithmetic on two numbers cannot throw, so it skips the exception check.
+                    if (c.jsrt_is_number(a) and c.jsrt_is_number(b)) if (numeric(o, c.jsrt_number_value(a), c.jsrt_number_value(b))) |r| {
+                        vs[top - 1] = r;
+                        continue :dispatch @fromBackingInt(next8(code, &pc));
+                    };
+                    vs[top - 1] = binary(o, a, b);
+                },
+                .neg, .plus, .bitnot, .not, .typeof, .inc, .dec => vs[top - 1] = unary(o, vs[top - 1]),
+                .to_string => vs[top - 1] = c.jsrt_to_string(vs[top - 1]),
+                .to_key => vs[top - 1] = toKey(vs[top - 1]),
+
+                .jump => pc = bc.read32(code, pc),
+                .jump_if_false, .jump_if_true, .jump_if_nullish, .jump_if_not_undef => {
+                    top -= 1;
+                    const v = vs[top];
+                    const taken = switch (o) {
+                        .jump_if_false => !truthy(v),
+                        .jump_if_true => truthy(v),
+                        .jump_if_nullish => c.jsrt_is_nullish(v),
+                        else => v != rt.undefined_value,
+                    };
+                    pc = if (taken) bc.read32(code, pc) else pc + 4;
+                },
+                .jump_if_int => {
+                    const want: i32 = @bitCast(next32(code, &pc));
+                    const target = next32(code, &pc);
+                    top -= 1;
+                    if (c.jsrt_to_number(vs[top]) == @as(f64, @floatFromInt(want))) pc = target;
+                },
+
+                .call => {
+                    const argc = next16(code, &pc);
+                    const args = vs[top - argc .. top];
+                    const r = callOn(mach, vs[top - argc - 2], vs[top - argc - 1], args);
+                    top -= argc + 1;
                     vs[top - 1] = r;
-                    continue;
-                };
-                vs[top - 1] = binary(o, a, b);
-            },
-            .neg, .plus, .bitnot, .not, .typeof, .inc, .dec => vs[top - 1] = unary(o, vs[top - 1]),
-            .to_string => vs[top - 1] = c.jsrt_to_string(vs[top - 1]),
-            .to_key => vs[top - 1] = toKey(vs[top - 1]),
-
-            .jump => pc = bc.read32(code, pc),
-            .jump_if_false, .jump_if_true, .jump_if_nullish, .jump_if_not_undef => {
-                top -= 1;
-                const v = vs[top];
-                const taken = switch (o) {
-                    .jump_if_false => !truthy(v),
-                    .jump_if_true => truthy(v),
-                    .jump_if_nullish => c.jsrt_is_nullish(v),
-                    else => v != rt.undefined_value,
-                };
-                pc = if (taken) bc.read32(code, pc) else pc + 4;
-            },
-            .jump_if_int => {
-                const want: i32 = @bitCast(next32(code, &pc));
-                const target = next32(code, &pc);
-                top -= 1;
-                if (c.jsrt_to_number(vs[top]) == @as(f64, @floatFromInt(want))) pc = target;
-            },
-
-            .call => {
-                const argc = next16(code, &pc);
-                const args = vs[top - argc .. top];
-                const r = call(vs[top - argc - 2], vs[top - argc - 1], args);
-                top -= argc + 1;
-                vs[top - 1] = r;
-            },
-            .call_spread => {
-                const r = call(vs[top - 3], vs[top - 2], arrayItems(vs[top - 1]));
-                top -= 2;
-                vs[top - 1] = r;
-            },
-            .new => {
-                const argc = next16(code, &pc);
-                const ctor = vs[top - argc - 1];
-                const r = construct(ctor, vs[top - argc .. top], ctor);
-                top -= argc;
-                vs[top - 1] = r;
-            },
-            .new_spread => {
-                const ctor = vs[top - 2];
-                const r = construct(ctor, arrayItems(vs[top - 1]), ctor);
-                top -= 1;
-                vs[top - 1] = r;
-            },
-            .super_call, .super_call_spread => {
-                var argc: usize = 1;
-                var args: []const Value = undefined;
-                if (o == .super_call) {
-                    argc = next16(code, &pc);
-                    args = vs[top - argc .. top];
-                } else args = arrayItems(vs[top - 1]);
-                const f = vs[top - argc - 2];
-                const target = vs[top - argc - 1];
-                // `super()` outside a derived constructor is an early error the compiler leaves
-                // to here when it reaches the VM through eval code (§19.2.1.1).
-                const parent = if (isInterpreted(f)) fnEnv(f).slots()[compile.fnenv_parent] else rt.undefined_value;
-                const r = if (!isInterpreted(f)) blk: {
-                    rt.throwSyntax("'super' keyword unexpected here");
-                    break :blk rt.undefined_value;
-                } else if (!isConstructor(parent)) blk: {
-                    rt.throwType("Super constructor is not a constructor");
-                    break :blk rt.undefined_value;
-                } else construct(parent, args, target);
-                top -= argc + 1;
-                vs[top - 1] = r;
-            },
-            .ret => {
-                top -= 1;
-                return vs[top];
-            },
-            .ret_ctor => {
-                top -= 2;
-                const r = ctorReturn(t, w[2], vs[top], vs[top + 1]);
-                if (!rt.pending()) return r;
-            },
-            .throw => {
-                top -= 1;
-                c.jsrt_throw(vs[top]);
-            },
-            .throw_error => {
-                const k = t.keys[next16(code, &pc)];
-                c.jsrt_throw_error(&c.jsrt_class_type_error, k);
-            },
-
-            .new_object => push(vs, &top, c.jsrt_dynobj_new()),
-            .new_array => {
-                const n = next16(code, &pc);
-                const arr = newArray(vs[top - n .. top]);
-                top -= n;
-                push(vs, &top, arr);
-            },
-            .array_push => {
-                top -= 1;
-                _ = c.jsrt_array_push(vs[top - 1], vs[top]);
-            },
-            .array_hole => _ = c.jsrt_array_push(vs[top - 1], c.JSRT_HOLE),
-            .array_spread => {
-                vs[top - 1] = getIterator(vs[top - 1]);
-                if (!rt.pending()) {
-                    var v: Value = undefined;
-                    while (iterStep(vs[top - 1], &v)) _ = c.jsrt_array_push(vs[top - 2], v);
-                }
-                top -= 1;
-            },
-            .define => {
-                const k = t.keys[next16(code, &pc)];
-                top -= 1;
-                defineOwn(vs[top - 1], k, vs[top]);
-            },
-            .define_elem => {
-                top -= 2;
-                defineOwn(vs[top - 1], keyOf(vs[top]), vs[top + 1]);
-            },
-            .define_accessor => {
-                const k = t.keys[next16(code, &pc)];
-                const setter = next8(code, &pc) != 0;
-                top -= 1;
-                defineAccessor(vs[top - 1], k, vs[top], setter);
-            },
-            .define_accessor_elem => {
-                const setter = next8(code, &pc) != 0;
-                top -= 2;
-                defineAccessor(vs[top - 1], keyOf(vs[top]), vs[top + 1], setter);
-            },
-            .object_spread => {
-                top -= 1;
-                copyDataProperties(vs[top - 1], vs[top]);
-            },
-            .set_proto => {
-                top -= 1;
-                const p = vs[top];
-                const obj = vs[top - 1];
-                if (rt.isObjectLike(p)) {
-                    dynObj(obj).proto = p;
-                } else if (p == rt.null_value) {
-                    dynObj(obj).cls = &c.jsrt_class_null_proto;
-                }
-            },
-            .closure => {
-                const f = makeClosure(t.funcs[next16(code, &pc)], frame.env);
-                push(vs, &top, f);
-            },
-            .set_home => {
-                const d = next8(code, &pc);
-                fnEnv(vs[top - 1]).slots()[compile.fnenv_home] = vs[top - 1 - d];
-            },
-            .class_setup => {
-                const has = next8(code, &pc) != 0;
-                if (classSetup(vs[top - 2], vs[top - 1], has)) |proto| {
-                    vs[top - 2] = vs[top - 1];
-                    vs[top - 1] = proto;
-                }
-            },
-            .set_field_init => {
-                top -= 1;
-                fnEnv(vs[top - 1]).slots()[compile.fnenv_fields] = vs[top];
-            },
-            .run_field_init => {
-                top -= 2;
-                const f = vs[top];
-                if (isInterpreted(f)) {
-                    const init = fnEnv(f).slots()[compile.fnenv_fields];
-                    if (isInterpreted(init)) _ = call(init, vs[top + 1], &.{});
-                }
-            },
-            .regexp => {
-                const s = t.strings[next16(code, &pc)];
-                const flags = t.strings[next16(code, &pc)];
-                // The flags string is made first and kept on the stack while the source is.
-                push(vs, &top, rt.string(flags));
-                vs[top - 1] = c.jsrt_regexp_new(rt.string(s), vs[top - 1]);
-            },
-            .tagged_template => {
-                const n = next16(code, &pc);
-                const strings = vs[top - n - 1];
-                c.jsrt_set_prop(strings, "raw", strings, null);
-                const r = call(vs[top - n - 3], vs[top - n - 2], vs[top - n - 1 .. top]);
-                top -= n + 2;
-                vs[top - 1] = r;
-            },
-
-            .get_iterator, .get_async_iterator => vs[top - 1] = if (o == .get_iterator) getIterator(vs[top - 1]) else getAsyncIterator(vs[top - 1]),
-            .iter_next => {
-                const target = next32(code, &pc);
-                var v: Value = rt.undefined_value;
-                if (iterStep(vs[top - 1], &v)) {
-                    vs[top - 1] = v;
-                } else {
+                },
+                .call_spread => {
+                    const r = call(vs[top - 3], vs[top - 2], arrayItems(vs[top - 1]));
+                    top -= 2;
+                    vs[top - 1] = r;
+                },
+                .new => {
+                    const argc = next16(code, &pc);
+                    const ctor = vs[top - argc - 1];
+                    const r = construct(ctor, vs[top - argc .. top], ctor);
+                    top -= argc;
+                    vs[top - 1] = r;
+                },
+                .new_spread => {
+                    const ctor = vs[top - 2];
+                    const r = construct(ctor, arrayItems(vs[top - 1]), ctor);
                     top -= 1;
-                    if (!rt.pending()) pc = target;
-                }
-            },
-            .iter_value => {
-                var v: Value = rt.undefined_value;
-                if (!iterStep(vs[top - 1], &v)) v = rt.undefined_value;
-                push(vs, &top, v);
-            },
-            .iter_rest => {
-                push(vs, &top, c.jsrt_array_new(0, null));
-                var v: Value = undefined;
-                while (iterStep(vs[top - 2], &v)) _ = c.jsrt_array_push(vs[top - 1], v);
-                vs[top - 2] = vs[top - 1];
-                top -= 1;
-            },
-            .iter_close => {
-                top -= 1;
-                iterClose(vs[top]);
-            },
-            .iter_close_quiet => {
-                top -= 1;
-                iterClose(vs[top]);
-                if (rt.pending()) _ = c.jsrt_take_exception();
-            },
-            .for_in_keys => vs[top - 1] = if (c.jsrt_is_nullish(vs[top - 1])) c.jsrt_array_new(0, null) else c.jsrt_object_for_in_keys(vs[top - 1]),
-            .for_in_next => {
-                const keys = locals[next16(code, &pc)];
-                const idx_slot = next16(code, &pc);
-                const target = next32(code, &pc);
-                const items = arrayItems(keys);
-                const i: usize = @intFromFloat(c.jsrt_to_number(locals[idx_slot]));
-                if (i >= items.len) {
-                    pc = target;
-                } else {
-                    locals[idx_slot] = rt.number(@floatFromInt(i + 1));
-                    push(vs, &top, items[i]);
-                }
-            },
-            .debugger => {},
+                    vs[top - 1] = r;
+                },
+                .super_call, .super_call_spread => {
+                    var argc: usize = 1;
+                    var args: []const Value = undefined;
+                    if (o == .super_call) {
+                        argc = next16(code, &pc);
+                        args = vs[top - argc .. top];
+                    } else args = arrayItems(vs[top - 1]);
+                    const f = vs[top - argc - 2];
+                    const target = vs[top - argc - 1];
+                    // `super()` outside a derived constructor is an early error the compiler leaves
+                    // to here when it reaches the VM through eval code (§19.2.1.1).
+                    const parent = if (isInterpreted(f)) fnEnv(f).slots()[compile.fnenv_parent] else rt.undefined_value;
+                    const r = if (!isInterpreted(f)) blk: {
+                        rt.throwSyntax("'super' keyword unexpected here");
+                        break :blk rt.undefined_value;
+                    } else if (!isConstructor(parent)) blk: {
+                        rt.throwType("Super constructor is not a constructor");
+                        break :blk rt.undefined_value;
+                    } else construct(parent, args, target);
+                    top -= argc + 1;
+                    vs[top - 1] = r;
+                },
+                .ret => {
+                    top -= 1;
+                    return vs[top];
+                },
+                .ret_ctor, .ret_this => {
+                    top -= if (o == .ret_this) 1 else 2;
+                    if (w[2] == rt.undefined_value) return vs[top];
+                    const r = ctorReturn(t, w[2], vs[top], if (o == .ret_this) w[1] else vs[top + 1]);
+                    if (!rt.pending()) return r;
+                },
+                .throw => {
+                    top -= 1;
+                    c.jsrt_throw(vs[top]);
+                },
+                .throw_error => {
+                    const k = t.keys[next16(code, &pc)];
+                    c.jsrt_throw_error(&c.jsrt_class_type_error, k);
+                },
 
-            .gen_start => {
-                suspendAt(&state, w, t.nlocals, top - op_base, pc, frame.env, .start);
-                return rt.undefined_value;
-            },
-            .yield, .await => {
-                const v = vs[top - 1];
-                top -= 1;
-                suspendAt(&state, w, t.nlocals, top - op_base, pc, frame.env, if (o == .yield) .yield else .await);
-                return v;
-            },
-            .reset_stack => top = op_base,
-            // Both leave `rec value kind`: `delegate` from `rec received mode`, the async step
-            // from `rec mode settled`.
-            .delegate, .async_delegate_step => {
-                var v: Value = rt.undefined_value;
-                const kind = if (o == .delegate)
-                    delegateStep(vs[top - 3], vs[top - 2], @intCast(intOf(vs[top - 1])), &v)
-                else
-                    asyncDelegateResult(vs[top - 3], vs[top - 1], @intCast(intOf(vs[top - 2])), &v);
-                vs[top - 2] = v;
-                vs[top - 1] = rt.number(@floatFromInt(kind));
-            },
-            .async_delegate => {
-                var mode: u8 = @intCast(intOf(vs[top - 1]));
-                const r = asyncDelegateCall(vs[top - 3], vs[top - 2], &mode);
-                vs[top - 2] = rt.number(@floatFromInt(mode));
-                vs[top - 1] = r;
-            },
-            .async_iter_next => {
-                const s = recSlots(vs[top - 1]);
-                if (s[rec_wrapped] == rt.true_value) {
+                .new_object => push(vs, &top, c.jsrt_dynobj_new()),
+                .new_array => {
+                    const n = next16(code, &pc);
+                    const arr = newArray(vs[top - n .. top]);
+                    top -= n;
+                    push(vs, &top, arr);
+                },
+                .array_push => {
+                    top -= 1;
+                    _ = c.jsrt_array_push(vs[top - 1], vs[top]);
+                },
+                .array_hole => _ = c.jsrt_array_push(vs[top - 1], c.JSRT_HOLE),
+                .array_spread => {
+                    vs[top - 1] = getIterator(vs[top - 1]);
+                    if (!rt.pending()) {
+                        var v: Value = undefined;
+                        while (iterStep(vs[top - 1], &v)) _ = c.jsrt_array_push(vs[top - 2], v);
+                    }
+                    top -= 1;
+                },
+                .define => {
+                    const k = t.keys[next16(code, &pc)];
+                    top -= 1;
+                    defineOwn(vs[top - 1], k, vs[top]);
+                },
+                .define_elem => {
+                    top -= 2;
+                    defineOwn(vs[top - 1], keyOf(vs[top]), vs[top + 1]);
+                },
+                .define_accessor => {
+                    const k = t.keys[next16(code, &pc)];
+                    const setter = next8(code, &pc) != 0;
+                    top -= 1;
+                    defineAccessor(vs[top - 1], k, vs[top], setter);
+                },
+                .define_accessor_elem => {
+                    const setter = next8(code, &pc) != 0;
+                    top -= 2;
+                    defineAccessor(vs[top - 1], keyOf(vs[top]), vs[top + 1], setter);
+                },
+                .object_spread => {
+                    top -= 1;
+                    copyDataProperties(vs[top - 1], vs[top]);
+                },
+                .set_proto => {
+                    top -= 1;
+                    const p = vs[top];
+                    const obj = vs[top - 1];
+                    if (rt.isObjectLike(p)) {
+                        dynObj(obj).proto = p;
+                    } else if (p == rt.null_value) {
+                        dynObj(obj).cls = &c.jsrt_class_null_proto;
+                    }
+                },
+                .closure => {
+                    const f = makeClosure(t.funcs[next16(code, &pc)], frame.env);
+                    push(vs, &top, f);
+                },
+                .set_home => {
+                    const d = next8(code, &pc);
+                    fnEnv(vs[top - 1]).slots()[compile.fnenv_home] = vs[top - 1 - d];
+                },
+                .class_setup => {
+                    const has = next8(code, &pc) != 0;
+                    if (classSetup(vs[top - 2], vs[top - 1], has)) |proto| {
+                        vs[top - 2] = vs[top - 1];
+                        vs[top - 1] = proto;
+                    }
+                },
+                .set_field_init => {
+                    top -= 1;
+                    fnEnv(vs[top - 1]).slots()[compile.fnenv_fields] = vs[top];
+                },
+                .run_field_init => {
+                    top -= 2;
+                    const f = vs[top];
+                    if (isInterpreted(f)) {
+                        const init = fnEnv(f).slots()[compile.fnenv_fields];
+                        if (isInterpreted(init)) _ = call(init, vs[top + 1], &.{});
+                    }
+                },
+                .regexp => {
+                    const s = t.strings[next16(code, &pc)];
+                    const flags = t.strings[next16(code, &pc)];
+                    // The flags string is made first and kept on the stack while the source is.
+                    push(vs, &top, rt.string(flags));
+                    vs[top - 1] = c.jsrt_regexp_new(rt.string(s), vs[top - 1]);
+                },
+                .tagged_template => {
+                    const n = next16(code, &pc);
+                    const strings = vs[top - n - 1];
+                    c.jsrt_set_prop(strings, "raw", strings, null);
+                    const r = call(vs[top - n - 3], vs[top - n - 2], vs[top - n - 1 .. top]);
+                    top -= n + 2;
+                    vs[top - 1] = r;
+                },
+
+                .get_iterator, .get_async_iterator => vs[top - 1] = if (o == .get_iterator) getIterator(vs[top - 1]) else getAsyncIterator(vs[top - 1]),
+                .iter_next => {
+                    const target = next32(code, &pc);
                     var v: Value = rt.undefined_value;
-                    const more = iterStep(s[rec_iter], &v);
-                    if (!more and !rt.pending()) s[rec_done] = rt.true_value;
-                    vs[top - 1] = v;
-                } else vs[top - 1] = call(s[rec_next], s[rec_iter], &.{});
-            },
-            .async_iter_step => {
-                const target = next32(code, &pc);
-                const y = vs[top - 1];
-                const s = recSlots(vs[top - 2]);
-                top -= 2;
-                if (s[rec_wrapped] == rt.true_value) {
-                    if (s[rec_done] == rt.true_value) pc = target else push(vs, &top, y);
-                } else if (!rt.isObjectLike(y)) {
-                    _ = throwAbout(y, "Iterator result {s} is not an object");
-                } else {
-                    const done = getProp(y, "done", null);
-                    if (!rt.pending()) {
-                        if (c.jsrt_truthy(done)) {
-                            s[rec_done] = rt.true_value;
-                            pc = target;
-                        } else push(vs, &top, getProp(y, "value", null));
+                    if (iterStep(vs[top - 1], &v)) {
+                        vs[top - 1] = v;
+                    } else {
+                        top -= 1;
+                        if (!rt.pending()) pc = target;
                     }
-                }
-            },
-            .async_close_call => {
-                const target = next32(code, &pc);
-                const s = recSlots(vs[top - 1]);
-                if (s[rec_wrapped] == rt.true_value or s[rec_done] == rt.true_value) {
-                    if (s[rec_wrapped] == rt.true_value) iterClose(s[rec_iter]);
+                },
+                .iter_value => {
+                    var v: Value = rt.undefined_value;
+                    if (!iterStep(vs[top - 1], &v)) v = rt.undefined_value;
+                    push(vs, &top, v);
+                },
+                .iter_rest => {
+                    push(vs, &top, c.jsrt_array_new(0, null));
+                    var v: Value = undefined;
+                    while (iterStep(vs[top - 2], &v)) _ = c.jsrt_array_push(vs[top - 1], v);
+                    vs[top - 2] = vs[top - 1];
                     top -= 1;
-                    if (!rt.pending()) pc = target;
-                } else {
-                    s[rec_done] = rt.true_value;
-                    const m = getProp(s[rec_iter], "return", null);
-                    if (!rt.pending()) {
-                        if (c.jsrt_is_nullish(m)) {
-                            top -= 1;
-                            pc = target;
-                        } else vs[top - 1] = call(m, s[rec_iter], &.{});
+                },
+                .iter_close => {
+                    top -= 1;
+                    iterClose(vs[top]);
+                },
+                .iter_close_quiet => {
+                    top -= 1;
+                    iterClose(vs[top]);
+                    if (rt.pending()) _ = c.jsrt_take_exception();
+                },
+                .for_in_keys => vs[top - 1] = if (c.jsrt_is_nullish(vs[top - 1])) c.jsrt_array_new(0, null) else c.jsrt_object_for_in_keys(vs[top - 1]),
+                .for_in_next => {
+                    const keys = locals[next16(code, &pc)];
+                    const idx_slot = next16(code, &pc);
+                    const target = next32(code, &pc);
+                    const items = arrayItems(keys);
+                    const i: usize = @intFromFloat(c.jsrt_to_number(locals[idx_slot]));
+                    if (i >= items.len) {
+                        pc = target;
+                    } else {
+                        locals[idx_slot] = rt.number(@floatFromInt(i + 1));
+                        push(vs, &top, items[i]);
                     }
-                }
-            },
-            .async_close_check => {
-                top -= 1;
-                if (!rt.isObjectLike(vs[top])) _ = throwAbout(vs[top], "Iterator result {s} is not an object");
-            },
-        }
-        if (pending.*) {
-            const h = findHandler(t, at) orelse return rt.undefined_value;
-            const exc = c.jsrt_take_exception();
-            top = op_base;
-            frame.env = unboxPtr(Env, locals[h.env_local]);
-            push(vs, &top, exc);
-            pc = h.target;
-        }
+                },
+                .debugger => {},
+
+                .gen_start => {
+                    suspendAt(&state, w, t.nlocals, top - op_base, pc, frame.env, .start);
+                    return rt.undefined_value;
+                },
+                .yield, .await => {
+                    const v = vs[top - 1];
+                    top -= 1;
+                    suspendAt(&state, w, t.nlocals, top - op_base, pc, frame.env, if (o == .yield) .yield else .await);
+                    return v;
+                },
+                .reset_stack => top = op_base,
+                // Both leave `rec value kind`: `delegate` from `rec received mode`, the async step
+                // from `rec mode settled`.
+                .delegate, .async_delegate_step => {
+                    var v: Value = rt.undefined_value;
+                    const kind = if (o == .delegate)
+                        delegateStep(vs[top - 3], vs[top - 2], @intCast(intOf(vs[top - 1])), &v)
+                    else
+                        asyncDelegateResult(vs[top - 3], vs[top - 1], @intCast(intOf(vs[top - 2])), &v);
+                    vs[top - 2] = v;
+                    vs[top - 1] = rt.number(@floatFromInt(kind));
+                },
+                .async_delegate => {
+                    var mode: u8 = @intCast(intOf(vs[top - 1]));
+                    const r = asyncDelegateCall(vs[top - 3], vs[top - 2], &mode);
+                    vs[top - 2] = rt.number(@floatFromInt(mode));
+                    vs[top - 1] = r;
+                },
+                .async_iter_next => {
+                    const s = recSlots(vs[top - 1]);
+                    if (s[rec_wrapped] == rt.true_value) {
+                        var v: Value = rt.undefined_value;
+                        const more = iterStep(s[rec_iter], &v);
+                        if (!more and !rt.pending()) s[rec_done] = rt.true_value;
+                        vs[top - 1] = v;
+                    } else vs[top - 1] = call(s[rec_next], s[rec_iter], &.{});
+                },
+                .async_iter_step => {
+                    const target = next32(code, &pc);
+                    const y = vs[top - 1];
+                    const s = recSlots(vs[top - 2]);
+                    top -= 2;
+                    if (s[rec_wrapped] == rt.true_value) {
+                        if (s[rec_done] == rt.true_value) pc = target else push(vs, &top, y);
+                    } else if (!rt.isObjectLike(y)) {
+                        _ = throwAbout(y, "Iterator result {s} is not an object");
+                    } else {
+                        const done = getProp(y, "done", null);
+                        if (!rt.pending()) {
+                            if (c.jsrt_truthy(done)) {
+                                s[rec_done] = rt.true_value;
+                                pc = target;
+                            } else push(vs, &top, getProp(y, "value", null));
+                        }
+                    }
+                },
+                .async_close_call => {
+                    const target = next32(code, &pc);
+                    const s = recSlots(vs[top - 1]);
+                    if (s[rec_wrapped] == rt.true_value or s[rec_done] == rt.true_value) {
+                        if (s[rec_wrapped] == rt.true_value) iterClose(s[rec_iter]);
+                        top -= 1;
+                        if (!rt.pending()) pc = target;
+                    } else {
+                        s[rec_done] = rt.true_value;
+                        const m = getProp(s[rec_iter], "return", null);
+                        if (!rt.pending()) {
+                            if (c.jsrt_is_nullish(m)) {
+                                top -= 1;
+                                pc = target;
+                            } else vs[top - 1] = call(m, s[rec_iter], &.{});
+                        }
+                    }
+                },
+                .async_close_check => {
+                    top -= 1;
+                    if (!rt.isObjectLike(vs[top])) _ = throwAbout(vs[top], "Iterator result {s} is not an object");
+                },
+            }
+            if (mayThrow(o) and pending.*) {
+                const h = findHandler(t, at) orelse return rt.undefined_value;
+                const exc = c.jsrt_take_exception();
+                top = op_base;
+                frame.env = unboxPtr(Env, locals[h.env_local]);
+                push(vs, &top, exc);
+                pc = h.target;
+            }
+            continue :dispatch @fromBackingInt(next8(code, &pc));
+        },
     }
+}
+
+/// Only instructions that can call JavaScript, allocate, or explicitly throw need to observe
+/// pending. Every such instruction checks before dispatching another one.
+fn mayThrow(comptime o: Op) bool {
+    return switch (o) {
+        .arg_local => false,
+        .undef, .null, .true, .false, .uninit, .int, .num, .pop, .dup, .dup2, .swap, .insert3, .insert4, .load, .store, .load_env, .store_env, .load_ref, .store_ref, .pop_env, .save_env, .arg, .this_raw, .new_target, .callee, .home, .jump, .jump_if_false, .jump_if_true, .jump_if_nullish, .jump_if_not_undef, .reset_stack, .debugger => false,
+        else => true,
+    };
 }
 
 /// Reads the operand at `pc.*` and steps past it.
@@ -1678,11 +1787,12 @@ fn next16(code: []const u8, pc: *usize) u16 {
 }
 
 /// A named property site: its key, then its inline cache.
-const Site = struct { key: [*:0]const u8, ic: *c.JSRTIC };
+const Site = struct { key: [*:0]const u8, ic: *c.JSRTIC, index: u16 };
 
 fn nextSite(t: *Template, code: []const u8, pc: *usize) Site {
     const key = t.keys[next16(code, pc)];
-    return .{ .key = key, .ic = &t.ics[next16(code, pc)] };
+    const i = next16(code, pc);
+    return .{ .key = key, .ic = &t.ics[i], .index = i };
 }
 
 fn next32(code: []const u8, pc: *usize) u32 {
@@ -1743,7 +1853,7 @@ inline fn numeric(o: Op, x: f64, y: f64) ?Value {
 }
 
 /// A unary operator's semantics, shared the same way.
-pub fn unary(o: Op, v: Value) Value {
+pub inline fn unary(o: Op, v: Value) Value {
     if (c.jsrt_is_number(v)) {
         const x = c.jsrt_number_value(v);
         switch (o) {
@@ -1769,9 +1879,12 @@ pub fn unary(o: Op, v: Value) Value {
 /// A global name's value (`typeof_` answers its `typeof` instead, never a ReferenceError). The
 /// key's cache, `t.global_ics[ki]`, is the one the JIT's inline read checks too.
 pub fn loadGlobal(t: *Template, ki: u16, typeof_: bool) Value {
-    if (cachedGlobal(t, ki)) |slot| return if (typeof_) c.jsrt_typeof(slot.*) else slot.*;
+    return loadGlobalFrom(builtins.global(), t, ki, typeof_);
+}
+
+inline fn loadGlobalFrom(g: Value, t: *Template, ki: u16, typeof_: bool) Value {
+    if (cachedGlobal(g, t, ki)) |slot| return if (typeof_) c.jsrt_typeof(slot.*) else slot.*;
     const k = t.keys[ki];
-    const g = builtins.global();
     if (!c.jsrt_has_prop(g, k)) {
         if (typeof_) return rt.string("undefined");
         throwFmt(&c.jsrt_class_reference_error, "{s} is not defined", .{keyText(k)});
@@ -1805,7 +1918,7 @@ fn sloppyThis(v: Value) Value {
 
 pub fn storeGlobal(t: *Template, ki: u16, strict: bool, v: Value) void {
     const g = builtins.global();
-    if (!dynObj(g).frozen) if (cachedGlobal(t, ki)) |slot| return writeSlot(dynObj(g), slot, v);
+    if (!dynObj(g).frozen) if (cachedGlobal(g, t, ki)) |slot| return writeSlot(dynObj(g), slot, v);
     const k = t.keys[ki];
     if (strict and !c.jsrt_has_prop(g, k)) throwFmt(&c.jsrt_class_reference_error, "{s} is not defined", .{keyText(k)}) else c.jsrt_set_prop(g, k, v, null);
 }
@@ -1813,8 +1926,8 @@ pub fn storeGlobal(t: *Template, ki: u16, strict: bool, v: Value) void {
 /// The global object's own data slot for `t`'s key `ki`: the key's cache, refilled by one shape
 /// walk when the object's shape has moved on (a global added or deleted). What the runtime's
 /// has-then-get would find for an own data property; anything else returns null for that path.
-fn cachedGlobal(t: *Template, ki: u16) ?*Value {
-    const o = dynObj(builtins.global());
+inline fn cachedGlobal(g: Value, t: *Template, ki: u16) ?*Value {
+    const o = dynObj(g);
     const ic = &t.global_ics[ki];
     if (ic.shape != @as(?*const c.JSRTShape, o.shape)) {
         const hit = c.jsrt_shape_find(o.shape, t.keys[ki]) orelse return null;
@@ -1834,7 +1947,7 @@ pub fn newArray(items: []const Value) Value {
 }
 
 /// A binding `hops` scopes out; `name` is set when a read must check the TDZ.
-pub fn envLoad(env: *Env, hops: u8, slot: u16, name: ?[*:0]const u8) Value {
+pub inline fn envLoad(env: *Env, hops: u8, slot: u16, name: ?[*:0]const u8) Value {
     const v = outward(env, hops).slots()[slot];
     if (name) |n| if (v == rt.uninitialized) {
         tdzError(n);
@@ -1843,7 +1956,7 @@ pub fn envLoad(env: *Env, hops: u8, slot: u16, name: ?[*:0]const u8) Value {
     return v;
 }
 
-pub fn envStore(env: *Env, hops: u8, slot: u16, name: ?[*:0]const u8, v: Value) void {
+pub inline fn envStore(env: *Env, hops: u8, slot: u16, name: ?[*:0]const u8, v: Value) void {
     const cell = &outward(env, hops).slots()[slot];
     if (name) |n| if (cell.* == rt.uninitialized) return tdzError(n);
     cell.* = v;
@@ -1865,7 +1978,7 @@ fn instanceOfValue(v: Value, target: Value) Value {
     return rt.boolean(instanceOf(v, target));
 }
 
-fn jsMod(a: f64, b: f64) f64 {
+inline fn jsMod(a: f64, b: f64) f64 {
     // Integers below 2^53 are exact in both representations, so the integer remainder is the
     // float one without fmod; only a zero result needs the dividend's sign put back.
     const exact = 9007199254740992.0;

@@ -17,7 +17,7 @@ pub const Op = enum(u8) {
     int,
     /// u16 index into the template's numbers.
     num,
-    /// u16 index into the template's strings: a fresh string value each time.
+    /// u16 index into the template's strings: lazily rooted in the current activation.
     str,
     pop,
     dup,
@@ -37,6 +37,19 @@ pub const Op = enum(u8) {
     load_checked,
     /// Same check, for an assignment to a `let` before its declaration.
     store_checked,
+    /// u16 local, u16 name key: a discarded ++/--, with TDZ and coercion before the store.
+    inc_local,
+    dec_local,
+    /// u16 local, u16 name key, i32 right operand: checked local read then binary operation.
+    add_local_int,
+    sub_local_int,
+    lt_local_int,
+    le_local_int,
+    /// u16 local, u16 name key for each operand, evaluated left to right.
+    add_locals,
+    sub_locals,
+    lt_locals,
+    le_locals,
     /// u8 hops, u16 slot.
     load_env,
     store_env,
@@ -72,6 +85,8 @@ pub const Op = enum(u8) {
     // ---- the call's own values
     /// u16 index.
     arg,
+    /// u16 argument index, u16 local: initialize a simple parameter directly.
+    arg_local,
     /// u16 index: the arguments from there on, as an array.
     rest,
     /// The arguments as an array-like object.
@@ -87,6 +102,10 @@ pub const Op = enum(u8) {
     // ---- properties
     /// u16 key, u16 ic.
     get_prop,
+    /// Same operands as get_prop, but used only as a direct call's callee.
+    get_method,
+    /// u16 local, u16 binding key, u16 property key, u16 ic: checked local then named get.
+    get_prop_local,
     /// obj value -> value. u16 key, u16 ic.
     set_prop,
     get_elem,
@@ -158,6 +177,8 @@ pub const Op = enum(u8) {
     ret,
     /// value this -> the result a construction answers (§10.2.2 [[Construct]] steps 10–12).
     ret_ctor,
+    /// value -> construction result, taking immutable `this` from the activation header.
+    ret_this,
     throw,
     /// u16 key: a ReferenceError or a TypeError the compiler already knows the program raises.
     throw_error,
@@ -289,7 +310,7 @@ pub const Kind = enum(u8) {
 
 /// One compiled function. Immortal once made: the closures made from it hold it by a raw pointer
 /// the collector does not follow, and it holds no collected value itself — string constants are
-/// bytes, made into a string by each execution of `str`, and keys are interned by the shape table.
+/// bytes, made into strings lazily in each activation, and keys are interned by the shape table.
 pub const Template = struct {
     code: []const u8,
     strings: []const []const u8,
@@ -322,6 +343,17 @@ pub const Template = struct {
         return t.kind.constructible() and !t.generator and !t.is_async;
     }
 };
+
+/// The ordinary operator whose semantics a fused local/immediate instruction preserves.
+pub fn localOperator(op: Op) Op {
+    return switch (op) {
+        .add_local_int, .add_locals => .add,
+        .sub_local_int, .sub_locals => .sub,
+        .lt_local_int, .lt_locals => .lt,
+        .le_local_int, .le_locals => .le,
+        else => unreachable,
+    };
+}
 
 pub fn read16(code: []const u8, pc: usize) u16 {
     return std.mem.readInt(u16, code[pc..][0..2], .little);

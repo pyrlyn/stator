@@ -26,20 +26,20 @@ The design rests on a measured spike, run on 2026-11-06 on an Apple M3 Max (arm6
 
 The spike's sources are not committed; this section and plan-notes 396 hold its numbers.
 
-| Measurement | Value |
-| --- | --- |
-| `fib(25)` through the tree walker, Stator-compiled | 1.20–1.26 s |
-| `fib(25)` through the bytecode VM, Stator-compiled | 0.41–0.43 s |
-| The same evaluator under Node 26.7.0 (JIT) | tree 37–45 ms, VM 30–31 ms |
-| Parse 657,780 bytes (20,000 statements), spike parser, Stator-compiled | 316–318 ms |
-| Same, spike parser under Node | 25–31 ms |
-| Same, stator-ts parser, Zig `ReleaseFast` | 7–8 ms |
-| Same, stator-ts parser, Zig `ReleaseSmall` | 11–12 ms |
-| Binary, `js`-mode `console.log` only (stripped) | 256,240 B |
-| …plus the spike's parser and tree walker (stripped) | 308,256 B (+52,016) |
-| …plus the spike's parser and bytecode VM (stripped) | 325,168 B (+68,928) |
-| stator-ts parser alone over an empty Zig program, `ReleaseSmall` (stripped) | +66,112 B |
-| stator-ts parser alone over an empty Zig program, `ReleaseFast` (stripped) | +132,240 B |
+| Measurement                                                                 | Value                      |
+| --------------------------------------------------------------------------- | -------------------------- |
+| `fib(25)` through the tree walker, Stator-compiled                          | 1.20–1.26 s                |
+| `fib(25)` through the bytecode VM, Stator-compiled                          | 0.41–0.43 s                |
+| The same evaluator under Node 26.7.0 (JIT)                                  | tree 37–45 ms, VM 30–31 ms |
+| Parse 657,780 bytes (20,000 statements), spike parser, Stator-compiled      | 316–318 ms                 |
+| Same, spike parser under Node                                               | 25–31 ms                   |
+| Same, stator-ts parser, Zig `ReleaseFast`                                   | 7–8 ms                     |
+| Same, stator-ts parser, Zig `ReleaseSmall`                                  | 11–12 ms                   |
+| Binary, `js`-mode `console.log` only (stripped)                             | 256,240 B                  |
+| …plus the spike's parser and tree walker (stripped)                         | 308,256 B (+52,016)        |
+| …plus the spike's parser and bytecode VM (stripped)                         | 325,168 B (+68,928)        |
+| stator-ts parser alone over an empty Zig program, `ReleaseSmall` (stripped) | +66,112 B                  |
+| stator-ts parser alone over an empty Zig program, `ReleaseFast` (stripped)  | +132,240 B                 |
 
 The spike also found two compiler bugs, which plan-notes 396 lists: `.length` on a dynamically read
 receiver (fixed, pyrlyn/stator#248) and the method-call receiver guess (fixed for direct calls by
@@ -112,7 +112,7 @@ the stator-ts AST to bytecode and runs that.
 and `src/vm.zig` runs it:
 
 - **A stack machine, not registers.** Each call owns a window of one thread-local value stack:
-  three call values, the locals, then the operand stack. Every operand a statement pushes is gone
+  three call values, the locals, then the operand stack and activation caches. Every operand a statement pushes is gone
   by the next statement, so a jump never rebalances the stack. The register file above was the
   spike's; a stack machine needed no register allocator, and the window is still one flat array
   the collector scans. The stack is 2^20 values per thread, taken from the page allocator rather
@@ -124,6 +124,22 @@ and `src/vm.zig` runs it:
   function with no nested function keeps them in frame locals. A name resolves at compile time to
   a local, an environment slot some hops out, or the global object.
 - **Property ICs.** A named get or set owns a `JSRTIC` in its template's table, as above.
+- **Dispatch and compact operations (T70).** A labeled switch specializes each opcode and its
+  successor branch. Exception checks follow potentially throwing instructions; numeric fast
+  paths and pure moves skip them. Simple parameter initialization, discarded local updates,
+  local arithmetic/comparisons and named property reads can use combined instructions. These
+  resolve binding slots, not types: mixed values still use the same JS coercion helpers, TDZ
+  checks and exception handlers. The baseline JIT accepts the same instructions.
+- **Call values.** In functions without nested functions, immutable `this`, `new.target`, home
+  and callee values read the activation header directly. Derived constructors retain a mutable
+  `this` binding, and captured call values remain in environments. Calls within the interpreter
+  reuse the machine pointer; entry from native code obtains the thread's machine normally.
+- **Activation caches.** String literals are allocated lazily once per activation. A direct
+  array method call can reuse its bound method while the receiver is unchanged and has no own
+  named properties. Overrides, accessors and receiver changes take normal lookup; a property
+  read that exposes the method value does not use this cache. Both strings and receiver/method
+  pairs live in the published GC frame, never unrooted template fields. Suspension drops these
+  caches and recreates them on demand after resume. They can retain values until frame exit.
 - **Globals.** `src/builtins.zig` builds the global object. Where the runtime already has a
   builtin (Map, Date, JSON, Math) the global names it. The rest are Zig natives over the
   runtime's helpers: the error constructors, `Object`'s reflection, `Symbol`, `Function.prototype`'s
@@ -254,17 +270,17 @@ The interpreter uses the runtime's existing machinery, with no second event loop
 
 ## 6. Which `not-yet` codes the interpreter takes
 
-| Code | Construct | Owner after Phase 14 |
-| --- | --- | --- |
-| `STA1206` | a direct `eval` in sloppy (CommonJS) code, since T14.3 narrowed it | the interpreter, with §3's sloppy case |
-| `STA1201` | generator methods, async generators, `for await` | the interpreter (T14.4), by interpreting the enclosing function |
-| `STA1202` | `arguments` in `js` mode | the interpreter (T14.4), same route |
-| `STA1214` | subset-boundary constructs, `js` mode only | the interpreter (T14.4), construct by construct; each one flips its decision tests |
-| `STA1203` | `Proxy` | stays: it needs an exotic-object hook in the runtime's object model, not an evaluator |
-| `STA1204` | prototype mutation | stays: shape and IC invalidation in the runtime |
-| `STA1205` | `delete` on a fixed-shape object | stays: dictionary mode in the runtime |
-| `STA1207` | `import()` with a computed specifier | stays: runtime module resolution |
-| `STA1210`, `STA1211`, `STA1213`, `STA1215`, `STA1216`, `STA1219`, `STA1220` | builtins, BigInt, ICU, FFI library output | stay: library or toolchain work, not evaluation |
+| Code                                                                        | Construct                                                          | Owner after Phase 14                                                                  |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `STA1206`                                                                   | a direct `eval` in sloppy (CommonJS) code, since T14.3 narrowed it | the interpreter, with §3's sloppy case                                                |
+| `STA1201`                                                                   | generator methods, async generators, `for await`                   | the interpreter (T14.4), by interpreting the enclosing function                       |
+| `STA1202`                                                                   | `arguments` in `js` mode                                           | the interpreter (T14.4), same route                                                   |
+| `STA1214`                                                                   | subset-boundary constructs, `js` mode only                         | the interpreter (T14.4), construct by construct; each one flips its decision tests    |
+| `STA1203`                                                                   | `Proxy`                                                            | stays: it needs an exotic-object hook in the runtime's object model, not an evaluator |
+| `STA1204`                                                                   | prototype mutation                                                 | stays: shape and IC invalidation in the runtime                                       |
+| `STA1205`                                                                   | `delete` on a fixed-shape object                                   | stays: dictionary mode in the runtime                                                 |
+| `STA1207`                                                                   | `import()` with a computed specifier                               | stays: runtime module resolution                                                      |
+| `STA1210`, `STA1211`, `STA1213`, `STA1215`, `STA1216`, `STA1219`, `STA1220` | builtins, BigInt, ICU, FFI library output                          | stay: library or toolchain work, not evaluation                                       |
 
 "By interpreting the enclosing function" is the general fallback: in `js` mode, a function whose
 body holds a construct the interpreter takes is lowered to an `Interpret` node carrying the
@@ -315,12 +331,12 @@ QuickJS-NG is not retired. Most of the 1,280 tests that still stop at a refused 
 
 ## 9. Where the code lives
 
-| Package | Holds | Must not |
-| --- | --- | --- |
-| `packages/engine` (Zig) | the parser front (`src/parse.zig`, T14.1); the entry points the runtime calls (`src/capi.zig`: `eval`, the `Function` constructor, the trampoline); the bytecode format, compiler and VM (`src/bytecode.zig`, `src/compile.zig`, `src/vm.zig`, T14.2); the global object (`src/builtins.zig`); the Test262 parse and execution drivers (`test262/parse.zig`, `test262/exec.zig`) and the execution driver's compiled host (`test262/host.ts`); the baseline JIT and `stator-engine` (`src/jit/`, `src/engine.zig`, `src/cli.zig`; `docs/ENGINE.md`). It is built into `libjsrt_interp.a` and imports stator-ts's `parser.zig`, and the CLI its `erase.zig` | hold its own value model, object model or GC |
-| `packages/transpiler` (stator-ts) | the parser | know the interpreter exists |
-| `packages/compiler` (and plan/T41's Zig port) | the `interpret-global` and `direct-eval` HIR nodes, the eval-visible cells and binding tables of §3, and linking `libjsrt_interp.a` only when generated C includes `jsrt_interp.h` (T14.3) | interpret anything at compile time |
-| `packages/runtime` | the C ABI the VM calls | grow a second dispatch path |
+| Package                                       | Holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Must not                                     |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `packages/engine` (Zig)                       | the parser front (`src/parse.zig`, T14.1); the entry points the runtime calls (`src/capi.zig`: `eval`, the `Function` constructor, the trampoline); the bytecode format, compiler and VM (`src/bytecode.zig`, `src/compile.zig`, `src/vm.zig`, T14.2); the global object (`src/builtins.zig`); the Test262 parse and execution drivers (`test262/parse.zig`, `test262/exec.zig`) and the execution driver's compiled host (`test262/host.ts`); the baseline JIT and `stator-engine` (`src/jit/`, `src/engine.zig`, `src/cli.zig`; `docs/ENGINE.md`). It is built into `libjsrt_interp.a` and imports stator-ts's `parser.zig`, and the CLI its `erase.zig` | hold its own value model, object model or GC |
+| `packages/transpiler` (stator-ts)             | the parser                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | know the interpreter exists                  |
+| `packages/compiler` (and plan/T41's Zig port) | the `interpret-global` and `direct-eval` HIR nodes, the eval-visible cells and binding tables of §3, and linking `libjsrt_interp.a` only when generated C includes `jsrt_interp.h` (T14.3)                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | interpret anything at compile time           |
+| `packages/runtime`                            | the C ABI the VM calls                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | grow a second dispatch path                  |
 
 A binary without an `Interpret` node does not link `libjsrt_interp.a`, so its size is
 byte-identical to before; every `ts`-mode binary is in that set. At T14.3, 18 golden fixtures

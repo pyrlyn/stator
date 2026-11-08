@@ -13,25 +13,25 @@ pyrlyn/gc since T66). The engine adds no second heap and no second value model.
 
 ## 1. Layout
 
-| Path | Holds |
-| --- | --- |
-| `src/engine.zig` | `run`: a source in one of the engine's languages (§2), run in one mode, with the outcome |
-| `src/cli.zig` | `stator-engine` (§5) |
-| `src/jit/analyze.zig` | Which templates the JIT takes, and the operand-stack depth at every instruction |
-| `src/jit/lower.zig` | Bytecode to pyrlyn/jit IR, with the inline fast paths |
-| `src/jit/helpers.zig` | What native code calls for everything else: the VM's own operations |
-| `src/jit/jit.zig` | Compile on first call, cache on the template, enter native code |
-| everything else | the interpreter, as `packages/engine/README.md` lists it |
+| Path                  | Holds                                                                                    |
+| --------------------- | ---------------------------------------------------------------------------------------- |
+| `src/engine.zig`      | `run`: a source in one of the engine's languages (§2), run in one mode, with the outcome |
+| `src/cli.zig`         | `stator-engine` (§5)                                                                     |
+| `src/jit/analyze.zig` | Which templates the JIT takes, and the operand-stack depth at every instruction          |
+| `src/jit/lower.zig`   | Bytecode to pyrlyn/jit IR, with the inline fast paths                                    |
+| `src/jit/helpers.zig` | What native code calls for everything else: the VM's own operations                      |
+| `src/jit/jit.zig`     | Compile on first call, cache on the template, enter native code                          |
+| everything else       | the interpreter, as `packages/engine/README.md` lists it                                 |
 
 ## 2. Input languages
 
-| Language | Extensions | How it runs |
-| --- | --- | --- |
-| `js` | `.js` `.mjs` `.cjs` | parsed by stator-ts's parser, compiled to bytecode |
-| `ts` | `.ts` `.mts` `.cts` | stator-ts erases the types (`packages/transpiler/src/erase.zig`: parse, bind, emit JavaScript), then as `js`. Types are not checked: a script with type errors runs, as under Node's type stripping |
-| `wasm` | `.wasm` | named and rejected until plan/T67.3 adds a WebAssembly runtime |
+| Language | Extensions          | How it runs                                                                                                                                                                                         |
+| -------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `js`     | `.js` `.mjs` `.cjs` | parsed by stator-ts's parser, compiled to bytecode                                                                                                                                                  |
+| `ts`     | `.ts` `.mts` `.cts` | stator-ts erases the types (`packages/transpiler/src/erase.zig`: parse, bind, emit JavaScript), then as `js`. Types are not checked: a script with type errors runs, as under Node's type stripping |
+| `wasm`   | `.wasm`             | named and rejected until plan/T67.3 adds a WebAssembly runtime                                                                                                                                      |
 
-Compiling JavaScript or TypeScript *to* WebAssembly (plan/T67.2) and to Zig source (plan/T67.4)
+Compiling JavaScript or TypeScript _to_ WebAssembly (plan/T67.2) and to Zig source (plan/T67.4)
 are `build` targets the CLI names and rejects until those cards land.
 
 ## 3. The baseline JIT
@@ -94,33 +94,35 @@ deoptimization) are the next steps.
 
 ## 4. Tests and benchmark
 
-| Command | What it checks |
-| --- | --- |
-| `pnpm run interp:test` | The engine's Zig tests; every interpreter test runs in both modes, and the JIT tests assert the templates were compiled. In test builds every helper the JIT calls is counted (`helpers.counted`), and `jitCost` tests pin how often each runs: a numeric loop calls none, a cached property read misses once per site, a global read once per function and name; they also pin how often the interpreter enters native code, which a call between compiled functions does not |
-| `pnpm run engine:test` | `packages/tests/engine/run.ts`: every script in `packages/tests/engine/scripts/` under the pinned Node and `stator-engine run` in both modes, stdout and exit status byte-for-byte; an uncaught error's first line; the CLI's usage errors and not-yet targets |
-| `pnpm run engine:bench` | `packages/tests/engine/bench.ts`: the bench programs (`packages/tests/engine/scripts/` and the JavaScript ones in `packages/tests/engine/bench/`) under Node (V8) and `jit` mode, each output checked against Node's, best of N wall time and peak RSS; results in `packages/tests/engine/results/` (ignored). V8 is the only reference |
-| `pnpm run engine:bench:zig` | `src/bench.zig`: the `packages/tests/engine/bench/` programs run by the engine inside one process, best of N, with no process or runtime start-up; prints the milliseconds and the templates compiled. `--mode=interp` measures the interpreter |
+| Command                     | What it checks                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm run interp:test`      | The engine's Zig tests; every interpreter test runs in both modes, and the JIT tests assert the templates were compiled. In test builds every helper the JIT calls is counted (`helpers.counted`), and `jitCost` tests pin how often each runs: a numeric loop calls none, a cached property read misses once per site, a global read once per function and name; they also pin how often the interpreter enters native code, which a call between compiled functions does not |
+| `pnpm run engine:test`      | `packages/tests/engine/run.ts`: every script in `packages/tests/engine/scripts/` under the pinned Node and `stator-engine run` in both modes, stdout and exit status byte-for-byte; an uncaught error's first line; the CLI's usage errors and not-yet targets                                                                                                                                                                                                                 |
+| `pnpm run engine:bench`     | `packages/tests/engine/bench.ts`: the bench programs (`packages/tests/engine/scripts/` and the JavaScript ones in `packages/tests/engine/bench/`) under Node (V8) and `jit` mode, each output checked against Node's, best of N wall time and peak RSS; results in `packages/tests/engine/results/` (ignored). V8 is the only reference                                                                                                                                        |
+| `pnpm run engine:bench:zig` | `src/bench.zig`: the `packages/tests/engine/bench/` programs run by the engine inside one process, best of N, with no process or runtime start-up; prints the milliseconds and the templates compiled. `--mode=interp` measures the interpreter                                                                                                                                                                                                                                |
+
+| `pnpm run engine:bench:quickjs` | Identical JavaScript in interpreter mode, QuickJS and optional PrimJS, with pinned Node as output oracle; rotating samples, medians, quartiles and every raw sample |
 
 A measurement, not a claim: 2026-11-08, Apple M3 Max, macOS 27.0, Node v26.7.0, Zig 0.17.1,
 `stator-engine` ReleaseFast, best of 5, wall milliseconds from spawn to exit (startup included).
 
-| program | Node (V8) | jit | jit / V8 |
-|---|---:|---:|---:|
-| fib.ts | 96 | 282 | 2.94 |
-| nbody.ts | 60 | 26 | 0.43 |
-| string-churn.ts | 56 | 15 | 0.28 |
-| json-roundtrip.ts | 56 | 8.0 | 0.14 |
-| hello.ts | 51 | 7.4 | 0.15 |
-| objects-churn.ts | 80 | 856 | 10.73 |
-| objects-retained.ts | 111 | 1002 | 9.03 |
-| alloc.js | 45 | 507 | 11.39 |
-| arrays.js | 55 | 315 | 5.71 |
-| closures.js | 43 | 114 | 2.63 |
-| fib.js | 51 | 112 | 2.19 |
-| loop.js | 59 | 325 | 5.53 |
-| methods.js | 40 | 244 | 6.06 |
-| props.js | 46 | 414 | 9.03 |
-| strings.js | 62 | 204 | 3.31 |
+| program             | Node (V8) |  jit | jit / V8 |
+| ------------------- | --------: | ---: | -------: |
+| fib.ts              |        96 |  282 |     2.94 |
+| nbody.ts            |        60 |   26 |     0.43 |
+| string-churn.ts     |        56 |   15 |     0.28 |
+| json-roundtrip.ts   |        56 |  8.0 |     0.14 |
+| hello.ts            |        51 |  7.4 |     0.15 |
+| objects-churn.ts    |        80 |  856 |    10.73 |
+| objects-retained.ts |       111 | 1002 |     9.03 |
+| alloc.js            |        45 |  507 |    11.39 |
+| arrays.js           |        55 |  315 |     5.71 |
+| closures.js         |        43 |  114 |     2.63 |
+| fib.js              |        51 |  112 |     2.19 |
+| loop.js             |        59 |  325 |     5.53 |
+| methods.js          |        40 |  244 |     6.06 |
+| props.js            |        46 |  414 |     9.03 |
+| strings.js          |        62 |  204 |     3.31 |
 
 The engine starts in under 10 ms against Node's 50, so short scripts favor it. On hot code V8's
 optimizing tiers are still 2–11 times faster than this baseline JIT. The inline caches, prologue
@@ -178,6 +180,58 @@ execution; the current three kernels do not establish broader bytecode coverage.
 The first three-round baseline and its raw data are recorded in
 [`plan/T69/report.md`](../plan/T69/report.md). It does not beat warmed V8 on any of the three
 kernels; it is a starting measurement for T67.1, not evidence that the performance goal is met.
+
+### Comparing the interpreter with QuickJS
+
+Install QuickJS separately, then run after `pnpm run runtime`:
+
+```bash
+QJS=/path/to/qjs BENCH_RUNS=7 pnpm run engine:bench:quickjs
+QJS=/path/to/qjs BENCH_RUNS=15 pnpm run engine:bench:quickjs --require-faster
+QJS=/path/to/qjs PRIMJS=/path/to/primjs/out/Default_snapshot/qjs BENCH_RUNS=15 pnpm run engine:bench:quickjs
+```
+
+The fixtures in `packages/tests/engine/scripts/bench/` cover numeric loops, recursive calls,
+array traversal, object properties, closures, prime sieving and string concatenation. Their
+`.ts` files contain JavaScript without annotations: Stator uses `--mode=interp --lang=js`,
+QuickJS uses `--script`, and all stdout must match the pinned Node byte for byte. A process's
+wall time includes startup and the timing wrapper. One untimed run precedes rotated tool
+order; the report includes executable flags, versions, source hashes, the interpreter binary
+hash, the source diff and raw samples. The interpreter executable is copied before measuring
+so another build cannot replace it midway through a run.
+
+`STATOR_ENGINE` selects a prebuilt interpreter; `STATOR_ENGINE_BASELINE` adds an older
+ReleaseFast executable to the same rounds. Results are saved under the ignored `results/`
+directory. `--require-faster` fails unless the interpreter's 75th percentile is below QuickJS's
+25th percentile on **every** fixture. It does not hide losses or silently switch to JIT.
+This is a local benchmark criterion, not a claim about all JavaScript programs or machines.
+The owner-requested target and remaining work are tracked in `plan/T70/task.md`.
+
+`PRIMJS` adds [Lynx PrimJS](https://github.com/lynx-family/primjs) to the same rotating rounds
+and output checks. Point it at a release executable built using upstream's instructions; on
+macOS arm64 use the snapshot interpreter with tracing GC enabled. `PRIMJS_VERSION`,
+`PRIMJS_REVISION` and `PRIMJS_BUILD_ARGS` record its provenance (its CLI has no version flag).
+The report also hashes that executable and records `--runtime-info`. `--require-faster` continues
+to check the QuickJS target; PrimJS is an additional comparison, not a replacement oracle.
+
+Local comparison, 2026-11-08, Apple M3 Max / macOS 27.0.1: Zig 0.17.1 ReleaseFast, QuickJS
+2026-06-04, PrimJS 2.11.1-rc.1 at `941a365b` (release arm64 snapshot interpreter, tracing GC).
+Medians of 15, wall milliseconds including startup:
+
+| Workload | T68 baseline | Stator interp | QuickJS | PrimJS | Speedup over T68 |
+| -------- | -----------: | ------------: | ------: | -----: | ---------------: |
+| array    |       111.22 |         40.51 |   45.04 |  28.57 |            2.75× |
+| closure  |        97.49 |         32.51 |   33.16 |  22.54 |            3.00× |
+| fib      |       536.90 |        146.06 |  134.95 |  83.09 |            3.68× |
+| loop     |       223.15 |        100.39 |   81.95 |  55.27 |            2.22× |
+| objects  |       143.79 |         53.26 |   56.53 |  37.65 |            2.70× |
+| sieve    |        64.42 |         22.28 |   24.11 |  18.02 |            2.89× |
+| string   |        20.62 |         13.44 |   13.41 |   9.91 |            1.53× |
+
+The changed interpreter is 1.5–3.7 times faster than its T68 baseline. It beats QuickJS beyond
+interquartile variation on arrays, objects and sieving; the all-workload gate still fails on
+closures, recursion, the numeric loop and strings. PrimJS wins all seven comparisons.
+[The T70 progress record](../plan/T70/progress.md) includes checks, build commands and raw samples.
 
 ## 5. The CLI
 
