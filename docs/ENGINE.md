@@ -58,6 +58,10 @@ collects needs no stack maps.
   NaN, because x86-64's default NaN has `undefined`'s bit pattern; AArch64's default NaN is the
   canonical one already, so there the check is not emitted;
 - `< > <= >= == === != !==` on two doubles through `fcmp`, written as `false + cmp`;
+- `%` on two integer-valued doubles with magnitudes below `2^53` and a nonzero divisor:
+  guarded integer conversion and signed remainder, preserving the dividend's sign for zero.
+  Fractions, larger magnitudes, nonfinite values, zero divisors and coercions use the VM's
+  existing remainder operation;
 - `++`, `--`, unary `+` and unary `-` on a double (`-x` is `x * -1`, so `-0` and `+0` swap);
 - `!` on a boolean, and the conditional jumps on `true` and `false`;
 - locals, arguments, constants and the TDZ check of a checked local;
@@ -180,6 +184,21 @@ execution; the current three kernels do not establish broader bytecode coverage.
 The first three-round baseline and its raw data are recorded in
 [`plan/T69/report.md`](../plan/T69/report.md). It does not beat warmed V8 on any of the three
 kernels; it is a starting measurement for T67.1, not evidence that the performance goal is met.
+
+T71 remeasured the merged baseline and added the guarded integer `%` path (§3). On the same
+Apple M3 Max with Node v26.7.0 and ReleaseFast, three interleaved processes per engine/kernel
+gave these medians in microseconds per checked call after warmup:
+
+| Kernel | V8 | JIT before | JIT after | After / V8 |
+| --- | ---: | ---: | ---: | ---: |
+| numeric | 22.252 | 213.642 | 190.008 | 8.54 |
+| objects | 4.525 | 238.305 | 237.288 | 52.44 |
+| cycles | 5.402 | 176.106 | 173.089 | 32.04 |
+
+Numeric time fell 11.1%, with nonoverlapping before/after process-median ranges. The object
+change is within variation; no object or collector improvement is claimed. Stator remains
+slower than V8 on all three kernels. Method, limitations and raw samples are in
+[`plan/T71/report.md`](../plan/T71/report.md).
 
 ### Comparing the interpreter with QuickJS
 

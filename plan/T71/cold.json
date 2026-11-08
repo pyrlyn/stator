@@ -1,0 +1,209 @@
+{
+  "host": {
+    "cpu": "Apple M3 Max",
+    "os": "darwin 27.0.0",
+    "arch": "arm64",
+    "node": "v26.7.0",
+    "zig": "0.17.1",
+    "engineBuild": "ReleaseFast",
+    "runs": 3
+  },
+  "tools": ["node (V8)", "engine jit"],
+  "rows": [
+    {
+      "program": "fib.ts",
+      "results": [
+        {
+          "ms": 90.52225,
+          "rssMb": 80.84375
+        },
+        {
+          "ms": 275.001417,
+          "rssMb": 11.765625
+        }
+      ]
+    },
+    {
+      "program": "nbody.ts",
+      "results": [
+        {
+          "ms": 58.732375,
+          "rssMb": 83
+        },
+        {
+          "ms": 25.050333,
+          "rssMb": 12.03125
+        }
+      ]
+    },
+    {
+      "program": "string-churn.ts",
+      "results": [
+        {
+          "ms": 53.770625,
+          "rssMb": 82.3125
+        },
+        {
+          "ms": 13.283417,
+          "rssMb": 14.65625
+        }
+      ]
+    },
+    {
+      "program": "json-roundtrip.ts",
+      "results": [
+        {
+          "ms": 54.745041,
+          "rssMb": 77.546875
+        },
+        {
+          "ms": 7.515208,
+          "rssMb": 12.03125
+        }
+      ]
+    },
+    {
+      "program": "hello.ts",
+      "results": [
+        {
+          "ms": 51.975041,
+          "rssMb": 76.59375
+        },
+        {
+          "ms": 7.144375,
+          "rssMb": 11.5625
+        }
+      ]
+    },
+    {
+      "program": "objects-churn.ts",
+      "results": [
+        {
+          "ms": 80.171458,
+          "rssMb": 83.578125
+        },
+        {
+          "ms": 850.595167,
+          "rssMb": 20.703125
+        }
+      ]
+    },
+    {
+      "program": "objects-retained.ts",
+      "results": [
+        {
+          "ms": 107.837833,
+          "rssMb": 241.765625
+        },
+        {
+          "ms": 835.414584,
+          "rssMb": 314.953125
+        }
+      ]
+    },
+    {
+      "program": "alloc.js",
+      "results": [
+        {
+          "ms": 43.292292,
+          "rssMb": 58.609375
+        },
+        {
+          "ms": 499.7,
+          "rssMb": 20.6875
+        }
+      ]
+    },
+    {
+      "program": "arrays.js",
+      "results": [
+        {
+          "ms": 53.963667,
+          "rssMb": 88.40625
+        },
+        {
+          "ms": 317.808083,
+          "rssMb": 40.546875
+        }
+      ]
+    },
+    {
+      "program": "closures.js",
+      "results": [
+        {
+          "ms": 41.967125,
+          "rssMb": 56.359375
+        },
+        {
+          "ms": 119.749875,
+          "rssMb": 11.8125
+        }
+      ]
+    },
+    {
+      "program": "fib.js",
+      "results": [
+        {
+          "ms": 48.561625,
+          "rssMb": 56.078125
+        },
+        {
+          "ms": 111.161625,
+          "rssMb": 11.6875
+        }
+      ]
+    },
+    {
+      "program": "loop.js",
+      "results": [
+        {
+          "ms": 57.726584,
+          "rssMb": 56.828125
+        },
+        {
+          "ms": 325.0255,
+          "rssMb": 11.671875
+        }
+      ]
+    },
+    {
+      "program": "methods.js",
+      "results": [
+        {
+          "ms": 36.681083,
+          "rssMb": 56.59375
+        },
+        {
+          "ms": 253.40525,
+          "rssMb": 11.828125
+        }
+      ]
+    },
+    {
+      "program": "props.js",
+      "results": [
+        {
+          "ms": 45.14125,
+          "rssMb": 56.703125
+        },
+        {
+          "ms": 253.613208,
+          "rssMb": 11.875
+        }
+      ]
+    },
+    {
+      "program": "strings.js",
+      "results": [
+        {
+          "ms": 61.583709,
+          "rssMb": 120.40625
+        },
+        {
+          "ms": 150.101834,
+          "rssMb": 25.8125
+        }
+      ]
+    }
+  ]
+}

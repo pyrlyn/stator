@@ -158,6 +158,7 @@ const Lowerer = struct {
     }
 
     fn binaryOp(l: *Lowerer, o: Op, s: u32) !void {
+        if (o == .mod) return l.remainder(s);
         // On two doubles loose and strict equality agree.
         const fast: union(enum) { none, arith: ir.TArith, cmp: ir.FCond } = switch (o) {
             inline .add, .sub, .mul, .div => |x| .{ .arith = @field(ir.TArith, @tagName(x)) },
@@ -185,6 +186,48 @@ const Lowerer = struct {
             },
         }
         try l.slowPath(slow, join, h.binary, o, s);
+    }
+
+    /// The integer case of vm.jsMod, expressed with the backend's existing conversions and
+    /// signed remainder. Magnitudes below 2^53 exclude boxed values, NaN and infinities before
+    /// conversion; the round trip rejects fractions. Both guards also exclude i64 overflow.
+    fn exactInteger(l: *Lowerer, s: u32, slow: u32) !VReg {
+        const bits = try l.load(s);
+        const magnitude = try l.arith(.@"and", bits, try l.konst(0x7FFF_FFFF_FFFF_FFFF));
+        const in_range = try l.block();
+        const limit: f64 = 9007199254740992.0;
+        try l.cbr(.uge, magnitude, try l.konst(@bitCast(limit)), slow, in_range);
+        l.cur = in_range;
+        const value = try l.loadF(s);
+        const integer = try l.def(.cvt, .{ .dst = undefined, .src = value, .from = .f64, .to = .i64 });
+        const back = try l.def(.cvt, .{ .dst = undefined, .src = integer, .from = .i64, .to = .f64 });
+        const exact = try l.def(.fcmp, .{ .dst = undefined, .cond = .eq, .ty = .f64, .a = value, .b = back });
+        try l.guardEq(exact, 1, slow);
+        return integer;
+    }
+
+    fn remainder(l: *Lowerer, s: u32) !void {
+        const slow = try l.block();
+        const join = try l.block();
+        const a = try l.exactInteger(s, slow);
+        const b = try l.exactInteger(s + 1, slow);
+        const nonzero = try l.block();
+        const zero = try l.konst(0);
+        try l.cbr(.eq, b, zero, slow, nonzero);
+        l.cur = nonzero;
+        const r = try l.arith(.srem, a, b);
+        const signed_zero = try l.block();
+        const number = try l.block();
+        try l.cbr(.eq, r, zero, signed_zero, number);
+        l.cur = number;
+        const value = try l.def(.cvt, .{ .dst = undefined, .src = r, .from = .i64, .to = .f64 });
+        try l.emit(.{ .store = .{ .base = l.w, .disp = disp(s), .src = value, .ty = .f64 } });
+        try l.br(join);
+        l.cur = signed_zero;
+        // Integer conversion loses -0; JavaScript's zero remainder keeps the dividend's sign.
+        try l.store(s, try l.arith(.@"and", try l.load(s), try l.konst(imm(0x8000_0000_0000_0000))));
+        try l.br(join);
+        try l.slowPath(slow, join, h.binary, .mod, s);
     }
 
     /// `a op b` in f64 into window slot `s`, then on to `join` with its NaN canonical.
