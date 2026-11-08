@@ -16,7 +16,7 @@ through pyrlyn/jit. Until T67 this package was `packages/interpreter`.
 | `src/interp.zig` | `runScript` and `evalScript`: parse, compile and run a script against the global object. |
 | `src/engine.zig` | `run`: a `.js` or `.ts` source (TypeScript erased by stator-ts's `erase.zig`) in `interp` or `jit` mode (`docs/ENGINE.md`). |
 | `src/cli.zig` | `stator-engine run [--mode=interp\|jit] [--lang=js\|ts\|wasm] <file>` (`docs/ENGINE.md` §5). |
-| `src/jit/` | The baseline JIT: `analyze.zig` (which templates, stack depths), `lower.zig` (bytecode → pyrlyn/jit IR), `helpers.zig` (the VM operations native code calls), `jit.zig` (compile on first call). |
+| `src/jit/` | The baseline JIT: `analyze.zig` (which templates, stack depths), `lower.zig` (bytecode → pyrlyn/jit IR), `layout.zig` (block order for backend liveness), `helpers.zig` (the VM operations native code calls), `jit.zig` (compile on first call), `timing.zig` (opt-in compilation stage timing). |
 | `src/rt.zig` | The runtime's C ABI, translated from `packages/runtime/src/jsrt_c.h`. |
 | `test262/parse.zig` | Runs Test262's `test/language/` through the parse entry and ratchets the result against `test262-parse.json`. |
 | `test262/host.ts` | The Test262 host: strict TS compiled `--mode=js --node`, so a test runs in the interpreter through an indirect `eval`, and `print` and `$262` are compiled code. |
@@ -43,3 +43,8 @@ set. A `--filter` run checks a slice, so it neither gates nor records.
 The script corpus and the V8 benchmark live in `packages/tests/engine/` (`pnpm run engine:test`,
 `pnpm run engine:bench`); `src/bench.zig` times the `bench/` programs inside one process
 (`pnpm run engine:bench:zig`).
+
+From the repository root, `node packages/tests/engine/startup.ts --rounds=9` measures cold
+process startup and compilation separately, comparing Stator with V8 Sparkplug and TurboFan.
+`STATOR_JIT_TRACE=1` adds nanosecond compilation-stage records to the existing trace. The
+measurement boundaries, before/after binary overrides and limitations are in `docs/ENGINE.md` §4.2.

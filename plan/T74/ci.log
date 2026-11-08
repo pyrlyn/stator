@@ -1,0 +1,117 @@
+$ node scripts/check-node.ts && node scripts/check-js-sources.ts && pnpm run typecheck && pnpm run lint && pnpm run dupes && pnpm run runtime && pnpm run test && pnpm run test:runtime && pnpm run test:subset && pnpm run test:golden && pnpm run test:selfhost && pnpm run test:builtins && pnpm run test:node-coverage && pnpm run test:leak && pnpm run test:asan
+stator: node v26.7.0 matches .node-version (26.7.0)
+stator: 815 tracked js/mjs/cjs files, all exempt
+$ node scripts/typecheck.ts
+$ oxlint --deny-warnings . && oxfmt --check "**/*.{ts,tsx,js,mjs,cjs,json,jsonc}"
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 47ms on 402 files using 16 threads.
+$ cpd .
+Using config from .jscpd.json
+[1mClones[22m:
+---
+[1m0[22m clones · [1m0.0%[22m duplication
+[90mtime: 53.844ms[39m
+$ just -f packages/runtime/justfile -d packages/runtime runtime && just -f packages/std/justfile -d packages/std std && just -f packages/engine/justfile -d packages/engine interp
+Runtime built with: pyrlyn/gc deferred RC (perceus), no LTO (the linker cannot read bitcode archives)
+std built: build/libjsrt_std.a
+interpreter built: build/lib/libjsrt_interp.a
+$ vitest run --config packages/tests/vitest.config.ts
+
+ RUN  v5.0.5 /Users/listepo/GitHub/listepo/apps/_worktrees/stator-t74
+
+ld: library not found for -lstator_missing_lib_xyz
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+
+ Test Files  67 passed (67)
+      Tests  843 passed (843)
+   Start at  22:39:18
+   Duration  48.71s (tests 91%, import 8%, setup 1%)
+
+$ just -f packages/runtime/justfile -d packages/runtime runtime-test
+Runtime built with: pyrlyn/gc deferred RC (perceus), no LTO (the linker cannot read bitcode archives)
+roots ok
+runtime: print corpus matches Node
+$ node packages/tests/subset/run.ts
+subset: 1041 fixtures — 1010 passed, 31 expected-fail, 0 failed
+$ node packages/tests/golden/run.ts
+golden: 525 fixtures — 525 passed, 0 failed
+golden: SKIPPED 2 intl_* fixtures (STATOR_RUNTIME is not intl; run `pnpm run test:intl` to include them)
+$ node packages/tests/selfhost/run.ts
+selfhost: packages/compiler: not-yet, 1 × STA1207, 2 × STA1213, 436 × STA1214
+selfhost: packages/std/src/encoding.ts: static
+selfhost: packages/std/src/env.ts: dynamic
+selfhost: packages/std/src/fs.ts: static
+selfhost: packages/std/src/hash.ts: dynamic
+selfhost: packages/std/src/io.ts: static
+selfhost: packages/std/src/os.ts: static
+selfhost: packages/std/src/path.ts: static
+selfhost: packages/std/src/process.ts: static
+selfhost: packages/std/src/sync.ts: dynamic
+selfhost: packages/std/src/thread.ts: static
+selfhost: packages/std/src/time.ts: static
+selfhost: packages/node/src/assert.ts: dynamic
+selfhost: packages/node/src/buffer.ts: dynamic
+selfhost: packages/node/src/crypto.ts: dynamic
+selfhost: packages/node/src/fs.ts: dynamic
+selfhost: packages/node/src/module.ts: dynamic
+selfhost: packages/node/src/os.ts: static
+selfhost: packages/node/src/path.ts: dynamic
+selfhost: packages/node/src/perf_hooks.ts: dynamic
+selfhost: packages/node/src/process.ts: dynamic
+selfhost: packages/node/src/timers.ts: dynamic
+selfhost: std_* smoke — 11 modules built and run; golden: 10 fixtures — 10 passed, 0 failed
+selfhost: node_* smoke — 10 modules built and run; golden: 23 fixtures — 23 passed, 0 failed
+selfhost: 22 targets match the baseline (65.7 s: explain 18.5 s, smoke 47.2 s)
+$ node packages/tests/golden/builtins.ts
+builtins: 258/324 surface members landed (80%), +5 nondeterministic (proved outside golden)
+  globals: 12/12 (100%)
+  Array: 2/3 (67%) — missing: of
+  Math: 42/42 (100%) [+1 nondeterministic]
+  Number: 12/14 (86%) — missing: isInteger, isSafeInteger
+  Number.prototype: 2/6 (33%) — missing: toExponential, toLocaleString, toPrecision, valueOf
+  String.prototype: 32/32 (100%)
+  Array.prototype: 37/37 (100%)
+  console: 12/12 (100%) [+3 nondeterministic]
+  Object: 9/13 (69%) — missing: create, defineProperty, getPrototypeOf, setPrototypeOf
+  Map.prototype: 10/10 (100%)
+  Set.prototype: 16/16 (100%)
+  RegExp.prototype: 13/15 (87%) — missing: compile, unicodeSets
+  Date: 2/2 (100%) [+1 nondeterministic]
+  Date.prototype: 39/43 (91%) — missing: toTimeString, toLocaleString, toLocaleDateString, toLocaleTimeString
+  JSON: 2/2 (100%)
+  Promise: 3/8 (38%) — missing: allSettled, any, race, withResolvers, try
+  Promise.prototype: 3/3 (100%)
+  Uint8Array: 0/5 (0%) — missing: from, of, BYTES_PER_ELEMENT, fromBase64, fromHex
+  Uint8Array.prototype: 7/40 (18%) — missing: entries, keys, values, at, copyWithin, every, fill, filter, find, findIndex, findLast, findLastIndex, forEach, includes, indexOf, join, lastIndexOf, map, reverse, reduce, reduceRight, some, sort, toReversed, toSorted, with, toLocaleString, toString, BYTES_PER_ELEMENT, toBase64, setFromBase64, toHex, setFromHex
+  ArrayBuffer: 1/1 (100%)
+  ArrayBuffer.prototype: 2/8 (25%) — missing: maxByteLength, resizable, resize, transfer, transferToFixedLength, detached
+$ node packages/tests/golden/node-coverage.ts --check
+node-coverage: docs/NODE.md is current
+$ node packages/tests/leak/run.ts
+leak: 10M objects — peak RSS 11840 KB of a 65536 KB cap, 54 samples, plateau
+leak: 10M FFI strings — peak RSS 12592 KB of a 65536 KB cap, 367 samples, plateau
+leak: 2M computed-key reads — peak RSS 12416 KB of a 65536 KB cap, 33 samples, plateau
+leak: 2M garbage cycles — peak RSS 16000 KB of a 65536 KB cap, 59 samples, plateau
+$ node packages/tests/golden/asan-gate.ts
+Runtime (ASan) built with: pyrlyn/gc deferred RC (perceus), no LTO (sanitized build)
+std built: build/libjsrt_std.a
+interpreter built: build/lib/libjsrt_interp.a
+Runtime (ASan) built with: pyrlyn/gc deferred RC (perceus), no LTO (sanitized build)
+roots ok
+runtime: print corpus matches Node (ASan/UBSan)
+ffi static-lib: ok (asan, two libraries, two collectors collecting on every allocation)
+
+ RUN  v5.0.5 /Users/listepo/GitHub/listepo/apps/_worktrees/stator-t74
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed | 15 skipped (22)
+   Start at  22:44:00
+   Duration  8.40s (tests 97%, import 2%)
+
+asan: inputs changed since 2026-11-08T20:31:33.139Z — running the full golden-asan pass
+golden: 525 fixtures — 525 passed, 0 failed
+golden: SKIPPED 2 intl_* fixtures (STATOR_RUNTIME is not intl; run `pnpm run test:intl` to include them)
+asan: golden-asan green — recorded ee2a01466dcd…
