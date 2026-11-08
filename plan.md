@@ -1188,7 +1188,7 @@ T9.1 proceeds independently. §15.1's top-down rule does not apply here.
 
 The Zig modules export the same C ABI and link into `libjsrt.a`. `jsrt_value.h` stays the
 codegen↔runtime contract, and generated code stays C. The collector is pyrlyn/gc, a Zig package
-driven as deferred reference counting (plan/T66, plan-notes 403; Boehm before it). Zig 0.17.1 is pinned in stator's `mise.toml`; a global 0.14.1 (if present) is
+driven as deferred reference counting (plan/T66, plan-notes 404; Boehm before it). Zig 0.17.1 is pinned in stator's `mise.toml`; a global 0.14.1 (if present) is
 untouched. This reopens the settled C11-runtime decision (§15.4) on the creator's direction.
 
 ### ~~T9.1. Runtime memory core in Zig~~ → [`plan/T9.1`](plan/T9.1/done.md)
@@ -1561,7 +1561,7 @@ rule 9, §11a), and it compiles to bytecode (the spike: 2.9× faster than a tree
 
 ### ~~T14.1. `packages/interpreter`: the parser front~~ → [`plan/T14.1/done.md`](plan/T14.1/done.md)
 
-### T14.2. `packages/interpreter`: the core evaluator → [`plan/T14.2`](plan/T14.2/task.md)
+### ~~T14.2. `packages/interpreter`: the core evaluator~~ → [`plan/T14.2/done.md`](plan/T14.2/done.md)
 
 ### T14.3. Wiring: `eval`, `new Function`, and the `Interpret` node → [`plan/T14.3`](plan/T14.3/task.md)
 
@@ -1739,7 +1739,7 @@ ms/line flat, golden byte-for-byte, full gate green.
 | `--node` (Phase 11) | typed arrays, `packages/std` + `packages/node`, CommonJS, sync `tsc` (N1) | T11.1–T11.6; the largest item is T11.4 (js-mode coverage, not Node). N2 deferred, N3 not planned (plan-notes 289) |
 | Bundler front end (Phase 12) | `statorc/api`, `BundlerAdapter`, `packages/vite-stator`; packages + CommonJS bundled into one vendor module, project stays Stator's graph | T12.0–T12.2 landed (plan-notes 296, 320, 321, `docs/BUNDLER.md`); T12.3 |
 | Web API (Phase 13) | `packages/webapi` (DOM + CSS, strict TS, render API) + `packages/renderer-clay` (default renderer) | T13.0 design first; T13.1–T13.5 (coverage in generated `docs/WEBAPI.md`); other Web APIs low priority (plan-notes 298, 299) |
-| JS interpreter (Phase 14) | `packages/interpreter` in Zig on stator-ts's parser: `eval`, `new Function` and other `not-yet` constructs in `js` mode, on the runtime's own values (`docs/INTERPRETER.md`) | T14.0 and T14.1 done; T14.2–T14.4 (plan-notes 300, 396, 401) |
+| JS interpreter (Phase 14) | `packages/interpreter` in Zig on stator-ts's parser: `eval`, `new Function` and other `not-yet` constructs in `js` mode, on the runtime's own values (`docs/INTERPRETER.md`) | T14.0–T14.2 done; T14.3–T14.4 (plan-notes 300, 396, 401, 403) |
 | Optimization ladder §12 rows 1–5 | competitive perf story | +3–5 months |
 | Conformance long tail | Porffor is at ~61% Test262 after years with a funded lead | years — the moat, budget honestly |
 
@@ -1981,4 +1981,4 @@ column and is not re-tagged: those rows are not tasks until they are scheduled.
 - **v4.88** (2026-11-02): **T41 opens: the compiler moves to Zig on stator-ts** (plan-notes 393). `packages/compiler` stays on `typescript` 6.0.3 as the oracle; Zig goes to 0.17.0 project-wide; `test:typediff` measures stator-ts against the checker.
 - **v4.89** (2026-11-06): **T14.0: the interpreter is Zig in the runtime, on stator-ts's parser, running bytecode** (plan-notes 396, `docs/INTERPRETER.md`). The creator chose the parser and the language from the spike's numbers; §11f and plan/T14.1–T14.4 follow.
 - **v4.90** (2026-11-07): **T14.1: `packages/interpreter`'s parser front** (plan-notes 401). The parse entry, the C ABI and a Test262 `language/` parse driver land in Zig on stator-ts's parser as it stands; 80.76% pass at the pin, ratcheted, and the rest is listed for stator-ts's owners.
-- **v4.91** (2026-11-07): **T66: Boehm is replaced by pyrlyn/gc as coalesced deferred reference counting** (plan-notes 403, `docs/VALUE.md` §4.12). No system GC library; each `--emit=lib` library carries its own collector; Zig moves to 0.17.1.
+- **v4.91** (2026-11-07): **T66: Boehm is replaced by pyrlyn/gc as coalesced deferred reference counting** (plan-notes 404, `docs/VALUE.md` §4.12). No system GC library; each `--emit=lib` library carries its own collector; Zig moves to 0.17.1.

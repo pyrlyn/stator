@@ -85,7 +85,9 @@ packages/jstext/   Zig: JavaScript text semantics over WTF-8 (Number::toString, 
                    order, JSON.stringify of a string), shared by transpiler and compiler-zig (plan/T62)
 packages/interpreter/ Zig: the Phase-14 interpreter (docs/INTERPRETER.md) → libjsrt_interp.a; src/parse.zig
                    (stator-ts's parser as `eval` and `new Function` read source), src/capi.zig (the C ABI),
-                   test262/parse.zig (Test262 language/ parse driver, ratcheted in test262-parse.json)
+                   src/compile.zig + src/vm.zig (bytecode compiler and VM), src/builtins.zig (globals),
+                   test262/parse.zig + test262/exec.zig (Test262 language/ parse and execution drivers,
+                   ratcheted in test262-parse.json and test262-exec.json)
 examples/vite/     `vite build` → native binary through vite-stator (a workspace package)
 ```
 
@@ -145,6 +147,7 @@ pnpm run test:leak              # 10M-object loop plus a cyclic one; RSS must pl
 pnpm run test262                # Test262 slice against packages/tests/test262/pin.json (not part of `ci`)
 pnpm run interp:test            # the interpreter's Zig tests (packages/interpreter; not part of `ci`)
 pnpm run test262:interp-parse   # Test262 language/ through the interpreter's parse entry, ratcheted (not part of `ci`)
+pnpm run test262:interp-exec    # Test262 language/ run by the interpreter, ratcheted; needs `pnpm run runtime` (not part of `ci`)
 pnpm run test:node-suite        # Node's own tests (packages/tests/node-suite/pin.json) through vitest, ratcheted (not part of `ci`)
 pnpm run differential           # fuzzer vs Node (failures land in packages/tests/differential/failures/)
 pnpm run bench:record           # refresh packages/tests/bench/baseline.json (valid for this machine only)

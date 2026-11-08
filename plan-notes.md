@@ -14643,7 +14643,78 @@ its own; `DataView` input and the `options` of `createHash` and `copy` are not l
 `x instanceof crypto.Hash` through the namespace is `STA1214` in `ts` mode ("instanceof against
 anything but a class name"), while the named `Hash` works.
 
-## 403. T66: Boehm is replaced by pyrlyn/gc as deferred reference counting (2026-11-07)
+## 403. T14.2: the interpreter on Test262 `language/`, and the QuickJS-NG comparison of docs/INTERPRETER.md §7 (2026-11-07)
+
+**What landed.** In `packages/interpreter/`:
+
+- `src/bytecode.zig`, `src/compile.zig` and `src/vm.zig` are the bytecode compiler and VM of
+  docs/INTERPRETER.md §2.
+- `src/builtins.zig` is the global object.
+- `test262/exec.zig` is the execution driver. It shares its metadata, mode, corpus and ratchet
+  code with the parse driver through `test262/common.zig`.
+
+`bench:record` reads `test262-exec.json` into a new dashboard column, "Test262 language/
+(interpreter)".
+
+**Plan contradiction.** T14.2's card says interpreter frames come from the Zig memory core (§4).
+They come from one thread-local stack of 2^20 values, allocated by the page allocator. Each call
+publishes its window as a `JSRTFrame`, which is all the collector needs to trace it. The heap
+frame §5 needs for a suspended generator is T14.4's: it copies the window into a heap object when
+the generator suspends. docs/INTERPRETER.md §2 ("As built") and §4 now say so.
+
+**Rate.** At the pin (`packages/tests/test262/pin.json`, `771005236e88`), 8,105 of 23,726 tests
+pass (34.16%). A test passes only if it passes in every mode its flags ask for. Each test runs in
+its own child process with a 10 s timeout. The run had no timeouts and 8 crashes. The 817 module
+tests are not run before T14.3 and count as failures.
+
+8,817 tests hold a construct the compiler refuses. The driver counts these per run, and a test
+runs once in each mode its flags ask for:
+
+| Construct | Runs |
+| --- | ---: |
+| generators | 13,010 |
+| async functions | 2,273 |
+| `import()` | 495 |
+| computed class field names | 408 |
+| BigInt | 338 |
+| `with` | 258 |
+| other | 164 |
+
+The 8 crashes are runtime panics, not interpreter faults:
+
+- `STA2005` for a property key containing U+0000, in two class-field early-error tests.
+- `STA2005` for an invalid named-group regular expression literal.
+- `STA2004` when a regular expression object grows a property.
+
+**QuickJS-NG v0.16.2** is built from its release tarball (CMake `Release`, `-O3`, Apple clang
+21.0.0). Its `run-test262` ran over the same `test/language/` with `mode=all`, `async=yes`,
+`module=yes`, its own `[features]` list, and no `[exclude]` entries. It reports
+`47/43566 errors, 553 skipped`, so it passes 23,726 − 553 skipped − 39 failing files = 23,134
+tests (97.51%).
+
+The interpreter passes **35.0%** of what QuickJS-NG passes. §7 requires at least 95%.
+
+**Binary delta of one `eval`,** stripped, on an Apple M3 Max, macOS arm64:
+
+| Engine | Smaller program | Same program with one `eval` | Delta |
+| --- | ---: | ---: | ---: |
+| Interpreter, `ReleaseSmall` | 277,368 B | 672,200 B | **+394,832 B** |
+| Interpreter, `ReleaseFast` | 277,368 B | 836,152 B | +558,784 B |
+| QuickJS-NG, `clang -O2` | 33,496 B | 1,013,384 B | **+979,888 B** |
+
+- For the interpreter, both programs are Zig programs linking `libjsrt.a`. The smaller one prints
+  `String(undefined)`. The other runs `interp.runScript("1 + 2")` and prints `3`.
+- For QuickJS-NG, the smaller program is an empty C `main`. The other does
+  `JS_NewRuntime` → `JS_NewContext` → `JS_Eval("1 + 2")` → `JS_ToCString`.
+
+The interpreter's delta is smaller.
+
+**Decision under §7.** The size condition holds and the pass condition does not, so QuickJS-NG is
+not retired. No `--interpreter` flag is added by T14.2: neither engine is reachable from compiled
+code before T14.3. Generators and async functions are 15,283 of the 16,946 refused runs, so §7 is
+measured again after T14.4.
+
+## 404. T66: Boehm is replaced by pyrlyn/gc as deferred reference counting (2026-11-07)
 
 **Direction.** The creator asked to replace Boehm with https://github.com/pyrlyn/gc used as a Zig
 module, as one change (T66). pyrlyn/gc (checked at `9bfc433`, 2026-11-07) is the KotlinX memory
