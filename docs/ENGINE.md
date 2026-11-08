@@ -208,6 +208,61 @@ respectively, so this remains an incremental improvement. Both engines' JIT comp
 verified separately. [The T73 progress report](../plan/T73/progress.md) includes the shared
 machine's load, raw samples, rejected experiments and correctness checks; its V8 target stays open.
 
+### 4.2. Startup and JIT compilation cost (T74)
+
+```sh
+pnpm run runtime
+node packages/tests/engine/startup.ts --rounds=9
+# Optional alternating comparison with an instrumented, prebuilt baseline:
+STATOR_ENGINE_BEFORE=/absolute/path/to/before node packages/tests/engine/startup.ts --rounds=9
+```
+
+This reuses `engineBinary`, the pinned Node, `timedRun` and the warmed harness's percentile
+helper. `STATOR_ENGINE` can select a prebuilt candidate. Cold timings run without tracing:
+fresh processes with warm filesystem caches, from spawn through exit, including the timing
+wrapper. The trivial script and generated sets of 24 small or larger functions have their
+output checked byte-for-byte against Node. All samples, commands, hashes, versions and load
+averages are retained under `packages/tests/engine/results/startup-*/`.
+
+Compilation is a separate instrumented run. `STATOR_JIT_TRACE=1` retains its existing messages
+and adds `jit-time: NAME compiled|rejected ANALYZE_NS LOWER_NS BACKEND_NS PUBLISH_NS` records.
+The successful stages cover bytecode analysis, IR lowering and layout, register allocation and
+machine-code emission, and executable-memory publication. Parsing, execution, trace I/O and
+temporary-allocation cleanup are outside these stage intervals. Failed stages may have zero
+timing; a benchmark requires a successful, positive record for every expected function.
+Disabled tracing reads no clocks. The clock is the runtime's existing monotonic `rt_nanos`.
+
+V8 Sparkplug is measured with synchronous, forced baseline compilation and `--trace-baseline`;
+TurboFan with prepared feedback, synchronous forced optimization and `--trace-opt`. These
+diagnostic flags and the V8-only preparation driver are recorded in the result. Function bodies
+are identical; V8 preparation is outside the reported compilation intervals. V8's trace fields
+have microsecond resolution and different tier-specific boundaries. Sparkplug and TurboFan
+produce different code quality: a smaller compilation total alone does not establish a better
+JIT, and forced-tier measurements do not describe default V8 startup scheduling. The parser
+targets the pinned Node's trace format and fails on missing or invalid records.
+
+The baseline JIT places acyclic reachable IR blocks in reverse postorder before the existing
+backend. The backend computes liveness backwards in block order; allocation-order diamonds previously
+required extra fixed-point sweeps. Layout preserves entry, edges, edge arguments and unreachable
+blocks. A reachable cycle leaves the original layout intact: the unrestricted ordering trial
+regressed the warmed object kernel. Traversal is iterative so large functions do not consume
+the native call stack. No second register allocator or optimizing tier is added; T67.1 still
+owns that tier.
+
+Nine alternating rounds on Apple M3 Max, macOS 27.0.1, Node 26.7.0, Zig 0.17.1, ReleaseFast:
+
+| Metric (24 functions) | Before ms | After ms | V8 Sparkplug ms | V8 TurboFan ms |
+| --- | ---: | ---: | ---: | ---: |
+| Compile, 8 arithmetic/branch pairs per body | 2.661 | 2.618 | 0.200 | 4.934 |
+| Compile, 64 pairs per body | 40.153 | 31.786 | 0.974 | 23.942 |
+
+The larger program's untraced spawn-to-exit median fell from 48.204 to 40.052 ms; Node with
+default flags took 35.519 ms. The trivial script took 6.005 ms before, 6.034 ms after and 32.507 ms
+under Node; overlapping quartiles do not establish a trivial-startup improvement. Compilation
+of the larger bodies improved by 20.8%, and their cold process time by 16.9%. Stator remains
+slower to compile them than V8, and remains slower than Sparkplug on both sizes. Full evidence
+and warmed-execution validation are in the [T74 report](../plan/T74/report.md).
+
 ### Comparing the interpreter with QuickJS
 
 Install QuickJS separately, then run after `pnpm run runtime`:

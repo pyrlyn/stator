@@ -15136,3 +15136,31 @@ committed workload. Previously `plan/T70/task.md` and `packages/tests/engine/qui
 only QuickJS and treated PrimJS as an optional measured comparator. The card and plan now make
 both mandatory for the completion gate. Preserve the seven input programs and the existing
 non-overlapping-interquartile criterion, interpreter-only execution and pinned Node oracle.
+
+## T74. Separate startup and compilation, then order baseline IR blocks (2026-11-08)
+
+The creator requests all three performance axes (startup, JIT compilation, warmed execution),
+then explicitly assigns this session startup/compilation and leaves T67.1's optimizing tier
+with its existing owner. T69 already supplies warmed measurements. At `149ebde3`, the existing
+`jit.zig` traces compiled instruction/code sizes but no compilation times; `bench.ts` includes
+process start and execution. Reuse the runtime clock, engine build helper, timing wrapper and
+percentile helper; add no dependency or competing optimizer. The normative measurement
+boundaries and command are in `docs/ENGINE.md` §4.2.
+
+On 24 generated functions with 64 arithmetic/branch pairs each, stage timing put 35 of 39 ms
+in pyrlyn/jit's backend. A macOS sample of 128 larger functions identified register allocation
+and `buildIntervalsUndef` as the main compile-time cost. The pinned dependency
+`pyrlyn/jit@20d0ed4e4618d6ee040943644f5521db5fb91353`, `src/core/regalloc.zig:liveOut`, iterates
+backwards in physical block order until its bitsets converge. The Stator lowerer creates join
+blocks before predecessors; neither its IR library nor Stator has an existing ordering pass.
+These repository and dependency sources were checked 2026-11-08. Reordering the completed
+acyclic reachable baseline IR in reverse postorder retains the same backend and avoids extra
+dependency sweeps. An unrestricted trial regressed warmed object execution (212.202 to
+228.697 microseconds per checked call, three rotating rounds), so reachable cycles retain
+their original layout. Cycle detection finishes before any block or edge is mutated.
+
+Nine alternating before/after rounds measure 40.153 to 31.786 ms for those larger functions'
+compilation (20.8%), and 48.204 to 40.052 ms for their untraced cold process (16.9%). Trivial
+startup's quartiles overlap; no improvement is claimed there. Sparkplug remains faster to
+compile both tested sizes; TurboFan remains faster on the larger size. These measurements do
+not establish superiority over V8. Results and verification are kept in `plan/T74/`.

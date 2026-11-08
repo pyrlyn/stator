@@ -1580,6 +1580,12 @@ rule 9, §11a), and it compiles to bytecode (the spike: 2.9× faster than a tree
 
 ### T67.1. The engine's optimizing JIT tier → [`plan/T67.1`](plan/T67.1/task.md)
 
+### ~~T74. Measure and reduce engine startup and JIT compilation cost~~ → [`plan/T74`](plan/T74/done.md)
+
+Startup, JIT compilation and warmed execution are separate measurements. T74 owns startup and
+compilation cost; T67.1 retains the optimizing tier. Benchmark claims name the corpus, compiler
+tier, measurement boundaries and host, and preserve the same observable JavaScript results.
+
 ### T67.2. `stator-engine build --target=wasm`: JavaScript and TypeScript to WebAssembly → [`plan/T67.2`](plan/T67.2/task.md)
 
 ### T67.3. A WebAssembly runtime in the engine: `.wasm` modules run from JavaScript and TypeScript → [`plan/T67.3`](plan/T67.3/task.md)
