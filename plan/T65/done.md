@@ -18,7 +18,7 @@ fixture that matches tsc 7:
 - `unused-exported-destructuring`: `export const { a, b } = …` was reported unused under
   `noUnusedLocals` (TS6198 in `packages/node/src/process.ts`).
 
-PR: PR_URL
+Branch: `t65-typecheck-stator-ts` (a1ee0732 + this change).
 
 How it was checked:
 
