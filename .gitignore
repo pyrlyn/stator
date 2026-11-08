@@ -50,6 +50,9 @@ packages/compiler-zig/zig-out/
 packages/compiler-zig/zig-pkg/
 packages/jstext/.zig-cache/
 packages/jstext/zig-out/
+# The runtime fetches pyrlyn/gc here (build.zig.zon); `zig build --fetch` recreates it.
+packages/runtime/.zig-cache/
+packages/runtime/zig-pkg/
 packages/interpreter/.zig-cache/
 packages/interpreter/zig-out/
 packages/interpreter/zig-pkg/

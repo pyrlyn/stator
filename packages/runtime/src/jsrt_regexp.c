@@ -22,17 +22,26 @@
 const JSRTClass jsrt_class_regexp __attribute__((used)) = {"RegExp", 0, NULL, NULL, 0, NULL,
                                                        NULL, NULL, NULL};
 
+JSRT_GC_TRACE(regexp_trace, JSRTRegExp, re) {
+  jsrt_gc_visit_value(re->source, visit);
+  jsrt_gc_visit_value(re->flags, visit);
+}
+
+static void regexp_finalize(void *obj) { free(((JSRTRegExp *)obj)->bytecode); }
+
+/* Its references are two strings, so it cannot be part of a cycle. */
+static const JSRTGcKind regexp_kind =
+    JSRT_GC_KIND("regexp", regexp_trace, regexp_finalize, JSRT_GC_ACYCLIC, 0);
+
 /* ============================================================================
  * The three functions libregexp.h says "must be provided by the user"
  * ============================================================================ */
 
 /* The engine's only allocator. Its convention is realloc's, with size 0 meaning free.
  *
- * Deliberately NOT the collected heap even when Boehm is present: this memory holds bytecode and
- * scratch buffers, never a `jsrt_value`, so nothing in it needs scanning — and the collector would
- * have to scan it, because it cannot know that. The regexp object owns the bytecode for as long as
- * it lives, and a regexp that dies takes the allocation with it only once the collector can run
- * finalizers; until then this is the same leak every other malloc'd table in the runtime has. */
+ * Deliberately NOT the collected heap: this memory holds bytecode and scratch buffers, never a
+ * `jsrt_value`, so the collector has nothing to find in it. The regexp object owns the bytecode and frees it
+ * in its finalizer. */
 void *lre_realloc(void *opaque, void *ptr, size_t size) {
   (void)opaque;
   if (size == 0) {
@@ -276,7 +285,7 @@ static bool regexp_build(jsrt_value source, int lre_flags, char *error, size_t e
     return false;
   }
 
-  JSRTRegExp *re = (JSRTRegExp *)jsrt_gc_alloc(sizeof(JSRTRegExp), "regexp");
+  JSRTRegExp *re = JSRT_GC_NEW(JSRTRegExp, &regexp_kind);
   re->cls = &jsrt_class_regexp;
   /* §22.2.6.10: the `source` of an empty pattern is `(?:)`, not the empty string -- so that
    * `/source/flags` is always a spelling that parses back. Normalized once, here, because every

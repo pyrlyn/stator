@@ -83,13 +83,13 @@ pub fn build(b: *std.Build) void {
     b.step("test262-exec", "Run Test262's language/ tests through the interpreter and ratchet the pass counts").dependOn(&run_exec.step);
 }
 
-/// The runtime archive and what it links against: Boehm when pkg-config finds it, as the
-/// runtime's own build decides (packages/runtime/justfile).
+/// The runtime archive and the system libraries it records in `link-flags.txt` (SYS_LIBS in
+/// packages/runtime/justfile): the collector is compiled into the archive (plan-notes 407).
 fn linkRuntime(b: *std.Build, m: *std.Build.Module, archive: []const u8) void {
     m.addObjectFile(b.path(archive));
     m.link_libc = true;
-    m.linkSystemLibrary("bdw-gc", .{ .use_pkg_config = .force });
     m.linkSystemLibrary("m", .{});
+    m.linkSystemLibrary("pthread", .{});
 }
 
 /// A module rooted at `root` that imports the interpreter, for its target and optimize mode.

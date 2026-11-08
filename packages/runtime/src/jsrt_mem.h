@@ -78,14 +78,6 @@ void jsrt_shape_remove(JSRTShape **shape, jsrt_value *slots, const JSRTShape *hi
  * fixed-shape enumeration answers it too, so the one spelling lives in C, and the Zig ordering
  * calls through to it rather than carrying a second copy. */
 
-/* ------------------------------------------------------------ the collector (jsrt_gc.zig) */
-
-/* The Boehm object kind every runtime copy in the process allocates from, plus one; 0 until the
- * first copy registers it. Weak and defined in jsrt_value.c because Zig 0.16 emits a weak data
- * export as a non-external symbol on Mach-O, and the copies only coalesce on an external one
- * (plan-notes 342). */
-extern unsigned jsrt_gc_shared_kind_p48;
-
 /* ------------------------------------------------------ allocation helpers (jsrt_alloc.zig) */
 
 /* Grows `a`'s element buffer so `index` is below its capacity; new elements read `undefined`. */

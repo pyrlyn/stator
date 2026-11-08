@@ -94,15 +94,31 @@ static bool same_value_zero(jsrt_value a, jsrt_value b) {
  * Storage
  * ============================================================================ */
 
-static void *map_alloc(size_t bytes) {
-  void *p = jsrt_gc_alloc(bytes, "map");
-  return p;
+JSRT_GC_TRACE(map_trace, JSRTMap, m) {
+  for (uint32_t i = 0; i < m->used; i++) {
+    jsrt_gc_visit_value(m->entries[i].key, visit);
+    jsrt_gc_visit_value(m->entries[i].value, visit);
+  }
 }
+
+static void map_finalize(void *obj) {
+  const JSRTMap *m = (const JSRTMap *)obj;
+  jsrt_gc_buffer_free(m->entries);
+  jsrt_gc_buffer_free(m->index);
+}
+
+/* WeakMap and WeakSet share it: their entries are strong references, as they were under every
+ * collector before this one. */
+static const JSRTGcKind map_kind = JSRT_GC_KIND("map", map_trace, map_finalize, JSRT_GC_CYCLIC, 0);
 
 /* The empty state, which a fresh collection and a cleared one are the same thing: both own nothing,
  * and the next insert allocates from scratch. Written once so the two cannot drift apart -- a
- * `clear` that left one field behind would be a table whose count disagrees with its storage. */
+ * `clear` that left one field behind would be a table whose count disagrees with its storage. A
+ * walk in progress may still hold the old entries, so they are retired rather than freed. */
 static void map_reset(JSRTMap *m) {
+  jsrt_gc_write(m);
+  jsrt_gc_buffer_retire(m->entries);
+  jsrt_gc_buffer_retire(m->index);
   m->size = 0;
   m->used = 0;
   m->capacity = 0;
@@ -112,7 +128,7 @@ static void map_reset(JSRTMap *m) {
 }
 
 static jsrt_value map_new(const JSRTClass *cls) {
-  JSRTMap *m = (JSRTMap *)map_alloc(sizeof(JSRTMap));
+  JSRTMap *m = JSRT_GC_NEW(JSRTMap, &map_kind);
   m->cls = cls;
   /* Set here and NOT in map_reset: `clear()` resets through that path, and a clear called from
    * inside a forEach must not re-enable compaction while the walk still holds an index. */
@@ -168,7 +184,8 @@ static void grow(JSRTMap *m) {
     capacity = capacity == 0 ? 8 : capacity * 2;
   }
 
-  JSRTMapEntry *entries = (JSRTMapEntry *)map_alloc(capacity * sizeof(JSRTMapEntry));
+  JSRTMapEntry *entries =
+      (JSRTMapEntry *)jsrt_gc_buffer(m, capacity * sizeof(JSRTMapEntry), "map entries");
   uint32_t used = 0;
   for (uint32_t i = 0; i < m->used; i++) {
     if (compacting && !m->entries[i].live) {
@@ -188,9 +205,11 @@ static void grow(JSRTMap *m) {
   while (slots < capacity * 2) {
     slots *= 2;
   }
-  uint32_t *index = (uint32_t *)map_alloc(slots * sizeof(uint32_t));
-  memset(index, 0, slots * sizeof(uint32_t));
+  uint32_t *index = (uint32_t *)jsrt_gc_buffer(m, slots * sizeof(uint32_t), "map index");
 
+  jsrt_gc_write(m);
+  jsrt_gc_buffer_retire(m->entries);
+  jsrt_gc_buffer_retire(m->index);
   m->entries = entries;
   m->used = used;
   m->capacity = capacity;
@@ -245,6 +264,7 @@ static jsrt_value map_put(jsrt_value map, jsrt_value raw_key, jsrt_value value) 
   if (entry != NULL) {
     /* An existing key keeps its position: `m.set('a', 2)` on a map that already has `'a'` changes
      * the value and NOT the order the entry prints in. */
+    jsrt_gc_write(m);
     entry->value = value;
     return map;
   }
@@ -252,6 +272,7 @@ static jsrt_value map_put(jsrt_value map, jsrt_value raw_key, jsrt_value value) 
     grow(m);
     (void)probe(m, key, &slot); /* the index was rebuilt, so the slot from before is meaningless */
   }
+  jsrt_gc_write(m);
   m->entries[m->used].key = key;
   m->entries[m->used].value = value;
   m->entries[m->used].live = true;
@@ -350,6 +371,7 @@ bool jsrt_map_delete(jsrt_value map, jsrt_value key) {
   }
   /* Blanked, not just flagged: the entry stays in place so the entries after it keep their
    * positions, and holding the old key here would keep a dead object reachable. */
+  jsrt_gc_write(m);
   entry->key = JSRT_UNDEFINED;
   entry->value = JSRT_UNDEFINED;
   entry->live = false;

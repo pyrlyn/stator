@@ -685,8 +685,8 @@ export function emitLibraryInitAsync(
 
 /* One exported function as C sees it (plan.md §10 Task 7.2 steps 4–5): convert the C
  * arguments into frame slots, call the closure the init left in its global, convert the
- * answer back. The stub opens the frame a call from C otherwise lacks (Boehm scans the
- * init thread's C stack itself since `jsrt_init`; a second thread is UB, header says so),
+ * answer back. The stub opens the frame a call from C otherwise lacks (the collector scans
+ * the init thread's C stack itself since `jsrt_init`; a second thread is UB, header says so),
  * and pops it on EVERY exit: the normal return and the `_jsrt_err` epilogue every throw
  * path — including a NULL `const char *` argument — funnels through. An exception never
  * unwinds into the C caller: the pending cell is taken into a rooted slot, rendered into

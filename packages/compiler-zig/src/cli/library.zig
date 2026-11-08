@@ -31,10 +31,6 @@ pub fn pkgConfigPath(a: Allocator, out: []const u8, name: []const u8) []const u8
     return fspath.join(a, &.{ fspath.dirname(out) orelse ".", file }) catch oom();
 }
 
-/// Runtime symbols every library keeps global beside its own: the weak Boehm kind the private
-/// runtime copies share (packages/runtime/src/jsrt_mem.h).
-pub const shared_runtime_symbols = [_][]const u8{"jsrt_gc_shared_kind_p48"};
-
 pub const ObjectFormat = enum { macho, elf };
 
 /// Windows has no `--emit=lib` yet (STA1219).
@@ -166,8 +162,7 @@ pub fn writeStaticLibrary(h: Host, lib: StaticLibrary) Error!void {
     const a = h.a;
     const name = libraryName(lib.out.path) orelse return h.r.fail("STA4072", "internal error: --emit=lib output \"{s}\" passed build()'s name check — this is a compiler bug; report it with the input that triggered it", .{lib.out.path});
     const keep_list = fspath.join(a, &.{ lib.scratch, "keep.txt" }) catch oom();
-    const kept = std.mem.concat(a, []const u8, &.{ lib.symbols, &shared_runtime_symbols }) catch oom();
-    try link.writeScratch(h, keep_list, keptSymbolsText(a, lib.format, kept));
+    try link.writeScratch(h, keep_list, keptSymbolsText(a, lib.format, lib.symbols));
     // The member keeps the library's name, so an archive listing says whose runtime it holds.
     const prelinked = fspath.join(a, &.{ lib.scratch, std.fmt.allocPrint(a, "{s}.o", .{name}) catch oom() }) catch oom();
     try runTool(h, lib.cc, prelinkArgs(a, lib.format, lib.object, lib.archives, keep_list, prelinked, lib.debug), h.env, "static library prelink", "CC");

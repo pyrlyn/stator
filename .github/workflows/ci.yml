@@ -299,18 +299,13 @@ jobs:
       - *checkout
       - *setup-just
       - *setup
-      # Without bdw-gc the justfile silently falls back to malloc and `test:leak` SKIPS -- a green
-      # run that proved nothing about GC hygiene (plan.md Task 4.5). Installing it is what makes
-      # the leak job's plateau assertion a real assertion.
-      - &install-boehm
-        name: Install Boehm GC
+      # The collector is pyrlyn/gc, fetched as a Zig package (plan/T66): no system GC to install.
+      # Linux still takes the distro clang and llvm for the sanitizer runtime and symbolizer.
+      - &install-llvm
+        name: Install clang and LLVM
+        if: runner.os == 'Linux'
         shell: bash
-        run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y libgc-dev clang llvm
-          else
-            brew install bdw-gc
-          fi
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
       - name: Record toolchain
         shell: bash
         run: |
@@ -359,7 +354,7 @@ jobs:
       - *checkout
       - *setup-just
       - *setup
-      - *install-boehm
+      - *install-llvm
       - *pnpm-install
       - name: tests skipped (SKIP_CI_TESTS)
         if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
@@ -393,13 +388,13 @@ jobs:
       - *setup
       # icu4c is keg-only on Homebrew, so its .pc files are not on the default search path and
       # `just runtime-intl` would report ICU missing on a machine that has it.
-      - name: Install ICU and Boehm GC
+      - name: Install ICU
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y libicu-dev libgc-dev clang llvm
+            sudo apt-get update && sudo apt-get install -y libicu-dev clang llvm
           else
-            brew install icu4c bdw-gc
+            brew install icu4c
             echo "PKG_CONFIG_PATH=$(brew --prefix icu4c)/lib/pkgconfig" >> "$GITHUB_ENV"
           fi
       - *pnpm-install
@@ -434,14 +429,10 @@ jobs:
       - *setup-just
       - *setup
       # SQLite ships in the macOS SDK; Linux needs the -dev package for sqlite3.h + libsqlite3.
-      - name: Install Boehm GC and SQLite
+      - name: Install SQLite
+        if: runner.os == 'Linux'
         shell: bash
-        run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y libgc-dev libsqlite3-dev clang llvm
-          else
-            brew install bdw-gc
-          fi
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev clang llvm
       - *pnpm-install
       - run: pnpm run runtime
       - name: tests skipped (SKIP_CI_TESTS)
@@ -456,7 +447,7 @@ jobs:
       - run: node packages/tests/ffi/example-c-consumer/c-consumer.ts
       # Task 7.4 Check: `--emit=lib` archives used through pkg-config alone from a directory
       # with no repo paths, byte-identical across two builds, and two libraries (two private
-      # runtimes) in one C program over forced Boehm collections. The versions are the
+      # runtimes, two private collectors) in one C program over forced collections. The versions are the
       # evidence plan-notes 342 cites for each object format's localization.
       - name: Static library (--emit=lib)
         shell: bash
@@ -511,10 +502,10 @@ jobs:
         with:
           just-version: '1.59.0'
       - uses: ./.github/actions/setup
-      # Same native deps as `runtime`, so leak and ffi are recorded rather than skipped -- a map
+      # Same native deps as `ffi`, so the ffi harness is recorded rather than skipped -- a map
       # that never saw a harness selects conservatively and loses the whole point of step 4.
-      - name: Install Boehm GC and SQLite
-        run: sudo apt-get update && sudo apt-get install -y libgc-dev libsqlite3-dev clang llvm
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev clang llvm
       - run: pnpm install --frozen-lockfile
       - name: tests skipped (SKIP_CI_TESTS)
         if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
@@ -555,8 +546,8 @@ jobs:
         with:
           just-version: '1.59.0'
       - uses: ./.github/actions/setup
-      - name: Install Boehm GC and SQLite
-        run: sudo apt-get update && sudo apt-get install -y libgc-dev libsqlite3-dev clang llvm
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev clang llvm
       - run: pnpm install --frozen-lockfile
       # restore-keys prefix finds the most recently created `impact-map-*` cache, which the
       # impact-map job on main writes. Caches from the default branch are visible to every PR,

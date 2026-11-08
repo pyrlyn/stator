@@ -70,19 +70,9 @@ _runtime flavor:
     CFLAGS_VENDOR="-std=c11 -Wall ${VENDOR_POSIX} -Iinclude ${VENDOR_INC} -ffunction-sections -fdata-sections"
     DEPFLAGS='-MMD -MP'
 
-    # Boehm: the library flags are the capability signal (Debian's libgc-dev has no -I). This
-    # must land on CFLAGS before the flavor-specific assignment, or -DJSRT_HAVE_BOEHM is dropped
-    # and the malloc fallback is silently selected while we report "Boehm GC".
-    BDW_CFLAGS="$(pkg-config --cflags bdw-gc 2>/dev/null || true)"
-    BDW_LIBS="$(pkg-config --libs bdw-gc 2>/dev/null || true)"
-    if [[ -n "${BDW_LIBS// }" ]]; then
-      CFLAGS_COMMON="${CFLAGS_COMMON} -DJSRT_HAVE_BOEHM ${BDW_CFLAGS}"
-      GC_LIBS="${BDW_LIBS}"
-      GC_STATUS='Boehm GC'
-    else
-      GC_LIBS=''
-      GC_STATUS='plain malloc (no collection)'
-    fi
+    # The collector is pyrlyn/gc (plan-notes 407), compiled into the Zig object below: nothing to
+    # probe and no library to link.
+    GC_STATUS='pyrlyn/gc deferred RC (perceus)'
     SYS_LIBS='-lm -pthread'
 
     # LTO: the archive's objects are LLVM bitcode, so the final link sees the runtime and the
@@ -113,9 +103,8 @@ _runtime flavor:
     rm -rf "${probe}"
 
     # The memory core is Zig (plan-notes 238): one object from src/jsrt_mem.zig, archived beside the
-    # C objects. It takes the same -I/-D flags the C objects do -- that is how -DJSRT_HAVE_BOEHM and
-    # the bdw-gc include path reach its @cImport -- and Zig has no warnings, only errors, which is
-    # -Werror's job here. Runtime safety checks are on in the sanitized flavor (ReleaseSafe), where a
+    # C objects. It takes the same -I/-D flags the C objects do, so its translated headers see what
+    # the C objects see, and Zig has no warnings, only errors, which is -Werror's job here. Runtime safety checks are on in the sanitized flavor (ReleaseSafe), where a
     # failure should point at a line, and off in the others, which match the C objects' -O2.
     ZIG_C='-Isrc'
     for f in ${CFLAGS_COMMON}; do
@@ -136,7 +125,7 @@ _runtime flavor:
         DIR=build
         CFLAGS="${CFLAGS_COMMON} ${DEPFLAGS} -O2 ${LTO}"
         VFLAGS="${CFLAGS_VENDOR} ${DEPFLAGS} -O2 ${LTO}"
-        EXTRA_LIBS="${GC_LIBS} ${SYS_LIBS}"
+        EXTRA_LIBS="${SYS_LIBS}"
         LABEL='Runtime built with'
         ;;
       asan)
@@ -155,7 +144,7 @@ _runtime flavor:
         CFLAGS="${CFLAGS_COMMON} ${DEPFLAGS} -O1 -g ${ASAN_FLAGS}"
         VFLAGS="${CFLAGS_VENDOR} ${DEPFLAGS} -O1 -g ${ASAN_FLAGS}"
         ZIG_OPT=ReleaseSafe
-        EXTRA_LIBS="${GC_LIBS} ${SYS_LIBS}"
+        EXTRA_LIBS="${SYS_LIBS}"
         LABEL='Runtime (ASan) built with'
         ;;
       intl)
@@ -172,7 +161,7 @@ _runtime flavor:
         # unit: JSString already holds uint16_t*, so the strings pass through without a copy.
         CFLAGS="${CFLAGS_COMMON} ${DEPFLAGS} -O2 ${LTO} -DJSRT_HAVE_ICU -DUCHAR_TYPE=uint16_t ${ICU_CFLAGS}"
         VFLAGS="${CFLAGS_VENDOR} ${DEPFLAGS} -O2 ${LTO}"
-        EXTRA_LIBS="${GC_LIBS} ${ICU_LIBS} ${SYS_LIBS}"
+        EXTRA_LIBS="${ICU_LIBS} ${SYS_LIBS}"
         LABEL='Runtime (Intl/ICU) built with'
         ;;
       *)
@@ -186,7 +175,7 @@ _runtime flavor:
     ZIG_FLAGS="-O ${ZIG_OPT} ${ZIG_TARGET} -lc -fPIC -mcpu=baseline ${ZIG_C} -ffunction-sections -fdata-sections -fno-stack-check"
 
     mkdir -p "${DIR}"
-    # A flag change (the LTO probe flipping, Boehm appearing) must rebuild every object: the
+    # A flag change (the LTO probe flipping) must rebuild every object: the
     # timestamp walk cannot see it, and a mixed archive links fine while silently lacking what the
     # flag was for.
     CFLAGS_KEY="${CC_ID}"$'\n'"${CFLAGS} ${VFLAGS}"$'\n'"zig $(zig version) ${ZIG_FLAGS}"
@@ -239,19 +228,21 @@ _runtime flavor:
     # change only when they did. `fmt --check` is the Zig side's style gate.
     zig fmt --check src/*.zig
     zig translate-c ${ZIG_TARGET} -lc ${ZIG_C} src/jsrt_c.h > "${DIR}/jsrt_c.zig"
-    if [[ "${ZIG_C}" == *JSRT_HAVE_BOEHM* ]]; then
-      zig translate-c ${ZIG_TARGET} -lc ${ZIG_C} src/jsrt_gc_c.h > "${DIR}/jsrt_gc_c.zig"
-    else
-      # jsrt_gc.zig reaches this module only behind JSRT_HAVE_BOEHM, but --dep needs a file.
-      : > "${DIR}/jsrt_gc_c.zig"
-    fi
+    # pyrlyn/gc is a Zig package pinned by build.zig.zon; `--fetch` resolves it into zig-pkg/ (a
+    # no-op once it is there). Its collector imports two modules: `kxgc` (its object layout) and
+    # `host`, the runtime symbols kxgc.h asks for, which Stator supplies in src/jsrt_gc_host.zig.
+    zig build --fetch --cache-dir "${DIR}/zig-cache" >/dev/null
+    KXGC="zig-pkg/$(sed -n 's/.*\.hash = "\(kxgc-[^"]*\)".*/\1/p' build.zig.zon)"
+    [[ -f "${KXGC}/src/perceus.zig" ]] || { echo "pyrlyn/gc not fetched into ${KXGC}" >&2; exit 1; }
     # Optimize mode, target and PIC are per module, so each -M repeats them: translated headers
     # carry inline functions that end up in this object.
     ZIG_MODULE="-O ${ZIG_OPT} ${ZIG_TARGET} -fPIC -mcpu=baseline -fno-stack-check"
     zig build-obj ${ZIG_FLAGS} --cache-dir "${DIR}/zig-cache" -femit-bin="${DIR}/jsrt_zig.o" \
-      --dep jsrt_c --dep jsrt_gc_c -Mroot=src/jsrt_mem.zig \
+      --dep jsrt_c --dep kxgc --dep host --dep collector -Mroot=src/jsrt_mem.zig \
       ${ZIG_MODULE} -Mjsrt_c="${DIR}/jsrt_c.zig" \
-      ${ZIG_MODULE} -Mjsrt_gc_c="${DIR}/jsrt_gc_c.zig"
+      ${ZIG_MODULE} -Mkxgc="${KXGC}/src/kxgc.zig" \
+      ${ZIG_MODULE} --dep jsrt_c -Mhost=src/jsrt_gc_host.zig \
+      ${ZIG_MODULE} --dep kxgc --dep host -Mcollector="${KXGC}/src/perceus.zig"
     objs+=("${DIR}/jsrt_zig.o")
 
     # Recreated, never incrementally updated: `ar r` replaces matching members but keeps
@@ -260,9 +251,8 @@ _runtime flavor:
     # archive-wide.
     rm -f "${DIR}/libjsrt.a"
     ${AR} rcs "${DIR}/libjsrt.a" "${objs[@]}"
-    # Recorded on the PHONY-equivalent recipe rather than the archive: installing bdw-gc changes
-    # the answer without changing a .c file, and an archive compiled WITH Boehm linked WITHOUT
-    # -lgc is an undefined-symbol error at the end of every compile (plan-notes 106).
+    # Recorded on the PHONY-equivalent recipe rather than the archive: the LTO probe and the ICU
+    # flavor change the answer without changing a .c file (plan-notes 106).
     printf '%s\n' "${LTO} ${EXTRA_LIBS}" > "${DIR}/link-flags.txt"
     echo "${LABEL}: ${GC_STATUS}, ${LTO_STATUS}"
 
@@ -287,7 +277,7 @@ _runtime-test flavor:
       asan) DIR=build-asan; CFLAGS="${CFLAGS_COMMON} -O1 -g -fsanitize=address,undefined"; TAG='runtime: print corpus matches Node (ASan/UBSan)' ;;
       *) echo "unknown test flavor: ${FLAVOR}" >&2; exit 1 ;;
     esac
-    # The archive says how it must be linked (-lgc, -flto); the corpus links it the same way the
+    # The archive says how it must be linked (ICU, -flto); the corpus links it the same way the
     # CLI does rather than rediscovering the answer here.
     LINK_FLAGS="$(cat "${DIR}/link-flags.txt")"
 

@@ -30,6 +30,18 @@ const Channel = struct {
     closed: bool = false,
 };
 
+fn traceChannel(channel: *Channel, visit: c.jsrt_gc_visit_fn) void {
+    gc.visitValues(channel.values, visit);
+}
+
+fn finalizeChannel(channel: *Channel) void {
+    // Empty until jsrt_sync_channel_new's second allocation returns.
+    if (channel.values.len != 0) gc.bufferFree(channel.values.ptr);
+}
+
+const handle_kind = gc.kind(anyopaque, "synchronization handle", null, null, .{ .cyclic = false });
+const channel_kind = gc.kind(Channel, "channel", traceChannel, finalizeChannel, .{});
+
 // Failure allocates an Error, so leave the monitor before entering the runtime.
 fn finish(message: ?[*:0]const u8) void {
     common.unlock(&gate);
@@ -70,7 +82,7 @@ fn acquire(mutex: *Mutex) ?[*:0]const u8 {
     return null;
 }
 export fn jsrt_sync_mutex_new() Value {
-    return common.create(Mutex, .{});
+    return common.create(Mutex, .{}, &handle_kind);
 }
 export fn jsrt_sync_mutex_lock(value: Value) void {
     const mutex = locked(Mutex, value, &mutex_class) orelse return;
@@ -97,7 +109,7 @@ export fn jsrt_sync_mutex_destroy(value: Value) void {
     destroy(mutex, mutex.owner != null or mutex.waiters != 0);
 }
 export fn jsrt_sync_cond_new() Value {
-    return common.create(Condition, .{});
+    return common.create(Condition, .{}, &handle_kind);
 }
 export fn jsrt_sync_cond_wait(value: Value, mutex_value: Value) void {
     const condition = common.handle(Condition, value, &cond_class) orelse return;
@@ -147,13 +159,14 @@ export fn jsrt_sync_channel_new(capacity: f64) Value {
         common.fail("std/sync.Channel(): EINVAL");
         return c.JSRT_UNDEFINED;
     }
-    const channel = common.allocate(Channel);
+    const channel = common.allocate(Channel, &channel_kind);
     const n: usize = @intFromFloat(capacity);
     channel.* = .{ .values = &.{} };
     var roots: common.Roots(1) = undefined;
     roots.open(.{common.box(channel)});
     defer roots.pop();
-    const values: [*]Value = @ptrCast(@alignCast(gc.alloc(n * @sizeOf(Value), "channel buffer")));
+    const values: [*]Value = @ptrCast(@alignCast(gc.buffer(channel, n * @sizeOf(Value), "channel buffer")));
+    gc.write(channel);
     channel.values = values[0..n];
     @memset(channel.values, c.JSRT_UNDEFINED);
     return roots.slots[0];
@@ -165,6 +178,7 @@ export fn jsrt_sync_channel_send(handle: Value, value: Value) void {
         finish("std/sync.Channel.send(): EPIPE");
         return;
     }
+    gc.write(channel);
     channel.values[(channel.head + channel.count) % channel.values.len] = value;
     channel.count += 1;
     notify();
@@ -177,6 +191,7 @@ export fn jsrt_sync_channel_receive(value: Value) Value {
         return c.JSRT_UNDEFINED;
     }
     const item = gc.jsrt_gc_handoff(channel.values[channel.head]);
+    gc.write(channel);
     channel.values[channel.head] = c.JSRT_UNDEFINED;
     channel.head = (channel.head + 1) % channel.values.len;
     channel.count -= 1;

@@ -67,18 +67,19 @@ foreign threads remain unsupported. The C export ABI remains main-thread-only (d
 
 ## GC and native boundary
 
-Boehm must be built with threads (`GC_THREADS`; packaged bdw-gc builds support this).
+The collector (docs/VALUE.md §4.12) stops the world at statement safepoints
+(`jsrt_gc_safepoint`); a thread blocked in a native wait brackets it with
+`jsrt_gc_enter_blocking`/`jsrt_gc_leave_blocking` and counts as stopped meanwhile.
 Each worker explicitly registers its stack before invoking Stator, then unregisters on exit.
 A registry records the address of every thread's TLS shadow-stack head and exception mailbox.
-Registry mutations run under Boehm's allocation lock; its stop-the-world roots hook walks all
+Registry mutations run under the collector's lock; with the world stopped it walks all
 registered frames without acquiring application locks. Queue records, channel values and
-closures use the existing masked-value GC allocation kind. Main's roots remain registered.
+closures are collected objects with their own kinds. Main's roots remain registered.
 Because another thread can collect between a native return and its caller's frame store,
 new allocations are temporarily rooted per thread until the next generated statement boundary.
 Return values and destructive channel receives also use a registered handoff slot. These
 transient roots are released at statement boundaries and on worker exit; collection is never
 disabled while workers run. Programs that import the thread bridge emit these safepoints.
-Without Boehm the existing malloc-only runtime remains supported, with its existing lack of GC.
 
 The compiler admits a boxed `jsrt_value` ABI only for the library's exact
 `src/native/concurrency.d.ts` declaration file and its closed symbol table. User FFI signatures

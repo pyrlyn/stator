@@ -1,0 +1,13 @@
+.{
+    .name = .jsrt,
+    .version = "0.0.0",
+    .fingerprint = 0x6909b0233a6a0ab9,
+    .minimum_zig_version = "0.17.1",
+    .dependencies = .{
+        .kxgc = .{
+            .url = "git+https://github.com/pyrlyn/gc#9bfc433b7344da78782e807787b955d9e8e8d84b",
+            .hash = "kxgc-0.1.0-qQGyHjGBAQADbnlyvNzkGrmZGL64HUPcKaohccB00Hon",
+        },
+    },
+    .paths = .{ "build.zig", "build.zig.zon" },
+}

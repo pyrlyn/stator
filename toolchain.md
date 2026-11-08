@@ -1,6 +1,6 @@
 # Toolchain
 
-Pins below are the ones in `mise.toml` and the package manifests. `docs/TOOLCHAIN.md` is the longer note (CI stages, environment variables, vendored C, Boehm, ICU) and matches these pins (plan-notes 359).
+Pins below are the ones in `mise.toml` and the package manifests. `docs/TOOLCHAIN.md` is the longer note (CI stages, environment variables, vendored C, the collector, ICU) and matches these pins (plan-notes 359).
 
 ## Programs
 
@@ -11,7 +11,7 @@ Pins below are the ones in `mise.toml` and the package manifests. `docs/TOOLCHAI
 | moon | mise (`npm:@moonrepo/cli`, 2.5.4) | Task graph over the pnpm workspace | https://github.com/moonrepo/moon |
 | just | mise (`mise.toml`, 1.58.0) | Builds `libjsrt.a` and `libjsrt_std.a` | https://github.com/casey/just |
 | clang, llvm | mise (`conda:clang` and `conda:llvm`, 21.1.8, Linux and macOS) | Compiles the runtime and the emitted C | https://github.com/llvm/llvm-project |
-| zig | mise (`mise.toml`, 0.17.0, Linux and macOS) | Memory core in `libjsrt.a`, the `std/*` backings and the interpreter (`libjsrt_interp.a`) | https://github.com/ziglang/zig |
+| zig | mise (`mise.toml`, 0.17.1, Linux and macOS) | Memory core in `libjsrt.a`, the `std/*` backings and the interpreter (`libjsrt_interp.a`) | https://github.com/ziglang/zig |
 | jactionlint | mise (`mise.toml` pins `github:jdx/jactionlint` 2.0.2) | Lint the workflows and composite actions (`static analysis` job, the pre-push hook and `mise x -- jactionlint`) | https://github.com/jdx/jactionlint |
 | hk | mise (`mise.toml` pins 2.5.0) | Runs jactionlint as a pre-push hook (`hk.pkl`) | https://github.com/jdx/hk |
 | shellcheck | mise (`mise.toml` pins 0.11.0; CI uses the runner image's copy) | Checks `run:` scripts inside jactionlint | https://github.com/koalaman/shellcheck |
@@ -46,3 +46,9 @@ Pins below are the ones in `mise.toml` and the package manifests. `docs/TOOLCHAI
 | playwright-core 1.63.0 | `site/` devDependency | https://www.npmjs.com/package/playwright-core | Browser check of the built site |
 
 `memfs` is not a dependency. It was removed from the root and `packages/tests` manifests (plan-notes 353).
+
+## Zig packages
+
+| Package | Where | Source | Why here |
+| --- | --- | --- | --- |
+| kxgc (pyrlyn/gc) 0.1.0 at `9bfc433` | local (`packages/runtime/build.zig.zon`) | https://github.com/pyrlyn/gc | The collector: deferred reference counting with trial deletion (plan/T66) |

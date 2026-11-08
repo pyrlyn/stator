@@ -361,22 +361,14 @@ jsrt_value jsrt_string_pad_end(jsrt_value s, jsrt_value target, jsrt_value pad) 
   return pad_impl(s, target, pad, false);
 }
 
-/* Scratch array for split's segments. Under Boehm this MUST be GC_MALLOC: the collector scans
- * its own heap but never the plain-malloc heap, and this scratch holds the only references to
- * the freshly-built segment strings until jsrt_array_new copies them out. */
+/* Scratch array for split's segments: it holds the only references to the freshly-built segment
+ * strings until jsrt_array_new copies them out, so it is collector scratch, a root while in use. */
 static jsrt_value *items_alloc(uint32_t count) {
   size_t size = (size_t)(count == 0 ? 1 : count) * sizeof(jsrt_value);
-  jsrt_value *items = (jsrt_value *)jsrt_gc_alloc(size, "string split");
-  return items;
+  return (jsrt_value *)jsrt_gc_scratch(size, "string split");
 }
 
-static void items_free(jsrt_value *items) {
-#ifdef JSRT_HAVE_BOEHM
-  (void)items; /* the collector owns it */
-#else
-  free(items);
-#endif
-}
+static void items_free(jsrt_value *items) { jsrt_gc_buffer_free(items); }
 
 /* §22.1.3.22: `search` has no string form at all -- the spec makes a RegExp out of whatever it is
  * given, and this compiler has no constructor to make one with, so the gate admits a regexp only
