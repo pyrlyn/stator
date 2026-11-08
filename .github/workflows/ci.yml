@@ -97,6 +97,9 @@ jobs:
           persist-credentials: false
       - &setup
         uses: ./.github/actions/setup
+      # The in-process builds compile with statorc's default, the clang mise pins (plan/T35).
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        uses: ./.github/actions/clang
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: packages/tests/test262/corpus
@@ -195,6 +198,13 @@ jobs:
         with:
           just-version: '1.59.0'
       - *setup
+      # statorc's default C compiler is the clang mise pins, and the justfiles' `clang` must be the
+      # same one (plan/T35, plan-notes 410). Windows keeps the `clang` on PATH: mise.toml pins
+      # clang for Linux and macOS only, and Windows never builds the runtime.
+      - &pinned-clang
+        name: Install the pinned clang
+        if: runner.os != 'Windows'
+        uses: ./.github/actions/clang
       - &record-toolchain
         name: Record toolchain
         shell: bash
@@ -243,6 +253,7 @@ jobs:
         with:
           just-version: '1.59.0'
       - *setup
+      - *pinned-clang
       - *record-toolchain
       - *pnpm-install
       - run: pnpm run typecheck
@@ -299,13 +310,15 @@ jobs:
       - *checkout
       - *setup-just
       - *setup
+      - *pinned-clang
       # The collector is pyrlyn/gc, fetched as a Zig package (plan/T66): no system GC to install.
-      # Linux still takes the distro clang and llvm for the sanitizer runtime and symbolizer.
+      # mise's clang carries its own sanitizer runtime but, on Linux, no llvm-symbolizer, so the
+      # distro llvm stays for ASan's stack traces (plan-notes 410).
       - &install-llvm
-        name: Install clang and LLVM
+        name: Install llvm-symbolizer
         if: runner.os == 'Linux'
         shell: bash
-        run: sudo apt-get update && sudo apt-get install -y clang llvm
+        run: sudo apt-get update && sudo apt-get install -y llvm
       - name: Record toolchain
         shell: bash
         run: |
@@ -354,6 +367,7 @@ jobs:
       - *checkout
       - *setup-just
       - *setup
+      - *pinned-clang
       - *install-llvm
       - *pnpm-install
       - name: tests skipped (SKIP_CI_TESTS)
@@ -386,13 +400,14 @@ jobs:
       - *checkout
       - *setup-just
       - *setup
+      - *pinned-clang
       # icu4c is keg-only on Homebrew, so its .pc files are not on the default search path and
       # `just runtime-intl` would report ICU missing on a machine that has it.
       - name: Install ICU
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y libicu-dev clang llvm
+            sudo apt-get update && sudo apt-get install -y libicu-dev
           else
             brew install icu4c
             echo "PKG_CONFIG_PATH=$(brew --prefix icu4c)/lib/pkgconfig" >> "$GITHUB_ENV"
@@ -428,11 +443,12 @@ jobs:
       - *checkout
       - *setup-just
       - *setup
+      - *pinned-clang
       # SQLite ships in the macOS SDK; Linux needs the -dev package for sqlite3.h + libsqlite3.
       - name: Install SQLite
         if: runner.os == 'Linux'
         shell: bash
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev clang llvm
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev llvm
       - *pnpm-install
       - run: pnpm run runtime
       - name: tests skipped (SKIP_CI_TESTS)
@@ -502,10 +518,11 @@ jobs:
         with:
           just-version: '1.59.0'
       - uses: ./.github/actions/setup
+      - *pinned-clang
       # Same native deps as `ffi`, so the ffi harness is recorded rather than skipped -- a map
       # that never saw a harness selects conservatively and loses the whole point of step 4.
       - name: Install SQLite
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev clang llvm
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev llvm
       - run: pnpm install --frozen-lockfile
       - name: tests skipped (SKIP_CI_TESTS)
         if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
@@ -546,8 +563,9 @@ jobs:
         with:
           just-version: '1.59.0'
       - uses: ./.github/actions/setup
+      - *pinned-clang
       - name: Install SQLite
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev clang llvm
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev llvm
       - run: pnpm install --frozen-lockfile
       # restore-keys prefix finds the most recently created `impact-map-*` cache, which the
       # impact-map job on main writes. Caches from the default branch are visible to every PR,
@@ -589,6 +607,7 @@ jobs:
         with:
           just-version: '1.59.0'
       - *setup
+      - *pinned-clang
       - *pnpm-install
       - name: Build runtime archive
         run: pnpm run runtime

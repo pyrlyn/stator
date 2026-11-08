@@ -82,7 +82,7 @@ export const ConfigSchema = Type.Object(
       nonEmpty(
         'build: the C compiler, a name on PATH or a path (relative to this file when it starts ' +
           'with "."); clang, Apple clang or gcc. --cc and CC override it ' +
-          '(docs/TOOLCHAIN.md, C compiler). Default clang.',
+          '(docs/TOOLCHAIN.md, C compiler). Default: the clang mise pins (clang on Windows).',
       ),
     ),
     diagnostics: Type.Optional(

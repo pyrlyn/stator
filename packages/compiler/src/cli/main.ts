@@ -98,7 +98,7 @@ Flags:
                    vite (default), none, or an adapter module (BUNDLER.md)
   --emit=binary    build a binary (default; overrides "emit": "c" or "lib")
   --cc <cc>        C compiler: clang, Apple clang or gcc, by name or path
-                   (default clang; or config "cc", then CC)
+                   (default: the clang mise pins; or CC, then config "cc")
   --config <path>  read options from this JSON file (default:
                    ./stator.config.json when it exists; docs/CONFIG.md)
   --no-config      ignore stator.config.json

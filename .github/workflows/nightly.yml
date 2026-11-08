@@ -27,8 +27,10 @@ jobs:
         with:
           just-version: '1.59.0'
       - uses: ./.github/actions/setup
+      # statorc's default C compiler, and the justfiles' `clang` (plan/T35, plan-notes 410).
+      - uses: ./.github/actions/clang
       - name: Install runtime dependencies
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev clang llvm
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev llvm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run runtime
       - name: Differential fuzzing

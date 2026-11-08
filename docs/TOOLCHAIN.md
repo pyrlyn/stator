@@ -22,7 +22,7 @@ that changes the pin, and note the reason in `plan-notes.md`.
 | vite                      | `8.3.3` (exact)    | `peerDependencies` (`^8.3.2`) and `devDependencies` of `packages/vite-stator`; `devDependencies` of `examples/vite`. The default bundler adapter and the `stator()` plugin (T12.2, plan-notes 321). Bumped 8.3.1 → 8.3.2 with the creator's permission; the devDependency moved to 8.3.3 in #141 |
 | vite-stator               | workspace          | `devDependencies` (root, `workspace:*`), so `--bundler=vite`, the default, resolves it. Never a dependency of `packages/compiler` (plan §0.9) |
 | pnpm                      | `12.3.4`           | `packageManager` in root `package.json`, `npm:pnpm` in `mise.toml`                                                                                                                                                               |
-| LLVM                      | `21.1.8`           | `mise.toml` (`conda:llvm` + `conda:clang`, Unix). The C compiler the justfile and `packages/compiler/src/cli/build.ts` look up as `$CC`/`clang`. Conda prebuilts — the asdf llvm plugin compiles from source and is not the pin. |
+| LLVM                      | `21.1.8`           | `mise.toml` (`conda:llvm` + `conda:clang`, Unix). statorc's default C compiler, which `packages/compiler/src/cli/build.ts` resolves with `mise which clang --tool conda:clang@21.1.8` (`PINNED_CLANG_TOOL` in `cli/cc.ts`, unit-tested against this pin); the justfiles' default is the `clang` on PATH, which `mise exec`/`mise activate` and CI's `.github/actions/clang` make the same one (plan-notes 410). Conda prebuilts — the asdf llvm plugin compiles from source and is not the pin. |
 | just                      | `1.58.0`           | `mise.toml`. The runtime build (`just -f packages/runtime/justfile -d packages/runtime runtime`, `runtime-asan`, `runtime-intl`).                                                                                                |
 | Zig                       | `0.17.1`           | `mise.toml` (`zig`, Unix). The memory-core objects in `libjsrt.a` (plan-notes 238, T9.1) and the `std/*` backings in `libjsrt_std.a` (T11.2). stator-ts (`packages/transpiler`), which `pnpm run typecheck` builds and runs (plan/T65). CI install via `mlugg/setup-zig@v2` in `.github/actions/setup`, Windows included, because every frontend leg runs `typecheck`. |
 
@@ -138,7 +138,9 @@ CI runs in two stages (plan-notes 292):
 Other Linux jobs (`test262`, Linux arm64 `frontend`, Linux `runtime`/`asan`/`intl`/`ffi`, and the
 non-required `compile jobs smoke` and `gcc goldens`) belong to neither stage and run ungated, in
 parallel with stage 1. `gcc goldens` builds the runtime and runs `test:golden` with `CC=gcc`
-(plan/T35, "C compiler" below).
+(plan/T35, "C compiler" below). Every other job that builds or links C, Test262 included, first
+runs `.github/actions/clang`, so statorc's default and the justfiles' `clang` are mise's pinned
+LLVM 21.1.8 on Linux and macOS (plan-notes 410).
 
 **Required to merge into `main`** (the `protect-main` ruleset; cloud-review T21, plan-notes 370):
 `pipeline / gate`, `static analysis`, `frontend (linux/x64)`, `frontend (windows/x64)` and
@@ -201,7 +203,12 @@ milliseconds). It is also not a `.env` key.
    below);
 3. `"cc"` in `stator.config.json` (a value starting with `.` resolves against the file's
    directory; docs/CONFIG.md);
-4. `clang`, the pinned LLVM 21.1.8 from `mise install`.
+4. the default: the clang mise pins, LLVM 21.1.8 (`conda:clang` in `mise.toml`), found with
+   `mise which clang --tool conda:clang@21.1.8` once per process — never whichever `clang` PATH
+   finds first. When mise is not on PATH or that clang is not installed the build fails with
+   `STA0022`, naming the fix (`mise install` in the Stator checkout, or another compiler through
+   one of the three above); there is no fallback to another clang (plan-notes 410). On Windows,
+   where `mise.toml` pins no clang, the default is the `clang` on PATH.
 
 `CC` sits above the config file, the order every other setting follows (docs/CONFIG.md): whoever
 runs the build overrides what the project file names (plan-notes 409). A config file can already make
@@ -232,11 +239,19 @@ To go back to the default, drop `--cc`, remove `"cc"` from the config and unset 
 
 **Limitations.** Supported families are clang, Apple clang and gcc; anything else is refused, and
 no compiler is bundled (no tcc). On macOS an ASan build (`STATOR_RUNTIME=asan`) defaults to
-`/usr/bin/clang`, because conda clang 21.1.8's ASan runtime deadlocks at startup; an explicit
+`/usr/bin/clang`, because conda clang 21.1.8's ASan runtime deadlocks at startup (on Linux the
+pinned clang builds and runs ASan/UBSan itself; plan-notes 410); an explicit
 choice is kept under ASan and prints one `stator: warning:` line saying so. The macOS stale-`ld`
 retry (below) applies only to the default compiler, so a bare `cc` that PATH resolves to a conda
 clang with a stale bundled `ld` fails to link on a newer Xcode; name `/usr/bin/cc` instead.
-Windows is out of scope.
+Windows is out of scope beyond its `clang` default.
+
+**The runtime archives.** The justfiles default to `CC=clang` resolved through PATH, not through
+`mise which`. Run them under `mise exec --` (or a shell with `mise activate`), as AGENTS.md's
+commands do, so that `clang` is the pinned one statorc links with. CI installs it with
+`.github/actions/clang` in every job that builds or links (mise.toml's `conda:clang` and
+`conda:llvm`, cached by `jdx/mise-action` per OS, arch and `mise.toml`) and puts it first on PATH;
+Linux jobs keep the distro `llvm` only for `llvm-symbolizer`, which the conda clang lacks there.
 
 ## Environment variables and `.env`
 

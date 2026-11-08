@@ -54,6 +54,7 @@ import {
   chooseCC,
   describeSource,
   detectCC,
+  pinnedClang,
   requireFlagsSupported,
   type VersionRun,
 } from './cc.ts';
@@ -646,28 +647,38 @@ export function dedupLinkLibs(flags: readonly string[]): string[] {
   return kept;
 }
 
-/** The command a build without `--cc` or config `cc` runs. Exported for the `--emit=lib`
- * consumer test, whose link must use the same compiler. */
-export function selectCC(runtime: Runtime): string {
+/** The command a build without `--cc` or config `cc` runs (`CC`, else the default). Exported for
+ * the `--emit=lib` consumer test and the ASan gate, which must use the same compiler. */
+export function selectCC(runtime: Pick<Runtime, 'sanitized'>): string {
   return choose(undefined, runtime).choice.command;
 }
 
-function choose(explicit: CcChoice | undefined, runtime: Runtime): ChosenCC {
+function choose(explicit: CcChoice | undefined, runtime: Pick<Runtime, 'sanitized'>): ChosenCC {
   return chooseCC(explicit, process.env, runtime.sanitized, ccHost());
 }
 
 function ccHost(): CcHost {
-  const darwin = process.platform === 'darwin';
-  return { darwin, systemClang: darwin && existsSync('/usr/bin/clang') };
+  const platform = process.platform;
+  const darwin = platform === 'darwin';
+  return {
+    darwin,
+    windows: platform === 'win32',
+    systemClang: darwin && existsSync('/usr/bin/clang'),
+    pinnedClang: miseClang,
+  };
+}
+
+/** One `mise which` per process (~35 ms): Test262 builds thousands of programs in one. A failure
+ * is not kept, so a `mise install` mid-run is picked up by the next build. */
+let pinnedClangPath: string | undefined;
+
+function miseClang(): string {
+  pinnedClangPath ??= pinnedClang(runClangCaptured);
+  return pinnedClangPath;
 }
 
 function runVersion(command: string): VersionRun {
-  const result = spawnSync(command, ['--version'], { encoding: 'utf8' });
-  return {
-    status: result.status,
-    stdout: typeof result.stdout === 'string' ? result.stdout : '',
-    ...(result.error !== undefined && { error: result.error }),
-  };
+  return runClangCaptured(command, ['--version']);
 }
 
 /** The one place a build decides its C compiler: chosen, probed once, and warned about when an
@@ -744,9 +755,10 @@ interface CapturedClang {
   readonly error: unknown;
 }
 
-/** The link's private runner: captured, so a failure can be classified before anything is
- * printed. Callers replay `stdout`/`stderr` on failure, which keeps the terminal output
- * identical to the inherited-stdio form — buffered rather than live, but byte-identical. */
+/** The link's private runner, and the `--version` probe's and `mise which`'s: captured, so a
+ * failure can be classified before anything is printed. Callers replay `stdout`/`stderr` on
+ * failure, which keeps the terminal output identical to the inherited-stdio form — buffered rather
+ * than live, but byte-identical. */
 function runClangCaptured(cc: string, args: readonly string[]): CapturedClang {
   const result = spawnSync(cc, args, { encoding: 'utf8' });
   return {
