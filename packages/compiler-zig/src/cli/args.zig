@@ -7,6 +7,7 @@ const Reporter = failure.Reporter;
 const Error = failure.Error;
 const oom = failure.oom;
 const config = @import("config.zig");
+const c_compiler = @import("cc.zig");
 
 pub const Mode = config.Mode;
 
@@ -16,7 +17,7 @@ pub const usage =
     \\Usage:
     \\  stator build <entry> -o <out> [--mode=ts|js] [--node] [--emit=c|lib] [--keep-c]
     \\    [--opt=0|1|2|3] [--link=<flags>]... [--emit-header=<h> [--unit-name=<unit>]]
-    \\    [--bundler=vite|none|<module>]
+    \\    [--bundler=vite|none|<module>] [--cc=<name|path>]
     \\  stator explain <entry> [--mode=ts|js] [--node] [--json] [--bundler=vite|none|<module>]
     \\  stator <command> --help
     \\  stator --version
@@ -39,7 +40,7 @@ pub const usage_build =
     \\Usage:
     \\  stator build <entry> -o <out> [--mode=ts|js] [--node] [--emit=c|lib] [--keep-c]
     \\    [--opt=0|1|2|3] [--link=<flags>]... [--emit-header=<h> [--unit-name=<unit>]]
-    \\    [--bundler=vite|none|<module>]
+    \\    [--bundler=vite|none|<module>] [--cc=<name|path>]
     \\
     \\Flags:
     \\  -o, --out <out>  output path: native binary, or C with --emit=c
@@ -59,6 +60,8 @@ pub const usage_build =
     \\  --bundler <b>    js mode: bundles package imports and CommonJS files;
     \\                   vite (default), none, or an adapter module (BUNDLER.md)
     \\  --emit=binary    build a binary (default; overrides "emit": "c" or "lib")
+    \\  --cc <cc>        C compiler: clang, Apple clang or gcc, by name or path
+    \\                   (default clang; or config "cc", then CC)
     \\
 ++ config_help;
 
@@ -116,6 +119,7 @@ pub const Build = struct {
     emit_header: ?[]const u8,
     unit_name: ?[]const u8,
     bundler: Bundler,
+    cc: ?c_compiler.Choice,
     node: bool,
 };
 
@@ -139,7 +143,7 @@ const Commands = enum { both, build, explain };
 
 const Value = struct { what: []const u8, equals: bool };
 
-const Flag = enum { out, mode, opt, link, emit_header, unit_name, bundler, config, no_config, json, diagnostics_text, emit_c, emit_lib, emit_binary, keep_c, node };
+const Flag = enum { out, mode, opt, link, emit_header, unit_name, bundler, cc, config, no_config, json, diagnostics_text, emit_c, emit_lib, emit_binary, keep_c, node };
 
 const Spec = struct { name: []const u8, flag: Flag, commands: Commands, value: ?Value = null };
 
@@ -151,6 +155,7 @@ const flags = [_]Spec{
     .{ .name = "--link", .flag = .link, .commands = .build, .value = .{ .what = "a value (clang link flags)", .equals = true } },
     .{ .name = "--emit-header", .flag = .emit_header, .commands = .build, .value = .{ .what = "a value (output header path)", .equals = true } },
     .{ .name = "--unit-name", .flag = .unit_name, .commands = .build, .value = .{ .what = "a value (C identifier prefix)", .equals = true } },
+    .{ .name = "--cc", .flag = .cc, .commands = .build, .value = .{ .what = "a value (C compiler name or path)", .equals = true } },
     .{ .name = "--bundler", .flag = .bundler, .commands = .both, .value = .{ .what = "a value (vite, none or a module)", .equals = true } },
     .{ .name = "--config", .flag = .config, .commands = .both, .value = .{ .what = "a value (config file path)", .equals = true } },
     .{ .name = "--no-config", .flag = .no_config, .commands = .both },
@@ -264,7 +269,7 @@ pub fn parse(a: Allocator, r: *Reporter, argv: []const []const u8, inputs: Input
                 if (split.len == 0) return r.fail("STA0004", "--link requires a value (clang link flags)", .{});
                 link_flags.appendSlice(a, split) catch oom();
             },
-            inline .emit_header, .unit_name, .bundler => |field| @field(cli, @tagName(field)) = value,
+            inline .emit_header, .unit_name, .bundler, .cc => |field| @field(cli, @tagName(field)) = value,
             .config => choice = .{ .path = value },
             .no_config => choice = .none,
             .json => cli.diagnostics = .json,
@@ -325,6 +330,8 @@ test "usage errors carry the CLI's codes" {
     try expectFailure(&.{ "build", "a.ts" }, "STA0004", "build requires -o <out>");
     try expectFailure(&.{"explain"}, "STA0004", "\"explain\" requires an entry file");
     try expectFailure(&.{ "explain", "a.ts", "--bundler=none" }, "STA0004", "--bundler requires --mode=js");
+    try expectFailure(&.{ "explain", "a.ts", "--cc=gcc" }, "STA0005", "flag \"--cc=gcc\" does not apply to explain");
+    try expectFailure(&.{ "build", "a.ts", "-o", "b", "--cc=" }, "STA0004", "--cc requires a value (C compiler name or path)");
 }
 
 test "an inline value keeps a leading dash" {
@@ -335,6 +342,8 @@ test "an inline value keeps a leading dash" {
     try std.testing.expectEqual(@as(u2, 1), c.build.opt);
     try std.testing.expectEqual(@as(usize, 3), c.build.link_flags.len);
     try std.testing.expectEqualStrings("-L/x", c.build.link_flags[1]);
+    const cc = try parse(arena.allocator(), &r, &.{ "build", "a.ts", "-o", "b", "--cc", "gcc-14" }, .{ .cwd = "/nonexistent", .env_opt = null, .io = std.testing.io });
+    try std.testing.expectEqualDeep(c_compiler.Choice{ .command = "gcc-14", .source = .flag }, cc.build.cc.?);
 }
 
 test "the environment's opt names where it came from" {
