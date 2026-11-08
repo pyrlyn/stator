@@ -51,7 +51,7 @@ Windows-only file). Every `fail` is a CommonJS file, which goes to the T12 bundl
 `fetch.ts` links the corpus's `test/common` to the strict-TS `common/`. The harness no longer
 imports `node:util` (N2); `common/inspect.ts` prints what its messages compare. Every `fail` now
 stops at `node:process` (the harness's `process.platform`, `exit`, `on` and `cwd`), then
-at Rolldown's `__commonJSMin` (STA4013, T12.3), and 13 of them at `path.win32`. **Third slice landed** (plan-notes 403): an untyped read or write
+at Rolldown's `__commonJSMin` (STA4013, T12.3), and 13 of them at `path.win32`. **Third slice landed** (plan-notes 404): an untyped read or write
 of a class accessor runs the class's `get`/`set` half, which the harness's `common` needed; two
 `path` files pass (2 / 17). Every remaining `fail` reason names where the file stops first.
 **Next:** `path.win32` (8 files stop there or after the CommonJS helpers), the helpers'

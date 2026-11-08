@@ -7,13 +7,25 @@ the `js`-mode code the compiler hands it. The design is in `docs/INTERPRETER.md`
 | --- | --- |
 | `src/parse.zig` | The parser front. `eval` source and `new Function`'s pieces go through stator-ts's parser (`packages/transpiler/src/parser.zig`), and the result is either the tree or the first early error. |
 | `src/capi.zig` | The C ABI the runtime calls. Errors are left pending through `jsrt_throw_error`. |
+| `src/bytecode.zig` | The bytecode format: opcodes, inline operands, function templates. |
+| `src/compile.zig` | stator-ts's tree to bytecode, with scope analysis. A construct it does not take yet is reported as unsupported, and nothing runs. |
+| `src/vm.zig` | The machine. Values are the runtime's `jsrt_value`, and every operation is a runtime helper. |
+| `src/builtins.zig` | The global object an interpreted script runs against. |
+| `src/interp.zig` | `runScript` and `evalScript`: parse, compile and run a script against the global object. |
+| `src/rt.zig` | The runtime's C ABI, translated from `packages/runtime/src/jsrt_c.h`. |
 | `test262/parse.zig` | Runs Test262's `test/language/` through the parse entry and ratchets the result against `test262-parse.json`. |
+| `test262/exec.zig` | Runs the same tests through the interpreter, one child process per test and mode, and ratchets the result against `test262-exec.json`. |
+| `test262/common.zig` | What the two drivers share: test metadata, modes, the corpus walk, the ratchet. |
 
 ```bash
 zig build test                    # unit tests (pnpm run interp:test)
 zig build lib -Doptimize=ReleaseFast   # zig-out/lib/libjsrt_interp.a
 zig build test262-parse -Doptimize=ReleaseFast -- [--corpus=<dir>] [--filter=<text>] [--failures] [--update]
+zig build test262-exec -Doptimize=ReleaseSafe -- [--corpus=<dir>] [--filter=<text>] [--failures] [--update]
 ```
+
+The tests and `test262-exec` link `../runtime/build/libjsrt.a` from `pnpm run runtime`. Pass
+`-Druntime=<path>` to link another flavor.
 
 The Test262 corpus comes from `pnpm run test262:fetch`, or from `$STATOR_TEST262` when that is
 set. A `--filter` run checks a slice, so it neither gates nor records.

@@ -39,11 +39,11 @@
     },
     "test-path-posix-exists.js": {
       "expect": "pass",
-      "reason": "passes since untyped reads and writes run class accessors (plan-notes 403)"
+      "reason": "passes since untyped reads and writes run class accessors (plan-notes 404)"
     },
     "test-path-posix-relative-on-windows.js": {
       "expect": "pass",
-      "reason": "passes since untyped reads and writes run class accessors (plan-notes 403)"
+      "reason": "passes since untyped reads and writes run class accessors (plan-notes 404)"
     },
     "test-path-relative.js": {
       "expect": "fail",
