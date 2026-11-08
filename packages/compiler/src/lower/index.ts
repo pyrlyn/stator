@@ -1783,9 +1783,10 @@ function lowerInterpreted(
     }
     // Each name once, resolved where the eval stands: an inner binding shadows an outer one.
     const seen: EvalBinding[] = [];
-    const names = new Set(
-      frontendTypes.evalVisibleDeclarations(node, checker).map((d) => d.name.getText(sourceFile)),
-    );
+    const names = new Set<string>();
+    for (const decl of frontendTypes.evalVisibleDeclarations(node, checker)) {
+      names.add(decl.name.getText(sourceFile));
+    }
     for (const source of names) {
       const decl = checker.resolveName(source, node, ts.SymbolFlags.Value, false)?.valueDeclaration;
       if (

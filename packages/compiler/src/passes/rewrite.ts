@@ -101,6 +101,20 @@ function rewriteFunction(fn: FunctionExpr, rewriter: Rewriter): FunctionExpr {
   return body === fn.body && params === fn.params ? fn : { ...fn, body, params };
 }
 
+/** A receiver and its arguments, the parts `super(…)` and a direct `eval(…)` share; `undefined`
+ * when neither changed. */
+function rewriteReceiverArgs(
+  receiver: Expression,
+  args: readonly Expression[],
+  f: (e: Expression) => Expression,
+): { receiver: Expression; args: readonly Expression[] } | undefined {
+  const nextReceiver = f(receiver);
+  const nextArgs = rewriteEach(args, f);
+  return nextReceiver === receiver && nextArgs === args
+    ? undefined
+    : { receiver: nextReceiver, args: nextArgs };
+}
+
 function rewriteMethod(method: ClassMethod, rewriter: Rewriter): ClassMethod {
   const fn = rewriteFunction(method.fn, rewriter);
   return fn === method.fn ? method : { ...method, fn };
@@ -157,9 +171,8 @@ function rebuildStatement(stmt: Statement, rewriter: Rewriter): Statement {
       return target === stmt.target && value === stmt.value ? stmt : { ...stmt, target, value };
     }
     case 'super-call': {
-      const receiver = expr(stmt.receiver);
-      const args = rewriteEach(stmt.args, expr);
-      return receiver === stmt.receiver && args === stmt.args ? stmt : { ...stmt, receiver, args };
+      const next = rewriteReceiverArgs(stmt.receiver, stmt.args, expr);
+      return next === undefined ? stmt : { ...stmt, ...next };
     }
     // A class's own parts are functions and initializers; its layout (fields, slots, vtable) is
     // resolved by the lowering and is not a tree to walk.
@@ -437,9 +450,8 @@ function rebuildExpression(expr: Expression, rewriter: Rewriter): Expression {
     }
     // The bindings are names, not reads: nothing a rewrite may replace.
     case 'direct-eval': {
-      const receiver = sub(expr.receiver);
-      const args = rewriteEach(expr.args, sub);
-      return receiver === expr.receiver && args === expr.args ? expr : { ...expr, receiver, args };
+      const next = rewriteReceiverArgs(expr.receiver, expr.args, sub);
+      return next === undefined ? expr : { ...expr, ...next };
     }
     case 'instanceof':
     case 'field-access':

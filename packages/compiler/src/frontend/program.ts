@@ -1198,7 +1198,9 @@ function seedDirectEvalBindings(program: ts.Program, into: Set<ts.Symbol>): void
           }
         }
       }
-      ts.forEachChild(node, visit);
+      for (const child of node.getChildren(file)) {
+        visit(child);
+      }
     };
     visit(file);
   }

@@ -43,8 +43,7 @@ pub fn evalDirect(x: Value, this: Value, bindings: []const Binding) Value {
 /// CreateDynamicFunction (§20.2.1.1.1) for `Function(…)` and `new Function(…)`: a sloppy
 /// function in the global scope, named `anonymous`.
 pub fn newFunction(params: []const u8, body: []const u8) Value {
-    builtins.init();
-    var arena: std.heap.ArenaAllocator = .init(std.heap.c_allocator);
+    var arena = scratch();
     defer arena.deinit();
     const a = arena.allocator();
     const f = switch (parse.parseFunction(a, .normal, params, body)) {
@@ -66,9 +65,15 @@ const Context = struct {
     bindings: []const Binding = &.{},
 };
 
-fn runCode(src: []const u8, goal: Goal, cx: Context) Outcome {
+/// The global object made, and an arena for one parse and compile: the tree dies with it, the
+/// templates it produced are allocated elsewhere and stay.
+fn scratch() std.heap.ArenaAllocator {
     builtins.init();
-    var arena: std.heap.ArenaAllocator = .init(std.heap.c_allocator);
+    return .init(std.heap.c_allocator);
+}
+
+fn runCode(src: []const u8, goal: Goal, cx: Context) Outcome {
+    var arena = scratch();
     defer arena.deinit();
     const a = arena.allocator();
     const file = switch (parse.parseScript(a, src)) {
