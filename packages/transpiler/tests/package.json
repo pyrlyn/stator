@@ -2,7 +2,7 @@
   "private": true,
   "description": "Reference compiler and ambient types for tests/differential.sh",
   "devDependencies": {
-    "@types/node": "24.12.4",
+    "@types/node": "24.19.2",
     "typescript": "7.0.2"
   }
 }
