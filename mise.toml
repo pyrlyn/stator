@@ -4,7 +4,7 @@
 # Windows story. ar/pkg-config/diff stay the system ones (Xcode CLT / apt); just is pinned here.
 [tools]
 node = "26.7.0"
-"npm:agent-browser" = "0.39.2" # browser automation CLI for agents: Open and check the project site in a real browser.
+"npm:agent-browser" = "0.41.1" # browser automation CLI for agents: Open and check the project site in a real browser.
 pnpm = "12.15.0"
 "npm:@moonrepo/cli" = "2.6.5"
 just = "1.59.0"
