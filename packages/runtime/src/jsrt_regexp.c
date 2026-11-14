@@ -18,7 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-const JSRTClass jsrt_class_regexp __attribute__((used)) = {"RegExp", 0, NULL, NULL, 0, NULL, NULL};
+const JSRTClass jsrt_class_regexp __attribute__((used)) = {"RegExp", 0, NULL, NULL, 0, NULL, NULL, NULL};
 
 /* ============================================================================
  * The three functions libregexp.h says "must be provided by the user"

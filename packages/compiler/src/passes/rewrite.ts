@@ -322,6 +322,10 @@ function rebuildExpression(expr: Expression, rewriter: Rewriter): Expression {
       const operand = sub(expr.operand);
       return operand === expr.operand ? expr : { ...expr, operand };
     }
+    case 'get-iterator': {
+      const operand = sub(expr.operand);
+      return operand === expr.operand ? expr : { ...expr, operand };
+    }
     case 'delete-prop': {
       const target = sub(expr.target);
       const key = sub(expr.key);

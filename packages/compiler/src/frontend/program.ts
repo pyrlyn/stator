@@ -101,6 +101,9 @@ const JS_MODE_RUNTIME_CODES: ReadonlySet<number> = new Set([
   // TypeError at run time, which is a fact about the value and not a reason to refuse the program.
   2531, // Object is possibly 'null'.
   2532, // Object is possibly 'undefined'.
+  // for-of over a value the checker cannot prove iterable: js mode runs GetIterator at runtime
+  // (plan.md §8 step 2a(c)).
+  2488, // Type must have a '[Symbol.iterator]()' method...
   2533, // Object is possibly 'null' or 'undefined'.
   2721, // Cannot invoke an object which is possibly 'null'.
   2722, // Cannot invoke an object which is possibly 'undefined'.

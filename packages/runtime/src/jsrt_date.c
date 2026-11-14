@@ -31,7 +31,7 @@
 #include <string.h>
 #include <time.h>
 
-const JSRTClass jsrt_class_date = {"Date", 0, NULL, NULL, 0, NULL, NULL};
+const JSRTClass jsrt_class_date = {"Date", 0, NULL, NULL, 0, NULL, NULL, NULL};
 
 #define MS_PER_SECOND 1000.0
 #define MS_PER_MINUTE 60000.0

@@ -19,8 +19,8 @@
 /* One descriptor each, file-scope and const: the printer's test and `instanceof` are both pointer
  * comparisons against these. No fields, because a Map's entries are not slots — nothing in the
  * subset can reach them by name. */
-const JSRTClass jsrt_class_map = {"Map", 0, NULL, NULL, 0, NULL, NULL};
-const JSRTClass jsrt_class_set = {"Set", 0, NULL, NULL, 0, NULL, NULL};
+const JSRTClass jsrt_class_map = {"Map", 0, NULL, NULL, 0, NULL, NULL, NULL};
+const JSRTClass jsrt_class_set = {"Set", 0, NULL, NULL, 0, NULL, NULL, NULL};
 
 /* ============================================================================
  * Keys — SameValueZero and a hash that agrees with it

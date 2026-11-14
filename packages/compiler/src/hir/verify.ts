@@ -907,6 +907,17 @@ function verifyExpression(
       break;
     }
 
+    case 'get-iterator':
+      verifyExpression(expr.operand, problems, bindings);
+      if (expr.type.kind !== 'iterator') {
+        problems.push({
+          kind: 'get-iterator',
+          span: expr.span,
+          code: 'STA4059',
+          message: `get-iterator typed '${hTypeName(expr.type)}', not iterator`,
+        });
+      }
+      break;
     case 'delete-prop': {
       verifyExpression(expr.target, problems, bindings);
       verifyExpression(expr.key, problems, bindings);

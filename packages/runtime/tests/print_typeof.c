@@ -25,7 +25,7 @@ static jsrt_value identity(uint32_t argc, const jsrt_value *argv, JSRTEnv *env) 
 }
 
 static const char *const p_fields[] = {"x"};
-static const JSRTClass P = {"P", 1, p_fields, NULL, 0, NULL, NULL};
+static const JSRTClass P = {"P", 1, p_fields, NULL, 0, NULL, NULL, NULL};
 
 static void show(jsrt_value v) {
   jsrt_print(jsrt_typeof(v));

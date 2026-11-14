@@ -18,7 +18,7 @@
 #include <stdio.h>
 
 static const char *const p_fields[] = {"x"};
-static const JSRTClass P = {"P", 1, p_fields, NULL, 0, NULL, NULL};
+static const JSRTClass P = {"P", 1, p_fields, NULL, 0, NULL, NULL, NULL};
 
 static jsrt_value point(jsrt_value x) {
   jsrt_value o = jsrt_object_new(&P);

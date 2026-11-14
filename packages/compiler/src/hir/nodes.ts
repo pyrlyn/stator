@@ -169,6 +169,12 @@ export interface DeleteProp extends Node {
   readonly key: Expression;
 }
 
+/** Runtime GetIterator on an iterable the checker could not prove (plan.md §8 step 2a(c)). */
+export interface GetIterator extends Node {
+  readonly kind: 'get-iterator';
+  readonly operand: Expression;
+}
+
 /** A runtime check that a value is what the program says it is — STA2001 if it is not.
  *
  * This is golden rule 4 made executable. TypeScript's types are unsound at exactly the places this
@@ -1358,6 +1364,7 @@ export type Expression =
   | UnaryOp
   | TypeOf
   | DeleteProp
+  | GetIterator
   | ConditionalExpr
   | UpdateExpr
   | BoundaryCheck

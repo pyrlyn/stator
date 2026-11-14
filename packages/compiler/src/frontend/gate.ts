@@ -2893,6 +2893,9 @@ function gateForOf(statement: ts.ForOfStatement, checker: ts.TypeChecker): GateR
     hir.kind !== 'iterator' &&
     userIteratorMethod(hir) === undefined
   ) {
+    if (hir.kind === 'unknown' || isDynamicShape(iterableType, checker)) {
+      return { kind: 'accept' };
+    }
     return notYet('for-of over a user iterable is not yet supported', 5);
   }
   const initializer = statement.initializer;

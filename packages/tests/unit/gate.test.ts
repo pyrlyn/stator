@@ -62,9 +62,9 @@ void test('for-of and for-in report distinctly from the for loop they are not', 
     [],
   );
   assert.deepEqual(codesFor('const s: Set<number> = new Set();\nfor (const e of s) { }'), []);
-  assert.deepEqual(codesFor('const xs: Iterable<number> = [1];\nfor (const e of xs) { }'), [
-    'STA1214',
-  ]);
+  assert.deepEqual(codesFor('const xs: Iterable<number> = [1];\nfor (const e of xs) { }'), []);
+  assert.deepEqual(codesFor('function f(o) { for (const x of o) {} }', 'js'), []);
+
   assert.deepEqual(
     codesFor(
       'function* g(): Generator<number, void, undefined> { yield 1; }\n' +

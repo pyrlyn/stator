@@ -276,6 +276,9 @@ typedef struct JSRTClass {
    *
    * Length is field_count when present; every slot appears exactly once. */
   const uint32_t *key_order;
+  /* The class's own `[Symbol.iterator]()` when declared, or NULL. Runtime GetIterator walks the
+   * parent chain for the first non-NULL entry (docs/VALUE.md §4.13). */
+  const struct JSRTClosure *iterator_method;
 } JSRTClass;
 
 /* The slot the i-th enumerated property lives in. Identity when a class declares no reordering --
@@ -762,6 +765,9 @@ bool jsrt_map_iter_step(jsrt_value map, uint32_t *index, jsrt_value *key, jsrt_v
 /* The string code-point walk, boxed. Never a stored member result -- only the suspendable-unit
  * for-of boxes it, because a cursor on the C frame would not survive a yield/await. */
 #define JSRT_ITER_STRING 10
+/* Iterator object returned from a well-known `Symbol.iterator` call on an unknown iterable. The
+ * target is that object; each step calls its `next()` (docs/VALUE.md §4.13). */
+#define JSRT_ITER_PROTOCOL 11
 
 typedef struct JSRTIterator {
   const JSRTClass *cls; /* &jsrt_class_iterator -- prefix-shared with JSRTObject */
@@ -777,6 +783,10 @@ jsrt_value jsrt_iterator_new(jsrt_value target, uint8_t kind);
 jsrt_value jsrt_iterator_match_all_new(jsrt_value str, jsrt_value matcher);
 jsrt_value jsrt_iterator_next(jsrt_value it, jsrt_value sent);
 bool jsrt_iterator_step(jsrt_value it, jsrt_value *out);
+/* GetIterator (ECMA-262): specialized tag dispatch first, then the well-known iterator method.
+ * Answers a boxed walk, a generator, or a protocol iterator; throws a catchable TypeError when the
+ * value is nullish or has no usable `Symbol.iterator` (plan.md §8 step 2a(c)). */
+jsrt_value jsrt_get_iterator(jsrt_value obj);
 
 /* `m.set(k, v)` and `s.add(v)` both RETURN THE COLLECTION, which is what makes them chainable. */
 jsrt_value jsrt_map_set(jsrt_value map, jsrt_value key, jsrt_value value);

@@ -15,8 +15,12 @@
 #include "jsrt_value.h"
 
 #include <stdint.h>
+#include <string.h>
 
-const JSRTClass jsrt_class_iterator = {"Iterator", 0, NULL, NULL, 0, NULL, NULL};
+/* Dynamic shape lookup until Symbol as a stored value lands (STA1212). */
+#define JSRT_ITERATOR_KEY "Symbol.iterator"
+
+const JSRTClass jsrt_class_iterator = {"Iterator", 0, NULL, NULL, 0, NULL, NULL, NULL};
 
 static const uint32_t ITER_DONE = UINT32_MAX;
 
@@ -123,7 +127,7 @@ static bool string_step(JSRTIterator *it, jsrt_value *out) {
   return true;
 }
 
-const JSRTClass jsrt_class_generator = {"Generator", 0, NULL, NULL, 0, NULL, NULL};
+const JSRTClass jsrt_class_generator = {"Generator", 0, NULL, NULL, 0, NULL, NULL, NULL};
 
 jsrt_value jsrt_generator_new(JSRTEnv *env, JSRTGenResume resume) {
   JSRTGenerator *g = (JSRTGenerator *)jsrt_gc_alloc(sizeof(JSRTGenerator), "generator");
@@ -213,6 +217,116 @@ static bool generator_step(jsrt_value gen, jsrt_value sent, jsrt_value *out) {
   return true;
 }
 
+static bool is_callable(jsrt_value v) { return jsrt_is(v, JSRT_TAG_CLOSURE); }
+
+static void throw_not_iterable(jsrt_value obj) {
+  if (jsrt_is(obj, JSRT_TAG_NULL)) {
+    jsrt_throw_error(&jsrt_class_type_error, "null is not iterable");
+    return;
+  }
+  if (jsrt_is(obj, JSRT_TAG_UNDEFINED)) {
+    jsrt_throw_error(&jsrt_class_type_error, "undefined is not iterable");
+    return;
+  }
+  (void)obj;
+  jsrt_throw_error(&jsrt_class_type_error, "object is not iterable");
+}
+
+static jsrt_value object_iterator_method(jsrt_value obj) {
+  const JSRTObject *self = jsrt_as_object(obj);
+  for (const JSRTClass *cls = self->cls; cls != NULL; cls = cls->parent) {
+    if (cls->iterator_method != NULL) {
+      return jsrt_closure(cls->iterator_method);
+    }
+  }
+  if (jsrt_is_dynobj(obj)) {
+    return jsrt_get_prop(obj, JSRT_ITERATOR_KEY, NULL);
+  }
+  return JSRT_UNDEFINED;
+}
+
+static jsrt_value box_protocol_iterator(jsrt_value iter) {
+  return make_iter(iter, JSRT_UNDEFINED, JSRT_ITER_PROTOCOL);
+}
+
+static bool protocol_step(JSRTIterator *it, jsrt_value *out) {
+  jsrt_value next = jsrt_get_prop(it->target, "next", NULL);
+  if (jsrt_pending()) {
+    return false;
+  }
+  if (!is_callable(next)) {
+    jsrt_throw_error(&jsrt_class_type_error, "Iterator method called on incompatible receiver");
+    return false;
+  }
+  jsrt_value recv = it->target;
+  jsrt_value result = jsrt_call(next, 1, &recv);
+  if (jsrt_pending()) {
+    return false;
+  }
+  if (!jsrt_is(result, JSRT_TAG_OBJECT) && !jsrt_is_dynobj(result)) {
+    jsrt_throw_error(&jsrt_class_type_error, "Iterator result interface is not an object");
+    return false;
+  }
+  jsrt_value done = jsrt_get_prop(result, "done", NULL);
+  if (jsrt_pending()) {
+    return false;
+  }
+  if (jsrt_truthy(done)) {
+    return false;
+  }
+  *out = jsrt_get_prop(result, "value", NULL);
+  if (jsrt_pending()) {
+    return false;
+  }
+  return true;
+}
+
+jsrt_value jsrt_get_iterator(jsrt_value obj) {
+  if (jsrt_is(obj, JSRT_TAG_NULL) || jsrt_is(obj, JSRT_TAG_UNDEFINED)) {
+    throw_not_iterable(obj);
+    return JSRT_UNDEFINED;
+  }
+  if (jsrt_is_generator(obj) || is_iterator(obj)) {
+    return obj;
+  }
+  if (jsrt_is(obj, JSRT_TAG_ARRAY)) {
+    return jsrt_iterator_new(obj, JSRT_ITER_ARRAY_VALUES);
+  }
+  if (jsrt_is(obj, JSRT_TAG_STRING)) {
+    return jsrt_iterator_new(obj, JSRT_ITER_STRING);
+  }
+  if (jsrt_is_map_or_set(obj)) {
+    const JSRTClass *cls = jsrt_as_object(obj)->cls;
+    const uint8_t kind = cls == &jsrt_class_map ? JSRT_ITER_MAP_ENTRIES : JSRT_ITER_SET_VALUES;
+    return jsrt_iterator_new(obj, kind);
+  }
+  if (!jsrt_is(obj, JSRT_TAG_OBJECT)) {
+    throw_not_iterable(obj);
+    return JSRT_UNDEFINED;
+  }
+  jsrt_value method = object_iterator_method(obj);
+  if (jsrt_pending()) {
+    return JSRT_UNDEFINED;
+  }
+  if (!is_callable(method)) {
+    throw_not_iterable(obj);
+    return JSRT_UNDEFINED;
+  }
+  jsrt_value argv[1] = {obj};
+  jsrt_value iter = jsrt_call(method, 1, argv);
+  if (jsrt_pending()) {
+    return JSRT_UNDEFINED;
+  }
+  if (jsrt_is_generator(iter) || is_iterator(iter)) {
+    return iter;
+  }
+  if (!jsrt_is(iter, JSRT_TAG_OBJECT) && !jsrt_is_dynobj(iter)) {
+    jsrt_throw_error(&jsrt_class_type_error, "object is not iterable");
+    return JSRT_UNDEFINED;
+  }
+  return box_protocol_iterator(iter);
+}
+
 bool jsrt_iterator_step(jsrt_value itv, jsrt_value *out) {
   if (jsrt_is_generator(itv)) {
     return generator_step(itv, JSRT_UNDEFINED, out);
@@ -226,7 +340,9 @@ bool jsrt_iterator_step(jsrt_value itv, jsrt_value *out) {
     return false;
   }
   bool more;
-  if (it->kind == JSRT_ITER_MATCH_ALL) {
+  if (it->kind == JSRT_ITER_PROTOCOL) {
+    more = protocol_step(it, out);
+  } else if (it->kind == JSRT_ITER_MATCH_ALL) {
     more = jsrt_regexp_match_all_step(it->extra, it->target, out);
   } else if (it->kind == JSRT_ITER_STRING) {
     more = string_step(it, out);

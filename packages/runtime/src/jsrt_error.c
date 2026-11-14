@@ -29,15 +29,15 @@ static const char *const error_fields[] = {"name", "message"};
 
 /* `parent` is the whole of the subclassing. Error is the root; each standard subclass points at it,
  * which is the prototype chain as far as `instanceof` — the only question asked of it — can see. */
-const JSRTClass jsrt_class_error = {"Error", 2, error_fields, NULL, 0, NULL, NULL};
+const JSRTClass jsrt_class_error = {"Error", 2, error_fields, NULL, 0, NULL, NULL, NULL};
 const JSRTClass jsrt_class_type_error = {"TypeError", 2, error_fields, &jsrt_class_error,
-                                         0,           NULL,          NULL};
+                                         0,           NULL,          NULL, NULL};
 const JSRTClass jsrt_class_range_error = {"RangeError", 2, error_fields, &jsrt_class_error,
-                                          0,            NULL,          NULL};
+                                          0,            NULL,          NULL, NULL};
 const JSRTClass jsrt_class_reference_error = {"ReferenceError", 2,    error_fields,
-                                              &jsrt_class_error, 0, NULL, NULL};
+                                              &jsrt_class_error, 0, NULL, NULL, NULL};
 const JSRTClass jsrt_class_syntax_error = {"SyntaxError", 2, error_fields, &jsrt_class_error,
-                                           0,             NULL,          NULL};
+                                           0,             NULL,          NULL, NULL};
 
 /* The name -> descriptor map `jsrt_instanceof_builtin` needs. A linear walk over five entries: the
  * list is closed by the language, and a table would not be faster than five pointer compares. */

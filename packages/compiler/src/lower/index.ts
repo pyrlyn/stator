@@ -1054,12 +1054,20 @@ function lowerForOf(
   if (!lowered) {
     return null;
   }
-  const iterable =
+  let iterable: Expression | null =
     peeled === undefined
       ? wrapUserIterator(lowered, iterableExpr, node, sourceFile, checker, diagnostics)
       : lowered;
   if (!iterable) {
     return null;
+  }
+  if (needsRuntimeGetIterator(iterable.type, checker.getTypeAtLocation(iterableExpr), checker)) {
+    iterable = {
+      kind: 'get-iterator',
+      type: hIterator(hUnknown(false)),
+      span: iterable.span,
+      operand: iterable,
+    };
   }
 
   const list = node.initializer;
@@ -1114,6 +1122,21 @@ function lowerForOf(
     ...(label !== undefined && { label }),
     ...(loopNeedsPerIterationEnv(node, checker) && { perIterationEnv: true as const }),
   };
+}
+
+/** True when the iterable must be resolved with runtime GetIterator rather than a compile-time walk. */
+function needsRuntimeGetIterator(type: HType, tsType: ts.Type, checker: ts.TypeChecker): boolean {
+  if (type.kind === 'unknown') {
+    return true;
+  }
+  if (
+    type.kind === 'object' &&
+    isDynamicShape(tsType, checker) &&
+    userIteratorMethod(type) === undefined
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** `for (const x of user)` where `user` declares `[Symbol.iterator]()`: call that method and let

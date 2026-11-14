@@ -17,37 +17,37 @@
 /* The class descriptors a compiled program would emit: one `static const` per class, shared by
  * every instance of it. */
 static const char *const empty_fields[] = {""};
-static const JSRTClass EMPTY = {"Empty", 0, empty_fields, NULL, 0, NULL, NULL};
+static const JSRTClass EMPTY = {"Empty", 0, empty_fields, NULL, 0, NULL, NULL, NULL};
 
 static const char *const p_fields[] = {"x", "y"};
-static const JSRTClass P = {"P", 2, p_fields, NULL, 0, NULL, NULL};
+static const JSRTClass P = {"P", 2, p_fields, NULL, 0, NULL, NULL, NULL};
 
 static const char *const one_field[] = {"v"};
-static const JSRTClass DEEP = {"Deep", 1, one_field, NULL, 0, NULL, NULL};
+static const JSRTClass DEEP = {"Deep", 1, one_field, NULL, 0, NULL, NULL, NULL};
 
 /* Same shape as Deep, different name: the pair is what shows the name is inside the line budget
  * and not merely printed in front of it. */
-static const JSRTClass SHORT = {"S", 1, one_field, NULL, 0, NULL, NULL};
-static const JSRTClass LONG = {"AVeryLongClassNameIndeed", 1, one_field, NULL, 0, NULL, NULL};
+static const JSRTClass SHORT = {"S", 1, one_field, NULL, 0, NULL, NULL, NULL};
+static const JSRTClass LONG = {"AVeryLongClassNameIndeed", 1, one_field, NULL, 0, NULL, NULL, NULL};
 
 static const char *const wide_fields[] = {"field0", "field1", "field2", "field3",
                                           "field4", "field5", "field6", "field7"};
-static const JSRTClass WIDE = {"Wide", 8, wide_fields, NULL, 0, NULL, NULL};
+static const JSRTClass WIDE = {"Wide", 8, wide_fields, NULL, 0, NULL, NULL, NULL};
 
 static const char *const two_long[] = {"averyveryverylongfieldname", "another"};
-static const JSRTClass LONGFIELDS = {"Long", 2, two_long, NULL, 0, NULL, NULL};
+static const JSRTClass LONGFIELDS = {"Long", 2, two_long, NULL, 0, NULL, NULL, NULL};
 
 static const char *const mixed_fields[] = {"arr", "o"};
-static const JSRTClass N = {"N", 2, mixed_fields, NULL, 0, NULL, NULL};
+static const JSRTClass N = {"N", 2, mixed_fields, NULL, 0, NULL, NULL, NULL};
 
 /* A `#private` field HAS a slot -- the layout is the same as any other field's -- and is not
  * printed. The leading '#' in the name is the whole signal, so these descriptors are what a
  * compiled program emits for `class Priv { #hidden; shown; }` with nothing special added. */
 static const char *const priv_fields[] = {"#hidden", "shown"};
-static const JSRTClass PRIV = {"Priv", 2, priv_fields, NULL, 0, NULL, NULL};
+static const JSRTClass PRIV = {"Priv", 2, priv_fields, NULL, 0, NULL, NULL, NULL};
 
 static const char *const all_priv_fields[] = {"#a", "#b"};
-static const JSRTClass ALLPRIV = {"AllPriv", 2, all_priv_fields, NULL, 0, NULL, NULL};
+static const JSRTClass ALLPRIV = {"AllPriv", 2, all_priv_fields, NULL, 0, NULL, NULL, NULL};
 
 static jsrt_value object(const JSRTClass *cls) {
   return jsrt_object_new(cls);

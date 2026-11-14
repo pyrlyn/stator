@@ -451,6 +451,8 @@ function expressionHasUnknown(expr: Expression): boolean {
     // `delete` answers a boolean, but unlike `typeof` it OPERATES on the receiver: removing a key
     // is the shape table's work, and a construct that only compiles against a dynamic receiver is
     // exactly what this report exists to name.
+    case 'get-iterator':
+      return expressionHasUnknown(expr.operand);
     case 'delete-prop':
       return true;
     // Likewise a check: it is the point where an Unknown becomes concrete, so it reports the type

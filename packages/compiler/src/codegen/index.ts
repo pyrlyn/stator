@@ -19,6 +19,7 @@ import type {
   DateOp,
   DateStaticCall,
   DeleteProp,
+  GetIterator,
   DynFieldAccess,
   DynFieldAssignment,
   DynObjectLiteral,
@@ -57,6 +58,7 @@ import type {
   VtableEntry,
   YieldExpr,
 } from '../hir/nodes.ts';
+import { ITERATOR_METHOD_NAME } from '../frontend/types.ts';
 import {
   arrayOpCallsBack,
   consoleEntryPoint,
@@ -332,7 +334,7 @@ class Emitter {
    * two `&&`s in one expression must not share a slot: the outer one's value stays live while the
    * inner one is being evaluated. */
   private tempSlots: Map<
-    AwaitExpr | LogicalOp | YieldExpr | ConditionalExpr | UpdateExpr | DynFieldAccess,
+    AwaitExpr | LogicalOp | YieldExpr | ConditionalExpr | UpdateExpr | DynFieldAccess | GetIterator,
     number
   > = new Map();
   /* C does not specify which operand of an operator or function call it evaluates first. Every
@@ -575,6 +577,9 @@ class Emitter {
         cls.vtable.length === 0 ? '0, NULL' : `${cls.vtable.length}, _jsrt_methods_${id}`;
       // Absent unless the literal's key order differs from its layout: a class declaration lays
       // its fields out in the order it writes them, so identity is the overwhelming case.
+      const iterMethod = cls.methods.find((m) => m.name === ITERATOR_METHOD_NAME);
+      const iterClosure =
+        iterMethod === undefined ? 'NULL' : `&_jsrt_closure_${this.functionId(iterMethod.fn)}`;
       const keyOrder = this.classKeyOrders.get(id);
       if (keyOrder !== undefined) {
         out.push(
@@ -584,7 +589,7 @@ class Emitter {
       out.push(
         `static const JSRTClass _jsrt_class_${id} = {${cNameLiteral(descriptorName(cls.name))}, ` +
           `${cls.fields.length}, _jsrt_fields_${id}, ${this.baseDescriptor(cls, id)}, ${table}, ` +
-          `${keyOrder === undefined ? 'NULL' : `_jsrt_keys_${id}`}};`,
+          `${keyOrder === undefined ? 'NULL' : `_jsrt_keys_${id}`}, ${iterClosure}};`,
       );
     }
     if (this.classes.length > 0) {
@@ -1166,6 +1171,11 @@ class Emitter {
       // Two rooted slots for the same reason an index access takes two: `jsrt_delete` allocates
       // (it replays the receiver's shape chain) and can throw, so both operands must be visible to
       // the collector across the call rather than live in C temporaries.
+      case 'get-iterator':
+        this.tempSlots.set(expr, this.slotCount);
+        this.slotCount++;
+        this.countExpression(expr.operand);
+        break;
       case 'delete-prop':
         this.indexSlots.set(expr, this.slotCount);
         this.slotCount += 2;
@@ -2629,6 +2639,17 @@ class Emitter {
         }
         this.flushParts(parts, expr.span);
         return read;
+      }
+
+      case 'get-iterator': {
+        const giSlot = this.tempSlots.get(expr);
+        if (giSlot === undefined) {
+          throw new Error('get-iterator was not registered during counting');
+        }
+        const giOperand = this.emitExpression(expr.operand);
+        this.appendLine(`${this.slotAt(giSlot)} = jsrt_get_iterator(${giOperand});`, expr.span);
+        this.emitPendingCheck(expr.span);
+        return this.slotAt(giSlot);
       }
 
       case 'delete-prop': {
