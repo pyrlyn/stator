@@ -6,7 +6,7 @@ runs:
     # The tools are named without versions, so mise.toml stays the one place they are pinned; the
     # action caches the install per OS, arch and mise.toml. No shims and no `mise env` export:
     # mise.toml also pins Node, pnpm and Zig, which `setup` installs its own way.
-    - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+    - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
       with:
         install_args: conda:clang conda:llvm
         add_shims_to_path: false
