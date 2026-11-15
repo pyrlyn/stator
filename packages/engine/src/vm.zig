@@ -407,18 +407,33 @@ fn ownTable(obj: Value) Value {
 }
 
 /// CreateDataProperty: an own property, whatever setter the prototype chain has for the key.
-pub fn defineOwn(obj_in: Value, key: [*:0]const u8, v: Value) void {
+pub fn defineOwn(obj: Value, key: [*:0]const u8, v: Value) void {
+    defineCached(obj, key, v, null);
+}
+
+/// `defineOwn` at a `define` site: `site` remembers the shape step the key took last time, so a
+/// literal's next object takes it without walking the chain or locking the shape table.
+pub fn defineAt(obj: Value, key: [*:0]const u8, v: Value, site: *bc.Transition) void {
+    defineCached(obj, key, v, site);
+}
+
+fn defineCached(obj_in: Value, key: [*:0]const u8, v: Value, site: ?*bc.Transition) void {
     const obj = ownTable(obj_in);
     if (!isDyn(obj)) return c.jsrt_set_prop(obj, key, v, null);
     const o = dynObj(obj);
     c.jsrt_gc_write(o);
-    if (c.jsrt_shape_find(o.shape, key)) |hit| {
-        o.slots[hit.*.offset] = v;
-        return;
-    }
-    const next = c.jsrt_shape_transition(o.shape, key);
-    c.jsrt_shape_reserve(&o.slots, &o.capacity, next.*.offset);
-    o.slots[next.*.offset] = v;
+    const next: *c.JSRTShape = step: {
+        if (site) |s| if (s.from == o.shape) break :step s.to.?;
+        if (c.jsrt_shape_find(o.shape, key)) |hit| {
+            o.slots[hit.*.offset] = v;
+            return;
+        }
+        const to = c.jsrt_shape_transition(o.shape, key);
+        if (site) |s| s.* = .{ .from = o.shape, .to = to, .offset = to.*.offset };
+        break :step to;
+    };
+    c.jsrt_shape_reserve(&o.slots, &o.capacity, next.offset);
+    o.slots[next.offset] = v;
     o.shape = next;
 }
 
@@ -1742,7 +1757,7 @@ fn execOn(mach: *Machine, initial_template: *Template, initial_env: ?*Env, entry
                         c.jsrt_throw_error(&c.jsrt_class_type_error, k);
                     },
 
-                    .new_object => push(vs, &top, c.jsrt_dynobj_new()),
+                    .new_object => push(vs, &top, c.jsrt_dynobj_new_sized(next16(code, &pc))),
                     .new_array => {
                         const n = next16(code, &pc);
                         const arr = newArray(vs[top - n .. top]);
@@ -1764,8 +1779,9 @@ fn execOn(mach: *Machine, initial_template: *Template, initial_env: ?*Env, entry
                     },
                     .define => {
                         const k = t.keys[next16(code, &pc)];
+                        const site = &t.transitions[next16(code, &pc)];
                         top -= 1;
-                        defineOwn(vs[top - 1], k, vs[top]);
+                        defineAt(vs[top - 1], k, vs[top], site);
                     },
                     .define_elem => {
                         top -= 2;

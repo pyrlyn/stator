@@ -200,6 +200,8 @@ const Fn = struct {
     handlers: std.ArrayList(bc.Handler) = .empty,
     nlocals: u16 = 0,
     nics: u16 = 0,
+    /// `define` sites so far: each has a cache in the template's `transitions`.
+    ntransitions: u16 = 0,
     depth: i32 = 0,
     max_depth: i32 = 0,
     scope: ?*Scope = null,
@@ -222,6 +224,8 @@ const Fn = struct {
         @memset(ics, .{ .shape = null, .offset = 0 });
         const global_ics = try p.alloc(c.JSRTIC, fs.keys.items.len);
         @memset(global_ics, .{ .shape = null, .offset = 0 });
+        const transitions = try p.alloc(bc.Transition, fs.ntransitions);
+        @memset(transitions, .{});
         const strings = try p.alloc([]const u8, fs.strings.items.len);
         for (strings, fs.strings.items) |*d, s| d.* = try p.dupe(u8, s);
         var entry_args: u16 = 0;
@@ -238,6 +242,7 @@ const Fn = struct {
             .funcs = try p.dupe(*Template, fs.funcs.items),
             .ics = ics,
             .global_ics = global_ics,
+            .transitions = transitions,
             .handlers = try p.dupe(bc.Handler, fs.handlers.items),
             .nlocals = fs.nlocals,
             .max_stack = @intCast(fs.max_depth + 2),
@@ -284,7 +289,7 @@ const Fn = struct {
             .call2 => -3,
             .call3 => -4,
             .ret_this => -1,
-            .undef, .null, .true, .false, .uninit, .dup, .arguments, .this_raw, .this_sloppy, .new_target, .callee, .home, .new_object => 1,
+            .undef, .null, .true, .false, .uninit, .dup, .arguments, .this_raw, .this_sloppy, .new_target, .callee, .home => 1,
             .dup2 => 2,
             .pop, .get_elem, .in, .instanceof, .add, .sub, .mul, .div, .mod, .exp, .bitand, .bitor, .bitxor, .shl, .shr, .ushr, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge, .delete_elem, .new_spread, .ret, .throw, .array_push, .array_spread, .object_spread, .set_proto, .set_field_init, .iter_close, .assert_uninit => -1,
             .set_elem, .ret_ctor, .define_elem, .run_field_init, .super_call_spread, .call_spread, .super_get_elem, .iter_close_quiet => -2,
@@ -302,14 +307,13 @@ const Fn = struct {
         try fs.operand(u16, v);
         fs.adjust(switch (o) {
             .global_callee => 2,
-            .num, .str, .load, .load_global, .typeof_global, .delete_global, .arg, .rest => 1,
+            .num, .str, .load, .load_global, .typeof_global, .delete_global, .arg, .rest, .new_object => 1,
             .store, .store_global => -1,
             .push_env, .save_env, .const_assign, .delete_prop, .throw_error, .declare_global => 0,
             .call => -@as(i32, v) - 1,
             .new => -@as(i32, v),
             .super_call => -@as(i32, v) - 1,
             .new_array => 1 - @as(i32, v),
-            .define => -1,
             .closure => 1,
             .tagged_template => -@as(i32, v) - 1,
             .super_get => -1,
@@ -361,6 +365,15 @@ const Fn = struct {
         try fs.byte(@backingInt(o));
         try fs.propOperands(key);
         fs.adjust(if (o == .add_set_prop) -3 else if (o == .set_prop) -1 else 0);
+    }
+
+    /// obj value -> obj: `key` as an own data property, through a transition cache of its own.
+    fn define(fs: *Fn, key: []const u8) Error!void {
+        try fs.byte(@backingInt(Op.define));
+        try fs.operand(u16, try fs.keyIndex(key));
+        try fs.operand(u16, fs.ntransitions);
+        fs.ntransitions += 1;
+        fs.adjust(-1);
     }
 
     fn propOperands(fs: *Fn, key: []const u8) Error!void {
@@ -957,7 +970,7 @@ const Fn = struct {
     /// `{...rest}`: a copy of the source on top (left in place) without the keys already taken.
     fn restObject(fs: *Fn, taken: []*Node) Error!void {
         try fs.op(.dup);
-        try fs.op(.new_object);
+        try fs.op16(.new_object, 0);
         try fs.op(.swap);
         try fs.op(.object_spread);
         for (taken) |pn| {
@@ -1681,7 +1694,10 @@ const Fn = struct {
     }
 
     fn objectLiteral(fs: *Fn, props: []*Node) Error!void {
-        try fs.op(.new_object);
+        // Room for every member the literal names; a spread's keys are not known here.
+        var named: u16 = 0;
+        for (props) |p| named +|= @intFromBool(p.data != .spread_assign);
+        try fs.op16(.new_object, named);
         for (props) |p| switch (p.data) {
             .property_assign => |pa| {
                 if (pa.name.data == .identifier and std.mem.eql(u8, pa.name.data.identifier, "__proto__") or
@@ -1693,7 +1709,7 @@ const Fn = struct {
                 }
                 if (try fs.staticKey(pa.name)) |k| {
                     try fs.exprNamed(pa.value, k);
-                    try fs.op16(.define, try fs.keyIndex(k));
+                    try fs.define(k);
                 } else {
                     try fs.propertyKey(pa.name);
                     try fs.expr(pa.value);
@@ -1702,7 +1718,7 @@ const Fn = struct {
             },
             .shorthand_assign => |s| {
                 try fs.loadName(s.name.data.identifier);
-                try fs.op16(.define, try fs.keyIndex(s.name.data.identifier));
+                try fs.define(s.name.data.identifier);
             },
             .spread_assign => |s| {
                 try fs.expr(s.expr);
@@ -1746,7 +1762,7 @@ const Fn = struct {
                     fs.adjust(-2);
                 }
             },
-            else => if (k) |key_text| try fs.op16(.define, try fs.keyIndex(key_text)) else try fs.op(.define_elem),
+            else => if (k) |key_text| try fs.define(key_text) else try fs.op(.define_elem),
         }
     }
 
@@ -2535,7 +2551,7 @@ fn fieldInit(comp: *Compiler, outer: ?*Scope, members: []*Node, start: u32) Erro
             try fs.loadName(this_name);
             const k = (try fs.staticKey(pd.name)) orelse return comp.unsupported(m, "this field name");
             if (pd.init) |init| try fs.exprNamed(init, k) else try fs.op(.undef);
-            try fs.op16(.define, try fs.keyIndex(k));
+            try fs.define(k);
             try fs.op(.pop);
         },
         .static_block => |sb| try fs.block(sb.body.data.block.stmts),

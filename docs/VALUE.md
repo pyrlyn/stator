@@ -778,7 +778,10 @@ plain object, and prints like a literal (`{ a: 1 }`), because Node cannot tell t
 are **out of line**, unlike a fixed-shape object's, because property addition grows them
 (doubling from 4) and the header's address must stay stable — every boxed reference is that
 address. The slots are a buffer block the object owns (§4.12); the shapes hold no values and use
-plain malloc.
+plain malloc. A literal whose member count is known asks for its first slots with the object
+(`jsrt_dynobj_new_sized`): they follow the header in the same block and `slots` points at them,
+so such an object is one allocation. The first growth past that count moves the values to a
+buffer, as for any other object, and nothing reads slots except through `slots`.
 
 **The inline cache.** One `JSRTIC { shape, offset }` per property-access *site*, emitted `static`
 in generated C. The whole protocol is two rules:
@@ -891,7 +894,8 @@ pointer); runtime pointers address the object after it, so no runtime layout cha
 the object's `JSRTGcKind`, built with `JSRT_GC_KIND(name, trace, finalize, cyclic, always_dirty)`:
 `trace` visits exactly the references the object holds, `finalize` frees what it owns outside the
 collected heap. Owned storage — array elements, Map entries, dynamic-object slots — is a buffer
-(`jsrt_gc_buffer`), never counted, freed by its owner.
+(`jsrt_gc_buffer`), never counted, freed by its owner. The one exception is a dynamic object's
+first slots when it was allocated with them (§4.10): they are part of the object's own block.
 
 **Counts cover the heap only, and are reconciled at collection.** A runtime function that changes
 the references inside an existing object calls `jsrt_gc_write(obj)` first. The first call after a

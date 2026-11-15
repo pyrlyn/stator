@@ -75,6 +75,12 @@ const root_bit: u64 = 1 << 62;
 /// Finalized; its memory is released when the list that still names it lets go.
 const dead_bit: u64 = 1 << 63;
 
+comptime {
+    // What jsrt.h tells a code generator that tests the dirty bit inline.
+    std.debug.assert(prefix == c.JSRT_GC_HEADER_BYTES);
+    std.debug.assert(dirty_bit == @as(u64, 1) << c.JSRT_GC_DIRTY_BIT);
+}
+
 const Header = extern struct {
     word: u64,
     /// The kind of an object; for a buffer, its owner's runtime address (0: none).
@@ -949,6 +955,16 @@ fn bufferBlock(p: ?*const anyopaque) ?*Header {
     const block = blockOf(addr);
     if (block.word & buffer_bit == 0) c.jsrt_panic("collector: not a buffer");
     return block;
+}
+
+/// Whether `p` points into the collected object `owner` itself: storage allocated with it,
+/// which is not a buffer and is freed with it.
+pub fn withinObject(owner: *const anyopaque, p: *const anyopaque) bool {
+    lock();
+    defer unlock();
+    const block = objectBlock(@intFromPtr(owner)) orelse return false;
+    const addr = @intFromPtr(p);
+    return addr >= @intFromPtr(owner) and addr < @intFromPtr(block) + blockBytes(block);
 }
 
 /// Bytes the buffer `p` can hold (at least what was asked for it).

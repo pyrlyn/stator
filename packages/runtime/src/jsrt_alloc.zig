@@ -50,8 +50,13 @@ fn traceDynobj(o: *c.JSRTDynObject, visit: c.jsrt_gc_visit_fn) void {
     gc.visitValue(o.ctor, visit);
 }
 
+/// The slots allocated with the object itself (jsrt_dynobj_new_sized).
+fn ownSlots(o: *const c.JSRTDynObject) [*]Value {
+    return @ptrFromInt(@intFromPtr(o) + @sizeOf(c.JSRTDynObject));
+}
+
 fn finalizeDynobj(o: *c.JSRTDynObject) void {
-    gc.bufferFree(o.slots);
+    if (o.slots != ownSlots(o)) gc.bufferFree(o.slots);
 }
 
 const object_kind = gc.kind(c.JSRTObject, "object", traceObject, null, .{});
@@ -180,13 +185,15 @@ export fn jsrt_args_rest(argc: u32, argv: [*c]const Value, from: u32) Value {
     return jsrt_array_new(argc - from, argv + from);
 }
 
-fn dynobjNew(cls: *const c.JSRTClass) Value {
-    const o = create(c.JSRTDynObject, @sizeOf(c.JSRTDynObject), &dynobj_kind);
+/// `capacity` slots follow the header in the same block, already zeroed by the allocator.
+fn dynobjNew(cls: *const c.JSRTClass, capacity: u32) Value {
+    const bytes = @sizeOf(c.JSRTDynObject) + @as(usize, capacity) * @sizeOf(Value);
+    const o = create(c.JSRTDynObject, bytes, &dynobj_kind);
     o.* = .{
         .cls = cls,
         .shape = &shapes.jsrt_shape_root,
-        .capacity = 0,
-        .slots = null,
+        .capacity = capacity,
+        .slots = if (capacity == 0) null else ownSlots(o),
         .frozen = false,
         .proto = 0,
         .ctor = 0,
@@ -195,9 +202,13 @@ fn dynobjNew(cls: *const c.JSRTClass) Value {
 }
 
 export fn jsrt_dynobj_new() Value {
-    return dynobjNew(&c.jsrt_class_dynamic);
+    return dynobjNew(&c.jsrt_class_dynamic, 0);
+}
+
+export fn jsrt_dynobj_new_sized(capacity: u32) Value {
+    return dynobjNew(&c.jsrt_class_dynamic, capacity);
 }
 
 export fn jsrt_null_proto_new() Value {
-    return dynobjNew(&c.jsrt_class_null_proto);
+    return dynobjNew(&c.jsrt_class_null_proto, 0);
 }

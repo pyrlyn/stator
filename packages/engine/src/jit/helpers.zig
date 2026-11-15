@@ -222,8 +222,8 @@ pub fn setElem(cx: *Ctx, s: u64) callconv(.c) u64 {
     return put(cx, s, cx.w[s + 2]);
 }
 
-pub fn newObject(cx: *Ctx, s: u64) callconv(.c) u64 {
-    return put(cx, s, c.jsrt_dynobj_new());
+pub fn newObject(cx: *Ctx, s: u64, n: u64) callconv(.c) u64 {
+    return put(cx, s, c.jsrt_dynobj_new_sized(@intCast(n)));
 }
 
 pub fn newArray(cx: *Ctx, s: u64, n: u64) callconv(.c) u64 {
@@ -231,8 +231,8 @@ pub fn newArray(cx: *Ctx, s: u64, n: u64) callconv(.c) u64 {
 }
 
 /// obj value at `s` -> obj at `s`.
-pub fn define(cx: *Ctx, s: u64, key: u64) callconv(.c) u64 {
-    vm.defineOwn(cx.w[s], cx.t.keys[key], cx.w[s + 1]);
+pub fn define(cx: *Ctx, s: u64, key: u64, site: u64) callconv(.c) u64 {
+    vm.defineAt(cx.w[s], cx.t.keys[key], cx.w[s + 1], &cx.t.transitions[site]);
     return status(cx);
 }
 

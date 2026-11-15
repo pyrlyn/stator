@@ -66,9 +66,16 @@ collects needs no stack maps.
 - `!` on a boolean, and the conditional jumps on `true` and `false`;
 - locals, arguments, constants and the TDZ check of a checked local;
 - `o.k` and `o.k = v` on a dynamic object whose shape the site's inline cache holds: a shape
-  compare and a slot load or store (with the write barrier on the slots buffer), falling to the
-  helper when the object is frozen, the slot holds an accessor or the shape differs. The key
-  `constructor` always takes the helper;
+  compare and a slot load or store, falling to the helper when the object is frozen, the slot
+  holds an accessor or the shape differs. The key `constructor` always takes the helper. A store
+  reads the collector's dirty bit from the object's header and calls the write barrier only for
+  an object the collector has not logged yet (`JSRT_GC_HEADER_BYTES`, `JSRT_GC_DIRTY_BIT`);
+- `{ a: x, b: y }`: the literal allocates the object and the slots for its named members as one
+  block (`jsrt_dynobj_new_sized`), and each member's `define` keeps the shape step it took last
+  (`bytecode.Transition`: the shape before, the shape after, the slot). While the object arrives
+  with that shape the member is a shape compare, a slot store and a shape store. A duplicate key,
+  a spread, `__proto__` or a first run takes the helper, which walks the transition and fills
+  the site;
 - a global read inline, on the global object's shape, through the cache the interpreter keeps per template and key;
 - `a.m` about to be called on an array with no own properties: the bound method this
   activation cached for that array (`vm.getMethod`'s two window slots per site), compared and
@@ -94,11 +101,11 @@ but is unverified until a Linux x86-64 run. A Windows or other host has no backe
 interprets.
 
 **What it is not yet.** A direct call still goes through one helper that checks the callee and
-opens its frame; every object literal allocates its slots and walks a shape transition per
-property; every operand goes through the frame window in memory. Allocation, property-heavy code
-and tight numeric loops are where V8 is far ahead (§4); a cached transition per literal and the
-optimizing tier (plan/T67.1: type feedback, values in registers, call inline caches,
-deoptimization) are the next steps.
+opens its frame; every object is a call into the allocator; an array's `length`, an indexed
+read or write and a call of a native method each go through a helper; every operand goes through
+the frame window in memory. Allocation, array-heavy code and tight numeric loops are where V8 is
+far ahead (§4); array fast paths, a cheaper allocation path and the optimizing tier (plan/T67.1:
+type feedback, values in registers, call inline caches, deoptimization) are the next steps.
 
 ## 4. Tests and benchmark
 

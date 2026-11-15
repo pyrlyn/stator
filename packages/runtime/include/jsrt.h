@@ -95,6 +95,11 @@ void *jsrt_gc_alloc(size_t bytes, const JSRTGcKind *kind);
  * a collection has run since it was allocated, but making it anyway is always correct. Cheap
  * after the first call per object per collection. */
 void jsrt_gc_write(const void *obj);
+/* For a code generator that inlines the barrier's common case: a collected object needs no
+ * jsrt_gc_write while bit JSRT_GC_DIRTY_BIT is set in the 64-bit word JSRT_GC_HEADER_BYTES
+ * before its address. */
+#define JSRT_GC_HEADER_BYTES 16
+#define JSRT_GC_DIRTY_BIT 60
 
 /* Storage `owner` holds outright -- elements, entries, slots -- zeroed, never counted. The owner's
  * kind traces what is in it and frees it from its finalizer. `owner` may be NULL and named later

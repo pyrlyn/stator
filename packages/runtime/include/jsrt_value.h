@@ -481,9 +481,11 @@ typedef struct JSRTShape {
 } JSRTShape;
 
 /* Prefix-shared with JSRTObject exactly as JSRTMap is: `cls` first, so the Object tag covers it
- * and `jsrt_class_dynamic` (by pointer) is what distinguishes it. Slots are OUT of line, unlike a
- * fixed-shape object's, because property addition grows them and the header's address must stay
- * stable -- every boxed reference is the header's address. */
+ * and `jsrt_class_dynamic` (by pointer) is what distinguishes it. Slots are reached only through
+ * `slots`, unlike a fixed-shape object's, because property addition grows them and the header's
+ * address must stay stable -- every boxed reference is the header's address. They are a buffer,
+ * except the first ones of an object allocated with them (jsrt_dynobj_new_sized), which follow
+ * the header in the object's own block until the object outgrows them. */
 typedef struct JSRTDynObject {
   const JSRTClass *cls; /* &jsrt_class_dynamic -- prefix-shared with JSRTObject */
   JSRTShape *shape;
@@ -521,6 +523,11 @@ extern const JSRTClass jsrt_class_dynamic;
 extern const JSRTClass jsrt_class_null_proto;
 
 jsrt_value jsrt_dynobj_new(void);
+/* A dynamic object with room for `capacity` properties in the same allocation, for a literal whose
+ * property count the caller knows. Those slots are part of the object, not a buffer of it: when
+ * the object outgrows them jsrt_shape_reserve moves the values to a buffer, and a pointer into
+ * the first ones stays valid for as long as the object lives. */
+jsrt_value jsrt_dynobj_new_sized(uint32_t capacity);
 jsrt_value jsrt_null_proto_new(void);
 
 /* An accessor property -- `{ get x() {…}, set x(v) {…} }` -- docs/VALUE.md §4.15.

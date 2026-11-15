@@ -236,6 +236,21 @@ test "a cached property read misses once per site" {
     try std.testing.expectEqual([3]usize{ 2, 1, 0 }, r.calls);
 }
 
+test "an object literal takes its cached shape steps in place" {
+    if (!jit.available) return error.SkipZigTest;
+    const r = try jitCost(
+        "function f() { let s = 0; for (let i = 0; i < 1000; i++) { const o = {x: i, y: 2}; s += o.x + o.y; } return s; } f()",
+        .{ helpers.define, helpers.newObject },
+    );
+    // The first literal finds both steps through the helper; the other 999 store inline into
+    // the slots the object was allocated with. Each literal still allocates through its helper.
+    try std.testing.expectEqualSlices(usize, &.{ 2, 1000 }, &r.calls);
+    try expectRuns("function f(k) { const o = {a: 1, b: 2, a: 3, [k]: 4, c: 5}; return JSON.stringify(o); } f('z') + f('b')", "{\"a\":3,\"b\":2,\"z\":4,\"c\":5}{\"a\":3,\"b\":4,\"c\":5}");
+    try expectRuns("function f(p) { const o = {a: 1, __proto__: p, ...p, b: 2, m() { return this.a + this.b + this.q; }}; o.late = 1; o.later = 2; return o.m() + Object.keys(o).join(); } f({q: 4}) + f({q: 5, a: 7})", "7a,q,b,m,late,later14a,q,b,m,late,later");
+    try expectRuns("function f(n) { const o = {a: n}; if (n & 1) o.b = n; else o.c = n; o.d = 1; o.e = 2; o.f = 3; return Object.keys(o).join('') + o.a; } f(1) + f(2) + f(3)", "abdef1acdef2abdef3");
+    try expectRuns("class P { x = 1; y = 2; } class Q extends P { z = this.x + this.y; } function f() { const q = new Q(); return q.x + q.y + q.z; } f() + f()", "12");
+}
+
 test "an array method is bound once per activation" {
     if (!jit.available) return error.SkipZigTest;
     const r = try jitCost(

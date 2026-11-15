@@ -183,16 +183,23 @@ export fn jsrt_shape_transition(from: *Shape, key: [*c]const u8) *Shape {
     return next;
 }
 
-/// Doubling from 4, so repeated additions stay amortized O(1). The slots are a buffer of the
-/// object that holds `slots` (jsrt_gc.zig); the old one is retired, since a caller may still hold
-/// a pointer into it.
+/// Doubling from 4, so repeated additions stay amortized O(1). The grown slots are a buffer of
+/// the object that holds `slots` (jsrt_gc.zig); the old one is retired, since a caller may still
+/// hold a pointer into it.
 export fn jsrt_shape_reserve(slots: *[*c]c.jsrt_value, capacity: *u32, offset: u32) void {
     if (offset < capacity.*) return;
     var grown: u32 = if (capacity.* == 0) 4 else capacity.* * 2;
     while (grown <= offset) grown *= 2;
     const bytes = @as(usize, grown) * @sizeOf(c.jsrt_value);
     const owner = gc.writeOwner(@ptrCast(slots));
-    const fresh: [*]c.jsrt_value = @ptrCast(@alignCast(gc.bufferResize(owner, slots.*, bytes, "dynamic object slots")));
+    const old = slots.*;
+    // Slots allocated with their object (jsrt_dynobj_new_sized) are not a buffer to retire: they
+    // stay valid, holding what they held, for as long as the object lives.
+    const fresh: [*]c.jsrt_value = if (old != null and gc.withinObject(owner, old)) own: {
+        const moved: [*]c.jsrt_value = @ptrCast(@alignCast(gc.buffer(owner, bytes, "dynamic object slots")));
+        @memcpy(moved[0..capacity.*], old[0..capacity.*]);
+        break :own moved;
+    } else @ptrCast(@alignCast(gc.bufferResize(owner, old, bytes, "dynamic object slots")));
     slots.* = fresh;
     capacity.* = grown;
 }

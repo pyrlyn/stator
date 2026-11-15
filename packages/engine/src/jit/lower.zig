@@ -336,6 +336,54 @@ const Lowerer = struct {
         return v;
     }
 
+    /// The collector's write barrier before a store into collected object `p`: nothing while the
+    /// object is already dirty (packages/runtime/include/jsrt.h), else `jsrt_gc_write`.
+    fn barrier(l: *Lowerer, p: VReg) !void {
+        const mark = try l.block();
+        const done = try l.block();
+        const word = try l.def(.load, .{ .dst = undefined, .base = p, .disp = -c.JSRT_GC_HEADER_BYTES });
+        const dirty = try l.arith(.@"and", word, try l.konst(imm(@as(u64, 1) << c.JSRT_GC_DIRTY_BIT)));
+        try l.cbr(.eq, dirty, try l.konst(0), mark, done);
+        l.cur = mark;
+        _ = try l.callHelper(c.jsrt_gc_write, &.{p});
+        try l.br(done);
+        l.cur = done;
+    }
+
+    /// `define` (obj value at `s` -> obj at `s`) through the site's transition cache: a dynamic
+    /// object on the shape the site last left, with room for the slot, takes the same step in
+    /// place. An empty cache holds no shape, which no object is on.
+    fn define(l: *Lowerer, i: analyze.Insn) !void {
+        const s = l.slot(i.depth - 2);
+        const slow = try l.block();
+        const hit = try l.block();
+        const room = try l.block();
+        const join = try l.block();
+        const site = try l.konst(@intCast(@intFromPtr(&l.t.transitions[i.b])));
+        const p = try l.dynObj(try l.load(s), slow);
+        const shape = try l.def(.load, .{ .dst = undefined, .base = p, .disp = @offsetOf(c.JSRTDynObject, "shape") });
+        const from = try l.def(.load, .{ .dst = undefined, .base = site, .disp = @offsetOf(bc.Transition, "from") });
+        try l.cbr(.ne, shape, from, slow, hit);
+        l.cur = hit;
+        // `offset` and `capacity` are u32s and the IR loads 64 bits: keep the low halves.
+        const low = try l.konst(0xFFFF_FFFF);
+        const off = try l.arith(.@"and", try l.def(.load, .{ .dst = undefined, .base = site, .disp = @offsetOf(bc.Transition, "offset") }), low);
+        const capacity = try l.arith(.@"and", try l.def(.load, .{ .dst = undefined, .base = p, .disp = @offsetOf(c.JSRTDynObject, "capacity") }), low);
+        try l.cbr(.uge, off, capacity, slow, room);
+        l.cur = room;
+        try l.barrier(p);
+        const slots = try l.def(.load, .{ .dst = undefined, .base = p, .disp = @offsetOf(c.JSRTDynObject, "slots") });
+        const at = try l.arith(.add, slots, try l.arith(.shl, off, try l.konst(3)));
+        try l.emit(.{ .store = .{ .base = at, .disp = 0, .src = try l.load(s + 1) } });
+        const to = try l.def(.load, .{ .dst = undefined, .base = site, .disp = @offsetOf(bc.Transition, "to") });
+        try l.emit(.{ .store = .{ .base = p, .disp = @offsetOf(c.JSRTDynObject, "shape"), .src = to } });
+        try l.br(join);
+        l.cur = slow;
+        try l.helper(h.define, &.{ s, i.a, i.b });
+        try l.br(join);
+        l.cur = join;
+    }
+
     /// `obj.key = value` (obj value at `s` -> value at `s`) through the site's inline cache: an
     /// unfrozen dynamic object of the cached shape whose slot holds no accessor is written in
     /// place, after the collector's write barrier on the object.
@@ -347,9 +395,7 @@ const Lowerer = struct {
         try l.guardEq(try l.arith(.@"and", frozen, try l.konst(0xFF)), 0, slow);
         const at = try l.cachedSlot(p, &l.t.ics[i.b], slow);
         try l.unlessAccessor(try l.def(.load, .{ .dst = undefined, .base = at, .disp = 0 }), slow);
-        // The owner, not its slot buffer: an object already dirty and named by its own address is
-        // the barrier's lock-free case.
-        _ = try l.callHelper(c.jsrt_gc_write, &.{p});
+        try l.barrier(p);
         const v = try l.load(s + 1);
         try l.emit(.{ .store = .{ .base = at, .disp = 0, .src = v } });
         try l.fastOrHelper(s, v, slow, h.setProp, &.{ s, i.a, i.b });
@@ -571,9 +617,9 @@ const Lowerer = struct {
                 try l.helper(h.getElem, &.{l.slot(d)});
             },
             .set_elem => try l.helper(h.setElem, &.{l.slot(d - 3)}),
-            .new_object => try l.helper(h.newObject, &.{l.slot(d)}),
+            .new_object => try l.helper(h.newObject, &.{ l.slot(d), i.a }),
             .new_array => try l.helper(h.newArray, &.{ l.slot(d - i.a), i.a }),
-            .define => try l.helper(h.define, &.{ l.slot(d - 2), i.a }),
+            .define => try l.define(i),
             .new => try l.helper(h.construct, &.{ l.slot(d - i.a - 1), i.a }),
             .throw => {
                 _ = try l.callHelper(h.throw, &.{ l.ctx, try l.konst(l.slot(d - 1)) });
