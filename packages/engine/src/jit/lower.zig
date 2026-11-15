@@ -527,19 +527,29 @@ const Lowerer = struct {
         if (std.mem.eql(u8, name, "constructor")) return l.helper(h.getProp, &.{ s, key, ic });
         if (!std.mem.eql(u8, name, "length")) return l.cachedProp(s, key, ic);
         // An array's length is a field of the array (vm.zig `knownProperty`).
-        const array = try l.block();
-        const other = try l.block();
         const join = try l.block();
         const v = try l.load(s);
-        try l.cbr(.eq, try l.tagOf(v), try l.konst(imm(boxTag(c.JSRT_TAG_ARRAY))), array, other);
-        l.cur = array;
+        const other = try l.ifArray(v);
         const len = try l.def(.cvt, .{ .dst = undefined, .src = try l.arrayLength(try l.ptrOf(v)), .from = .i64, .to = .f64 });
         try l.emit(.{ .store = .{ .base = l.w, .disp = disp(s), .src = len, .ty = .f64 } });
-        try l.br(join);
-        l.cur = other;
+        try l.goOn(join, other);
         try l.cachedProp(s, key, ic);
+        try l.goOn(join, join);
+    }
+
+    /// Goes on in a new block when `v` is an array; the block for anything else is the answer.
+    fn ifArray(l: *Lowerer, v: VReg) !u32 {
+        const array = try l.block();
+        const other = try l.block();
+        try l.cbr(.eq, try l.tagOf(v), try l.konst(imm(boxTag(c.JSRT_TAG_ARRAY))), array, other);
+        l.cur = array;
+        return other;
+    }
+
+    /// Ends the current block at `join` and goes on in `next`.
+    fn goOn(l: *Lowerer, join: u32, next: u32) !void {
         try l.br(join);
-        l.cur = join;
+        l.cur = next;
     }
 
     fn cachedProp(l: *Lowerer, s: u32, key: u32, ic: u32) !void {
@@ -551,16 +561,13 @@ const Lowerer = struct {
     /// `obj.key` about to be called. An array with no own properties answers the bound method
     /// this activation cached for it (vm.getMethod); the helper fills the cache on a miss.
     fn getMethod(l: *Lowerer, s: u32, key: u32, ic: u32) !void {
-        const array = try l.block();
-        const other = try l.block();
         const named = try l.block();
         const plain = try l.block();
         const hit = try l.block();
         const miss = try l.block();
         const join = try l.block();
         const v = try l.load(s);
-        try l.cbr(.eq, try l.tagOf(v), try l.konst(imm(boxTag(c.JSRT_TAG_ARRAY))), array, other);
-        l.cur = array;
+        const other = try l.ifArray(v);
         const shape = try l.def(.load, .{ .dst = undefined, .base = try l.ptrOf(v), .disp = @offsetOf(c.JSRTArray, "shape") });
         try l.cbr(.eq, shape, try l.konst(0), plain, named);
         l.cur = named;
@@ -571,14 +578,11 @@ const Lowerer = struct {
         try l.cbr(.eq, v, try l.load(cache), hit, miss);
         l.cur = hit;
         try l.store(s, try l.load(cache + 1));
-        try l.br(join);
-        l.cur = miss;
+        try l.goOn(join, miss);
         try l.helper(h.getMethod, &.{ s, key, ic });
-        try l.br(join);
-        l.cur = other;
+        try l.goOn(join, other);
         try l.getProp(s, key, ic);
-        try l.br(join);
-        l.cur = join;
+        try l.goOn(join, join);
     }
 
     /// A global name read from the global object through the key's cache, which the interpreter
