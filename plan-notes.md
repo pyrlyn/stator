@@ -15164,3 +15164,40 @@ compilation (20.8%), and 48.204 to 40.052 ms for their untraced cold process (16
 startup's quartiles overlap; no improvement is claimed there. Sparkplug remains faster to
 compile both tested sizes; TurboFan remains faster on the larger size. These measurements do
 not establish superiority over V8. Results and verification are kept in `plan/T74/`.
+
+## 414. T75: one bench list in both modes, a per-program regression gate, bench programs in golden (2026-11-08)
+
+**Context.** The creator asked for more regression tests, the benchmark first. `bench:record`
+timed six `ts`-mode programs and failed only on a 20% geomean regression, so one program three
+times slower could hide in the mean, and the bench programs never ran in `pnpm run ci`.
+`engine:bench`, `bench:memory` and `bench:profile` each kept their own hand-written copy of the
+shared program list.
+
+**Change.** `packages/tests/support/bench-programs.ts` is the one list: the `ts` set in
+`packages/tests/bench/programs/` (eight new programs: classes, arrays, map-set, closures, regexp,
+exceptions, typed-arrays, promises) and the `js` set `engine:bench` already owned in
+`packages/tests/engine/bench/`, which `bench:record` now builds with `--mode=js`. Results key
+the `ts` set by bare name, as before, and the `js` set as `js/<name>`. The golden runner checks
+every bench program against Node (`ts/bench/<name>`, `js/bench/<name>`), and the ASan gate and
+the impact selector know those keys. The gate (`packages/tests/bench/gate.ts`) compares the
+geomean over the programs both recordings share, because a program added or removed moves a
+mean over different sets without anything getting slower, and also fails one program past
+**75%** that grew by at least **10 ms**. Reference engines get type-stripped copies of the `ts`
+programs: `qjs` on `PATH` could not parse TypeScript, so `bench:record` aborted on every
+program before this change, and a program a reference engine still cannot run is listed with
+its reason instead of aborting the recording.
+
+**Evidence.** Five `bench:record` runs of one tree (T75 branch from `ec60a284`) on
+darwin-arm64, Apple M3 Max, Node v26.7.0, clang 21.1.8, generated C `-O2`, best of 5 per
+program, 22 programs: stator geomean 113.67–120.59 ms (**6.1%** spread, under the 20% gate).
+Widest per-program range past 10 ms of growth: `js/fib.js` 241.1–337.2 ms (**39.9%**, one
+outlier run), `classes.ts` 133.8–173.9 ms (30.0%); below it, `json-roundtrip.ts` 5.7–10.7 ms
+(86.6%, **5.0 ms**). The pair 75% / 10 ms sits about twice above both. A sixth run against the
+fifth passed the gate. This host is not the weekly job's ubuntu-24.04 runner (§9 Task 6.3
+residue); the per-program pair inherits the same open question.
+
+**Finding.** `promises.ts` at 600 rounds panics with `collector: a count fell below zero` from
+about 300 rounds, at `ec60a284` too. Carded as plan/T76; the program runs 200 rounds until it
+lands. `stator-engine` cannot run `map-set.ts` (`Map`), `typed-arrays.ts` (`Uint8Array`) or
+`promises.ts` (unhandled-rejection report) yet; `engine:bench` shows those as ✗ with the
+reason rather than aborting.

@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { benchGoldenName, benchPrograms } from '../support/bench-programs.ts';
 import {
   fullSelection,
   isScriptPath,
@@ -91,8 +92,8 @@ export function nodeCommand(
   };
 }
 
-/** Golden's fixture list, spelled as its runner keys it (`ts/name.ts`, `js/dir`); `intl_*`
- * fixtures only run in the ICU build, which the map does not record. */
+/** Golden's fixture list, spelled as its runner keys it (`ts/name.ts`, `js/dir`, `ts/bench/fib.ts`);
+ * `intl_*` fixtures only run in the ICU build, which the map does not record. */
 function goldenKeys(): string[] {
   const keys: string[] = [];
   for (const mode of ['ts', 'js'] as const) {
@@ -105,6 +106,7 @@ function goldenKeys(): string[] {
       }
     }
   }
+  for (const program of benchPrograms()) keys.push(`${program.mode}/${benchGoldenName(program)}`);
   return keys;
 }
 
