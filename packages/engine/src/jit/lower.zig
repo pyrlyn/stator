@@ -43,6 +43,9 @@ const Lowerer = struct {
     argc: VReg,
     cur: ?u32 = null,
     exit: u32,
+    insns: []const analyze.Insn = &.{},
+    /// Index in `insns` of the instruction being lowered.
+    at: usize = 0,
     blocks: std.AutoHashMapUnmanaged(u32, u32) = .empty,
 
     fn block(l: *Lowerer) !u32 {
@@ -340,6 +343,62 @@ const Lowerer = struct {
         const v = try l.load(s + 2);
         try l.emit(.{ .store = .{ .base = at, .disp = 0, .src = v } });
         try l.fastOrHelper(s, v, slow, h.setElem, &.{s});
+    }
+
+    /// The inline-cache index of the `get_method` named `name` that read the callee of the call
+    /// being lowered, whose callee is operand `base`: compile.zig's member call is `dup`,
+    /// `get_method`, `swap`, the arguments, the call. Only a hint: `push` checks the callee.
+    fn methodSite(l: *Lowerer, base: u32, name: []const u8) ?u32 {
+        var k = l.at;
+        while (k >= 2) : (k -= 1) {
+            const x = l.insns[k - 1];
+            if (x.depth < base + 2) return null;
+            if (x.op != .swap or x.depth != base + 2) continue;
+            const g = l.insns[k - 2];
+            return if (g.op == .get_method and std.mem.eql(u8, std.mem.span(l.t.keys[g.a]), name)) g.b else null;
+        }
+        return null;
+    }
+
+    /// `a.push(v)` (method this value at `s` -> the new length at `s`). A callee that is the
+    /// method site `ic` cached for this receiver is the runtime's own `push` bound to that
+    /// array: the cache is filled only from an array without own properties (vm.getMethod).
+    /// An array with room then takes the element in place, as `array_store` would.
+    fn push(l: *Lowerer, s: u32, ic: u32) !void {
+        comptime std.debug.assert(@offsetOf(c.JSRTArray, "capacity") == @offsetOf(c.JSRTArray, "length") + 4);
+        comptime std.debug.assert(builtin.cpu.arch.endian() == .little);
+        const slow = try l.block();
+        const join = try l.block();
+        const this = try l.load(s + 1);
+        // An empty cache holds undefined twice, which a call of undefined would match.
+        try l.guardEq(try l.tagOf(this), boxTag(c.JSRT_TAG_ARRAY), slow);
+        const cache: u32 = @intCast(vm.methodCacheIndex(l.t, ic));
+        const mine = try l.block();
+        try l.cbr(.ne, this, try l.load(cache), slow, mine);
+        l.cur = mine;
+        const bound = try l.block();
+        try l.cbr(.ne, try l.load(s), try l.load(cache + 1), slow, bound);
+        l.cur = bound;
+        const p = try l.ptrOf(this);
+        // `length` and `capacity` are adjacent u32s, read and written as one word.
+        const word = try l.def(.load, .{ .dst = undefined, .base = p, .disp = @offsetOf(c.JSRTArray, "length") });
+        const len = try l.arith(.@"and", word, try l.konst(0xFFFF_FFFF));
+        const room = try l.block();
+        try l.cbr(.uge, len, try l.arith(.shr, word, try l.konst(32)), slow, room);
+        l.cur = room;
+        try l.barrier(p);
+        const elements = try l.def(.load, .{ .dst = undefined, .base = p, .disp = @offsetOf(c.JSRTArray, "elements") });
+        try l.emit(.{ .store = .{ .base = try l.arith(.add, elements, try l.arith(.shl, len, try l.konst(3))), .disp = 0, .src = try l.load(s + 2) } });
+        // The length is below the capacity, so the sum does not carry into it.
+        const one = try l.konst(1);
+        try l.emit(.{ .store = .{ .base = p, .disp = @offsetOf(c.JSRTArray, "length"), .src = try l.arith(.add, word, one) } });
+        const n = try l.def(.cvt, .{ .dst = undefined, .src = try l.arith(.add, len, one), .from = .i64, .to = .f64 });
+        try l.emit(.{ .store = .{ .base = l.w, .disp = disp(s), .src = n, .ty = .f64 } });
+        try l.br(join);
+        l.cur = slow;
+        try l.helper(h.call, &.{ s, 1 });
+        try l.br(join);
+        l.cur = join;
     }
 
     /// The object pointer of `v` when it is a dynamic object, else on to `no`.
@@ -756,7 +815,11 @@ const Lowerer = struct {
             },
             .get_prop => try l.getProp(l.slot(d - 1), i.a, i.b),
             .get_method => try l.getMethod(l.slot(d - 1), i.a, i.b),
-            .call, .call0, .call1, .call2, .call3 => try l.helper(h.call, &.{ l.slot(d - i.a - 2), i.a }),
+            .call, .call0, .call1, .call2, .call3 => {
+                const base = d - i.a - 2;
+                if (i.a == 1) if (l.methodSite(base, "push")) |ic| return l.push(l.slot(base), ic);
+                try l.helper(h.call, &.{ l.slot(base), i.a });
+            },
             .add, .sub, .mul, .div, .mod, .exp, .bitand, .bitor, .bitxor, .shl, .shr, .ushr, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge => try l.binaryOp(i.op, l.slot(d - 2)),
             .neg, .plus, .bitnot, .not, .typeof, .inc, .dec => try l.unaryOp(i.op, l.slot(d - 1)),
             .jump => try l.br(try l.blockAt(i.a)),
@@ -778,7 +841,7 @@ pub fn lower(f: *ir.Func, t: *const bc.Template, plan: analyze.Plan) !void {
     const ctx = f.newVReg();
     const entry = try f.addBlock("entry");
     const exit = try f.addBlock("exit");
-    var l: Lowerer = .{ .f = f, .t = t, .ctx = ctx, .w = f.newVReg(), .argv = f.newVReg(), .argc = f.newVReg(), .exit = exit };
+    var l: Lowerer = .{ .f = f, .t = t, .ctx = ctx, .w = f.newVReg(), .argv = f.newVReg(), .argc = f.newVReg(), .exit = exit, .insns = plan.insns };
 
     l.cur = exit;
     try l.emit(.{ .ret = try l.konst(imm(c.JSRT_UNDEFINED)) });
@@ -789,7 +852,8 @@ pub fn lower(f: *ir.Func, t: *const bc.Template, plan: analyze.Plan) !void {
     try l.emit(.{ .load = .{ .dst = l.argc, .base = ctx, .disp = @offsetOf(h.Ctx, "argc") } });
 
     const dead = try deadStores(f.alloc(), t, plan.insns);
-    for (plan.insns, dead) |i, skip| {
+    for (plan.insns, dead, 0..) |i, skip, at| {
+        l.at = at;
         if (i.leader) {
             const b = try l.blockAt(i.pc);
             if (l.cur != null) try l.br(b);

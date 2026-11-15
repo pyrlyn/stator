@@ -85,6 +85,9 @@ collects needs no stack maps.
   activation cached for that array (`vm.getMethod`'s two window slots per site), compared and
   loaded in place. The helper binds the method and fills the cache on a miss, so a loop of
   `a.push(v)` binds once instead of allocating a bound closure per call;
+- `a.push(v)` itself: a callee that is the method cached for this receiver is the runtime's own
+  `push` bound to that array, so an array with room takes the element and the new length in
+  place. A full array, another callee or more than one argument takes the call helper;
 - sloppy `this` (nullish becomes the global object) and a constructor's return on a plain call;
 - a call from compiled code to a plain function the JIT has compiled: the callee's window opens
   above the caller's and its code runs at once, with none of the interpreter's call layers
@@ -106,10 +109,10 @@ interprets.
 
 **What it is not yet.** A direct call still goes through one helper that checks the callee and
 opens its frame; every object is a call into the allocator, which is most of the time of an
-allocating loop; a call of a native method (`a.push(v)`) goes through the call helper and the
+allocating loop; a call of any native method but `push` goes through the call helper and the
 runtime's method dispatch; every operand goes through the frame window in memory. Allocation and
-tight numeric loops are where V8 is far ahead (§4); a cheaper allocation path, `push` in place
-and the optimizing tier (plan/T67.1: type feedback, values in registers, call inline caches,
+tight numeric loops are where V8 is far ahead (§4); a cheaper allocation path and the
+optimizing tier (plan/T67.1: type feedback, values in registers, call inline caches,
 deoptimization) are the next steps.
 
 ## 4. Tests and benchmark

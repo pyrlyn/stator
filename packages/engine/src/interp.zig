@@ -278,6 +278,17 @@ test "an array method is bound once per activation" {
     // The first `a.push` binds the method and caches it; the other 999 read the cache inline.
     // `a.length` is read in place.
     try std.testing.expectEqual([2]usize{ 1, 0 }, r.calls);
+    const pushes = try jitCost(
+        "function f(n) { const a = []; for (let i = 0; i < n; i++) a.push(i); return a.length + ':' + a[n - 1]; } f(1000)",
+        .{helpers.call},
+    );
+    // The first push binds the method; the others reach the helper only to grow the array,
+    // whose capacity doubles from 1.
+    try std.testing.expectEqualSlices(usize, &.{11}, &pushes.calls);
+    try expectRuns("function f(n) { const a = []; for (let i = 0; i < n; i++) a.push(i); return a.length + ':' + a[n - 1]; } f(1000)", "1000:999");
+    // The result is the new length; two arguments, and a site that sees two arrays in turn.
+    try expectRuns("function f() { const a = [1], b = [2]; let r = ''; for (let i = 0; i < 3; i++) { const x = i % 2 ? a : b; r += a.push(i) + ',' + b.push(i, i) + ',' + x.push(i) + ';'; } return r + a + '|' + b; } f()", "2,3,4;3,6,4;5,8,9;1,0,1,1,2|2,0,0,0,1,1,2,2,2");
+    try expectRuns("function f(o) { let r = 0; for (let i = 0; i < 3; i++) r += o.push(i); return r; } f({ push(v) { return v * 2; } }) + ':' + f([])", "6:6");
     // An own property that shadows the method ends the cache's answer.
     try expectRuns("function f() { const a = []; let s = 0; for (let i = 0; i < 4; i++) { a.push(i); if (i === 1) a.push = function (v) { s += v; return 0; }; } return a.length + ':' + s; } f()", "2:5");
     try expectRuns("function f(o) { let s = 0; for (let i = 0; i < 3; i++) s += o.m(i); return s; } f({ m(v) { return v * 2; } })", "6");
