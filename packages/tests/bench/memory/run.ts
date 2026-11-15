@@ -1,6 +1,7 @@
 /* Memory benchmark: stator binaries vs other JS/TS -> standalone-binary compilers.
  *
- * For every program in ./programs plus the shared ../programs set, each available tool
+ * For every program in ./programs plus the engine-agnostic ts-mode bench programs
+ * (support/bench-programs.ts), each available tool
  * compiles the same source into a standalone executable. Each executable runs RUNS times
  * under `/usr/bin/time -l` (macOS) / `-f %M` (Linux); we record the MEDIAN peak RSS, the
  * median wall time, and the binary size, and byte-compare stdout against the Node oracle.
@@ -26,6 +27,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { arch, cpus, hostname, platform, release, tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { benchPrograms, engineAgnostic } from '../../support/bench-programs.ts';
 import { nodePath } from '../../support/node-path.ts';
 import { onPath } from '../../support/on-path.ts';
 import { type TimedRun, timedRun } from '../../support/timed-run.ts';
@@ -216,10 +218,11 @@ function programs(): string[] {
   const local = readdirSync(join(HERE, 'programs'))
     .filter((f) => f.endsWith('.ts'))
     .map((f) => join(HERE, 'programs', f));
-  // ffi-sqrt uses a stator-only extern and startup.ts is empty (hello.ts covers it).
-  const shared = ['fib.ts', 'json-roundtrip.ts', 'nbody.ts', 'string-churn.ts'].map((f) =>
-    join(HERE, '..', 'programs', f),
-  );
+  // The `ts`-mode set only: this harness builds without `--mode`. startup.ts is the empty
+  // floor hello.ts already covers.
+  const shared = benchPrograms()
+    .filter((p) => p.mode === 'ts' && engineAgnostic(p))
+    .map((p) => p.path);
   const filter = process.env['BENCH_PROGRAMS']?.split(',');
   return [...local, ...shared].filter((p) => !filter || filter.includes(basename(p, '.ts')));
 }

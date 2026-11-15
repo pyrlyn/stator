@@ -1,6 +1,6 @@
 /* CPU profiling of stator binaries with samply, exported to speedscope JSON.
  *
- * For every memory-benchmark program (../memory/programs plus the shared ../programs set used
+ * For every memory-benchmark program (../memory/programs plus the shared bench set used
  * by ../memory/run.ts) this compiles the program with stator (CC wrapper adds frame pointers,
  * nothing else), records it with `samply record --save-only --unstable-presymbolicate`, then
  * converts the Firefox-Profiler output to speedscope JSON plus a plain-text hot-spot summary.
@@ -19,6 +19,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { benchPrograms, engineAgnostic } from '../../support/bench-programs.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '..', '..', '..', 'compiler', 'src', 'cli', 'main.ts');
@@ -38,9 +39,9 @@ function programs(): string[] {
   const local = readdirSync(join(HERE, '..', 'memory', 'programs'))
     .filter((f) => f.endsWith('.ts'))
     .map((f) => join(HERE, '..', 'memory', 'programs', f));
-  const shared = ['fib.ts', 'json-roundtrip.ts', 'nbody.ts', 'string-churn.ts'].map((f) =>
-    join(HERE, '..', 'programs', f),
-  );
+  const shared = benchPrograms()
+    .filter((p) => p.mode === 'ts' && engineAgnostic(p))
+    .map((p) => p.path);
   const filter = process.env['PROFILE_PROGRAMS']?.split(',');
   return [...local, ...shared].filter((p) => !filter || filter.includes(basename(p, '.ts')));
 }

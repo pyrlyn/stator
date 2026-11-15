@@ -142,7 +142,7 @@ pnpm run test:impact            # only the tests (every harness) your diff reach
 pnpm run test:impact:record     # full instrumented run at a clean HEAD → .cache/impact/impact-map.json (never committed)
 pnpm run test:coverage          # same under c8 + packages/compiler/src coverage table; writes coverage/lcov.info — ONLY when the coverage table is the question (it costs ~4x wall time)
 pnpm run test:subset            # decision tests → verdict matrix
-pnpm run test:golden            # compile + run vs Node, byte-for-byte
+pnpm run test:golden            # compile + run vs Node, byte-for-byte (the fixtures plus every bench program, `--filter=/bench/`)
 pnpm run test:typediff          # stator-ts's type of every expression vs the `typescript` checker, ratcheted; STATOR_TS picks the binary (plan/T41, not part of `ci` yet)
 pnpm run test:zigdiff           # each Zig compiler stage vs this compiler, over subset + golden; STATOR_ZIG picks the binary (plan/T41, not part of `ci` yet)
 pnpm run test:selfhost          # Stator explains (and builds) its own packages; ratcheted per-code counts; record changes with --update
@@ -158,7 +158,7 @@ pnpm run test262:interp-parse   # Test262 language/ through the interpreter's pa
 pnpm run test262:interp-exec    # compiles test262/host.ts, then runs Test262 language/ through it in the interpreter, ratcheted; needs `pnpm run runtime` (not part of `ci`)
 pnpm run test:node-suite        # Node's own tests (packages/tests/node-suite/pin.json) through vitest, ratcheted (not part of `ci`)
 pnpm run differential           # fuzzer vs Node (failures land in packages/tests/differential/failures/)
-pnpm run bench:record           # refresh packages/tests/bench/baseline.json (valid for this machine only)
+pnpm run bench:record           # time every bench program in both modes, fail a geomean or per-program regression; refresh packages/tests/bench/baseline.json (valid for this machine only)
 pnpm run runtime                # build libjsrt.a (clang, -Wall -Wextra -Werror; wraps the just recipe), then libjsrt_std.a
 just -f packages/runtime/justfile -d packages/runtime runtime       # the recipe directly
 just -f packages/runtime/justfile -d packages/runtime runtime-asan  # ASan/UBSan runtime build

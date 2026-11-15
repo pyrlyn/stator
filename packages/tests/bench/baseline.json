@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-10-23T14:44:12.385Z",
+  "recordedAt": "2026-11-08T20:01:55.383Z",
   "host": {
     "platform": "darwin",
     "release": "25.5.0",
@@ -151,12 +151,28 @@
     }
   ],
   "programs": [
+    "arrays.ts",
+    "classes.ts",
+    "closures.ts",
+    "exceptions.ts",
     "ffi-sqrt.ts",
     "fib.ts",
     "json-roundtrip.ts",
+    "map-set.ts",
     "nbody.ts",
+    "promises.ts",
+    "regexp.ts",
     "startup.ts",
-    "string-churn.ts"
+    "string-churn.ts",
+    "typed-arrays.ts",
+    "js/alloc.js",
+    "js/arrays.js",
+    "js/closures.js",
+    "js/fib.js",
+    "js/loop.js",
+    "js/methods.js",
+    "js/props.js",
+    "js/strings.js"
   ],
   "engines": [
     {
@@ -164,58 +180,202 @@
       "version": "working tree",
       "measurements": [
         {
+          "program": "arrays.ts",
+          "startupMsBest": 952.112417,
+          "runtimeMsBest": 211.760875,
+          "peakRssBytes": 23543808,
+          "peakRssRaw": 23543808,
+          "binaryBytes": 361552,
+          "output": "351587053\n"
+        },
+        {
+          "program": "classes.ts",
+          "startupMsBest": 980.910166,
+          "runtimeMsBest": 136.590709,
+          "peakRssBytes": 2211840,
+          "peakRssRaw": 2211840,
+          "binaryBytes": 362448,
+          "output": "24010322\n"
+        },
+        {
+          "program": "closures.ts",
+          "startupMsBest": 920.145042,
+          "runtimeMsBest": 126.294916,
+          "peakRssBytes": 12173312,
+          "peakRssRaw": 12173312,
+          "binaryBytes": 361408,
+          "output": "2249370\n"
+        },
+        {
+          "program": "exceptions.ts",
+          "startupMsBest": 930.716708,
+          "runtimeMsBest": 39.111208,
+          "peakRssBytes": 8011776,
+          "peakRssRaw": 8011776,
+          "binaryBytes": 362080,
+          "output": "3750648612 100000\n"
+        },
+        {
           "program": "ffi-sqrt.ts",
-          "startupMsBest": 697.249542,
-          "runtimeMsBest": 44.08025,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
-          "binaryBytes": 264768,
+          "startupMsBest": 905.682916,
+          "runtimeMsBest": 45.392,
+          "peakRssBytes": 2031616,
+          "peakRssRaw": 2031616,
+          "binaryBytes": 344112,
           "output": "666667166.4588418\n"
         },
         {
           "program": "fib.ts",
-          "startupMsBest": 683.012167,
-          "runtimeMsBest": 599.422167,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
-          "binaryBytes": 265168,
+          "startupMsBest": 879.451041,
+          "runtimeMsBest": 666.777875,
+          "peakRssBytes": 2031616,
+          "peakRssRaw": 2031616,
+          "binaryBytes": 344672,
           "output": "5702887\n"
         },
         {
           "program": "json-roundtrip.ts",
-          "startupMsBest": 725.715459,
-          "runtimeMsBest": 5.981875,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
-          "binaryBytes": 282000,
+          "startupMsBest": 905.582916,
+          "runtimeMsBest": 6.468375,
+          "peakRssBytes": 2375680,
+          "peakRssRaw": 2375680,
+          "binaryBytes": 361456,
           "output": "4000\n"
         },
         {
+          "program": "map-set.ts",
+          "startupMsBest": 914.130583,
+          "runtimeMsBest": 87.200083,
+          "peakRssBytes": 20742144,
+          "peakRssRaw": 20742144,
+          "binaryBytes": 361632,
+          "output": "646781819 5000 24999 7919\n"
+        },
+        {
           "program": "nbody.ts",
-          "startupMsBest": 738.761458,
-          "runtimeMsBest": 30.312666,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
-          "binaryBytes": 264880,
+          "startupMsBest": 902.6205,
+          "runtimeMsBest": 30.553208,
+          "peakRssBytes": 2031616,
+          "peakRssRaw": 2031616,
+          "binaryBytes": 344208,
           "output": "1715\n"
         },
         {
+          "program": "promises.ts",
+          "startupMsBest": 919.440208,
+          "runtimeMsBest": 21.19575,
+          "peakRssBytes": 13205504,
+          "peakRssRaw": 13205504,
+          "binaryBytes": 364080,
+          "output": "119900\n"
+        },
+        {
+          "program": "regexp.ts",
+          "startupMsBest": 910.015,
+          "runtimeMsBest": 58.388208,
+          "peakRssBytes": 13484032,
+          "peakRssRaw": 13484032,
+          "binaryBytes": 344384,
+          "output": "72438000\n"
+        },
+        {
           "program": "startup.ts",
-          "startupMsBest": 680.113125,
-          "runtimeMsBest": 5.695084,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
-          "binaryBytes": 54880,
+          "startupMsBest": 854.44125,
+          "runtimeMsBest": 5.616834,
+          "peakRssBytes": 1851392,
+          "peakRssRaw": 1851392,
+          "binaryBytes": 54976,
           "output": ""
         },
         {
           "program": "string-churn.ts",
-          "startupMsBest": 728.752542,
-          "runtimeMsBest": 11.972959,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
-          "binaryBytes": 264976,
+          "startupMsBest": 889.918458,
+          "runtimeMsBest": 10.263208,
+          "peakRssBytes": 4800512,
+          "peakRssRaw": 4800512,
+          "binaryBytes": 344432,
           "output": "1000\n"
+        },
+        {
+          "program": "typed-arrays.ts",
+          "startupMsBest": 914.694125,
+          "runtimeMsBest": 258.046084,
+          "peakRssBytes": 4521984,
+          "peakRssRaw": 4521984,
+          "binaryBytes": 379824,
+          "output": "148933 8719000\n"
+        },
+        {
+          "program": "js/alloc.js",
+          "startupMsBest": 921.733541,
+          "runtimeMsBest": 596.704667,
+          "peakRssBytes": 12271616,
+          "peakRssRaw": 12271616,
+          "binaryBytes": 344832,
+          "output": "37500007500000\n"
+        },
+        {
+          "program": "js/arrays.js",
+          "startupMsBest": 939.533375,
+          "runtimeMsBest": 467.930958,
+          "peakRssBytes": 19267584,
+          "peakRssRaw": 19267584,
+          "binaryBytes": 344672,
+          "output": "4999995000000\n"
+        },
+        {
+          "program": "js/closures.js",
+          "startupMsBest": 902.478041,
+          "runtimeMsBest": 247.583542,
+          "peakRssBytes": 2097152,
+          "peakRssRaw": 2097152,
+          "binaryBytes": 361600,
+          "output": "5000000\n"
+        },
+        {
+          "program": "js/fib.js",
+          "startupMsBest": 892.561167,
+          "runtimeMsBest": 246.346041,
+          "peakRssBytes": 2031616,
+          "peakRssRaw": 2031616,
+          "binaryBytes": 344736,
+          "output": "2178309\n"
+        },
+        {
+          "program": "js/loop.js",
+          "startupMsBest": 882.179166,
+          "runtimeMsBest": 1205.893167,
+          "peakRssBytes": 2048000,
+          "peakRssRaw": 2048000,
+          "binaryBytes": 344672,
+          "output": "224999992500000\n"
+        },
+        {
+          "program": "js/methods.js",
+          "startupMsBest": 1029.794417,
+          "runtimeMsBest": 502.944209,
+          "peakRssBytes": 2113536,
+          "peakRssRaw": 2113536,
+          "binaryBytes": 361712,
+          "output": "55000000\n"
+        },
+        {
+          "program": "js/props.js",
+          "startupMsBest": 1173.077,
+          "runtimeMsBest": 634.5175,
+          "peakRssBytes": 2080768,
+          "peakRssRaw": 2080768,
+          "binaryBytes": 344832,
+          "output": "30000000\n"
+        },
+        {
+          "program": "js/strings.js",
+          "startupMsBest": 929.675958,
+          "runtimeMsBest": 186.688459,
+          "peakRssBytes": 17399808,
+          "peakRssRaw": 17399808,
+          "binaryBytes": 361696,
+          "output": "1000000 2999998\n"
         }
       ]
     },
@@ -224,125 +384,615 @@
       "version": "v26.7.0",
       "measurements": [
         {
+          "program": "arrays.ts",
+          "startupMsBest": 104.087459,
+          "runtimeMsBest": 104.087459,
+          "peakRssBytes": 76021760,
+          "peakRssRaw": 76021760,
+          "binaryBytes": 0,
+          "output": "351587053\n"
+        },
+        {
+          "program": "classes.ts",
+          "startupMsBest": 48.480334,
+          "runtimeMsBest": 48.480334,
+          "peakRssBytes": 63340544,
+          "peakRssRaw": 63340544,
+          "binaryBytes": 0,
+          "output": "24010322\n"
+        },
+        {
+          "program": "closures.ts",
+          "startupMsBest": 48.937166,
+          "runtimeMsBest": 48.937166,
+          "peakRssBytes": 61751296,
+          "peakRssRaw": 61751296,
+          "binaryBytes": 0,
+          "output": "2249370\n"
+        },
+        {
+          "program": "exceptions.ts",
+          "startupMsBest": 97.178625,
+          "runtimeMsBest": 97.178625,
+          "peakRssBytes": 62308352,
+          "peakRssRaw": 62308352,
+          "binaryBytes": 0,
+          "output": "3750648612 100000\n"
+        },
+        {
           "program": "ffi-sqrt.ts",
-          "startupMsBest": 53.744542,
-          "runtimeMsBest": 53.744542,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
+          "startupMsBest": 36.776958,
+          "runtimeMsBest": 36.776958,
+          "peakRssBytes": 59949056,
+          "peakRssRaw": 59949056,
           "binaryBytes": 0,
           "output": "666667166.4588418\n"
         },
         {
           "program": "fib.ts",
-          "startupMsBest": 90.48925,
-          "runtimeMsBest": 90.48925,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
+          "startupMsBest": 71.81975,
+          "runtimeMsBest": 71.81975,
+          "peakRssBytes": 58523648,
+          "peakRssRaw": 58523648,
           "binaryBytes": 0,
           "output": "5702887\n"
         },
         {
           "program": "json-roundtrip.ts",
-          "startupMsBest": 51.976083,
-          "runtimeMsBest": 51.976083,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
+          "startupMsBest": 34.42925,
+          "runtimeMsBest": 34.42925,
+          "peakRssBytes": 54837248,
+          "peakRssRaw": 54837248,
           "binaryBytes": 0,
           "output": "4000\n"
         },
         {
+          "program": "map-set.ts",
+          "startupMsBest": 68.341417,
+          "runtimeMsBest": 68.341417,
+          "peakRssBytes": 67665920,
+          "peakRssRaw": 67665920,
+          "binaryBytes": 0,
+          "output": "646781819 5000 24999 7919\n"
+        },
+        {
           "program": "nbody.ts",
-          "startupMsBest": 57.219291,
-          "runtimeMsBest": 57.219291,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
+          "startupMsBest": 39.170375,
+          "runtimeMsBest": 39.170375,
+          "peakRssBytes": 60440576,
+          "peakRssRaw": 60440576,
           "binaryBytes": 0,
           "output": "1715\n"
         },
         {
+          "program": "promises.ts",
+          "startupMsBest": 42.251041,
+          "runtimeMsBest": 42.251041,
+          "peakRssBytes": 61718528,
+          "peakRssRaw": 61718528,
+          "binaryBytes": 0,
+          "output": "119900\n"
+        },
+        {
+          "program": "regexp.ts",
+          "startupMsBest": 40.901458,
+          "runtimeMsBest": 40.901458,
+          "peakRssBytes": 62291968,
+          "peakRssRaw": 62291968,
+          "binaryBytes": 0,
+          "output": "72438000\n"
+        },
+        {
           "program": "startup.ts",
-          "startupMsBest": 46.862542,
-          "runtimeMsBest": 46.862542,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
+          "startupMsBest": 33.672792,
+          "runtimeMsBest": 33.672792,
+          "peakRssBytes": 52543488,
+          "peakRssRaw": 52543488,
           "binaryBytes": 0,
           "output": ""
         },
         {
           "program": "string-churn.ts",
-          "startupMsBest": 53.538208,
-          "runtimeMsBest": 53.538208,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
+          "startupMsBest": 36.361458,
+          "runtimeMsBest": 36.361458,
+          "peakRssBytes": 60030976,
+          "peakRssRaw": 60030976,
           "binaryBytes": 0,
           "output": "1000\n"
+        },
+        {
+          "program": "typed-arrays.ts",
+          "startupMsBest": 49.585666,
+          "runtimeMsBest": 49.585666,
+          "peakRssBytes": 62521344,
+          "peakRssRaw": 62521344,
+          "binaryBytes": 0,
+          "output": "148933 8719000\n"
+        },
+        {
+          "program": "js/alloc.js",
+          "startupMsBest": 44.517667,
+          "runtimeMsBest": 44.517667,
+          "peakRssBytes": 61554688,
+          "peakRssRaw": 61554688,
+          "binaryBytes": 0,
+          "output": "37500007500000\n"
+        },
+        {
+          "program": "js/arrays.js",
+          "startupMsBest": 53.5305,
+          "runtimeMsBest": 53.5305,
+          "peakRssBytes": 93044736,
+          "peakRssRaw": 93044736,
+          "binaryBytes": 0,
+          "output": "4999995000000\n"
+        },
+        {
+          "program": "js/closures.js",
+          "startupMsBest": 40.560375,
+          "runtimeMsBest": 40.560375,
+          "peakRssBytes": 59211776,
+          "peakRssRaw": 59211776,
+          "binaryBytes": 0,
+          "output": "5000000\n"
+        },
+        {
+          "program": "js/fib.js",
+          "startupMsBest": 52.791917,
+          "runtimeMsBest": 52.791917,
+          "peakRssBytes": 58966016,
+          "peakRssRaw": 58966016,
+          "binaryBytes": 0,
+          "output": "2178309\n"
+        },
+        {
+          "program": "js/loop.js",
+          "startupMsBest": 58.966458,
+          "runtimeMsBest": 58.966458,
+          "peakRssBytes": 59867136,
+          "peakRssRaw": 59867136,
+          "binaryBytes": 0,
+          "output": "224999992500000\n"
+        },
+        {
+          "program": "js/methods.js",
+          "startupMsBest": 40.794375,
+          "runtimeMsBest": 40.794375,
+          "peakRssBytes": 59637760,
+          "peakRssRaw": 59637760,
+          "binaryBytes": 0,
+          "output": "55000000\n"
+        },
+        {
+          "program": "js/props.js",
+          "startupMsBest": 45.526,
+          "runtimeMsBest": 45.526,
+          "peakRssBytes": 59490304,
+          "peakRssRaw": 59490304,
+          "binaryBytes": 0,
+          "output": "30000000\n"
+        },
+        {
+          "program": "js/strings.js",
+          "startupMsBest": 63.54775,
+          "runtimeMsBest": 63.54775,
+          "peakRssBytes": 126631936,
+          "peakRssRaw": 126631936,
+          "binaryBytes": 0,
+          "output": "1000000 2999998\n"
         }
-      ]
+      ],
+      "failures": []
     },
     {
       "engine": "bun",
       "version": "1.3.14",
       "measurements": [
         {
+          "program": "arrays.ts",
+          "startupMsBest": 97.875458,
+          "runtimeMsBest": 97.875458,
+          "peakRssBytes": 71155712,
+          "peakRssRaw": 71155712,
+          "binaryBytes": 0,
+          "output": "351587053\n"
+        },
+        {
+          "program": "classes.ts",
+          "startupMsBest": 35.60925,
+          "runtimeMsBest": 35.60925,
+          "peakRssBytes": 42106880,
+          "peakRssRaw": 42106880,
+          "binaryBytes": 0,
+          "output": "24010322\n"
+        },
+        {
+          "program": "closures.ts",
+          "startupMsBest": 37.078125,
+          "runtimeMsBest": 37.078125,
+          "peakRssBytes": 72400896,
+          "peakRssRaw": 72400896,
+          "binaryBytes": 0,
+          "output": "2249370\n"
+        },
+        {
+          "program": "exceptions.ts",
+          "startupMsBest": 42.839334,
+          "runtimeMsBest": 42.839334,
+          "peakRssBytes": 63094784,
+          "peakRssRaw": 63094784,
+          "binaryBytes": 0,
+          "output": "3750648612 100000\n"
+        },
+        {
           "program": "ffi-sqrt.ts",
-          "startupMsBest": 28.683041,
-          "runtimeMsBest": 28.683041,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
+          "startupMsBest": 38.113209,
+          "runtimeMsBest": 38.113209,
+          "peakRssBytes": 34521088,
+          "peakRssRaw": 34521088,
           "binaryBytes": 0,
           "output": "666667166.4588418\n"
         },
         {
           "program": "fib.ts",
-          "startupMsBest": 39.7375,
-          "runtimeMsBest": 39.7375,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
+          "startupMsBest": 50.630042,
+          "runtimeMsBest": 50.630042,
+          "peakRssBytes": 32145408,
+          "peakRssRaw": 32145408,
           "binaryBytes": 0,
           "output": "5702887\n"
         },
         {
           "program": "json-roundtrip.ts",
-          "startupMsBest": 14.733583,
-          "runtimeMsBest": 14.733583,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
+          "startupMsBest": 23.737917,
+          "runtimeMsBest": 23.737917,
+          "peakRssBytes": 25903104,
+          "peakRssRaw": 25903104,
           "binaryBytes": 0,
           "output": "4000\n"
         },
         {
+          "program": "map-set.ts",
+          "startupMsBest": 52.045375,
+          "runtimeMsBest": 52.045375,
+          "peakRssBytes": 74629120,
+          "peakRssRaw": 74629120,
+          "binaryBytes": 0,
+          "output": "646781819 5000 24999 7919\n"
+        },
+        {
           "program": "nbody.ts",
-          "startupMsBest": 17.802958,
-          "runtimeMsBest": 17.802958,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
+          "startupMsBest": 27.873833,
+          "runtimeMsBest": 27.873833,
+          "peakRssBytes": 33751040,
+          "peakRssRaw": 33751040,
           "binaryBytes": 0,
           "output": "1715\n"
         },
         {
+          "program": "promises.ts",
+          "startupMsBest": 31.1655,
+          "runtimeMsBest": 31.1655,
+          "peakRssBytes": 57114624,
+          "peakRssRaw": 57114624,
+          "binaryBytes": 0,
+          "output": "119900\n"
+        },
+        {
+          "program": "regexp.ts",
+          "startupMsBest": 30.863083,
+          "runtimeMsBest": 30.863083,
+          "peakRssBytes": 44204032,
+          "peakRssRaw": 44204032,
+          "binaryBytes": 0,
+          "output": "72438000\n"
+        },
+        {
           "program": "startup.ts",
-          "startupMsBest": 13.997292,
-          "runtimeMsBest": 13.997292,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
+          "startupMsBest": 24.133708,
+          "runtimeMsBest": 24.133708,
+          "peakRssBytes": 24084480,
+          "peakRssRaw": 24084480,
           "binaryBytes": 0,
           "output": ""
         },
         {
           "program": "string-churn.ts",
-          "startupMsBest": 14.851458,
-          "runtimeMsBest": 14.851458,
-          "peakRssBytes": 0,
-          "peakRssRaw": 0,
+          "startupMsBest": 27.027625,
+          "runtimeMsBest": 27.027625,
+          "peakRssBytes": 30474240,
+          "peakRssRaw": 30474240,
           "binaryBytes": 0,
           "output": "1000\n"
+        },
+        {
+          "program": "typed-arrays.ts",
+          "startupMsBest": 34.52325,
+          "runtimeMsBest": 34.52325,
+          "peakRssBytes": 38043648,
+          "peakRssRaw": 38043648,
+          "binaryBytes": 0,
+          "output": "148933 8719000\n"
+        },
+        {
+          "program": "js/alloc.js",
+          "startupMsBest": 27.036958,
+          "runtimeMsBest": 27.036958,
+          "peakRssBytes": 55951360,
+          "peakRssRaw": 55951360,
+          "binaryBytes": 0,
+          "output": "37500007500000\n"
+        },
+        {
+          "program": "js/arrays.js",
+          "startupMsBest": 32.397917,
+          "runtimeMsBest": 32.397917,
+          "peakRssBytes": 69140480,
+          "peakRssRaw": 69140480,
+          "binaryBytes": 0,
+          "output": "4999995000000\n"
+        },
+        {
+          "program": "js/closures.js",
+          "startupMsBest": 22.031375,
+          "runtimeMsBest": 22.031375,
+          "peakRssBytes": 32882688,
+          "peakRssRaw": 32882688,
+          "binaryBytes": 0,
+          "output": "5000000\n"
+        },
+        {
+          "program": "js/fib.js",
+          "startupMsBest": 29.523167,
+          "runtimeMsBest": 29.523167,
+          "peakRssBytes": 30834688,
+          "peakRssRaw": 30834688,
+          "binaryBytes": 0,
+          "output": "2178309\n"
+        },
+        {
+          "program": "js/loop.js",
+          "startupMsBest": 43.881167,
+          "runtimeMsBest": 43.881167,
+          "peakRssBytes": 31703040,
+          "peakRssRaw": 31703040,
+          "binaryBytes": 0,
+          "output": "224999992500000\n"
+        },
+        {
+          "program": "js/methods.js",
+          "startupMsBest": 39.751208,
+          "runtimeMsBest": 39.751208,
+          "peakRssBytes": 33865728,
+          "peakRssRaw": 33865728,
+          "binaryBytes": 0,
+          "output": "55000000\n"
+        },
+        {
+          "program": "js/props.js",
+          "startupMsBest": 25.738709,
+          "runtimeMsBest": 25.738709,
+          "peakRssBytes": 32391168,
+          "peakRssRaw": 32391168,
+          "binaryBytes": 0,
+          "output": "30000000\n"
+        },
+        {
+          "program": "js/strings.js",
+          "startupMsBest": 25.758209,
+          "runtimeMsBest": 25.758209,
+          "peakRssBytes": 66043904,
+          "peakRssRaw": 66043904,
+          "binaryBytes": 0,
+          "output": "1000000 2999998\n"
         }
-      ]
+      ],
+      "failures": []
     },
     {
       "engine": "qjs",
-      "version": "absent",
-      "measurements": []
+      "version": "QuickJS version 2026-06-04",
+      "measurements": [
+        {
+          "program": "arrays.ts",
+          "startupMsBest": 254.872208,
+          "runtimeMsBest": 254.872208,
+          "peakRssBytes": 5046272,
+          "peakRssRaw": 5046272,
+          "binaryBytes": 0,
+          "output": "351587053\n"
+        },
+        {
+          "program": "classes.ts",
+          "startupMsBest": 183.320833,
+          "runtimeMsBest": 183.320833,
+          "peakRssBytes": 2850816,
+          "peakRssRaw": 2850816,
+          "binaryBytes": 0,
+          "output": "24010322\n"
+        },
+        {
+          "program": "closures.ts",
+          "startupMsBest": 180.157,
+          "runtimeMsBest": 180.157,
+          "peakRssBytes": 2621440,
+          "peakRssRaw": 2621440,
+          "binaryBytes": 0,
+          "output": "2249370\n"
+        },
+        {
+          "program": "exceptions.ts",
+          "startupMsBest": 58.103833,
+          "runtimeMsBest": 58.103833,
+          "peakRssBytes": 2736128,
+          "peakRssRaw": 2736128,
+          "binaryBytes": 0,
+          "output": "3750648612 100000\n"
+        },
+        {
+          "program": "ffi-sqrt.ts",
+          "startupMsBest": 33.938708,
+          "runtimeMsBest": 33.938708,
+          "peakRssBytes": 2637824,
+          "peakRssRaw": 2637824,
+          "binaryBytes": 0,
+          "output": "666667166.4588418\n"
+        },
+        {
+          "program": "fib.ts",
+          "startupMsBest": 339.911042,
+          "runtimeMsBest": 339.911042,
+          "peakRssBytes": 2621440,
+          "peakRssRaw": 2621440,
+          "binaryBytes": 0,
+          "output": "5702887\n"
+        },
+        {
+          "program": "json-roundtrip.ts",
+          "startupMsBest": 7.109542,
+          "runtimeMsBest": 7.109542,
+          "peakRssBytes": 2621440,
+          "peakRssRaw": 2621440,
+          "binaryBytes": 0,
+          "output": "4000\n"
+        },
+        {
+          "program": "map-set.ts",
+          "startupMsBest": 69.686709,
+          "runtimeMsBest": 69.686709,
+          "peakRssBytes": 6029312,
+          "peakRssRaw": 6029312,
+          "binaryBytes": 0,
+          "output": "646781819 5000 24999 7919\n"
+        },
+        {
+          "program": "nbody.ts",
+          "startupMsBest": 26.188041,
+          "runtimeMsBest": 26.188041,
+          "peakRssBytes": 2605056,
+          "peakRssRaw": 2605056,
+          "binaryBytes": 0,
+          "output": "1715\n"
+        },
+        {
+          "program": "promises.ts",
+          "startupMsBest": 54.878167,
+          "runtimeMsBest": 54.878167,
+          "peakRssBytes": 2654208,
+          "peakRssRaw": 2654208,
+          "binaryBytes": 0,
+          "output": "119900\n"
+        },
+        {
+          "program": "regexp.ts",
+          "startupMsBest": 52.7485,
+          "runtimeMsBest": 52.7485,
+          "peakRssBytes": 2670592,
+          "peakRssRaw": 2670592,
+          "binaryBytes": 0,
+          "output": "72438000\n"
+        },
+        {
+          "program": "startup.ts",
+          "startupMsBest": 7.01375,
+          "runtimeMsBest": 7.01375,
+          "peakRssBytes": 2490368,
+          "peakRssRaw": 2490368,
+          "binaryBytes": 0,
+          "output": ""
+        },
+        {
+          "program": "string-churn.ts",
+          "startupMsBest": 13.526125,
+          "runtimeMsBest": 13.526125,
+          "peakRssBytes": 2719744,
+          "peakRssRaw": 2719744,
+          "binaryBytes": 0,
+          "output": "1000\n"
+        },
+        {
+          "program": "typed-arrays.ts",
+          "startupMsBest": 164.783834,
+          "runtimeMsBest": 164.783834,
+          "peakRssBytes": 4718592,
+          "peakRssRaw": 4718592,
+          "binaryBytes": 0,
+          "output": "148933 8719000\n"
+        },
+        {
+          "program": "js/alloc.js",
+          "startupMsBest": 600.29225,
+          "runtimeMsBest": 600.29225,
+          "peakRssBytes": 2605056,
+          "peakRssRaw": 2605056,
+          "binaryBytes": 0,
+          "output": "37500007500000\n"
+        },
+        {
+          "program": "js/arrays.js",
+          "startupMsBest": 215.182666,
+          "runtimeMsBest": 215.182666,
+          "peakRssBytes": 20267008,
+          "peakRssRaw": 20267008,
+          "binaryBytes": 0,
+          "output": "4999995000000\n"
+        },
+        {
+          "program": "js/closures.js",
+          "startupMsBest": 129.364,
+          "runtimeMsBest": 129.364,
+          "peakRssBytes": 2588672,
+          "peakRssRaw": 2588672,
+          "binaryBytes": 0,
+          "output": "5000000\n"
+        },
+        {
+          "program": "js/fib.js",
+          "startupMsBest": 133.103083,
+          "runtimeMsBest": 133.103083,
+          "peakRssBytes": 2654208,
+          "peakRssRaw": 2654208,
+          "binaryBytes": 0,
+          "output": "2178309\n"
+        },
+        {
+          "program": "js/loop.js",
+          "startupMsBest": 475.9425,
+          "runtimeMsBest": 475.9425,
+          "peakRssBytes": 2605056,
+          "peakRssRaw": 2605056,
+          "binaryBytes": 0,
+          "output": "224999992500000\n"
+        },
+        {
+          "program": "js/methods.js",
+          "startupMsBest": 206.41175,
+          "runtimeMsBest": 206.41175,
+          "peakRssBytes": 2621440,
+          "peakRssRaw": 2621440,
+          "binaryBytes": 0,
+          "output": "55000000\n"
+        },
+        {
+          "program": "js/props.js",
+          "startupMsBest": 269.61675,
+          "runtimeMsBest": 269.61675,
+          "peakRssBytes": 2621440,
+          "peakRssRaw": 2621440,
+          "binaryBytes": 0,
+          "output": "30000000\n"
+        },
+        {
+          "program": "js/strings.js",
+          "startupMsBest": 87.454708,
+          "runtimeMsBest": 87.454708,
+          "peakRssBytes": 4358144,
+          "peakRssRaw": 4358144,
+          "binaryBytes": 0,
+          "output": "1000000 2999998\n"
+        }
+      ],
+      "failures": []
     },
     {
       "engine": "perry",
@@ -362,6 +1012,8 @@
   ],
   "regression": {
     "thresholdPercent": 20,
-    "statorGeomeanMs": 26.243594837265828
+    "programThresholdPercent": 75,
+    "programFloorMs": 10,
+    "statorGeomeanMs": 113.678550553293
   }
 }

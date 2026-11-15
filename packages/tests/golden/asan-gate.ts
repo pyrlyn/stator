@@ -57,6 +57,9 @@ export const RECORD_VERSION = 1;
 const TRACKED_SCOPES: readonly string[] = [
   'packages/compiler/src',
   'packages/tests/golden',
+  // The benchmark programs the golden runner also checks (support/bench-programs.ts).
+  'packages/tests/bench/programs',
+  'packages/tests/engine/bench',
   'packages/tests/support',
   'packages/runtime/src',
   'packages/runtime/include',
