@@ -3,7 +3,7 @@ status: in progress
 priority: P2
 complexity: 5
 readiness: 35%
-agent: Claude Code / claude-opus-5-5
+agent: Claude Code / claude-fable-5-2
 ---
 
 # T67.1. The engine's optimizing JIT tier
@@ -37,6 +37,9 @@ Steps, each measured against V8 with `pnpm run engine:bench` before the next:
 2. Object literals: a cached shape transition per `define` site and slots sized for the literal.
 3. The optimizing tier: type feedback, unboxed doubles in registers, guards that deoptimize into
    the interpreter, inlining of small callees.
+
+Reassigned by the creator on 2026-11-16 together with T73, whose card holds the measured order
+of the remaining work: step 2 here is T73's step 6, step 3 is its step 8.
 
 Verify: `pnpm run interp:test`, `pnpm run engine:test`, `pnpm run engine:bench`,
 `pnpm run test:golden` when the runtime changes.
