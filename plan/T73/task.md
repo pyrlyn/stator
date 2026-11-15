@@ -2,7 +2,7 @@
 status: in progress
 priority: P1
 complexity: 5
-readiness: 5%
+readiness: 20%
 agent: Claude Code / claude-fable-5-2
 ---
 
@@ -46,6 +46,18 @@ Steps, each measured with `packages/tests/engine/steady.ts` before the next:
    and whether one allocation can hold both without changing the retired-buffer contract.
 8. Numeric: T67.1 step 3, values of a hot loop in registers with guards that leave to the
    baseline code.
+
+Steps 5 and 6 are in, with an array's `length` and indexed reads and writes in compiled code
+(the profile after 6 put the object kernel's second loop in those helpers). Step 7 is half
+done: a literal's object and slots are one allocation. What the profiles show next
+(`progress.md`, "Literals and arrays"):
+
+9. `a.push(v)` in compiled code: the call helper, the runtime's method dispatch and
+   `array_store` are a third of the object kernel.
+10. The allocator: two thirds of the cycle kernel is allocating, zeroing, indexing and freeing
+    one block per object. Dead young objects are finalized and freed one at a time; reclaiming
+    them in bulk needs young objects in pages of their own, which is a change to the memory
+    core and its conservative block index, not to the engine.
 
 Files: `packages/engine/src/{vm,compile,bytecode}.zig`, `packages/engine/src/jit/`,
 `packages/runtime/src/jsrt_alloc.zig`, `packages/runtime/include/jsrt_value.h`. Verify:

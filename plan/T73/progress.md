@@ -112,3 +112,64 @@ T73 remains **in progress**: the complete performance Check fails because Stator
 to V8 in every kernel. No `done.md` is created. The measured optimization is suitable to land
 independently while the optimizing JIT task T67.1 continues under its existing owner. No
 plan-notes entry was required: this follows the existing collector contract and adds no dependency.
+
+## Literals and arrays (2026-11-16)
+
+After the card passed to one agent with T67.1, on pyrlyn/gc `ef3b440` and pyrlyn/jit `e90d570`.
+Four changes, each profiled with macOS `sample` on the ReleaseFast `stator-steady` host and
+measured before the next:
+
+1. `2044cb0c`: compiled code reads the activation's bound-method cache, so `retained.push`
+   stops allocating an environment and a bound closure per call.
+2. `45bd36cb`: `defineOwn` applies the collector's write barrier. This is a correctness fix
+   found on the way: an old object that gained a property through a class field or a spread
+   could keep a reference the collector had not counted. `engine:test` now runs every script
+   under `JSRT_GC_STRESS=1 JSRT_GC_VERIFY=1` as well; 34 of those runs fail without the fix.
+3. `e8a79b20`: a literal allocates its slots with the object (`jsrt_dynobj_new_sized`), each
+   `define` site caches its shape step, and compiled code takes a cached step and tests the
+   collector's dirty bit in place.
+4. `7f72a818`: an array's `length` and its indexed reads and writes in compiled code.
+
+One process per engine and kernel after each change, microseconds per checked call:
+
+| Kernel | Start | After 1 | After 3 | After 4 |
+| --- | ---: | ---: | ---: | ---: |
+| cycles | 156.6 | 141.2 | 43.9 | 45.4 |
+| objects | 234.0 | 113.4 | 61.2 | 43.1 |
+| numeric | 170.3 | not recorded | 134.3 | 135.2 |
+
+"Start" is the previous section's five-process result. None of the four changes touches
+arithmetic: the numeric difference from "Start" predates them (the dependency update
+`6d049881` and the merges since) and was not bisected.
+
+Five interleaved processes per engine and kernel at `7f72a818`, clean tree, Apple M3 Max,
+Node v26.7.0 (V8 14.6.202.34-node.28), Zig 0.17.1 ReleaseFast, load averages 7.75/7.18/9.27
+before and 10.19/8.13/9.43 after. Samples, warmups, process times, peak RSS and source hashes
+are in [`literals-arrays.json`](literals-arrays.json):
+
+| Kernel | V8 us | V8 IQR | Stator us | Stator IQR | Stator / V8 |
+| --- | ---: | --- | ---: | --- | ---: |
+| numeric | 22.385 | 22.373-22.390 | 138.158 | 137.896-138.184 | 6.17 |
+| objects | 4.379 | 4.378-4.391 | 45.885 | 44.432-47.835 | 10.48 |
+| cycles | 5.428 | 5.405-5.430 | 45.171 | 45.046-45.936 | 8.32 |
+
+The compilation proof of that run lists `bench` and `checkedBatch` compiled in all three
+kernels. The script itself is still interpreted (`rejected: opcode array_push`); it only
+drives the loop.
+
+Checks at `7f72a818`: `pnpm run interp:test` exits 0; `pnpm run engine:test` reports
+`engine: 92 passed, 0 failed` (46 runs, each also under collector stress and verification).
+At `e8a79b20`, the last runtime change: `pnpm run test` 844 passed in 67 files, `test:golden`
+525 passed, `test:asan` 525 passed, `test:runtime` matches Node with `roots ok`, `test:leak`
+four plateaus (peak RSS 11776, 11680, 11856 and 15984 KB of a 65536 KB cap), `pnpm run dupes`
+0 clones.
+
+Where the time is now (same profiler, `7f72a818`). Cycles: 68% is the allocator (the pool,
+zeroing the block, the block index, the young list, then finalizing and freeing each dead
+object), 25% is generated code, 4% the store to the script's `cycleRoot` binding. Objects: 34%
+is `retained.push` (the call helper, `jsrt_call_with_this`, the method dispatch, `array_store`),
+37% the allocator, 27% generated code. Numeric: generated code only, every operand through the
+frame window.
+
+The Check still fails on every kernel, so the card stays open. Steps 9 and 10 in `task.md` are
+what these profiles ask for next, with T67.1 step 3 for numeric.

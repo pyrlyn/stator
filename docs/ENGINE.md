@@ -224,6 +224,23 @@ respectively, so this remains an incremental improvement. Both engines' JIT comp
 verified separately. [The T73 progress report](../plan/T73/progress.md) includes the shared
 machine's load, raw samples, rejected experiments and correctness checks; its V8 target stays open.
 
+Later T73 steps (§3: the bound-method cache read in compiled code, a literal's slots allocated
+with the object and its shape steps cached, an array's `length` and elements in place) were
+measured the same way: five interleaved processes per engine and kernel, the same machine,
+Node v26.7.0, ReleaseFast.
+
+| Kernel  |     V8 | JIT (T73 start) |     JIT | JIT / V8 |
+| ------- | -----: | --------------: | ------: | -------: |
+| numeric | 22.385 |         170.309 | 138.158 |     6.17 |
+| objects |  4.379 |         234.009 |  45.885 |    10.48 |
+| cycles  |  5.428 |         156.619 |  45.171 |     8.32 |
+
+The process-median interquartile ranges do not overlap between the engines: Stator is slower
+than V8 on all three kernels. None of these steps touches arithmetic: the numeric difference
+predates them and was not bisected. Two thirds of the cycle kernel is now the allocator and a
+third of the object kernel is `push` through the call helper; the progress report has the
+profiles and raw samples.
+
 ### 4.2. Startup and JIT compilation cost (T74)
 
 ```sh
