@@ -398,7 +398,11 @@ fn keyOf(v: Value) [*:0]const u8 {
 fn ownTable(obj: Value) Value {
     if (!rt.is(obj, c.JSRT_TAG_CLOSURE)) return obj;
     const clo = closureOf(obj);
-    if (clo.props == null) clo.props = @ptrCast(@alignCast(c.jsrt_ptr(c.jsrt_dynobj_new())));
+    if (clo.props == null) {
+        const props = c.jsrt_dynobj_new();
+        c.jsrt_gc_write(clo);
+        clo.props = @ptrCast(@alignCast(c.jsrt_ptr(props)));
+    }
     return c.JSRT_BOX(c.JSRT_TAG_OBJECT, @intFromPtr(clo.props));
 }
 
@@ -407,6 +411,7 @@ pub fn defineOwn(obj_in: Value, key: [*:0]const u8, v: Value) void {
     const obj = ownTable(obj_in);
     if (!isDyn(obj)) return c.jsrt_set_prop(obj, key, v, null);
     const o = dynObj(obj);
+    c.jsrt_gc_write(o);
     if (c.jsrt_shape_find(o.shape, key)) |hit| {
         o.slots[hit.*.offset] = v;
         return;

@@ -105,7 +105,7 @@ deoptimization) are the next steps.
 | Command                     | What it checks                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `pnpm run interp:test`      | The engine's Zig tests; every interpreter test runs in both modes, and the JIT tests assert the templates were compiled. In test builds every helper the JIT calls is counted (`helpers.counted`), and `jitCost` tests pin how often each runs: a numeric loop calls none, a cached property read misses once per site, a global read once per function and name; they also pin how often the interpreter enters native code, which a call between compiled functions does not |
-| `pnpm run engine:test`      | `packages/tests/engine/run.ts`: every script in `packages/tests/engine/scripts/` under the pinned Node and `stator-engine run` in both modes, stdout and exit status byte-for-byte; an uncaught error's first line; the CLI's usage errors and not-yet targets                                                                                                                                                                                                                 |
+| `pnpm run engine:test`      | `packages/tests/engine/run.ts`: every script in `packages/tests/engine/scripts/` under the pinned Node and `stator-engine run` in both modes, and again with the collector collecting on every allocation and recounting the heap (`JSRT_GC_STRESS=1 JSRT_GC_VERIFY=1`), stdout and exit status byte-for-byte; an uncaught error's first line; the CLI's usage errors and not-yet targets                                                                                      |
 | `pnpm run engine:bench`     | `packages/tests/engine/bench.ts`: the bench programs (`packages/tests/engine/scripts/` and the JavaScript ones in `packages/tests/engine/bench/`) under Node (V8) and `jit` mode, each output checked against Node's, best of N wall time and peak RSS; results in `packages/tests/engine/results/` (ignored). V8 is the only reference                                                                                                                                        |
 | `pnpm run engine:bench:zig` | `src/bench.zig`: the `packages/tests/engine/bench/` programs run by the engine inside one process, best of N, with no process or runtime start-up; prints the milliseconds and the templates compiled. `--mode=interp` measures the interpreter                                                                                                                                                                                                                                |
 
@@ -193,11 +193,11 @@ T71 remeasured the merged baseline and added the guarded integer `%` path (§3).
 Apple M3 Max with Node v26.7.0 and ReleaseFast, three interleaved processes per engine/kernel
 gave these medians in microseconds per checked call after warmup:
 
-| Kernel | V8 | JIT before | JIT after | After / V8 |
-| --- | ---: | ---: | ---: | ---: |
-| numeric | 22.252 | 213.642 | 190.008 | 8.54 |
-| objects | 4.525 | 238.305 | 237.288 | 52.44 |
-| cycles | 5.402 | 176.106 | 173.089 | 32.04 |
+| Kernel  |     V8 | JIT before | JIT after | After / V8 |
+| ------- | -----: | ---------: | --------: | ---------: |
+| numeric | 22.252 |    213.642 |   190.008 |       8.54 |
+| objects |  4.525 |    238.305 |   237.288 |      52.44 |
+| cycles  |  5.402 |    176.106 |   173.089 |      32.04 |
 
 Numeric time fell 11.1%, with nonoverlapping before/after process-median ranges. The object
 change is within variation; no object or collector improvement is claimed. Stator remains
@@ -255,10 +255,10 @@ owns that tier.
 
 Nine alternating rounds on Apple M3 Max, macOS 27.0.1, Node 26.7.0, Zig 0.17.1, ReleaseFast:
 
-| Metric (24 functions) | Before ms | After ms | V8 Sparkplug ms | V8 TurboFan ms |
-| --- | ---: | ---: | ---: | ---: |
-| Compile, 8 arithmetic/branch pairs per body | 2.661 | 2.618 | 0.200 | 4.934 |
-| Compile, 64 pairs per body | 40.153 | 31.786 | 0.974 | 23.942 |
+| Metric (24 functions)                       | Before ms | After ms | V8 Sparkplug ms | V8 TurboFan ms |
+| ------------------------------------------- | --------: | -------: | --------------: | -------------: |
+| Compile, 8 arithmetic/branch pairs per body |     2.661 |    2.618 |           0.200 |          4.934 |
+| Compile, 64 pairs per body                  |    40.153 |   31.786 |           0.974 |         23.942 |
 
 The larger program's untraced spawn-to-exit median fell from 48.204 to 40.052 ms; Node with
 default flags took 35.519 ms. The trivial script took 6.005 ms before, 6.034 ms after and 32.507 ms
