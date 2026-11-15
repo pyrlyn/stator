@@ -15164,3 +15164,22 @@ compilation (20.8%), and 48.204 to 40.052 ms for their untraced cold process (16
 startup's quartiles overlap; no improvement is claimed there. Sparkplug remains faster to
 compile both tested sizes; TurboFan remains faster on the larger size. These measurements do
 not establish superiority over V8. Results and verification are kept in `plan/T74/`.
+
+## T73. pyrlyn/gc to `ef3b440` and pyrlyn/jit to `e90d570` (2026-11-16)
+
+**Direction.** The creator asked for the latest pyrlyn/gc and pyrlyn/jit before the engine work
+on T73 continues. pyrlyn/gc moves from `bad8e04` to `ef3b440` (`packages/runtime/build.zig.zon`):
+medium epoch objects packed into slabs, an incremental step scheduler, pool compaction without
+moving objects, epoch boundary pauses bounded to 1 ms. pyrlyn/jit moves from `20d0ed4` to
+`e90d570` (`packages/engine/build.zig.zon`): faster compilation and a lower peak heap, an IR
+optimizer, C API 0.2.0. Neither bump needed a source change here.
+
+**Evidence.** Every `pnpm run ci` step passes on the bump (855 unit tests, subset 1010 passed
+and 31 expected-fail, golden 525, selfhost 22 targets, runtime corpus, leak, ASan), as do
+`pnpm run interp:test` and `pnpm run engine:test` (58 passed). The warmed corpus
+(`packages/tests/engine/steady.ts`, Apple M3 Max, Node v26.7.0) read, in microseconds per
+kernel call, Stator against V8: before the bump, one round, numeric 170.387 against 22.601,
+objects 239.025 against 4.530, cycles 162.022 against 5.908; after it, three rounds, numeric
+140.953 against 22.545, objects 227.153 against 4.965, cycles 142.106 against 5.448. The two
+series differ in rounds, so the difference is an indication, not a claim; Stator still loses
+every kernel.
