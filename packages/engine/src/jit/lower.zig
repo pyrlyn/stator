@@ -293,9 +293,58 @@ const Lowerer = struct {
         return l.arith(.@"and", v, try l.konst(imm(payload_mask)));
     }
 
+    /// The sign, exponent, quiet bit and tag of `v`, to compare with a `boxTag`.
+    fn tagOf(l: *Lowerer, v: VReg) !VReg {
+        return l.arith(.@"and", v, try l.konst(imm(tag_bits)));
+    }
+
+    /// The array `w[s]` and the address of its element `w[s + 1]`; on to `slow` unless that is an
+    /// array and an index below its length (vm.zig `denseIndex`).
+    fn element(l: *Lowerer, s: u32, slow: u32) !struct { VReg, VReg } {
+        const v = try l.load(s);
+        try l.guardEq(try l.tagOf(v), boxTag(c.JSRT_TAG_ARRAY), slow);
+        const p = try l.ptrOf(v);
+        const index = try l.exactInteger(s + 1, slow);
+        const inside = try l.block();
+        // A negative index is above every length when compared unsigned.
+        try l.cbr(.uge, index, try l.arrayLength(p), slow, inside);
+        l.cur = inside;
+        const elements = try l.def(.load, .{ .dst = undefined, .base = p, .disp = @offsetOf(c.JSRTArray, "elements") });
+        return .{ p, try l.arith(.add, elements, try l.arith(.shl, index, try l.konst(3))) };
+    }
+
+    fn arrayLength(l: *Lowerer, p: VReg) !VReg {
+        // `length` is a u32 and the IR loads 64 bits: keep the low half.
+        const raw = try l.def(.load, .{ .dst = undefined, .base = p, .disp = @offsetOf(c.JSRTArray, "length") });
+        return l.arith(.@"and", raw, try l.konst(0xFFFF_FFFF));
+    }
+
+    /// `obj[key]` (obj key at `s` -> value at `s`): an array's element at an index below its
+    /// length is loaded in place. A hole reads as undefined, which the helper answers.
+    fn getElem(l: *Lowerer, s: u32) !void {
+        const slow = try l.block();
+        _, const at = try l.element(s, slow);
+        const v = try l.def(.load, .{ .dst = undefined, .base = at, .disp = 0 });
+        const present = try l.block();
+        try l.cbr(.eq, v, try l.konst(imm(c.JSRT_HOLE)), slow, present);
+        l.cur = present;
+        try l.fastOrHelper(s, v, slow, h.getElem, &.{s});
+    }
+
+    /// `obj[key] = value` (obj key value at `s` -> value at `s`): an array's element at an index
+    /// below its length is written in place, after the collector's write barrier on the array.
+    fn setElem(l: *Lowerer, s: u32) !void {
+        const slow = try l.block();
+        const p, const at = try l.element(s, slow);
+        try l.barrier(p);
+        const v = try l.load(s + 2);
+        try l.emit(.{ .store = .{ .base = at, .disp = 0, .src = v } });
+        try l.fastOrHelper(s, v, slow, h.setElem, &.{s});
+    }
+
     /// The object pointer of `v` when it is a dynamic object, else on to `no`.
     fn dynObj(l: *Lowerer, v: VReg, no: u32) !VReg {
-        try l.guardEq(try l.arith(.@"and", v, try l.konst(imm(tag_bits))), boxTag(c.JSRT_TAG_OBJECT), no);
+        try l.guardEq(try l.tagOf(v), boxTag(c.JSRT_TAG_OBJECT), no);
         const p = try l.ptrOf(v);
         try l.guardEq(try l.def(.load, .{ .dst = undefined, .base = p, .disp = 0 }), @intFromPtr(&c.jsrt_class_dynamic), no);
         return p;
@@ -322,7 +371,7 @@ const Lowerer = struct {
     fn unlessAccessor(l: *Lowerer, v: VReg, slow: u32) !void {
         const done = try l.block();
         const object = try l.block();
-        try l.cbr(.eq, try l.arith(.@"and", v, try l.konst(imm(tag_bits))), try l.konst(imm(boxTag(c.JSRT_TAG_OBJECT))), object, done);
+        try l.cbr(.eq, try l.tagOf(v), try l.konst(imm(boxTag(c.JSRT_TAG_OBJECT))), object, done);
         l.cur = object;
         const cls = try l.def(.load, .{ .dst = undefined, .base = try l.ptrOf(v), .disp = 0 });
         try l.cbr(.eq, cls, try l.konst(@intCast(@intFromPtr(&c.jsrt_class_accessor))), slow, done);
@@ -415,7 +464,26 @@ const Lowerer = struct {
     /// `obj.key` through the site's inline cache, the helper filling it on a miss.
     fn getProp(l: *Lowerer, s: u32, key: u32, ic: u32) !void {
         // `constructor` has answers of its own before any shape is asked (vm.getProp).
-        if (std.mem.eql(u8, std.mem.span(l.t.keys[key]), "constructor")) return l.helper(h.getProp, &.{ s, key, ic });
+        const name = std.mem.span(l.t.keys[key]);
+        if (std.mem.eql(u8, name, "constructor")) return l.helper(h.getProp, &.{ s, key, ic });
+        if (!std.mem.eql(u8, name, "length")) return l.cachedProp(s, key, ic);
+        // An array's length is a field of the array (vm.zig `knownProperty`).
+        const array = try l.block();
+        const other = try l.block();
+        const join = try l.block();
+        const v = try l.load(s);
+        try l.cbr(.eq, try l.tagOf(v), try l.konst(imm(boxTag(c.JSRT_TAG_ARRAY))), array, other);
+        l.cur = array;
+        const len = try l.def(.cvt, .{ .dst = undefined, .src = try l.arrayLength(try l.ptrOf(v)), .from = .i64, .to = .f64 });
+        try l.emit(.{ .store = .{ .base = l.w, .disp = disp(s), .src = len, .ty = .f64 } });
+        try l.br(join);
+        l.cur = other;
+        try l.cachedProp(s, key, ic);
+        try l.br(join);
+        l.cur = join;
+    }
+
+    fn cachedProp(l: *Lowerer, s: u32, key: u32, ic: u32) !void {
         const slow = try l.block();
         const v = try l.cachedRead(try l.dynObj(try l.load(s), slow), &l.t.ics[ic], slow);
         try l.fastOrHelper(s, v, slow, h.getProp, &.{ s, key, ic });
@@ -432,7 +500,7 @@ const Lowerer = struct {
         const miss = try l.block();
         const join = try l.block();
         const v = try l.load(s);
-        try l.cbr(.eq, try l.arith(.@"and", v, try l.konst(imm(tag_bits))), try l.konst(imm(boxTag(c.JSRT_TAG_ARRAY))), array, other);
+        try l.cbr(.eq, try l.tagOf(v), try l.konst(imm(boxTag(c.JSRT_TAG_ARRAY))), array, other);
         l.cur = array;
         const shape = try l.def(.load, .{ .dst = undefined, .base = try l.ptrOf(v), .disp = @offsetOf(c.JSRTArray, "shape") });
         try l.cbr(.eq, shape, try l.konst(0), plain, named);
@@ -596,7 +664,7 @@ const Lowerer = struct {
                         try l.getProp(l.slot(d + 1), i.tail[0], i.tail[1]);
                     } else {
                         try l.store(l.slot(d + 2), try l.checkedLocal(i.tail[0], i.tail[1]));
-                        try l.helper(h.getElem, &.{l.slot(d + 1)});
+                        try l.getElem(l.slot(d + 1));
                     }
                 }
                 try l.binaryOp(if (i.op == .lt_local_prop) .lt else if (i.op == .le_local_prop) .le else .add, l.slot(d));
@@ -610,13 +678,13 @@ const Lowerer = struct {
                 _ = try l.checkedLocal(i.a, i.b);
                 try l.store(vm.header + i.a, try l.load(l.slot(d - 2)));
             },
-            .get_elem => try l.helper(h.getElem, &.{l.slot(d - 2)}),
+            .get_elem => try l.getElem(l.slot(d - 2)),
             .get_elem_locals => {
                 try l.store(l.slot(d), try l.checkedLocal(i.a, i.b));
                 try l.store(l.slot(d + 1), try l.checkedLocal(i.c, i.d));
-                try l.helper(h.getElem, &.{l.slot(d)});
+                try l.getElem(l.slot(d));
             },
-            .set_elem => try l.helper(h.setElem, &.{l.slot(d - 3)}),
+            .set_elem => try l.setElem(l.slot(d - 3)),
             .new_object => try l.helper(h.newObject, &.{ l.slot(d), i.a }),
             .new_array => try l.helper(h.newArray, &.{ l.slot(d - i.a), i.a }),
             .define => try l.define(i),

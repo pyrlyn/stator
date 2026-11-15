@@ -251,6 +251,23 @@ test "an object literal takes its cached shape steps in place" {
     try expectRuns("class P { x = 1; y = 2; } class Q extends P { z = this.x + this.y; } function f() { const q = new Q(); return q.x + q.y + q.z; } f() + f()", "12");
 }
 
+test "an array's length and its elements are read and written in place" {
+    if (!jit.available) return error.SkipZigTest;
+    const r = try jitCost(
+        "function f(a) { let s = 0; for (let i = 0; i < a.length; i++) { a[i] = a[i] + 1; s += a[i]; } return s; } const a = []; for (let i = 0; i < 1000; i++) a.push(i); f(a)",
+        .{ helpers.getProp, helpers.getElem, helpers.setElem, helpers.binary },
+    );
+    try std.testing.expectEqualSlices(usize, &.{ 0, 0, 0, 0 }, &r.calls);
+    // A hole, an index outside the array, a fraction, a numeric string, -0 and NaN.
+    try expectRuns("function f(a, k) { return String(a[k]); } const a = [1, , 3]; [0, 1, 2, 3, -1, 0.5, '2', -0, NaN, 4294967296].map((k) => f(a, k)).join()", "1,undefined,3,undefined,undefined,undefined,3,1,undefined,undefined");
+    // A write at or past the end grows the array through the helper.
+    try expectRuns("function f(a, k, v) { a[k] = v; return a.length; } const a = [1, 2]; [f(a, 0, 'a'), f(a, 2, 'b'), f(a, 5, 'c')].join() + JSON.stringify(a)", "2,3,6[\"a\",2,\"b\",null,null,\"c\"]");
+    // Not arrays: a string and an object with index keys, and `length` of each.
+    try expectRuns("function f(o, k) { return o[k] + ':' + o.length; } [f('abc', 1), f({ 1: 'p', length: 'q' }, 1), f([5, 6], 1)].join()", "b:3,p:q,6:2");
+    // An element store keeps the collector's view of the array: old arrays take new objects.
+    try expectRuns("function f(a, n) { for (let i = 0; i < a.length; i++) a[i] = { v: i + n }; } const a = [0, 0, 0, 0]; let s = 0; for (let n = 0; n < 300; n++) { f(a, n); s += a[3].v; } s", "45750");
+}
+
 test "an array method is bound once per activation" {
     if (!jit.available) return error.SkipZigTest;
     const r = try jitCost(
@@ -259,8 +276,8 @@ test "an array method is bound once per activation" {
     );
     try std.testing.expectEqual(2, r.compiled);
     // The first `a.push` binds the method and caches it; the other 999 read the cache inline.
-    // The one property read is `a.length`.
-    try std.testing.expectEqual([2]usize{ 1, 1 }, r.calls);
+    // `a.length` is read in place.
+    try std.testing.expectEqual([2]usize{ 1, 0 }, r.calls);
     // An own property that shadows the method ends the cache's answer.
     try expectRuns("function f() { const a = []; let s = 0; for (let i = 0; i < 4; i++) { a.push(i); if (i === 1) a.push = function (v) { s += v; return 0; }; } return a.length + ':' + s; } f()", "2:5");
     try expectRuns("function f(o) { let s = 0; for (let i = 0; i < 3; i++) s += o.m(i); return s; } f({ m(v) { return v * 2; } })", "6");

@@ -76,6 +76,10 @@ collects needs no stack maps.
   with that shape the member is a shape compare, a slot store and a shape store. A duplicate key,
   a spread, `__proto__` or a first run takes the helper, which walks the transition and fills
   the site;
+- `a.length`, `a[i]` and `a[i] = v` on an array: the length is the array's own field, boxed as a
+  double; an element at an integer index below the length is loaded or stored in place (a store
+  after the same write-barrier check on the array). A hole, an index at or past the length, a
+  fraction or a name takes the helper, as does every receiver that is not an array;
 - a global read inline, on the global object's shape, through the cache the interpreter keeps per template and key;
 - `a.m` about to be called on an array with no own properties: the bound method this
   activation cached for that array (`vm.getMethod`'s two window slots per site), compared and
@@ -101,11 +105,12 @@ but is unverified until a Linux x86-64 run. A Windows or other host has no backe
 interprets.
 
 **What it is not yet.** A direct call still goes through one helper that checks the callee and
-opens its frame; every object is a call into the allocator; an array's `length`, an indexed
-read or write and a call of a native method each go through a helper; every operand goes through
-the frame window in memory. Allocation, array-heavy code and tight numeric loops are where V8 is
-far ahead (§4); array fast paths, a cheaper allocation path and the optimizing tier (plan/T67.1:
-type feedback, values in registers, call inline caches, deoptimization) are the next steps.
+opens its frame; every object is a call into the allocator, which is most of the time of an
+allocating loop; a call of a native method (`a.push(v)`) goes through the call helper and the
+runtime's method dispatch; every operand goes through the frame window in memory. Allocation and
+tight numeric loops are where V8 is far ahead (§4); a cheaper allocation path, `push` in place
+and the optimizing tier (plan/T67.1: type feedback, values in registers, call inline caches,
+deoptimization) are the next steps.
 
 ## 4. Tests and benchmark
 
