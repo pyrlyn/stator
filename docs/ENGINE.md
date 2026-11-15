@@ -70,6 +70,10 @@ collects needs no stack maps.
   helper when the object is frozen, the slot holds an accessor or the shape differs. The key
   `constructor` always takes the helper;
 - a global read inline, on the global object's shape, through the cache the interpreter keeps per template and key;
+- `a.m` about to be called on an array with no own properties: the bound method this
+  activation cached for that array (`vm.getMethod`'s two window slots per site), compared and
+  loaded in place. The helper binds the method and fills the cache on a miss, so a loop of
+  `a.push(v)` binds once instead of allocating a bound closure per call;
 - sloppy `this` (nullish becomes the global object) and a constructor's return on a plain call;
 - a call from compiled code to a plain function the JIT has compiled: the callee's window opens
   above the caller's and its code runs at once, with none of the interpreter's call layers

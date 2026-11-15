@@ -249,7 +249,7 @@ fn getPropSlow(obj: Value, key: [*:0]const u8, ic: ?*c.JSRTIC) Value {
 /// A direct call cannot expose the runtime's freshly bound method value. Reuse it while the
 /// same array still has no own properties; an own override, getter, or another receiver takes
 /// the normal lookup. Both cache entries are slots in the activation's GC frame.
-fn getMethod(obj: Value, site: Site, cache: *[2]Value) Value {
+pub fn getMethod(obj: Value, site: Site, cache: *[2]Value) Value {
     if (rt.is(obj, c.JSRT_TAG_ARRAY) and
         (c.jsrt_as_array(obj).*.shape == null or c.jsrt_as_array(obj).*.shape == &c.jsrt_shape_root) and
         !std.mem.eql(u8, keyText(site.key), "constructor"))
@@ -262,6 +262,12 @@ fn getMethod(obj: Value, site: Site, cache: *[2]Value) Value {
         return method;
     }
     return getProp(obj, site.key, site.ic);
+}
+
+/// Window index of the receiver `getMethod` cached for property site `index`; the method it
+/// answered is the slot after. Compiled code reads the pair in place (jit/lower.zig).
+pub fn methodCacheIndex(t: *const Template, index: usize) usize {
+    return header + t.nlocals + t.max_stack + t.strings.len + 2 * index;
 }
 
 /// Whether `f`'s own property table holds `key` (its `name`, `length` and `prototype` aside).
@@ -1522,7 +1528,7 @@ fn execOn(mach: *Machine, initial_template: *Template, initial_env: ?*Env, entry
                     .get_prop, .get_method => {
                         const site = nextSite(t, code, &pc);
                         vs[top - 1] = if (o == .get_method)
-                            getMethod(vs[top - 1], site, w[header + t.nlocals + t.max_stack + t.strings.len + 2 * @as(usize, site.index) ..][0..2])
+                            getMethod(vs[top - 1], site, w[methodCacheIndex(t, site.index)..][0..2])
                         else
                             getProp(vs[top - 1], site.key, site.ic);
                     },
@@ -2055,12 +2061,15 @@ fn next16(code: []const u8, pc: *usize) u16 {
 }
 
 /// A named property site: its key, then its inline cache.
-const Site = struct { key: [*:0]const u8, ic: *c.JSRTIC, index: u16 };
+pub const Site = struct { key: [*:0]const u8, ic: *c.JSRTIC, index: u16 };
+
+pub fn siteOf(t: *const Template, key: u16, ic: u16) Site {
+    return .{ .key = t.keys[key], .ic = &t.ics[ic], .index = ic };
+}
 
 fn nextSite(t: *Template, code: []const u8, pc: *usize) Site {
-    const key = t.keys[next16(code, pc)];
-    const i = next16(code, pc);
-    return .{ .key = key, .ic = &t.ics[i], .index = i };
+    const key = next16(code, pc);
+    return siteOf(t, key, next16(code, pc));
 }
 
 fn next32(code: []const u8, pc: *usize) u32 {

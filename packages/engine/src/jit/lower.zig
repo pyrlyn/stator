@@ -375,6 +375,39 @@ const Lowerer = struct {
         try l.fastOrHelper(s, v, slow, h.getProp, &.{ s, key, ic });
     }
 
+    /// `obj.key` about to be called. An array with no own properties answers the bound method
+    /// this activation cached for it (vm.getMethod); the helper fills the cache on a miss.
+    fn getMethod(l: *Lowerer, s: u32, key: u32, ic: u32) !void {
+        const array = try l.block();
+        const other = try l.block();
+        const named = try l.block();
+        const plain = try l.block();
+        const hit = try l.block();
+        const miss = try l.block();
+        const join = try l.block();
+        const v = try l.load(s);
+        try l.cbr(.eq, try l.arith(.@"and", v, try l.konst(imm(tag_bits))), try l.konst(imm(boxTag(c.JSRT_TAG_ARRAY))), array, other);
+        l.cur = array;
+        const shape = try l.def(.load, .{ .dst = undefined, .base = try l.ptrOf(v), .disp = @offsetOf(c.JSRTArray, "shape") });
+        try l.cbr(.eq, shape, try l.konst(0), plain, named);
+        l.cur = named;
+        try l.cbr(.eq, shape, try l.konst(@intCast(@intFromPtr(&c.jsrt_shape_root))), plain, miss);
+        l.cur = plain;
+        const cache: u32 = @intCast(vm.methodCacheIndex(l.t, ic));
+        // The cached receiver starts as undefined, which is no array.
+        try l.cbr(.eq, v, try l.load(cache), hit, miss);
+        l.cur = hit;
+        try l.store(s, try l.load(cache + 1));
+        try l.br(join);
+        l.cur = miss;
+        try l.helper(h.getMethod, &.{ s, key, ic });
+        try l.br(join);
+        l.cur = other;
+        try l.getProp(s, key, ic);
+        try l.br(join);
+        l.cur = join;
+    }
+
     /// A global name read from the global object through the key's cache, which the interpreter
     /// and the helper fill (vm.loadGlobal).
     fn globalLoad(l: *Lowerer, i: analyze.Insn) !void {
@@ -607,7 +640,8 @@ const Lowerer = struct {
                 try l.store(l.slot(d), try l.checkedLocal(i.a, i.b));
                 try l.getProp(l.slot(d), i.c, i.d);
             },
-            .get_prop, .get_method => try l.getProp(l.slot(d - 1), i.a, i.b),
+            .get_prop => try l.getProp(l.slot(d - 1), i.a, i.b),
+            .get_method => try l.getMethod(l.slot(d - 1), i.a, i.b),
             .call, .call0, .call1, .call2, .call3 => try l.helper(h.call, &.{ l.slot(d - i.a - 2), i.a }),
             .add, .sub, .mul, .div, .mod, .exp, .bitand, .bitor, .bitxor, .shl, .shr, .ushr, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge => try l.binaryOp(i.op, l.slot(d - 2)),
             .neg, .plus, .bitnot, .not, .typeof, .inc, .dec => try l.unaryOp(i.op, l.slot(d - 1)),

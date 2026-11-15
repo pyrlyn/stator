@@ -124,6 +124,13 @@ pub fn getProp(cx: *Ctx, s: u64, key: u64, ic: u64) callconv(.c) u64 {
     return put(cx, s, vm.getProp(cx.w[s], cx.t.keys[key], &cx.t.ics[ic]));
 }
 
+/// `obj.key` about to be called: the activation's bound-method cache answers an array's method
+/// again without the runtime binding a fresh one (vm.getMethod).
+pub fn getMethod(cx: *Ctx, s: u64, key: u64, ic: u64) callconv(.c) u64 {
+    const cache = cx.w[vm.methodCacheIndex(cx.t, ic)..][0..2];
+    return put(cx, s, vm.getMethod(cx.w[s], vm.siteOf(cx.t, @intCast(key), @intCast(ic)), cache));
+}
+
 /// callee this args… at `base` -> the result at `base`.
 pub fn call(cx: *Ctx, base: u64, argc: u64) callconv(.c) u64 {
     const w = cx.w;

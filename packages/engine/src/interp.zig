@@ -236,6 +236,21 @@ test "a cached property read misses once per site" {
     try std.testing.expectEqual([3]usize{ 2, 1, 0 }, r.calls);
 }
 
+test "an array method is bound once per activation" {
+    if (!jit.available) return error.SkipZigTest;
+    const r = try jitCost(
+        "function f() { const a = []; for (let i = 0; i < 1000; i++) a.push(i); return a.length; } f()",
+        .{ helpers.getMethod, helpers.getProp },
+    );
+    try std.testing.expectEqual(2, r.compiled);
+    // The first `a.push` binds the method and caches it; the other 999 read the cache inline.
+    // The one property read is `a.length`.
+    try std.testing.expectEqual([2]usize{ 1, 1 }, r.calls);
+    // An own property that shadows the method ends the cache's answer.
+    try expectRuns("function f() { const a = []; let s = 0; for (let i = 0; i < 4; i++) { a.push(i); if (i === 1) a.push = function (v) { s += v; return 0; }; } return a.length + ':' + s; } f()", "2:5");
+    try expectRuns("function f(o) { let s = 0; for (let i = 0; i < 3; i++) s += o.m(i); return s; } f({ m(v) { return v * 2; } })", "6");
+}
+
 test "exact integer remainder stays in native code and other operands use the VM" {
     if (!jit.available) return error.SkipZigTest;
     const fast = try jitCost(
