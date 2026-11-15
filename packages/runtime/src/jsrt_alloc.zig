@@ -188,7 +188,8 @@ export fn jsrt_args_rest(argc: u32, argv: [*c]const Value, from: u32) Value {
 /// `capacity` slots follow the header in the same block, already zeroed by the allocator.
 fn dynobjNew(cls: *const c.JSRTClass, capacity: u32) Value {
     const bytes = @sizeOf(c.JSRTDynObject) + @as(usize, capacity) * @sizeOf(Value);
-    const o = create(c.JSRTDynObject, bytes, &dynobj_kind);
+    // Its finalizer frees the slots only when they are a buffer, which then names the object.
+    const o: *c.JSRTDynObject = @ptrCast(@alignCast(gc.allocLazy(bytes, &dynobj_kind)));
     o.* = .{
         .cls = cls,
         .shape = &shapes.jsrt_shape_root,

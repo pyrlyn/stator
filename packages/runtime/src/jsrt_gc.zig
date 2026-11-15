@@ -14,11 +14,18 @@
 //! one count for every reference a dirty object holds now and takes one away for every reference
 //! its log holds. Stores therefore need no per-store barrier.
 //!
-//! A new object is young until the next collection: it needs no `jsrt_gc_write` and is on no list
-//! but the young one. A collection traces only the young objects that survive -- those a root or a
-//! reconciled object names, and what they name in turn -- and adds their references to the counts.
-//! Every other young object is dead and is freed without being traced, so a short-lived object
-//! costs its allocation and nothing else, and a young garbage cycle needs no trial deletion.
+//! A new object is young until the next collection: it needs no `jsrt_gc_write`. A collection
+//! traces only the young objects that survive -- those a root or a reconciled object names, and
+//! what they name in turn -- and adds their references to the counts. Every other young object is
+//! dead and is freed without being traced, so a short-lived object costs its allocation and
+//! nothing else, and a young garbage cycle needs no trial deletion.
+//!
+//! A small object is born in the young region: one reservation cut into 512-byte lines, where
+//! allocation moves a pointer through a run of free lines. Nothing moves afterwards. A survivor
+//! keeps its address and holds the lines it overlaps; the lines of a run that hold no survivor
+//! are free again once the collection clears their index words, without a visit to the dead
+//! objects in them. Only a young object with something to finalize is on the young list; larger
+//! blocks, buffers and whatever the region has no room for come from pyrlyn/gc's pools.
 //!
 //! Frame slots, globals, C and Zig locals and static storage are not counted: they are the roots,
 //! read with the world stopped. Each thread's `JSRT_FRAME` chain is read precisely (the globals
@@ -60,8 +67,10 @@ const prefix: usize = 16;
 
 /// Bits above kxgc's 35 belong to the runtime: the block size, then flags.
 const size_shift: u6 = 35;
-const size_bits: u6 = 21;
+const size_bits: u6 = 20;
 const size_field: u64 = (@as(u64, 1) << size_bits) - 1;
+/// On the young list: a collection that finds the object dead finalizes it.
+const listed_bit: u64 = 1 << 55;
 /// Allocated since the last collection, and not yet found alive by one.
 const young_bit: u64 = 1 << 56;
 /// The size counts 4 KiB pages instead of 8-byte granules (a block past 16 MiB).
@@ -173,7 +182,7 @@ fn List(comptime T: type) type {
 
 /// Which 8-byte granules start a live block, per 64 KiB of address space: how a conservative root
 /// word is resolved to the block it points into, and how a pointer is told from a collected one.
-const Chunk = struct { bits: [128]u64 = @splat(0) };
+const Chunk = extern struct { bits: [128]u64 = @splat(0) };
 const chunk_shift: u6 = 16;
 const chunk_bytes: usize = 1 << chunk_shift;
 
@@ -267,7 +276,7 @@ fn indexInsert(block: *Header, total: usize) void {
 fn indexRemove(block: *Header, total: usize) void {
     const addr = @intFromPtr(block);
     const g = granule(addr);
-    if (index.find(addr >> chunk_shift)) |chunk| chunk.bits[g.word] &= ~(@as(u64, 1) << g.bit);
+    if (chunkAt(addr >> chunk_shift)) |chunk| chunk.bits[g.word] &= ~(@as(u64, 1) << g.bit);
     if (total > chunk_bytes) {
         const at = largeLowerBound(addr);
         if (at < large.len and large.items[at] == addr) {
@@ -284,6 +293,8 @@ threadlocal var cached_chunk: ?*Chunk = null;
 /// stays valid while the table grows around it.
 fn isBlockStart(addr: usize) bool {
     if (addr < heap_lo or addr >= heap_hi or addr & 7 != 0) return false;
+    const off = addr -% nursery_base;
+    if (off < nursery_size) return nursery_bits[off >> line_shift] & startBit(off) != 0;
     const key = addr >> chunk_shift;
     const chunk = if (key == cached_key) cached_chunk else blk: {
         const found = index.find(key);
@@ -304,7 +315,7 @@ fn startBelow(addr: usize, chunks: usize) ?usize {
     var limit = granule(addr);
     var left = chunks;
     while (true) {
-        if (index.find(key)) |chunk| {
+        if (chunkAt(key)) |chunk| {
             var w = limit.word;
             var mask: u64 = if (limit.bit == 63) ~@as(u64, 0) else (@as(u64, 2) << limit.bit) - 1;
             while (true) {
@@ -343,6 +354,168 @@ fn objectBlock(obj: usize) ?*Header {
     const block = blockOf(obj);
     if (block.word & (buffer_bit | dead_bit | swept_bit) != 0) return null;
     return block;
+}
+
+// ---------------------------------------------------------------- the young region
+
+/// One index word covers a line, so a run's lines are forgotten by zeroing its words.
+const line_shift: u6 = 9;
+const line_bytes: usize = 1 << line_shift;
+/// Address space, not memory: a collection starts again at the first free line, so the pages past
+/// what the survivors hold and one collection allocates are never touched.
+const nursery_bytes: usize = 64 * 1024 * 1024;
+/// The largest block born in the region. It overlaps two lines at most.
+const nursery_max: usize = line_bytes;
+
+/// Zero while there is no region: before `jsrt_gc_init`, and in the sanitized flavor.
+var nursery_size: usize = 0;
+var nursery_base: usize = 0;
+/// The region's part of the block index, one word per line.
+var nursery_bits: [*]u64 = undefined;
+/// How many surviving objects overlap each line. A line is free while its count is 0.
+var nursery_counts: [*]u8 = undefined;
+/// The open run: `bump` is the next block, up to `bump_limit`. All zero while none is open.
+var run_start: usize = 0;
+var bump: usize = 0;
+var bump_limit: usize = 0;
+/// Where the search for the next run goes on. A line freed behind it waits for the collection.
+var scan_line: usize = 0;
+/// The parts of this collection's runs that hold blocks.
+var runs: List(Range) = .{};
+/// The young objects in the region this collection found alive.
+var young_kept: List(*Header) = .{};
+
+inline fn inNursery(addr: usize) bool {
+    return addr -% nursery_base < nursery_size;
+}
+
+/// The bit of the granule `off` bytes into the region, in its line's index word.
+inline fn startBit(off: usize) u64 {
+    return @as(u64, 1) << @intCast((off >> 3) & 63);
+}
+
+/// The index chunk of the 64 KiB at `key`, if any block ever started there.
+inline fn chunkAt(key: usize) ?*Chunk {
+    const i = key -% (nursery_base >> chunk_shift);
+    if (i < nursery_size >> chunk_shift) return @ptrCast(nursery_bits + i * (chunk_bytes >> line_shift));
+    return index.find(key);
+}
+
+/// Fails open: without the region every block comes from the pools.
+fn nurseryInit() void {
+    if (!use_pools) return;
+    const lines = nursery_bytes >> line_shift;
+    const raw = std.c.malloc(nursery_bytes + chunk_bytes) orelse return;
+    const bits = std.c.calloc(lines, @sizeOf(u64));
+    const counts = std.c.calloc(lines, 1);
+    if (bits == null or counts == null) {
+        std.c.free(raw);
+        std.c.free(bits);
+        std.c.free(counts);
+        return;
+    }
+    nursery_base = std.mem.alignForward(usize, @intFromPtr(raw), chunk_bytes);
+    nursery_bits = @ptrCast(@alignCast(bits));
+    nursery_counts = @ptrCast(counts);
+    nursery_size = nursery_bytes;
+    heap_lo = @min(heap_lo, nursery_base);
+    heap_hi = @max(heap_hi, nursery_base + nursery_bytes);
+}
+
+/// Ends the open run. What it holds counts toward the next collection only now: the run was
+/// sized to end where that collection is due.
+fn closeRun() void {
+    if (bump != run_start) {
+        allocated_since += bump - run_start;
+        runs.push(.{ .lo = run_start, .hi = bump });
+    }
+    run_start = 0;
+    bump = 0;
+    bump_limit = 0;
+}
+
+/// Opens a run at the next free lines, no longer than what is left before a collection is due.
+fn openRun() bool {
+    const lines = nursery_size >> line_shift;
+    var i = scan_line;
+    while (i < lines and nursery_counts[i] != 0) i += 1;
+    scan_line = i;
+    if (i == lines) return false;
+    // Under stress the next allocation collects, so a longer run would be searched for nothing.
+    const want = if (gc_stress) 1 else @max(1, (threshold -| allocated_since) >> line_shift);
+    const most = @min(lines, i + want);
+    var j = i + 1;
+    while (j < most and nursery_counts[j] == 0) j += 1;
+    scan_line = j;
+    run_start = nursery_base + (i << line_shift);
+    bump = run_start;
+    bump_limit = nursery_base + (j << line_shift);
+    return true;
+}
+
+/// The block at `at` in the open run: indexed, and zeroed past the prefix its caller writes.
+inline fn bumped(at: usize, total: usize) *Header {
+    bump = at + total;
+    const off = at - nursery_base;
+    nursery_bits[off >> line_shift] |= startBit(off);
+    const bytes: [*]u8 = @ptrFromInt(at);
+    switch (total) {
+        // A length known here is a few stores, where the general case is a call.
+        inline 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128 => |n| @memset(bytes[prefix..n], 0),
+        else => @memset(bytes[prefix..total], 0),
+    }
+    return @ptrFromInt(at);
+}
+
+/// A block in the region, or null when it is not born there: too large, no free line, or a
+/// collection is running (its sweep assumes the runs are closed).
+inline fn bumpAlloc(total: usize) ?*Header {
+    const at = bump;
+    if (at + total > bump_limit) return bumpSlow(total);
+    return bumped(at, total);
+}
+
+noinline fn bumpSlow(total: usize) ?*Header {
+    if (nursery_size == 0 or total > nursery_max or collecting) return null;
+    closeRun();
+    maybeCollect();
+    if (!openRun()) return null;
+    const block = bumped(bump, total);
+    if (gc_stress) bump_limit = bump;
+    return block;
+}
+
+/// Adds or removes one object's hold on the lines it overlaps.
+fn holdLines(block: *const Header, comptime hold: bool) void {
+    const off = @intFromPtr(block) - nursery_base;
+    var line = off >> line_shift;
+    const last = (off + blockBytes(block) - 1) >> line_shift;
+    while (line <= last) : (line += 1) {
+        if (hold) nursery_counts[line] += 1 else nursery_counts[line] -= 1;
+    }
+}
+
+/// After the dead young objects on the young list are finalized: this collection's runs keep
+/// only the survivors, and every line no survivor holds is free.
+fn sweepNursery() void {
+    for (runs.slice()) |r| {
+        const lo = (r.lo - nursery_base) >> line_shift;
+        const hi = (r.hi - nursery_base + line_bytes - 1) >> line_shift;
+        @memset(nursery_bits[lo..hi], 0);
+    }
+    runs.len = 0;
+    for (young_kept.slice()) |block| {
+        const off = @intFromPtr(block) - nursery_base;
+        nursery_bits[off >> line_shift] |= startBit(off);
+        holdLines(block, true);
+        live_bytes += blockBytes(block);
+    }
+    young_kept.len = 0;
+    scan_line = 0;
+    if (watched_hidden != 0 and inNursery(~watched_hidden) and !isBlockStart(~watched_hidden - prefix)) {
+        watched_flag = 1;
+        watched_hidden = 0;
+    }
 }
 
 // ---------------------------------------------------------------- state
@@ -740,6 +913,7 @@ fn survive(block: *Header) void {
     if (block.word & young_bit == 0) return;
     block.word &= ~young_bit;
     survivors.push(block);
+    if (inNursery(@intFromPtr(block))) young_kept.push(block);
 }
 
 fn zctPush(block: *Header) void {
@@ -825,8 +999,10 @@ fn rawFree(h: *Header) void {
         watched_flag = 1;
         watched_hidden = 0;
     }
+    if (inNursery(@intFromPtr(h))) holdLines(h, false);
     indexRemove(h, bytes);
     live_bytes -|= bytes;
+    if (inNursery(@intFromPtr(h))) return;
     if (use_pools) collector.rt_free_trace(h, @intCast(bytes)) else collector.rt_free(h, @intCast(bytes));
 }
 
@@ -846,19 +1022,46 @@ fn maybeCollect() void {
 }
 
 pub fn alloc(bytes: usize, kind_: *const Kind) *anyopaque {
+    return allocYoung(bytes, kind_, kind_.finalize != null);
+}
+
+/// `alloc` for a kind whose finalizer only frees buffers that name the object as their owner: a
+/// young one is finalized only once it owns one (`listOwner`).
+pub fn allocLazy(bytes: usize, kind_: *const Kind) *anyopaque {
+    return allocYoung(bytes, kind_, false);
+}
+
+fn allocYoung(bytes: usize, kind_: *const Kind, finalized: bool) *anyopaque {
     const total = blockTotal(bytes, kind_.name);
     // Before worker publication there is no mutex to own and no reentrancy depth to track.
     // Avoid two thread-local lookups for every single-thread allocation.
     const shared = isConcurrent();
     if (shared) lock();
     defer if (shared) unlock();
-    maybeCollect();
-    const block = rawAlloc(total, kind_.name);
+    var listed = finalized;
+    const block = bumpAlloc(total) orelse pool: {
+        maybeCollect();
+        // A pool block is freed by itself, which the young list is also for.
+        listed = true;
+        break :pool rawAlloc(total, kind_.name);
+    };
     // Dirty, so `jsrt_gc_write` returns at once: a young object's references are counted only if
     // it survives, and then all of them.
     block.* = .{ .word = sizeWord(total) | young_bit | dirty_bit, .meta = @intFromPtr(kind_) };
-    young.push(block);
+    if (listed) {
+        block.word |= listed_bit;
+        young.push(block);
+    }
     return objOf(block);
+}
+
+/// A young object that was left off the young list owns storage now, so it has a finalizer to
+/// run if it dies young.
+fn listOwner(owner: ?*const anyopaque) void {
+    const block = objectBlock(@intFromPtr(owner)) orelse return;
+    if (block.word & (young_bit | listed_bit) != young_bit) return;
+    block.word |= listed_bit;
+    young.push(block);
 }
 
 pub export fn jsrt_gc_alloc(bytes: usize, kind_: *const Kind) *anyopaque {
@@ -930,8 +1133,13 @@ pub fn buffer(owner: ?*const anyopaque, bytes: usize, what: [*:0]const u8) *anyo
     lock();
     defer unlock();
     maybeCollect();
-    const block = rawAlloc(total, what);
+    return bufferOf(rawAlloc(total, what), total, owner);
+}
+
+/// `block` of `total` bytes as a buffer of `owner`, whose finalizer now has storage to free.
+fn bufferOf(block: *Header, total: usize, owner: ?*const anyopaque) *anyopaque {
     block.* = .{ .word = sizeWord(total) | buffer_bit, .meta = @intFromPtr(owner) };
+    listOwner(owner);
     return objOf(block);
 }
 
@@ -944,9 +1152,7 @@ pub fn bufferOrNull(owner: ?*const anyopaque, bytes: usize) ?*anyopaque {
     lock();
     defer unlock();
     maybeCollect();
-    const block = rawAllocOrNull(sized) orelse return null;
-    block.* = .{ .word = sizeWord(sized) | buffer_bit, .meta = @intFromPtr(owner) };
-    return objOf(block);
+    return bufferOf(rawAllocOrNull(sized) orelse return null, sized, owner);
 }
 
 fn bufferBlock(p: ?*const anyopaque) ?*Header {
@@ -979,6 +1185,7 @@ pub fn bufferAdopt(p: ?*const anyopaque, owner: ?*const anyopaque) void {
     lock();
     defer unlock();
     (bufferBlock(p) orelse return).meta = @intFromPtr(owner);
+    listOwner(owner);
 }
 
 /// From a finalizer: the owner is dead, and a root inside the buffer would have kept it alive.
@@ -1132,9 +1339,10 @@ fn freeYoung() void {
     for (young.slice()) |block| {
         if (block.word & young_bit == 0) continue;
         finalize(block);
-        rawFree(block);
+        if (!inNursery(@intFromPtr(block))) rawFree(block);
     }
     young.len = 0;
+    sweepNursery();
 }
 
 fn sweepChild(child: *Header) void {
@@ -1219,6 +1427,7 @@ fn collectLocked() void {
     };
     stopWorld();
     defer resumeWorld();
+    closeRun();
     if (registered) publishStack();
     gatherRoots();
     reconcile();
@@ -1256,19 +1465,24 @@ export fn jsrt_gc_collect() void {
 var verify = false;
 var edges: List(usize) = .{};
 
+/// Every block the index words `words` say starts in the memory at `base`.
+fn eachStart(base: usize, words: []const u64, comptime f: fn (*Header) void) void {
+    for (words, 0..) |word, w| {
+        var bits = word;
+        while (bits != 0) {
+            const bit = @ctz(bits);
+            bits &= bits - 1;
+            f(@ptrFromInt(base + (w * 64 + bit) * 8));
+        }
+    }
+}
+
 fn eachBlock(comptime f: fn (*Header) void) void {
     for (0..index.cap) |i| {
         const chunk = index.chunks[i] orelse continue;
-        const base = index.keys[i] << chunk_shift;
-        for (chunk.bits, 0..) |word, w| {
-            var bits = word;
-            while (bits != 0) {
-                const bit = @ctz(bits);
-                bits &= bits - 1;
-                f(@ptrFromInt(base + (w * 64 + bit) * 8));
-            }
-        }
+        eachStart(index.keys[i] << chunk_shift, &chunk.bits, f);
     }
+    eachStart(nursery_base, nursery_bits[0 .. nursery_size >> line_shift], f);
 }
 
 fn edgeChild(child: *Header) void {
@@ -1331,6 +1545,7 @@ export fn jsrt_gc_watched() c_int {
 pub export fn jsrt_gc_init() void {
     if (initialized) return;
     imageInit();
+    nurseryInit();
     register();
     if (std.c.getenv("JSRT_GC_VERIFY")) |v| verify = v[0] != 0 and v[0] != '0';
     // A library built with --emit=lib localizes jsrt_gc_stress, so a C host cannot reach its

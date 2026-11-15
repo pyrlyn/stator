@@ -905,6 +905,19 @@ nothing more. A new object is *young*: it needs no `jsrt_gc_write`, and a collec
 the young objects something reachable names. The rest are freed untraced, so a short-lived object
 costs its allocation and a young garbage cycle needs no cycle collection.
 
+**Young objects are born in one region and freed there without a visit.** A block of 512 bytes
+or less comes from the young region: one 64 MiB reservation (address space; pages past what a
+collection allocates and the survivors hold are never touched) cut into 512-byte lines.
+Allocation moves a pointer through a run of free lines, sets the block's bit in the index and
+zeroes it. Nothing moves afterwards. A survivor keeps its address and holds the lines it
+overlaps until it is freed; a collection clears the index words of the lines its runs used and
+sets the survivors' bits again, so a dead young object costs no finalizer call, no free and no
+read of its memory. The young list names only the young objects with something to finalize: an
+object of a kind with a finalizer, except a dynamic object, which gets on the list when a
+buffer first names it as owner. Larger blocks, every buffer and whatever the region has no
+free line for come from pyrlyn/gc's pools, as does every block in the sanitized flavor, where
+each free must be visible to ASan.
+
 Dynamic slot growth uses the Zig `writeOwner` barrier to resolve the owning object once,
 log its old references if needed, and pass that owner to the replacement buffer. A static
 slot field remains its own owner marker, so roots into its buffer still pin its contents.

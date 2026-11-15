@@ -108,12 +108,12 @@ but is unverified until a Linux x86-64 run. A Windows or other host has no backe
 interprets.
 
 **What it is not yet.** A direct call still goes through one helper that checks the callee and
-opens its frame; every object is a call into the allocator, which is most of the time of an
-allocating loop; a call of any native method but `push` goes through the call helper and the
-runtime's method dispatch; every operand goes through the frame window in memory. Allocation and
-tight numeric loops are where V8 is far ahead (§4); a cheaper allocation path and the
-optimizing tier (plan/T67.1: type feedback, values in registers, call inline caches,
-deoptimization) are the next steps.
+opens its frame; every object is a call into the allocator, though the allocator itself is now
+a bump through the collector's young region (docs/VALUE.md §4.12); a call of any native method
+but `push` goes through the call helper and the runtime's method dispatch; every operand goes
+through the frame window in memory, which is most of the time of every kernel in §4. Compiled
+code that keeps values in registers and the optimizing tier (plan/T67.1: type feedback, call
+inline caches, deoptimization) are the next steps.
 
 ## 4. Tests and benchmark
 
