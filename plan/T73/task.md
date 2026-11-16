@@ -2,7 +2,7 @@
 status: in progress
 priority: P1
 complexity: 5
-readiness: 70%
+readiness: 75%
 agent: Claude Code / claude-fable-5-2
 ---
 
@@ -134,6 +134,22 @@ alone: the collector finds a block by its prefix when something asks about it. C
     the slot it came from lets one check serve both, and lets a double be loaded from there.
 26. Constants made once a run. The run's address, a block's prefix words, the class, the shape
     and the tags are made again for each literal.
+
+24 is in, with part of 23 (`progress.md`, "Reads on the chain, a guard's stores where it
+fails, fewer cycle candidates"): a cached property, an array element and `i < array.length` are
+read on the chain, so the objects kernel's read loop is a carried loop; a guard stores nothing
+on the path that passes it; and the collector no longer makes a cycle candidate of every object
+a dirty holder still holds. Objects went from 3.58x to 2.43x of V8's time and cycles from 1.30x
+to 1.22x. 19, 22, 25 and 26 are still to do, and the listings add:
+
+27. What a loop does not change, read once: an array's address, length and elements are read
+    again at each element, and the cache's shape and slot at each property.
+28. An index that is an integer: a carried counter used as an index is converted from a double
+    and checked for exactness at each element.
+29. `push` on the chain: the filling loop of the objects kernel calls `get_method` and `push`
+    for each element, and a literal that was pushed is forgotten.
+30. A dirty object that is dead is not counted first: the array a root held while it was
+    filled has all it holds promoted at the next collection and freed in the same one.
 
 Files: `packages/engine/src/{vm,compile,bytecode}.zig`, `packages/engine/src/jit/`,
 `packages/runtime/src/{jsrt_alloc,jsrt_gc}.zig`, `packages/runtime/include/jsrt_value.h`. Verify:

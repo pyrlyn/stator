@@ -330,26 +330,31 @@ in place, the collector's young region, docs/VALUE.md §4.12, the fast chain and
 locals, the remainder that does not divide and the collector's cheaper scan of static roots,
 object literals followed, allocated and filled on the fast chain, and then values kept out of
 the frame window, a literal's slots written once and its block left for the collector to
-index) were measured the same way: five interleaved processes per engine and kernel, the same
+index, and last the reads on the chain, a guard's stores made where it fails and the
+collector's cycle candidates, docs/VALUE.md §4.12) were measured the same way: five interleaved processes per engine and kernel, the same
 machine, Node v26.7.0, ReleaseFast. The V8 column and the ratio are from the last run; "young
 region" is the run before the fast chain, "fast chain" the run before literals were followed
-on it, and "literals" the run before the last three changes.
+on it, "literals" the run before values were kept out of the window, and "lazy stores" the
+run before the last changes.
 
-| Kernel  |     V8 | JIT (T73 start) | JIT (young region) | JIT (fast chain) | JIT (literals) |    JIT | JIT / V8 |
-| ------- | -----: | --------------: | -----------------: | ---------------: | -------------: | -----: | -------: |
-| numeric | 22.023 |         170.309 |            138.221 |           16.710 |         16.513 | 13.420 |     0.61 |
-| objects |  4.211 |         234.009 |             25.628 |           21.103 |         16.524 | 15.089 |     3.58 |
-| cycles  |  5.441 |         156.619 |             29.259 |           25.099 |          9.996 |  7.097 |     1.30 |
+| Kernel  |     V8 | JIT (T73 start) | JIT (young region) | JIT (fast chain) | JIT (literals) | JIT (lazy stores) |    JIT | JIT / V8 |
+| ------- | -----: | --------------: | -----------------: | ---------------: | -------------: | ----------------: | -----: | -------: |
+| numeric | 22.078 |         170.309 |            138.221 |           16.710 |         16.513 |            13.420 | 13.473 |     0.61 |
+| objects |  4.185 |         234.009 |             25.628 |           21.103 |         16.524 |            15.089 | 10.167 |     2.43 |
+| cycles  |  5.437 |         156.619 |             29.259 |           25.099 |          9.996 |             7.097 |  6.648 |     1.22 |
 
 The process-median interquartile ranges do not overlap between the engines on any kernel. On
 the numeric kernel, a loop that wraps a running sum with a remainder, Stator is faster than V8
-(13.405-13.468 us against 22.015-22.028); that is one loop, not numeric code in general. On
-objects and cycles it is still slower, by 3.6 and 1.3 times. The cycles loop makes two
+(13.455-13.474 us against 22.069-22.081); that is one loop, not numeric code in general. On
+objects and cycles it is still slower, by 2.4 and 1.2 times. The cycles loop makes two
 literals an iteration, and what is left of it is the instructions that write them: a dynamic
-object with two properties is eleven words, a value that waits for the window is stored before
-every guard it passes, and each literal makes its constants again. The objects kernel reads
-its objects back through an array, where the generated code still asks each object for its
-shape. The machine was shared with other work (load average about 5.5). The progress report has the
+object with two properties is eleven words, each literal makes its constants again, and a
+value a read loaded is guarded again where its copy is used. The objects kernel fills an array
+by `push` and reads it back: the read loop asks each element for the array, its length, the
+element's shape and the cache again, and converts its index to an integer each time, and the
+filling loop still calls for each `push`. A collection there takes 98 us against 14 on cycles:
+the array a root holds while it is filled is counted, with all it holds, and freed one
+collection later. The machine was shared with other work (load average about 4). The progress report has the
 profiles, the threshold sweep, the checks and the raw samples.
 
 ### 4.2. Startup and JIT compilation cost (T74)

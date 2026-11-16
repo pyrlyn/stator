@@ -521,3 +521,79 @@ run interp:test` exits 0, with the six cases of "a value that waits for the fram
 there when the chain is left"; `pnpm run engine:test` reports `engine: 100 passed, 0 failed`.
 
 The Check still fails on objects and cycles, so the card stays open.
+
+## Reads on the chain, a guard's stores where it fails, fewer cycle candidates (2026-11-16)
+
+Step 24 of `task.md`, the first part of 23 and three changes to the collector. Each row of the
+first table is the median of five interleaved processes per engine.
+
+| Change                | Record                                                     | cycles us | objects us | numeric us |
+| --------------------- | ---------------------------------------------------------- | --------: | ---------: | ---------: |
+| before                | [`lazy-stores-and-index.json`](lazy-stores-and-index.json) |     7.097 |     15.089 |     13.420 |
+| the five steps below  | [`reads-and-candidates.json`](reads-and-candidates.json)   |     6.648 |     10.167 |     13.473 |
+
+1. **Reads on the chain.** `obj.key` through the site's inline cache, `array[index]` and
+   `i < array.length` have forms on the fast chain: guards for the kind of value, the cached
+   shape, an accessor pair, an integer index below the length and a hole, and a load. None
+   writes the heap or calls, so a loop of them carries its numeric locals in registers. One
+   process after this step alone: objects 10.86 us.
+2. **A guard's stores on the path that fails** (step 24). A guard no longer stores what waits
+   for the window before it. What it owes, at most eight stores, is written in a block of its
+   own after the run, which only the failing guard runs; calls, jumps and the run's end store
+   as before. One process after this step: objects 10.7 us, cycles 6.9.
+3. **The alternate signal stack is allocated.** It was 128 KiB of static data, which the
+   collector read for roots at each collection: the median pause on cycles went from 27 us to
+   21.5.
+4. **A reference that stayed is not counted again.** `reconcile` counted every reference of a
+   dirty object and then released every one it had logged, and a release that leaves a count
+   above 0 makes its object a cycle candidate. An instrumented run counted 175 such candidates
+   a collection on cycles (133 closures and 22 environments the globals hold, each time) and
+   about 1000 on objects (the elements of the array being filled), and trial deletion walked
+   602 and 3587 objects for them. `recount` skips the ends of the two lists that match.
+5. **A candidate a root names is not walked.** It is alive with all it reaches; it is made
+   black before trial deletion, which drops it, and is a candidate again when unpinned.
+
+After 4 and 5 the median pause is 14.0 us on cycles (4605 collections in the instrumented
+runs) and 98.0 us on objects (1731), from 27.8 and 141.2.
+
+| Kernel  |  V8 us | V8 IQR        | Stator us | Stator IQR    | Stator / V8 |
+| ------- | -----: | ------------- | --------: | ------------- | ----------: |
+| numeric | 22.078 | 22.069-22.081 |    13.473 | 13.455-13.474 |        0.61 |
+| objects |  4.185 | 4.185-4.188   |    10.167 | 10.119-10.170 |        2.43 |
+| cycles  |  5.437 | 5.418-5.450   |     6.648 | 6.645-6.649   |        1.22 |
+
+Numeric holds: Stator's slowest process (13.489 us) is faster than V8's fastest (22.002 us).
+On cycles and objects V8's slowest process (5.589 and 4.399 us) is faster than Stator's fastest
+(6.635 and 10.116). The load average was between 3.4 and 4.2. The record's metadata names
+`dc4b5bc1` with a dirty tree, which is the content of the commits that follow it here.
+
+What is left, from the listings after step 2. The read loop of objects is about 118
+instructions an element: the array's kind and length are read twice, the index is converted
+and checked in nine instructions, each of the two properties loads the cache's shape and slot
+through a three-instruction address, and three results are stored at the loop's end. Its
+filling loop is about 130 instructions and two calls an element, and 7% of the samples are the
+array's growth. The cycle loop is about 120 instructions an iteration: a value that was read
+goes to a float register through the window, a value and its copy are guarded separately, and
+eight constants of three instructions are made again. Of a collection on objects, most is the
+array a root held when the collection before it ran: all it holds is promoted and then freed
+(step 30). Steps 25 to 30 in `task.md` follow from that, with 19 and 22.
+
+The new corpus script `reads.ts` covers each read and each way it leaves the chain (other
+shapes, getters, inherited and missing members, holes, indexes that are no element's, strings,
+a getter that shortens the array being read, values still in registers when a read leaves).
+Mutants were run against it: no stores on a failing guard's path, no accessor guard, no hole
+guard and no exactness guard for the index each change its output; the bounds test off by one
+does not, because the hole guard answers for the element past the end.
+
+Checks on that tree, each step of `pnpm run ci` on its own as before: `check-node`,
+`check-js-sources`, `typecheck`, `oxlint --deny-warnings .`, `dupes` (0 clones), `zig fmt
+--check` and `pnpm run runtime` exit 0; `oxfmt --check` passes on the two new files; `pnpm run
+test` 855 passed in 68 files; `test:runtime` exits 0; `test:subset` 1010 passed, 31
+expected-fail, 0 failed; `test:golden` 547 passed; `test:selfhost`, `test:builtins`,
+`test:node-coverage` and `test:leak` exit 0 (10M objects peak at 10400 KB, 10M FFI strings at
+10480 KB, 2M computed-key reads at 10464 KB, 2M garbage cycles at 15408 KB, all four on a
+plateau); `test:asan` 547 passed; `pnpm run interp:test` exits 0; `pnpm run engine:test`
+reports `engine: 108 passed, 0 failed`, `reads.ts` among them in both modes and under the
+collector's stress and verify runs.
+
+The Check still fails on objects and cycles, so the card stays open.
