@@ -2,7 +2,7 @@
 status: in progress
 priority: P1
 complexity: 5
-readiness: 20%
+readiness: 30%
 agent: Claude Code / claude-fable-5-2
 ---
 
@@ -59,8 +59,23 @@ done: a literal's object and slots are one allocation. What the profiles show ne
     them in bulk needs young objects in pages of their own, which is a change to the memory
     core and its conservative block index, not to the engine.
 
+Steps 9 and 10 are in (`progress.md`, "Push and the young region"): `push` takes its element
+in place, and blocks of 512 bytes or less are bumped through a young region whose dead objects
+are reclaimed by clearing index words. The kernels stand at 5.45x (cycles), 5.93x (objects)
+and 6.16x (numeric) of V8's time, and generated code is now most of each. Next:
+
+11. Values in registers inside a basic block: the lowerer forwards a window slot it has just
+    loaded or stored and remembers which values are known doubles, so a chain of arithmetic
+    guards and loads each operand once. Locals still reach the window before any helper that
+    can throw or collect.
+12. A literal's allocation in compiled code: the young region's bump inline, with the helper
+    for a full run, a worker thread or the sanitized flavor.
+13. `store_env` and `load_env` in place, with the write barrier's dirty-bit test.
+14. Numeric after 11: T67.1 step 3, loop-carried values in registers across blocks with
+    guards that leave to the baseline code.
+
 Files: `packages/engine/src/{vm,compile,bytecode}.zig`, `packages/engine/src/jit/`,
-`packages/runtime/src/jsrt_alloc.zig`, `packages/runtime/include/jsrt_value.h`. Verify:
+`packages/runtime/src/{jsrt_alloc,jsrt_gc}.zig`, `packages/runtime/include/jsrt_value.h`. Verify:
 `pnpm run interp:test`, `pnpm run engine:test`, `pnpm run test:golden` and `pnpm run test:asan`
 when the runtime changes, `pnpm run ci` before a push.
 

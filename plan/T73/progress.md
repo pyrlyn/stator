@@ -76,11 +76,11 @@ TLS experiment. Executable/source hashes, load, flags, peak RSS and all samples 
 [`interleaved.json`](interleaved.json); [`jit-proof.txt`](jit-proof.txt) records both engines'
 compilation proof. Warmup finished after V8's TurboFan compilations in all three trace runs.
 
-| Kernel | V8 us | Stator before us | Stator after us | Time reduction | After / V8 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| numeric | 22.431 | 169.918 | 170.309 | -0.23% | 7.59 |
-| objects | 4.597 | 249.129 | 234.009 | 6.07% | 50.91 |
-| cycles | 5.449 | 172.566 | 156.619 | 9.24% | 28.74 |
+| Kernel  |  V8 us | Stator before us | Stator after us | Time reduction | After / V8 |
+| ------- | -----: | ---------------: | --------------: | -------------: | ---------: |
+| numeric | 22.431 |          169.918 |         170.309 |         -0.23% |       7.59 |
+| objects |  4.597 |          249.129 |         234.009 |          6.07% |      50.91 |
+| cycles  |  5.449 |          172.566 |         156.619 |          9.24% |      28.74 |
 
 Before/after process-median interquartile ranges (nearest rank, as in the existing harness):
 numeric 169.888–171.079 / 168.919–171.023 us; objects 243.195–251.171 / 231.899–234.617 us;
@@ -132,11 +132,11 @@ measured before the next:
 
 One process per engine and kernel after each change, microseconds per checked call:
 
-| Kernel | Start | After 1 | After 3 | After 4 |
-| --- | ---: | ---: | ---: | ---: |
-| cycles | 156.6 | 141.2 | 43.9 | 45.4 |
-| objects | 234.0 | 113.4 | 61.2 | 43.1 |
-| numeric | 170.3 | not recorded | 134.3 | 135.2 |
+| Kernel  | Start |      After 1 | After 3 | After 4 |
+| ------- | ----: | -----------: | ------: | ------: |
+| cycles  | 156.6 |        141.2 |    43.9 |    45.4 |
+| objects | 234.0 |        113.4 |    61.2 |    43.1 |
+| numeric | 170.3 | not recorded |   134.3 |   135.2 |
 
 "Start" is the previous section's five-process result. None of the four changes touches
 arithmetic: the numeric difference from "Start" predates them (the dependency update
@@ -147,11 +147,11 @@ Node v26.7.0 (V8 14.6.202.34-node.28), Zig 0.17.1 ReleaseFast, load averages 7.7
 before and 10.19/8.13/9.43 after. Samples, warmups, process times, peak RSS and source hashes
 are in [`literals-arrays.json`](literals-arrays.json):
 
-| Kernel | V8 us | V8 IQR | Stator us | Stator IQR | Stator / V8 |
-| --- | ---: | --- | ---: | --- | ---: |
-| numeric | 22.385 | 22.373-22.390 | 138.158 | 137.896-138.184 | 6.17 |
-| objects | 4.379 | 4.378-4.391 | 45.885 | 44.432-47.835 | 10.48 |
-| cycles | 5.428 | 5.405-5.430 | 45.171 | 45.046-45.936 | 8.32 |
+| Kernel  |  V8 us | V8 IQR        | Stator us | Stator IQR      | Stator / V8 |
+| ------- | -----: | ------------- | --------: | --------------- | ----------: |
+| numeric | 22.385 | 22.373-22.390 |   138.158 | 137.896-138.184 |        6.17 |
+| objects |  4.379 | 4.378-4.391   |    45.885 | 44.432-47.835   |       10.48 |
+| cycles  |  5.428 | 5.405-5.430   |    45.171 | 45.046-45.936   |        8.32 |
 
 The compilation proof of that run lists `bench` and `checkedBatch` compiled in all three
 kernels. The script itself is still interpreted (`rejected: opcode array_push`); it only
@@ -173,3 +173,63 @@ frame window.
 
 The Check still fails on every kernel, so the card stays open. Steps 9 and 10 in `task.md` are
 what these profiles ask for next, with T67.1 step 3 for numeric.
+
+## Push and the young region (2026-11-16)
+
+Two more changes on the same dependencies, profiled and measured the same way:
+
+1. `008e2a5f`: `a.push(v)` in compiled code. A callee that is the method the activation cached
+   for this receiver is the runtime's own `push` bound to that array, so an array with room
+   takes the element and the new length in place.
+2. `153ec14a`: the memory core allocates blocks of 512 bytes or less by moving a pointer
+   through a young region (one 64 MiB reservation in 512-byte lines, docs/VALUE.md §4.12). A
+   collection clears the index words of the lines its runs used and marks the survivors
+   again, so a dead young object costs no finalizer call, no free and no read of its memory.
+   Only young objects with something to finalize are listed; a dynamic object is listed when
+   a buffer first names it as owner. Larger blocks, buffers and the sanitized flavor stay on
+   pyrlyn/gc's pools.
+
+`0854a4c5` between them only removes two clones `pnpm run dupes` found in the lowerer.
+
+One process per engine and kernel after each change, microseconds per checked call:
+
+| Kernel  | At `7f72a818` | After 1 | After 2 |
+| ------- | ------------: | ------: | ------: |
+| cycles  |          45.2 |    44.6 |    29.0 |
+| objects |          45.9 |    33.6 |    25.0 |
+| numeric |         138.2 |   138.1 |   137.0 |
+
+Five interleaved processes per engine and kernel at `153ec14a`, clean tree, Apple M3 Max,
+Node v26.7.0 (V8 14.6.202.34-node.28), Zig 0.17.1 ReleaseFast, load averages 5.48/7.09/8.02
+before and 6.16/6.88/7.84 after. Samples, warmups, process times, peak RSS, source hashes and
+the compilation proof are in [`young-region.json`](young-region.json):
+
+| Kernel  |  V8 us | V8 IQR        | Stator us | Stator IQR      | Stator / V8 |
+| ------- | -----: | ------------- | --------: | --------------- | ----------: |
+| numeric | 22.423 | 22.350-22.509 |   138.221 | 138.147-138.442 |        6.16 |
+| objects |  4.319 | 4.314-4.348   |    25.628 | 25.523-25.765   |        5.93 |
+| cycles  |  5.373 | 5.370-5.429   |    29.259 | 29.176-29.385   |        5.45 |
+
+Stator's full-collection latency in the instrumented runs: p99 0.074 ms over 1068 collections
+on cycles (0.458 ms before the region) and 0.216 ms over 715 on objects.
+
+Checks at `153ec14a`: `pnpm run interp:test` exits 0; `pnpm run engine:test` reports
+`engine: 92 passed, 0 failed`; `pnpm run test` 844 passed in 67 files; `test:golden` 525
+passed; `test:asan` 525 passed; `test:runtime` matches Node with `roots ok`; `test:leak` exits
+0; `pnpm run dupes` 0 clones. One earlier `test:golden` run, started while a profiler and a
+benchmark were loading the machine, printed `ts/node_timers.ts`'s 10 ms timer and its interval
+in the other order; the run on an idle machine and the sanitized run both pass, and the
+fixture's order depends on wall-clock timers, not on the collector.
+
+Where the time is now (same profiler, the tree of `153ec14a`). Cycles: 56% generated code,
+22% the young allocation (its stalls are the first writes to cold lines: the index word and
+the header; each object is 88 bytes), 7% `jsrt_dynobj_new_sized`, 5% the `new_object` helper,
+4% `store_env`, 6% root scanning and collection. Objects: 75% generated code, 14% the young
+allocation. Numeric: generated code only.
+
+The Check still fails on every kernel, so the card stays open. Generated code is the largest
+share of all three: every operand is loaded from the frame window and every arithmetic
+operand is guarded as a double again. Steps 11 to 14 in `task.md` follow from that.
+
+Found on the way and not fixed here: an array method read as a value stays bound to the array
+it was read from (`const p = a.push; p.call(b, 9)` pushes onto `a`, in both modes).
