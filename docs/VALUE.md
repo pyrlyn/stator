@@ -1668,7 +1668,8 @@ binary used to die of SIGSEGV with nothing printed (QA audit F6). Two layers now
   async-signal-safe), then aborts. Any other fault is not ours: the handler reinstalls the action
   it replaced (the default, ASan's reporter, a host program's handler) and returns, so the
   faulting instruction re-runs into it. An alternate stack someone already installed (ASan does)
-  is kept.
+  is kept. Ours is allocated, not static: the collector reads every writable word of the image
+  for roots (§4.12), and 128 KiB that never hold a value would be read at each collection.
 
 ## 4.26 The class object — a closure-shaped value whose `klass` names the descriptor (plan.md §8 step 12(d)/(e), T27)
 
