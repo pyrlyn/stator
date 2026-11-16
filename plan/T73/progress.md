@@ -233,3 +233,70 @@ operand is guarded as a double again. Steps 11 to 14 in `task.md` follow from th
 
 Found on the way and not fixed here: an array method read as a value stays bound to the array
 it was read from (`const p = a.push; p.call(b, 9)` pushes onto `a`, in both modes).
+
+## The fast chain and carried locals (2026-11-16)
+
+Two changes to the lowerer, AArch64 only, on the same dependencies:
+
+1. `a712c3fc`: the fast chain. Within a straight run of bytecode the lowerer remembers what
+   each window slot holds: the vreg it loaded or computed, whether it is a known double, a
+   constant. A chain of arithmetic guards and loads each operand once, a comparison and the
+   jump after it are one branch, and a guard that fails leaves for a generic copy of the run
+   from the guarded instruction on, emitted after the function's main code. Window stores
+   stay eager, which is what lets a guard leave from anywhere.
+2. `2d71565d`: loop-carried locals. A loop whose every instruction has a fast form (so it
+   makes no call) carries up to eight numeric locals in float registers from one iteration to
+   the next. Each of its blocks has a window entry, which guards and loads the carried locals,
+   and a register entry the loop's own edges take. Such functions are laid out in the order
+   their blocks were filled, so the loop body stays in one piece.
+
+Microseconds per checked call after each change. The first column is the five-process record
+above; "After 1" is five processes on the working tree before its commit, "After 2" one
+process:
+
+| Kernel  | At `153ec14a` | After 1 | After 2 |
+| ------- | ------------: | ------: | ------: |
+| cycles  |          29.3 |    26.1 |    25.6 |
+| objects |          25.6 |    21.4 |    22.3 |
+| numeric |         138.2 |   104.2 |    87.5 |
+
+Five interleaved processes per engine and kernel at `2d71565d` (the tree's only difference
+from the commit was this card's `task.md`), Apple M3 Max, Node v26.7.0 (V8
+14.6.202.34-node.28), Zig 0.17.1 ReleaseFast. The machine was shared with other work: load
+averages 12.72/9.60/9.20 before and 12.70/10.41/9.55 after, against 5 to 8 for the earlier
+records. Samples, warmups, source hashes and the compilation proof are in
+[`carried-locals.json`](carried-locals.json):
+
+| Kernel  |  V8 us | V8 IQR        | Stator us | Stator IQR     | Stator / V8 |
+| ------- | -----: | ------------- | --------: | -------------- | ----------: |
+| numeric | 22.459 | 22.403-22.588 |    89.619 | 89.509-102.053 |        3.99 |
+| objects |  4.676 | 4.674-4.685   |    22.356 | 22.351-22.485  |        4.78 |
+| cycles  |  5.590 | 5.579-5.608   |    26.386 | 26.264-26.490  |        4.72 |
+
+Numeric's per-process medians were 89.619, 102.053, 89.049, 89.509 and 103.392 us: two
+processes ran a seventh slower, which the load explains better than the code does, and V8 had
+one such process too (26.118 us among four at 22.4 to 22.6). Stator's full-collection latency
+in the instrumented runs: p99 0.099 ms over 1203 collections on cycles and 0.258 ms over 837
+on objects.
+
+Checks at `2d71565d`, each step of `pnpm run ci` run on its own (`oxfmt --check` trips over an
+untracked local settings file, so `lint` was `oxlint --deny-warnings .`, clean): `typecheck`
+and `check-js-sources` exit 0; `pnpm run dupes` 0 clones; `zig fmt --check` clean; `pnpm run
+test` 844 passed in 67 files; `test:runtime` matches Node with `roots ok`; `test:subset` 1010
+passed, 31 expected-fail, 0 failed; `test:golden` 525 passed; `test:selfhost`,
+`test:builtins`, `test:node-coverage` and `test:leak` exit 0; `test:asan` 525 passed; `pnpm run
+interp:test` exits 0; `pnpm run engine:test` reports `engine: 92 passed, 0 failed`.
+
+What the numeric loop's machine code shows (the IR and code dumped through a temporary patch
+to `jit.zig`, not committed). The carried locals are where they should be: `sum` in `d0`, `i`
+in `d1`, with no load from the window on the loop's path. What is left is the arithmetic
+itself. `(sum + i) % 65521` is `fadd`, a conversion to an integer with its range fix-up, `sdiv`,
+`msub` and a conversion back, all on the dependency chain from one iteration's `sum` to the
+next: 28 to 35 cycles an iteration by the instructions' latencies and 8.75 ns measured, where
+V8's whole iteration takes about 2.2 ns.
+Beside it each iteration still writes about six results to the frame window, because a guard
+may leave from any of them. Steps 15 to 17 in `task.md` follow from that; 12 and 13 (a
+literal's allocation and the environment accesses in place) are what the object and cycle
+kernels wait for.
+
+The Check still fails on every kernel, so the card stays open.

@@ -259,20 +259,22 @@ machine's load, raw samples, rejected experiments and correctness checks; its V8
 
 Later T73 steps (§3: the bound-method cache read in compiled code, a literal's slots allocated
 with the object and its shape steps cached, an array's `length` and elements in place, `push`
-in place, and the collector's young region, docs/VALUE.md §4.12) were measured the same way:
-five interleaved processes per engine and kernel, the same machine, Node v26.7.0, ReleaseFast.
+in place, the collector's young region, docs/VALUE.md §4.12, and then the fast chain and
+loop-carried locals) were measured the same way: five interleaved processes per engine and
+kernel, the same machine, Node v26.7.0, ReleaseFast. The V8 column and the ratio are from the
+last run; "young region" is the run before the fast chain.
 
-| Kernel  |     V8 | JIT (T73 start) |     JIT | JIT / V8 |
-| ------- | -----: | --------------: | ------: | -------: |
-| numeric | 22.423 |         170.309 | 138.221 |     6.16 |
-| objects |  4.319 |         234.009 |  25.628 |     5.93 |
-| cycles  |  5.373 |         156.619 |  29.259 |     5.45 |
+| Kernel  |     V8 | JIT (T73 start) | JIT (young region) |    JIT | JIT / V8 |
+| ------- | -----: | --------------: | -----------------: | -----: | -------: |
+| numeric | 22.459 |         170.309 |            138.221 | 89.619 |     3.99 |
+| objects |  4.676 |         234.009 |             25.628 | 22.356 |     4.78 |
+| cycles  |  5.590 |         156.619 |             29.259 | 26.386 |     4.72 |
 
 The process-median interquartile ranges do not overlap between the engines: Stator is slower
-than V8 on all three kernels. None of these steps touches arithmetic: the numeric difference
-predates them and was not bisected. Generated code is now most of every kernel (all of
-numeric, three quarters of objects, over half of cycles); the progress report has the
-profiles and raw samples.
+than V8 on all three kernels. The last run shared the machine with other work (load average
+12.7 before it), and two of the five numeric processes measured 102 and 103 us. Generated code
+is most of every kernel (all of numeric, three quarters of objects, over half of cycles); the
+progress report has the profiles, the machine code of the numeric loop and the raw samples.
 
 ### 4.2. Startup and JIT compilation cost (T74)
 

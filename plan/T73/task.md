@@ -2,7 +2,7 @@
 status: in progress
 priority: P1
 complexity: 5
-readiness: 30%
+readiness: 35%
 agent: Claude Code / claude-fable-5-2
 ---
 
@@ -73,6 +73,20 @@ and 6.16x (numeric) of V8's time, and generated code is now most of each. Next:
 13. `store_env` and `load_env` in place, with the write barrier's dirty-bit test.
 14. Numeric after 11: T67.1 step 3, loop-carried values in registers across blocks with
     guards that leave to the baseline code.
+
+Step 11 and the first half of 14 are in (`progress.md`, "The fast chain and carried locals"):
+a run of bytecode keeps what it loaded or computed in registers, and a loop that makes no call
+carries its numeric locals in float registers from one iteration to the next. 12 and 13 are
+still to do. What the numeric kernel's machine code shows next:
+
+15. Integers in registers. A number is always a double, so `(sum + i) % 65521` converts to an
+    integer, divides and converts back on the loop's critical path. A local the loop only adds
+    to, subtracts from, compares and takes remainders of can be carried as an i64 with a range
+    guard, converted only where it is stored.
+16. Window stores only where a guard leaves. Every result is written to the frame window at
+    once so that a failed guard can leave from anywhere; a flush block per guard, placed with
+    the loop, would take those stores out of the loop.
+17. A remainder by a constant as a multiplication and a shift.
 
 Files: `packages/engine/src/{vm,compile,bytecode}.zig`, `packages/engine/src/jit/`,
 `packages/runtime/src/{jsrt_alloc,jsrt_gc}.zig`, `packages/runtime/include/jsrt_value.h`. Verify:
