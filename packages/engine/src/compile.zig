@@ -86,6 +86,9 @@ const Loc = union(enum) { local: u16, env: u16, global: []const u8, ref: u16, sp
 const Binding = struct {
     loc: Loc,
     kind: BKind,
+    /// A local the function has initialized wherever the code it compiles from here on runs
+    /// (`initName`): a read or a write of it needs no TDZ check.
+    ready: bool = false,
 
     fn tdz(b: Binding) bool {
         return b.kind == .let_ or b.kind == .const_ or b.kind == .class_;
@@ -100,6 +103,8 @@ const Scope = struct {
     count: u16 = 0,
     /// Top-level `var`s and functions of a script are the global object's.
     script: bool = false,
+    /// A `switch`: a clause is entered past the declarations of the clauses before it.
+    skips: bool = false,
 };
 
 const CtxKind = enum { loop, switch_, block, finally_, forof };
@@ -514,13 +519,13 @@ const Fn = struct {
         fs.scope = scope.parent;
     }
 
-    const Resolved = struct { b: Binding, hops: u8 };
+    const Resolved = struct { b: Binding, hops: u8, scope: *Scope };
 
     fn resolve(fs: *Fn, name: []const u8) ?Resolved {
         var hops: u8 = 0;
         var s = fs.scope;
         while (s) |sc| : (s = sc.parent) {
-            if (sc.names.get(name)) |b| return .{ .b = b, .hops = hops };
+            if (sc.names.get(name)) |b| return .{ .b = b, .hops = hops, .scope = sc };
             if (sc.env and sc.count > 0) hops += 1;
         }
         return null;
@@ -528,7 +533,7 @@ const Fn = struct {
 
     fn loadName(fs: *Fn, name: []const u8) Error!void {
         const r = fs.resolve(name) orelse return fs.op16(.load_global, try fs.keyIndex(name));
-        const checked = r.b.tdz() or std.mem.eql(u8, name, this_name);
+        const checked = (r.b.tdz() and !r.b.ready) or std.mem.eql(u8, name, this_name);
         switch (r.b.loc) {
             .local => |l| if (checked) try fs.localOp(.load_checked, l, name) else try fs.op16(.load, l),
             .env => |slot| try fs.envOp(if (checked) .load_env_checked else .load_env, r.hops, slot, if (checked) name else null),
@@ -569,6 +574,10 @@ const Fn = struct {
     fn initName(fs: *Fn, name: []const u8) Error!void {
         const r = fs.resolve(name) orelse return fs.storeGlobal(name);
         try fs.storeLoc(r.b.loc, r.hops, name);
+        // A statement runs after the ones before it in its scope, each time the scope is
+        // entered, and a local is no other function's. A captured variable is: a function
+        // declared after this point may be called before it.
+        if (r.b.loc == .local and !r.scope.skips) r.scope.names.getPtr(name).?.ready = true;
     }
 
     fn storeGlobal(fs: *Fn, name: []const u8) Error!void {
@@ -585,8 +594,10 @@ const Fn = struct {
             .const_ => {
                 if (r.b.loc == .local) {
                     // The TDZ outranks the constant: reading it first raises the right error.
-                    try fs.localOp(.load_checked, r.b.loc.local, name);
-                    try fs.op(.pop);
+                    if (!r.b.ready) {
+                        try fs.localOp(.load_checked, r.b.loc.local, name);
+                        try fs.op(.pop);
+                    }
                 } else if (r.b.loc == .env) {
                     try fs.envOp(.load_env_checked, r.hops, r.b.loc.env, name);
                     try fs.op(.pop);
@@ -601,7 +612,7 @@ const Fn = struct {
                 return;
             },
             .let_, .class_ => switch (r.b.loc) {
-                .local => |l| return fs.localOp(.store_checked, l, name),
+                .local => |l| return if (r.b.ready) fs.op16(.store, l) else fs.localOp(.store_checked, l, name),
                 .env => |slot| return fs.envOp(.store_env_checked, r.hops, slot, name),
                 .global, .ref, .special => unreachable,
             },
@@ -1470,6 +1481,7 @@ const Fn = struct {
         const d = fs.newLocal();
         try fs.op16(.store, d);
         const scope = try fs.newScope(fs.scope, false);
+        scope.skips = true;
         for (clauses) |cl| try fs.hoistLexical(scope, clauseStmts(cl));
         try fs.enterScope(scope);
         for (clauses) |cl| try fs.instantiateFunctions(clauseStmts(cl));

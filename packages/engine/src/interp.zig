@@ -309,6 +309,25 @@ test "an object literal takes its cached shape steps in place" {
 
 test "a literal the fast chain follows answers what the object would" {
     // Members read back through locals, operands and a cycle; a key named twice, an own key
+test "a local read after its declaration takes no TDZ check, and any other read does" {
+    // A read before the declaration, in a later clause of a `switch`, in the next iteration,
+    // in its own initializer and by assignment; a constant and a class; a captured variable,
+    // which a closure or a hoisted function may reach first; `this` before `super()`; a
+    // `continue` past the declaration; a clause entered past it; reads that need no check.
+    try expectRuns("function f() { try { x; } catch (e) { return e.name; } let x = 1; return x; } f()", "ReferenceError");
+    try expectRuns("function f(n) { switch (n) { case 0: let y = 1; return y; case 1: try { return y; } catch (e) { return e.name; } } } f(0) + ',' + f(1)", "1,ReferenceError");
+    try expectRuns("function f() { const out = []; for (let i = 0; i < 2; i += 1) { try { out.push(v); } catch (e) { out.push(e.name); } let v = i; out.push(v); } return out.join(); } f()", "ReferenceError,0,ReferenceError,1");
+    try expectRuns("function f() { try { let x = x + 1; return x; } catch (e) { return e.name; } } f()", "ReferenceError");
+    try expectRuns("function f() { try { z = 1; } catch (e) { return e.name; } let z; return z; } function g() { let z; z = 2; z += 1; return z; } f() + ',' + g()", "ReferenceError,3");
+    try expectRuns("function f() { const c = 1; try { c = 2; } catch (e) { return e.name + c; } } function g() { try { c = 2; } catch (e) { return e.name; } const c = 1; } f() + ',' + g()", "TypeError1,ReferenceError");
+    try expectRuns("function f() { try { new C(); } catch (e) { return e.name; } class C {} return typeof C; } function g() { class C {} return typeof new C(); } f() + ',' + g()", "ReferenceError,object");
+    try expectRuns("function f() { const g = () => x; try { g(); } catch (e) { return e.name; } let x = 1; } function h() { try { return g(); } catch (e) { return e.name; } let x = 1; function g() { return x; } } f() + ',' + h()", "ReferenceError,ReferenceError");
+    try expectRuns("let r = ''; class A {} class B extends A { constructor() { try { this.x = 1; } catch (e) { r = e.name; } super(); this.x = 2; } } r + new B().x + r", "2ReferenceError");
+    try expectRuns("function f() { let n = 0; outer: for (let i = 0; i < 3; i += 1) { if (i === 1) continue outer; let k = i; n += k; } return n; } f()", "2");
+    try expectRuns("function f() { const out = []; for (let i = 0; i < 3; i += 1) { switch (i) { case 1: try { out.push(q); } catch (e) { out.push('R'); } break; case 0: case 2: let q = i; out.push(q); } } return out.join(); } f()", "0,R,2");
+    try expectRuns("function f(a) { let s = 0; for (const x of a) { const y = x * 2; s += y; } { let t = s; t += 1; s = t; } return s; } f([1, 2, 3])", "13");
+}
+
     // written, a key added and a key it lacks; two names for one object; an object a call, a
     // getter or Object.freeze has reached; members that are calls, literals and remainders;
     // `constructor` and `__proto__`; more members than the chain follows, none and a spread;
