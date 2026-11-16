@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.17.1",
     .dependencies = .{
         .kxgc = .{
-            .url = "git+https://github.com/pyrlyn/gc#bad8e04fd0ad314590ce90842c06bc09ad3c7e77",
-            .hash = "kxgc-0.1.0-qQGyHgy3AQAH93_u8ZcASoGU3NAyEkM2ndhFfm1Eyy5H",
+            .url = "git+https://github.com/pyrlyn/gc#ef3b4400dba9a0e5e10b8198f245945dffde5fec",
+            .hash = "kxgc-0.1.0-qQGyHvSzAgB-EFPxnZ1tVaPQGV9nvC6VI2NWj1Xb94wf",
         },
     },
     .paths = .{ "build.zig", "build.zig.zon" },

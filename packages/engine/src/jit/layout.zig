@@ -62,9 +62,21 @@ pub fn orderAcyclic(f: *ir.Func) !void {
         order[used] = @intCast(i);
         used += 1;
     };
-    const mapping = try a.alloc(u32, n);
+    try permute(f, order);
+}
+
+/// Lays `f` out as `order` names its blocks, the entry first. An order that leaves a block out
+/// is not one, and `f` stays as it is.
+pub fn inOrder(f: *ir.Func, order: []const u32) !void {
+    if (order.len == f.blocks.items.len and order[0] == 0) try permute(f, order);
+}
+
+fn permute(f: *ir.Func, order: []const u32) !void {
+    const blocks = f.blocks.items;
+    const a = f.alloc();
+    const mapping = try a.alloc(u32, blocks.len);
     for (order, 0..) |old, new| mapping[old] = @intCast(new);
-    const reordered = try a.alloc(ir.Block, n);
+    const reordered = try a.alloc(ir.Block, blocks.len);
     for (order, reordered) |old, *b| {
         b.* = blocks[old];
         var buf: [2]*u32 = undefined;

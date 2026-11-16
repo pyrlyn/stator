@@ -225,6 +225,54 @@ test "a numeric loop runs without a helper" {
     try std.testing.expectEqual([3]usize{ 0, 0, 1 }, r.calls);
 }
 
+test "the fast chain leaves for the generic code on anything but the doubles it expects" {
+    // Strings and objects where the chain guards for doubles; remainders that are -0,
+    // NaN or fractional; NaN comparisons, fused with their jump and not; a TDZ read and write
+    // after the chain has stored; a value whose type changes inside a loop.
+    try expectRuns("function f(a) { let s = a; for (let i = 0; i < 5; i += 1) s = s + i; return s; } f('x') + f(1)", "x0123411");
+    try expectRuns("function f(a, b) { return a % b; } [Object.is(f(-4, 2), -0), Object.is(f(4, 2), 0), Object.is(f(-0, 3), -0), Object.is(f(0, 3), 0), f(5, 0), f(5.5, 2), f(-7, 3), f(7, -3), f(2 ** 53, 3), f(Infinity, 2), f(3, Infinity), f(NaN, 2), f('7', 4)].join()", "true,true,true,true,NaN,1.5,-1,1,2,NaN,3,NaN,3");
+    try expectRuns("function f(a, b) { let n = 0; if (a < b) n += 1; if (a >= b) n += 2; if (a == b) n += 4; if (a != b) n += 8; if (a === b) n += 16; if (a !== b) n += 32; if (a > b) n += 64; if (a <= b) n += 128; return n; } [f(1, 2), f(2, 1), f(1, 1), f(NaN, 1), f(NaN, NaN), f(0, -0), f('1', 1), f(null, undefined), f(null, 0)].join()", "169,106,150,40,40,150,166,36,170");
+    try expectRuns("function f(a, b) { const x = a < b; const y = (a >= b) + 1; let i = 0; do { i += 1; } while (i < b); return [x, y, i, a < b || a, a > b && b].join(); } f(1, 3) + ';' + f(3, 1) + ';' + f(NaN, 2)", "true,1,3,true,false;false,2,1,3,1;false,1,2,NaN,false");
+    try expectRuns("function f() { let s = 1; try { s = s + y; } catch (e) { return s + ':' + (e instanceof ReferenceError); } let y = 2; return s; } f()", "1:true");
+    try expectRuns("function f() { let s = 1; try { s = s + 2; y = s; } catch (e) { return s + ':' + (e instanceof ReferenceError); } let y = 2; return s; } f()", "3:true");
+    try expectRuns("function f(x) { let a = x; a++; ++a; a--; let b = a++ + ++a; return a + ',' + b; } f(1) + ';' + f('1') + ';' + f(1.5)", "4,6;4,6;4.5,7");
+    try expectRuns("function f() { let a = 5; let b = a; a = 7; const c = a; a = a + c; return a + b * 2; } f()", "24");
+    try expectRuns("function f(o) { let s = 1; s = s + 2; s = s + o; s = s * 2; return s; } f(3) + ',' + f('a') + ',' + f({ valueOf() { return 4; } })", "12,NaN,14");
+    try expectRuns("function f() { let s = 0; for (let i = 0; i < 6; i += 1) { if (i == 3) s = s + 'x'; s = s + i; } return s; } f()", "3x345");
+    try expectRuns("function f(n) { let sum = 0; for (let i = 0; i < n; i += 1) sum = (sum + i) % 65521; return sum; } f(10000) + ',' + f(0) + ',' + f(-1)", "2477,0,0");
+    try expectRuns("function f(a, b) { let q = a / b; let p = a * b - q; return [q, p, a - b, 1 / (a * 0), a / 0 - a / 0].join(); } f(6, 4) + ';' + f(-1, 2)", "1.5,22.5,2,Infinity,NaN;-0.5,-1.5,-3,-Infinity,NaN");
+    try expectRuns("function f(a) { let s = 0; for (let i = a; i < 4; i += 1) s += i; return s; } f(0) + ',' + f('2') + ',' + f(-0.5)", "6,02,7.5");
+}
+
+test "a loop that carries its locals in registers answers what the window would" {
+    // Two carried locals exchanged; nested loops; break and continue; a boolean local as the
+    // condition; operands that cross a block; -0 and NaN; a local that arrives or turns into
+    // something other than a double; a loop counting down and one that halves.
+    try expectRuns("function f(n) { let a = 0; let b = 1; for (let i = 0; i < n; i += 1) { const t = a + b; a = b; b = t; } return a; } f(50) + ',' + f(0) + ',' + f(1)", "12586269025,0,1");
+    try expectRuns("function f(n) { let a = 1; let b = 2; let i = 0; while (i < n) { let t = a; a = b; b = t; i += 1; } return a + ',' + b; } f(3) + ';' + f(4)", "2,1;1,2");
+    try expectRuns("function f(n) { let s = 0; for (let i = 0; i < n; i += 1) { for (let j = 0; j < i; j += 1) { s = s + i * j; } } return s; } f(20)", "16815");
+    try expectRuns("function f(n) { let s = 0; let i = 0; while (true) { i += 1; if (i > n) break; if (i % 3 == 0) continue; s = s + i; } return s + ',' + i; } f(10)", "37,11");
+    try expectRuns("function f() { let n = 0; let go = true; while (go) { n += 1; go = n < 10; } return n; } f()", "10");
+    try expectRuns("function f(n) { let s = 0; for (let i = 0; i < n; i += 1) s = s + (i % 2 == 0 ? 1 : 0.5); return s; } f(7)", "5.5");
+    try expectRuns("function f(n) { let x = 1; for (let i = 0; i < n; i += 1) x = x * -0; return Object.is(x, -0) + ',' + Object.is(x * -1, 0); } f(1) + ';' + f(2)", "true,true;false,false");
+    try expectRuns("function f(a, n) { let s = a; let k = 0; for (let i = 0; i < n; i += 1) { s = s + i; k = k + 2; } return s + ',' + k; } f(0.5, 4) + ';' + f('s', 4) + ';' + f(null, 4) + ';' + f(undefined, 2)", "6.5,8;s0123,8;6,8;NaN,4");
+    try expectRuns("function f(n) { let s = 0; let o = 1; for (let i = 0; i < n; i += 1) { if (i == 2) o = 'q'; s = s + o; } return s; } f(5)", "2qqq");
+    try expectRuns("function f(n) { let x = 0; let y = 0 / 0; let c = 0; do { x += 1; if (x < y) c += 1; if (x >= y) c += 10; if (x != y) c += 100; } while (x < n); return c + ',' + x; } f(3)", "300,3");
+    try expectRuns("function f(n) { let i = n; let s = 0; while (i > 0) { s = s + i; i = i - 1; } return s + ',' + i; } f(4) + ';' + f(2.5) + ';' + f(-1)", "10,0;4.5,-0.5;0,-1");
+    try expectRuns("function f(n) { let lo = 0; let hi = n; while (lo < hi) { const mid = (lo + hi - (lo + hi) % 2) / 2; if (mid * mid < n) lo = mid + 1; else hi = mid; } return lo; } f(1000) + ',' + f(2)", "32,2");
+}
+
+test "a remainder loop runs without a helper" {
+    if (!jit.available) return error.SkipZigTest;
+    const r = try jitCost(
+        "function f(n) { let sum = 0; for (let i = 0; i < n; i += 1) sum = (sum + i) % 65521; return sum; } f(10000)",
+        .{ helpers.binary, helpers.truthy },
+    );
+    try std.testing.expectEqual(2, r.compiled);
+    // The first remainder is a zero, which the chain leaves to the generic code's inline case.
+    try std.testing.expectEqual([2]usize{ 0, 0 }, r.calls);
+}
+
 test "a cached property read misses once per site" {
     if (!jit.available) return error.SkipZigTest;
     const r = try jitCost(
@@ -234,6 +282,64 @@ test "a cached property read misses once per site" {
     try std.testing.expectEqual(2, r.compiled);
     // Two sites, 1000 reads each: the first read of each fills its cache.
     try std.testing.expectEqual([3]usize{ 2, 1, 0 }, r.calls);
+}
+
+test "an object literal takes its cached shape steps in place" {
+    if (!jit.available) return error.SkipZigTest;
+    const r = try jitCost(
+        "function f() { let s = 0; for (let i = 0; i < 1000; i++) { const o = {x: i, y: 2}; s += o.x + o.y; } return s; } f()",
+        .{ helpers.define, helpers.newObject },
+    );
+    // The first literal finds both steps through the helper; the other 999 store inline into
+    // the slots the object was allocated with. Each literal still allocates through its helper.
+    try std.testing.expectEqualSlices(usize, &.{ 2, 1000 }, &r.calls);
+    try expectRuns("function f(k) { const o = {a: 1, b: 2, a: 3, [k]: 4, c: 5}; return JSON.stringify(o); } f('z') + f('b')", "{\"a\":3,\"b\":2,\"z\":4,\"c\":5}{\"a\":3,\"b\":4,\"c\":5}");
+    try expectRuns("function f(p) { const o = {a: 1, __proto__: p, ...p, b: 2, m() { return this.a + this.b + this.q; }}; o.late = 1; o.later = 2; return o.m() + Object.keys(o).join(); } f({q: 4}) + f({q: 5, a: 7})", "7a,q,b,m,late,later14a,q,b,m,late,later");
+    try expectRuns("function f(n) { const o = {a: n}; if (n & 1) o.b = n; else o.c = n; o.d = 1; o.e = 2; o.f = 3; return Object.keys(o).join('') + o.a; } f(1) + f(2) + f(3)", "abdef1acdef2abdef3");
+    try expectRuns("class P { x = 1; y = 2; } class Q extends P { z = this.x + this.y; } function f() { const q = new Q(); return q.x + q.y + q.z; } f() + f()", "12");
+}
+
+test "an array's length and its elements are read and written in place" {
+    if (!jit.available) return error.SkipZigTest;
+    const r = try jitCost(
+        "function f(a) { let s = 0; for (let i = 0; i < a.length; i++) { a[i] = a[i] + 1; s += a[i]; } return s; } const a = []; for (let i = 0; i < 1000; i++) a.push(i); f(a)",
+        .{ helpers.getProp, helpers.getElem, helpers.setElem, helpers.binary },
+    );
+    try std.testing.expectEqualSlices(usize, &.{ 0, 0, 0, 0 }, &r.calls);
+    // A hole, an index outside the array, a fraction, a numeric string, -0 and NaN.
+    try expectRuns("function f(a, k) { return String(a[k]); } const a = [1, , 3]; [0, 1, 2, 3, -1, 0.5, '2', -0, NaN, 4294967296].map((k) => f(a, k)).join()", "1,undefined,3,undefined,undefined,undefined,3,1,undefined,undefined");
+    // A write at or past the end grows the array through the helper.
+    try expectRuns("function f(a, k, v) { a[k] = v; return a.length; } const a = [1, 2]; [f(a, 0, 'a'), f(a, 2, 'b'), f(a, 5, 'c')].join() + JSON.stringify(a)", "2,3,6[\"a\",2,\"b\",null,null,\"c\"]");
+    // Not arrays: a string and an object with index keys, and `length` of each.
+    try expectRuns("function f(o, k) { return o[k] + ':' + o.length; } [f('abc', 1), f({ 1: 'p', length: 'q' }, 1), f([5, 6], 1)].join()", "b:3,p:q,6:2");
+    // An element store keeps the collector's view of the array: old arrays take new objects.
+    try expectRuns("function f(a, n) { for (let i = 0; i < a.length; i++) a[i] = { v: i + n }; } const a = [0, 0, 0, 0]; let s = 0; for (let n = 0; n < 300; n++) { f(a, n); s += a[3].v; } s", "45750");
+}
+
+test "an array method is bound once per activation" {
+    if (!jit.available) return error.SkipZigTest;
+    const r = try jitCost(
+        "function f() { const a = []; for (let i = 0; i < 1000; i++) a.push(i); return a.length; } f()",
+        .{ helpers.getMethod, helpers.getProp },
+    );
+    try std.testing.expectEqual(2, r.compiled);
+    // The first `a.push` binds the method and caches it; the other 999 read the cache inline.
+    // `a.length` is read in place.
+    try std.testing.expectEqual([2]usize{ 1, 0 }, r.calls);
+    const pushes = try jitCost(
+        "function f(n) { const a = []; for (let i = 0; i < n; i++) a.push(i); return a.length + ':' + a[n - 1]; } f(1000)",
+        .{helpers.call},
+    );
+    // The first push binds the method; the others reach the helper only to grow the array,
+    // whose capacity doubles from 1.
+    try std.testing.expectEqualSlices(usize, &.{11}, &pushes.calls);
+    try expectRuns("function f(n) { const a = []; for (let i = 0; i < n; i++) a.push(i); return a.length + ':' + a[n - 1]; } f(1000)", "1000:999");
+    // The result is the new length; two arguments, and a site that sees two arrays in turn.
+    try expectRuns("function f() { const a = [1], b = [2]; let r = ''; for (let i = 0; i < 3; i++) { const x = i % 2 ? a : b; r += a.push(i) + ',' + b.push(i, i) + ',' + x.push(i) + ';'; } return r + a + '|' + b; } f()", "2,3,4;3,6,4;5,8,9;1,0,1,1,2|2,0,0,0,1,1,2,2,2");
+    try expectRuns("function f(o) { let r = 0; for (let i = 0; i < 3; i++) r += o.push(i); return r; } f({ push(v) { return v * 2; } }) + ':' + f([])", "6:6");
+    // An own property that shadows the method ends the cache's answer.
+    try expectRuns("function f() { const a = []; let s = 0; for (let i = 0; i < 4; i++) { a.push(i); if (i === 1) a.push = function (v) { s += v; return 0; }; } return a.length + ':' + s; } f()", "2:5");
+    try expectRuns("function f(o) { let s = 0; for (let i = 0; i < 3; i++) s += o.m(i); return s; } f({ m(v) { return v * 2; } })", "6");
 }
 
 test "exact integer remainder stays in native code and other operands use the VM" {

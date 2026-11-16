@@ -249,7 +249,7 @@ fn getPropSlow(obj: Value, key: [*:0]const u8, ic: ?*c.JSRTIC) Value {
 /// A direct call cannot expose the runtime's freshly bound method value. Reuse it while the
 /// same array still has no own properties; an own override, getter, or another receiver takes
 /// the normal lookup. Both cache entries are slots in the activation's GC frame.
-fn getMethod(obj: Value, site: Site, cache: *[2]Value) Value {
+pub fn getMethod(obj: Value, site: Site, cache: *[2]Value) Value {
     if (rt.is(obj, c.JSRT_TAG_ARRAY) and
         (c.jsrt_as_array(obj).*.shape == null or c.jsrt_as_array(obj).*.shape == &c.jsrt_shape_root) and
         !std.mem.eql(u8, keyText(site.key), "constructor"))
@@ -262,6 +262,12 @@ fn getMethod(obj: Value, site: Site, cache: *[2]Value) Value {
         return method;
     }
     return getProp(obj, site.key, site.ic);
+}
+
+/// Window index of the receiver `getMethod` cached for property site `index`; the method it
+/// answered is the slot after. Compiled code reads the pair in place (jit/lower.zig).
+pub fn methodCacheIndex(t: *const Template, index: usize) usize {
+    return header + t.nlocals + t.max_stack + t.strings.len + 2 * index;
 }
 
 /// Whether `f`'s own property table holds `key` (its `name`, `length` and `prototype` aside).
@@ -392,22 +398,42 @@ fn keyOf(v: Value) [*:0]const u8 {
 fn ownTable(obj: Value) Value {
     if (!rt.is(obj, c.JSRT_TAG_CLOSURE)) return obj;
     const clo = closureOf(obj);
-    if (clo.props == null) clo.props = @ptrCast(@alignCast(c.jsrt_ptr(c.jsrt_dynobj_new())));
+    if (clo.props == null) {
+        const props = c.jsrt_dynobj_new();
+        c.jsrt_gc_write(clo);
+        clo.props = @ptrCast(@alignCast(c.jsrt_ptr(props)));
+    }
     return c.JSRT_BOX(c.JSRT_TAG_OBJECT, @intFromPtr(clo.props));
 }
 
 /// CreateDataProperty: an own property, whatever setter the prototype chain has for the key.
-pub fn defineOwn(obj_in: Value, key: [*:0]const u8, v: Value) void {
+pub fn defineOwn(obj: Value, key: [*:0]const u8, v: Value) void {
+    defineCached(obj, key, v, null);
+}
+
+/// `defineOwn` at a `define` site: `site` remembers the shape step the key took last time, so a
+/// literal's next object takes it without walking the chain or locking the shape table.
+pub fn defineAt(obj: Value, key: [*:0]const u8, v: Value, site: *bc.Transition) void {
+    defineCached(obj, key, v, site);
+}
+
+fn defineCached(obj_in: Value, key: [*:0]const u8, v: Value, site: ?*bc.Transition) void {
     const obj = ownTable(obj_in);
     if (!isDyn(obj)) return c.jsrt_set_prop(obj, key, v, null);
     const o = dynObj(obj);
-    if (c.jsrt_shape_find(o.shape, key)) |hit| {
-        o.slots[hit.*.offset] = v;
-        return;
-    }
-    const next = c.jsrt_shape_transition(o.shape, key);
-    c.jsrt_shape_reserve(&o.slots, &o.capacity, next.*.offset);
-    o.slots[next.*.offset] = v;
+    c.jsrt_gc_write(o);
+    const next: *c.JSRTShape = step: {
+        if (site) |s| if (s.from == o.shape) break :step s.to.?;
+        if (c.jsrt_shape_find(o.shape, key)) |hit| {
+            o.slots[hit.*.offset] = v;
+            return;
+        }
+        const to = c.jsrt_shape_transition(o.shape, key);
+        if (site) |s| s.* = .{ .from = o.shape, .to = to, .offset = to.*.offset };
+        break :step to;
+    };
+    c.jsrt_shape_reserve(&o.slots, &o.capacity, next.offset);
+    o.slots[next.offset] = v;
     o.shape = next;
 }
 
@@ -1522,7 +1548,7 @@ fn execOn(mach: *Machine, initial_template: *Template, initial_env: ?*Env, entry
                     .get_prop, .get_method => {
                         const site = nextSite(t, code, &pc);
                         vs[top - 1] = if (o == .get_method)
-                            getMethod(vs[top - 1], site, w[header + t.nlocals + t.max_stack + t.strings.len + 2 * @as(usize, site.index) ..][0..2])
+                            getMethod(vs[top - 1], site, w[methodCacheIndex(t, site.index)..][0..2])
                         else
                             getProp(vs[top - 1], site.key, site.ic);
                     },
@@ -1731,7 +1757,7 @@ fn execOn(mach: *Machine, initial_template: *Template, initial_env: ?*Env, entry
                         c.jsrt_throw_error(&c.jsrt_class_type_error, k);
                     },
 
-                    .new_object => push(vs, &top, c.jsrt_dynobj_new()),
+                    .new_object => push(vs, &top, c.jsrt_dynobj_new_sized(next16(code, &pc))),
                     .new_array => {
                         const n = next16(code, &pc);
                         const arr = newArray(vs[top - n .. top]);
@@ -1753,8 +1779,9 @@ fn execOn(mach: *Machine, initial_template: *Template, initial_env: ?*Env, entry
                     },
                     .define => {
                         const k = t.keys[next16(code, &pc)];
+                        const site = &t.transitions[next16(code, &pc)];
                         top -= 1;
-                        defineOwn(vs[top - 1], k, vs[top]);
+                        defineAt(vs[top - 1], k, vs[top], site);
                     },
                     .define_elem => {
                         top -= 2;
@@ -2055,12 +2082,15 @@ fn next16(code: []const u8, pc: *usize) u16 {
 }
 
 /// A named property site: its key, then its inline cache.
-const Site = struct { key: [*:0]const u8, ic: *c.JSRTIC, index: u16 };
+pub const Site = struct { key: [*:0]const u8, ic: *c.JSRTIC, index: u16 };
+
+pub fn siteOf(t: *const Template, key: u16, ic: u16) Site {
+    return .{ .key = t.keys[key], .ic = &t.ics[ic], .index = ic };
+}
 
 fn nextSite(t: *Template, code: []const u8, pc: *usize) Site {
-    const key = t.keys[next16(code, pc)];
-    const i = next16(code, pc);
-    return .{ .key = key, .ic = &t.ics[i], .index = i };
+    const key = next16(code, pc);
+    return siteOf(t, key, next16(code, pc));
 }
 
 fn next32(code: []const u8, pc: *usize) u32 {

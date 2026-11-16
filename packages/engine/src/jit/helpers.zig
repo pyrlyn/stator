@@ -124,6 +124,13 @@ pub fn getProp(cx: *Ctx, s: u64, key: u64, ic: u64) callconv(.c) u64 {
     return put(cx, s, vm.getProp(cx.w[s], cx.t.keys[key], &cx.t.ics[ic]));
 }
 
+/// `obj.key` about to be called: the activation's bound-method cache answers an array's method
+/// again without the runtime binding a fresh one (vm.getMethod).
+pub fn getMethod(cx: *Ctx, s: u64, key: u64, ic: u64) callconv(.c) u64 {
+    const cache = cx.w[vm.methodCacheIndex(cx.t, ic)..][0..2];
+    return put(cx, s, vm.getMethod(cx.w[s], vm.siteOf(cx.t, @intCast(key), @intCast(ic)), cache));
+}
+
 /// callee this args… at `base` -> the result at `base`.
 pub fn call(cx: *Ctx, base: u64, argc: u64) callconv(.c) u64 {
     const w = cx.w;
@@ -215,8 +222,8 @@ pub fn setElem(cx: *Ctx, s: u64) callconv(.c) u64 {
     return put(cx, s, cx.w[s + 2]);
 }
 
-pub fn newObject(cx: *Ctx, s: u64) callconv(.c) u64 {
-    return put(cx, s, c.jsrt_dynobj_new());
+pub fn newObject(cx: *Ctx, s: u64, n: u64) callconv(.c) u64 {
+    return put(cx, s, c.jsrt_dynobj_new_sized(@intCast(n)));
 }
 
 pub fn newArray(cx: *Ctx, s: u64, n: u64) callconv(.c) u64 {
@@ -224,8 +231,8 @@ pub fn newArray(cx: *Ctx, s: u64, n: u64) callconv(.c) u64 {
 }
 
 /// obj value at `s` -> obj at `s`.
-pub fn define(cx: *Ctx, s: u64, key: u64) callconv(.c) u64 {
-    vm.defineOwn(cx.w[s], cx.t.keys[key], cx.w[s + 1]);
+pub fn define(cx: *Ctx, s: u64, key: u64, site: u64) callconv(.c) u64 {
+    vm.defineAt(cx.w[s], cx.t.keys[key], cx.w[s + 1], &cx.t.transitions[site]);
     return status(cx);
 }
 

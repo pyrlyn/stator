@@ -214,6 +214,7 @@ pub const Op = enum(u8) {
     throw_error,
 
     // ---- literals
+    /// u16 count: an object with room for `count` properties in its own allocation.
     new_object,
     /// u16 count: the top `count` values, in order, as an array.
     new_array,
@@ -222,7 +223,7 @@ pub const Op = enum(u8) {
     array_hole,
     /// array iterable -> array
     array_spread,
-    /// obj value -> obj. u16 key.
+    /// obj value -> obj. u16 key, u16 site (the template's `transitions`).
     define,
     /// obj key value -> obj
     define_elem,
@@ -307,6 +308,16 @@ pub const Native = struct {
     direct: bool = false,
 };
 
+/// What a `define` site learned: an object on shape `from` gains the site's key by moving to
+/// shape `to`, whose value lives in slot `offset`. `from == null` is the empty cache. Shapes are
+/// immortal and a shape's chain never changes, so a hit needs no other check. Compiled code
+/// reads the fields in place (jit/lower.zig).
+pub const Transition = extern struct {
+    from: ?*const c.JSRTShape = null,
+    to: ?*c.JSRTShape = null,
+    offset: u32 = 0,
+};
+
 pub const Handler = struct {
     start: u32,
     end: u32,
@@ -350,6 +361,8 @@ pub const Template = struct {
     ics: []c.JSRTIC,
     /// One cache per key for the global object's own slot under that name (vm.zig `cachedGlobal`).
     global_ics: []c.JSRTIC,
+    /// One cache per `define` site.
+    transitions: []Transition,
     handlers: []const Handler,
     nlocals: u32,
     max_stack: u32,

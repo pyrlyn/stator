@@ -142,17 +142,17 @@ pub fn decode(code: []const u8, pc: u32, depth: u32) ?Insn {
         .arg_local => 4,
         .undef, .null, .true, .false, .uninit, .pop, .dup, .swap, .ret, .ret_ctor, .throw, .arguments => 0,
         .call0, .call1, .call2, .call3, .this_raw, .this_sloppy, .new_target, .callee, .home, .pop_env, .clone_env => 0,
-        .new_object, .get_elem, .set_elem => 0,
+        .get_elem, .set_elem => 0,
         .add, .sub, .mul, .div, .mod, .exp, .bitand, .bitor, .bitxor, .shl, .shr, .ushr => 0,
         .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge => 0,
         .neg, .plus, .bitnot, .not, .typeof, .inc, .dec => 0,
         .int, .jump, .jump_if_false, .jump_if_true, .jump_if_nullish, .jump_if_not_undef => 4,
         .num, .load, .store, .arg, .load_global, .global_callee, .typeof_global, .call, .new => 2,
-        .push_env, .closure, .declare_global, .new_array, .define, .str, .rest => 2,
+        .push_env, .closure, .declare_global, .new_array, .new_object, .str, .rest => 2,
         .store_global => 3,
         .add_local_string => 6,
         .add_local_prop, .add_local_elem, .lt_local_prop, .le_local_prop => 12,
-        .add_set_prop, .add_store_local, .ret_local, .local_callee, .load_checked, .store_checked, .inc_local, .dec_local, .get_prop, .get_method, .set_prop => 4,
+        .add_set_prop, .add_store_local, .ret_local, .local_callee, .load_checked, .store_checked, .inc_local, .dec_local, .get_prop, .get_method, .set_prop, .define => 4,
         .load_env, .store_env => 3,
         .load_env_checked, .store_env_checked, .inc_env, .dec_env => 5,
         .add_local_int, .sub_local_int, .lt_local_int, .le_local_int => 8,
@@ -179,12 +179,12 @@ pub fn decode(code: []const u8, pc: u32, depth: u32) ?Insn {
             i.c = bc.read32(code, at + 4);
         },
         .int, .jump, .jump_if_false, .jump_if_true, .jump_if_nullish, .jump_if_not_undef => i.a = bc.read32(code, at),
-        .num, .load, .store, .arg, .load_global, .global_callee, .typeof_global, .call, .new, .push_env, .closure, .declare_global, .new_array, .define, .str, .rest => i.a = bc.read16(code, at),
+        .num, .load, .store, .arg, .load_global, .global_callee, .typeof_global, .call, .new, .push_env, .closure, .declare_global, .new_array, .new_object, .str, .rest => i.a = bc.read16(code, at),
         .store_global => {
             i.a = bc.read16(code, at);
             i.b = code[at + 2];
         },
-        .arg_local, .add_set_prop, .add_store_local, .ret_local, .local_callee, .load_checked, .store_checked, .inc_local, .dec_local, .get_prop, .get_method, .set_prop => {
+        .arg_local, .add_set_prop, .add_store_local, .ret_local, .local_callee, .load_checked, .store_checked, .inc_local, .dec_local, .get_prop, .get_method, .set_prop, .define => {
             i.a = bc.read16(code, at);
             i.b = bc.read16(code, at + 2);
         },

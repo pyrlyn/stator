@@ -2,8 +2,10 @@
  *
  * Every script in scripts/ runs under the pinned Node and under `stator-engine run` in both modes;
  * stdout and the exit status must match Node byte-for-byte. A script that throws uncaught must
- * report it the way Node's first stderr line does. The CLI cases pin usage errors and the
- * not-yet targets. */
+ * report it the way Node's first stderr line does. Each script runs once more with the collector
+ * collecting on every allocation and recounting the heap afterwards, so a reference the engine
+ * wrote without the write barrier panics instead of surviving by luck. The CLI cases pin usage
+ * errors and the not-yet targets. */
 import { spawnSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -14,6 +16,11 @@ import { engineBinary } from './binary.ts';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPTS = join(HERE, 'scripts');
 const MODES = ['interp', 'jit'] as const;
+/** The collector's test switches (packages/runtime/src/jsrt_gc.zig). */
+const COLLECTORS = [
+  { label: '', env: {} },
+  { label: ', gc stress', env: { JSRT_GC_STRESS: '1', JSRT_GC_VERIFY: '1' } },
+] as const;
 
 interface Ran {
   readonly status: number | null;
@@ -21,8 +28,12 @@ interface Ran {
   readonly stderr: string;
 }
 
-function run(command: string, args: readonly string[]): Ran {
-  const r = spawnSync(command, args, { encoding: 'utf8', timeout: 60_000 });
+function run(command: string, args: readonly string[], env: NodeJS.ProcessEnv = {}): Ran {
+  const r = spawnSync(command, args, {
+    encoding: 'utf8',
+    timeout: 60_000,
+    env: { ...process.env, ...env },
+  });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
@@ -48,25 +59,27 @@ for (const file of readdirSync(SCRIPTS)
   const path = join(SCRIPTS, file);
   const node = run(nodePath(), [path]);
   for (const mode of MODES) {
-    const got = run(engine, ['run', `--mode=${mode}`, path]);
-    const name = `${file} [${mode}]`;
-    expect(
-      name,
-      got.status === node.status,
-      `exit ${String(got.status)}, Node ${String(node.status)}\n${got.stderr}`,
-    );
-    expect(
-      name,
-      got.stdout === node.stdout,
-      `stdout differs\n--- node\n${node.stdout}--- engine\n${got.stdout}`,
-    );
-    if (node.status !== 0) {
-      const want = uncaughtLine(node.stderr);
+    for (const collector of COLLECTORS) {
+      const got = run(engine, ['run', `--mode=${mode}`, path], collector.env);
+      const name = `${file} [${mode}${collector.label}]`;
       expect(
         name,
-        got.stderr.startsWith(`Uncaught ${want}`),
-        `stderr ${JSON.stringify(got.stderr)}, want "Uncaught ${want}"`,
+        got.status === node.status,
+        `exit ${String(got.status)}, Node ${String(node.status)}\n${got.stderr}`,
       );
+      expect(
+        name,
+        got.stdout === node.stdout,
+        `stdout differs\n--- node\n${node.stdout}--- engine\n${got.stdout}`,
+      );
+      if (node.status !== 0) {
+        const want = uncaughtLine(node.stderr);
+        expect(
+          name,
+          got.stderr.startsWith(`Uncaught ${want}`),
+          `stderr ${JSON.stringify(got.stderr)}, want "Uncaught ${want}"`,
+        );
+      }
     }
   }
 }

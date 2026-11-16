@@ -7,8 +7,8 @@
         .stator_ts = .{ .path = "../transpiler" },
         .jstext = .{ .path = "../jstext" },
         .pyrlyn_jit = .{
-            .url = "git+https://github.com/pyrlyn/jit#20d0ed4e4618d6ee040943644f5521db5fb91353",
-            .hash = "N-V-__8AAN6qCAG2O0Tn8Qk3yrHeTc1Bdk8Bx4pbjPDMpIay",
+            .url = "git+https://github.com/pyrlyn/jit#e90d5705e7d242a009976a033ecae4e5e7ec343c",
+            .hash = "N-V-__8AANYfGAHP2NQpkMdFu0DZLiXuCiUptwa3anopZPOM",
         },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src", "test262" },

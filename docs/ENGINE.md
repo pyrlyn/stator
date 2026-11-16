@@ -66,10 +66,28 @@ collects needs no stack maps.
 - `!` on a boolean, and the conditional jumps on `true` and `false`;
 - locals, arguments, constants and the TDZ check of a checked local;
 - `o.k` and `o.k = v` on a dynamic object whose shape the site's inline cache holds: a shape
-  compare and a slot load or store (with the write barrier on the slots buffer), falling to the
-  helper when the object is frozen, the slot holds an accessor or the shape differs. The key
-  `constructor` always takes the helper;
+  compare and a slot load or store, falling to the helper when the object is frozen, the slot
+  holds an accessor or the shape differs. The key `constructor` always takes the helper. A store
+  reads the collector's dirty bit from the object's header and calls the write barrier only for
+  an object the collector has not logged yet (`JSRT_GC_HEADER_BYTES`, `JSRT_GC_DIRTY_BIT`);
+- `{ a: x, b: y }`: the literal allocates the object and the slots for its named members as one
+  block (`jsrt_dynobj_new_sized`), and each member's `define` keeps the shape step it took last
+  (`bytecode.Transition`: the shape before, the shape after, the slot). While the object arrives
+  with that shape the member is a shape compare, a slot store and a shape store. A duplicate key,
+  a spread, `__proto__` or a first run takes the helper, which walks the transition and fills
+  the site;
+- `a.length`, `a[i]` and `a[i] = v` on an array: the length is the array's own field, boxed as a
+  double; an element at an integer index below the length is loaded or stored in place (a store
+  after the same write-barrier check on the array). A hole, an index at or past the length, a
+  fraction or a name takes the helper, as does every receiver that is not an array;
 - a global read inline, on the global object's shape, through the cache the interpreter keeps per template and key;
+- `a.m` about to be called on an array with no own properties: the bound method this
+  activation cached for that array (`vm.getMethod`'s two window slots per site), compared and
+  loaded in place. The helper binds the method and fills the cache on a miss, so a loop of
+  `a.push(v)` binds once instead of allocating a bound closure per call;
+- `a.push(v)` itself: a callee that is the method cached for this receiver is the runtime's own
+  `push` bound to that array, so an array with room takes the element and the new length in
+  place. A full array, another callee or more than one argument takes the call helper;
 - sloppy `this` (nullish becomes the global object) and a constructor's return on a plain call;
 - a call from compiled code to a plain function the JIT has compiled: the callee's window opens
   above the caller's and its code runs at once, with none of the interpreter's call layers
@@ -78,6 +96,35 @@ collects needs no stack maps.
   each thread-local read is a function call on macOS;
 - a pure push followed by a store to a local nothing reads (the prologue's `this`, `new.target`,
   `home` and `callee` when the body does not use them) is not emitted.
+
+**The fast chain (AArch64).** Inside one straight run of bytecode the lowerer remembers what
+each window slot holds: the register it was loaded into or computed in, whether it is a double,
+whether it is past its TDZ, and the constant when the bytecode names one (`lower.zig`, `Known`).
+Constants, moves between locals and operands, `+ - * / %` and the comparisons on doubles, and
+the fused local forms then guard and load each operand once per run instead of once per
+instruction, and a comparison the next instruction jumps on becomes the branch, with no boolean
+written. Every result is still stored in the window at once, so the window is current at every
+instruction boundary. A guard that fails (an operand that is not a double, a local in its TDZ,
+a remainder that is not an integer's or is a zero of a non-positive dividend) therefore just
+branches to the same instruction in a second, generic copy of the run, which finishes it with
+the fast paths and helpers above and rejoins at the next run. The generic copies are emitted
+after all the fast code and nothing is remembered across an instruction lowered generically,
+because pyrlyn/jit keeps no float register across a call. x86-64 has only the generic code: its
+results must be read back from the window to make their NaN canonical.
+
+**Loops with carried locals (AArch64).** A loop whose every instruction has a form on the fast
+chain makes no call on that chain, so its numeric locals can stay in float registers from one
+iteration to the next. `carriedLoops` picks those loops, outermost first, and for each the
+locals it computes with and stores nothing but doubles into (`carriedIn`), eight at most. Every
+block of such a loop is then lowered with two entries. The window entry, where code outside
+the loop and the generic copies arrive, guards that each carried local is a double, loads it
+into its register and goes on in the register entry; the register entry, which the loop's own
+jumps use, starts with those registers known. Before a block of the loop ends, each carried
+local's current value is copied into its register. The window is still written at once, so a
+failed guard leaves for the generic copy as anywhere else, and comes back through a window
+entry. A function with such a loop is laid out in the order its blocks were written, which
+keeps a loop's blocks together: a block a forward jump names is created early, and a carried
+register whose life spanned that block's calls would be kept in memory by the backend.
 
 Everything else (mixed operands, strings, a cache miss, calls, environments, construction,
 `throw`) calls a helper in `helpers.zig` that runs the VM's own function for the
@@ -90,18 +137,20 @@ but is unverified until a Linux x86-64 run. A Windows or other host has no backe
 interprets.
 
 **What it is not yet.** A direct call still goes through one helper that checks the callee and
-opens its frame; every object literal allocates its slots and walks a shape transition per
-property; every operand goes through the frame window in memory. Allocation, property-heavy code
-and tight numeric loops are where V8 is far ahead (§4); a cached transition per literal and the
-optimizing tier (plan/T67.1: type feedback, values in registers, call inline caches,
-deoptimization) are the next steps.
+opens its frame; every object is a call into the allocator, though the allocator itself is now
+a bump through the collector's young region (docs/VALUE.md §4.12); a call of any native method
+but `push` goes through the call helper and the runtime's method dispatch; a number is always
+a double, so an integer loop converts to an integer and back around every remainder, and every
+result is written to the frame window whether or not anything reads it there. Integers in
+registers, window stores made only where a guard leaves, and the optimizing tier (plan/T67.1:
+type feedback, call inline caches, deoptimization) are the next steps.
 
 ## 4. Tests and benchmark
 
 | Command                     | What it checks                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `pnpm run interp:test`      | The engine's Zig tests; every interpreter test runs in both modes, and the JIT tests assert the templates were compiled. In test builds every helper the JIT calls is counted (`helpers.counted`), and `jitCost` tests pin how often each runs: a numeric loop calls none, a cached property read misses once per site, a global read once per function and name; they also pin how often the interpreter enters native code, which a call between compiled functions does not |
-| `pnpm run engine:test`      | `packages/tests/engine/run.ts`: every script in `packages/tests/engine/scripts/` under the pinned Node and `stator-engine run` in both modes, stdout and exit status byte-for-byte; an uncaught error's first line; the CLI's usage errors and not-yet targets                                                                                                                                                                                                                 |
+| `pnpm run engine:test`      | `packages/tests/engine/run.ts`: every script in `packages/tests/engine/scripts/` under the pinned Node and `stator-engine run` in both modes, and again with the collector collecting on every allocation and recounting the heap (`JSRT_GC_STRESS=1 JSRT_GC_VERIFY=1`), stdout and exit status byte-for-byte; an uncaught error's first line; the CLI's usage errors and not-yet targets                                                                                      |
 | `pnpm run engine:bench` | `packages/tests/engine/bench.ts`: the bench programs (the engine-agnostic `ts` set in `packages/tests/bench/programs/`, the memory programs, and the JavaScript ones in `packages/tests/engine/bench/`; one list, `packages/tests/support/bench-programs.ts`) under Node (V8) and `jit` mode, each output checked against Node's, best of N wall time and peak RSS; results in `packages/tests/engine/results/` (ignored). A wrong V8 answer aborts the run; a program the engine cannot run yet is a ✗ with its first error line under the table, never a time. V8 is the only reference |
 | `pnpm run engine:bench:zig` | `src/bench.zig`: the `packages/tests/engine/bench/` programs run by the engine inside one process, best of N, with no process or runtime start-up; prints the milliseconds and the templates compiled. `--mode=interp` measures the interpreter                                                                                                                                                                                                                                |
 
@@ -189,11 +238,11 @@ T71 remeasured the merged baseline and added the guarded integer `%` path (§3).
 Apple M3 Max with Node v26.7.0 and ReleaseFast, three interleaved processes per engine/kernel
 gave these medians in microseconds per checked call after warmup:
 
-| Kernel | V8 | JIT before | JIT after | After / V8 |
-| --- | ---: | ---: | ---: | ---: |
-| numeric | 22.252 | 213.642 | 190.008 | 8.54 |
-| objects | 4.525 | 238.305 | 237.288 | 52.44 |
-| cycles | 5.402 | 176.106 | 173.089 | 32.04 |
+| Kernel  |     V8 | JIT before | JIT after | After / V8 |
+| ------- | -----: | ---------: | --------: | ---------: |
+| numeric | 22.252 |    213.642 |   190.008 |       8.54 |
+| objects |  4.525 |    238.305 |   237.288 |      52.44 |
+| cycles  |  5.402 |    176.106 |   173.089 |      32.04 |
 
 Numeric time fell 11.1%, with nonoverlapping before/after process-median ranges. The object
 change is within variation; no object or collector improvement is claimed. Stator remains
@@ -207,6 +256,25 @@ Numeric was essentially unchanged (169.918 → 170.309 us). V8 took 4.597, 5.449
 respectively, so this remains an incremental improvement. Both engines' JIT compilation is
 verified separately. [The T73 progress report](../plan/T73/progress.md) includes the shared
 machine's load, raw samples, rejected experiments and correctness checks; its V8 target stays open.
+
+Later T73 steps (§3: the bound-method cache read in compiled code, a literal's slots allocated
+with the object and its shape steps cached, an array's `length` and elements in place, `push`
+in place, the collector's young region, docs/VALUE.md §4.12, and then the fast chain and
+loop-carried locals) were measured the same way: five interleaved processes per engine and
+kernel, the same machine, Node v26.7.0, ReleaseFast. The V8 column and the ratio are from the
+last run; "young region" is the run before the fast chain.
+
+| Kernel  |     V8 | JIT (T73 start) | JIT (young region) |    JIT | JIT / V8 |
+| ------- | -----: | --------------: | -----------------: | -----: | -------: |
+| numeric | 22.459 |         170.309 |            138.221 | 89.619 |     3.99 |
+| objects |  4.676 |         234.009 |             25.628 | 22.356 |     4.78 |
+| cycles  |  5.590 |         156.619 |             29.259 | 26.386 |     4.72 |
+
+The process-median interquartile ranges do not overlap between the engines: Stator is slower
+than V8 on all three kernels. The last run shared the machine with other work (load average
+12.7 before it), and two of the five numeric processes measured 102 and 103 us. Generated code
+is most of every kernel (all of numeric, three quarters of objects, over half of cycles); the
+progress report has the profiles, the machine code of the numeric loop and the raw samples.
 
 ### 4.2. Startup and JIT compilation cost (T74)
 
@@ -251,10 +319,10 @@ owns that tier.
 
 Nine alternating rounds on Apple M3 Max, macOS 27.0.1, Node 26.7.0, Zig 0.17.1, ReleaseFast:
 
-| Metric (24 functions) | Before ms | After ms | V8 Sparkplug ms | V8 TurboFan ms |
-| --- | ---: | ---: | ---: | ---: |
-| Compile, 8 arithmetic/branch pairs per body | 2.661 | 2.618 | 0.200 | 4.934 |
-| Compile, 64 pairs per body | 40.153 | 31.786 | 0.974 | 23.942 |
+| Metric (24 functions)                       | Before ms | After ms | V8 Sparkplug ms | V8 TurboFan ms |
+| ------------------------------------------- | --------: | -------: | --------------: | -------------: |
+| Compile, 8 arithmetic/branch pairs per body |     2.661 |    2.618 |           0.200 |          4.934 |
+| Compile, 64 pairs per body                  |    40.153 |   31.786 |           0.974 |         23.942 |
 
 The larger program's untraced spawn-to-exit median fell from 48.204 to 40.052 ms; Node with
 default flags took 35.519 ms. The trivial script took 6.005 ms before, 6.034 ms after and 32.507 ms
