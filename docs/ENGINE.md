@@ -112,6 +112,12 @@ after all the fast code and nothing is remembered across an instruction lowered 
 because pyrlyn/jit keeps no float register across a call. x86-64 has only the generic code: its
 results must be read back from the window to make their NaN canonical.
 
+A remainder on the chain divides only when it has to. A dividend from zero up to the divisor is
+its own remainder, and one below twice the divisor leaves their difference, which is exact for
+doubles; those two cases are two comparisons and at most a subtraction, with no conversion to
+an integer. Anything else (a negative dividend, a larger one, a NaN) takes the guarded integer
+division. The wrap of an index or of a running sum, `i = (i + 1) % n`, is the common case.
+
 **Loops with carried locals (AArch64).** A loop whose every instruction has a form on the fast
 chain makes no call on that chain, so its numeric locals can stay in float registers from one
 iteration to the next. `carriedLoops` picks those loops, outermost first, and for each the
@@ -140,7 +146,7 @@ interprets.
 opens its frame; every object is a call into the allocator, though the allocator itself is now
 a bump through the collector's young region (docs/VALUE.md §4.12); a call of any native method
 but `push` goes through the call helper and the runtime's method dispatch; a number is always
-a double, so an integer loop converts to an integer and back around every remainder, and every
+a double, so a remainder that does divide converts to an integer and back, and every
 result is written to the frame window whether or not anything reads it there. Integers in
 registers, window stores made only where a guard leaves, and the optimizing tier (plan/T67.1:
 type feedback, call inline caches, deoptimization) are the next steps.

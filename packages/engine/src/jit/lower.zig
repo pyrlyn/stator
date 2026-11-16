@@ -1017,6 +1017,19 @@ const Lowerer = struct {
         for (loop.carried) |x| try l.know(vm.header + x.local, .{ .f = x.v, .double = true, .live = true });
     }
 
+    /// Goes on when `a cond b` and to `otherwise` when not, which a NaN makes it.
+    fn goOnIf(l: *Lowerer, cond: ir.FCond, a: VReg, b: VReg, otherwise: u32) !void {
+        const next = try l.block();
+        try l.cbr(.ne, try l.fcmp(cond, a, b), try l.konst(0), next, otherwise);
+        l.cur = next;
+    }
+
+    /// Ends one arm of a choice of values: `r` is `v`, and on to `join`.
+    fn settle(l: *Lowerer, r: VReg, v: VReg, join: u32) !void {
+        try l.emit(.{ .copy = .{ .dst = r, .src = v } });
+        try l.br(join);
+    }
+
     /// `a op b` on two doubles into window slot `s`; `kb` is `b` when the bytecode names it.
     /// A comparison the next instruction jumps on becomes the jump.
     fn fastBinary(l: *Lowerer, o: Op, a: VReg, b: VReg, kb: ?f64, s: u32) !void {
@@ -1039,19 +1052,38 @@ const Lowerer = struct {
             },
             .none => {
                 std.debug.assert(o == .mod);
+                // The wrap of an index or of a running sum seldom has anything to divide: a
+                // dividend from zero up to the divisor is its own remainder, and one below twice
+                // the divisor leaves their difference, which is exact (Sterbenz). A NaN fails
+                // every comparison here and so reaches the division's guards.
+                const r = l.f.newVReg();
+                const join = try l.block();
+                const divide = try l.block();
+                const above = try l.block();
+                try l.goOnIf(.ge, a, try l.fnum(0), divide);
+                try l.goOnIf(.lt, a, b, above);
+                try l.settle(r, a, join);
+                l.cur = above;
+                const less = try l.def(.typed, .{ .op = .sub, .ty = .f64, .dst = undefined, .a = a, .b = b });
+                try l.goOnIf(.lt, less, b, divide);
+                try l.settle(r, less, join);
+                l.cur = divide;
                 const n = try l.integerOf(a, null);
                 const m = try l.integerOf(b, kb);
                 if (kb == null or kb.? == 0) try l.bailIf(.eq, m, zero);
-                const r = try l.arith(.srem, n, m);
+                const rem = try l.arith(.srem, n, m);
                 const some = try l.block();
                 const none = try l.block();
-                try l.cbr(.ne, r, zero, some, none);
+                try l.cbr(.ne, rem, zero, some, none);
                 l.cur = none;
                 // A zero remainder has the dividend's sign, and no integer is -0.
                 try l.bailIf(.le, n, zero);
                 try l.br(some);
                 l.cur = some;
-                try l.putDouble(s, try l.def(.cvt, .{ .dst = undefined, .src = r, .from = .i64, .to = .f64 }));
+                try l.emit(.{ .cvt = .{ .dst = r, .src = rem, .from = .i64, .to = .f64 } });
+                try l.br(join);
+                l.cur = join;
+                try l.putDouble(s, r);
             },
         }
     }

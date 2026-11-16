@@ -240,6 +240,10 @@ test "the fast chain leaves for the generic code on anything but the doubles it 
     try expectRuns("function f(o) { let s = 1; s = s + 2; s = s + o; s = s * 2; return s; } f(3) + ',' + f('a') + ',' + f({ valueOf() { return 4; } })", "12,NaN,14");
     try expectRuns("function f() { let s = 0; for (let i = 0; i < 6; i += 1) { if (i == 3) s = s + 'x'; s = s + i; } return s; } f()", "3x345");
     try expectRuns("function f(n) { let sum = 0; for (let i = 0; i < n; i += 1) sum = (sum + i) % 65521; return sum; } f(10000) + ',' + f(0) + ',' + f(-1)", "2477,0,0");
+    // Remainders that take the dividend, one subtraction or the division; a divisor that is
+    // negative, zero, infinite or NaN.
+    try expectRuns("function f(a, b) { return a % b; } [f(3, 5), f(7, 5), f(5, 5), f(12, 5), f(2.5, 4), f(5.75, 4), f(0.5, 0.3), f(9.5, 0.3), Object.is(f(-0, 5), -0), Object.is(f(0, 5), 0), f(3, -5), f(7, -5), f(0, -3), f(3, Infinity), f(Infinity, Infinity), f(7, NaN), f(NaN, NaN), f(1e308, 6e307), f(1e-323, 5e-324), f(2 ** 53, 2 ** 52), f(-3, 5), f(4, 0), f(0, 0)].join()", "3,2,0,2,2.5,1.75,0.2,0.20000000000000034,true,true,3,2,0,3,NaN,NaN,NaN,4.0000000000000004e+307,0,0,-3,NaN,NaN");
+    try expectRuns("function f(n) { let i = 0; let c = 0; let s = 0; let d = 0; for (let k = 0; k < n; k += 1) { i = (i + 1) % 7; c += i; s = (s + k * 1000) % 97; d = (d - k) % 5; } return [c, i, s, d].join(); } f(100) + ';' + f(0) + ';' + f(3)", "297,2,90,0;0,0,0,0;6,3,90,-3");
     try expectRuns("function f(a, b) { let q = a / b; let p = a * b - q; return [q, p, a - b, 1 / (a * 0), a / 0 - a / 0].join(); } f(6, 4) + ';' + f(-1, 2)", "1.5,22.5,2,Infinity,NaN;-0.5,-1.5,-3,-Infinity,NaN");
     try expectRuns("function f(a) { let s = 0; for (let i = a; i < 4; i += 1) s += i; return s; } f(0) + ',' + f('2') + ',' + f(-0.5)", "6,02,7.5");
 }
@@ -269,7 +273,7 @@ test "a remainder loop runs without a helper" {
         .{ helpers.binary, helpers.truthy },
     );
     try std.testing.expectEqual(2, r.compiled);
-    // The first remainder is a zero, which the chain leaves to the generic code's inline case.
+    // No dividend here reaches twice the divisor, so nothing is divided either.
     try std.testing.expectEqual([2]usize{ 0, 0 }, r.calls);
 }
 
@@ -355,7 +359,9 @@ test "exact integer remainder stays in native code and other operands use the VM
         .{helpers.binary},
     );
     try std.testing.expectEqual(2, slow.compiled);
-    try std.testing.expectEqual(11, slow.calls[0]);
+    // Three of the eleven need no division and so no helper: 1.5 % 1 is one subtraction, and
+    // 1 % Infinity and 3 % 2^53 are their dividends.
+    try std.testing.expectEqual(8, slow.calls[0]);
 }
 
 test "a global name is looked up once per function" {
