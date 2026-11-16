@@ -926,7 +926,9 @@ slot field remains its own owner marker, so roots into its buffer still pin its 
 globals frame included), pending-exception cell and handoff slot are read precisely; its native
 stack, saved registers and the image's writable segments conservatively, each word masked with
 `JSRT_PAYLOAD_MASK`. That is what lets runtime C keep raw pointers in locals across allocations
-(plan-notes 163). A rooted object is pinned for the collection; an object whose count is 0 and
+(plan-notes 163). On Mach-O a segment is read section by section, without the templates a thread's
+variables are copied from: nothing is ever stored in those, and thread-local buffers can make them
+most of the segment. A word outside the heap's address range is dismissed before any lookup. A rooted object is pinned for the collection; an object whose count is 0 and
 that no root names is freed, releasing what it held. Older cycles go to pyrlyn/gc's trial deletion
 (Bacon-Rajan), run with the roots pinned.
 

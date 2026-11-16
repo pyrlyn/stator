@@ -799,6 +799,14 @@ extern "c" fn dladdr(addr: *const anyopaque, info: *Dlinfo) c_int;
 
 fn addData(lo: usize, hi: usize) void {
     if (hi <= lo) return;
+    // A section that follows the last one, alignment padding aside, extends its range.
+    if (data_range_count != 0) {
+        const last = &data_ranges[data_range_count - 1];
+        if (lo >= last.hi and lo - last.hi < 64) {
+            last.hi = hi;
+            return;
+        }
+    }
     if (data_range_count == data_ranges.len) c.jsrt_panic("collector: too many writable segments");
     data_ranges[data_range_count] = .{ .lo = lo, .hi = hi };
     data_range_count += 1;
@@ -839,10 +847,15 @@ fn imageInit() void {
             const s = slide orelse c.jsrt_panic("collector: image has no __TEXT");
             segs = all;
             while (segs.next()) |seg| {
-                if (seg.vmsize != 0 and seg.initprot.WRITE) {
-                    const lo = seg.vmaddr +% s;
-                    addData(lo, lo + seg.vmsize);
-                }
+                if (seg.vmsize == 0 or !seg.initprot.WRITE) continue;
+                if (seg.nsects == 0) addData(seg.vmaddr +% s, seg.vmaddr +% s + seg.vmsize);
+                const sections: [*]const std.macho.section_64 = @ptrCast(@alignCast(@as([*]const u8, @ptrCast(seg)) + @sizeOf(std.macho.segment_command_64)));
+                for (sections[0..seg.nsects]) |sect| switch (sect.type()) {
+                    // What a thread's variables are copied from: no value is ever stored in
+                    // these, and a program's thread-local buffers make them most of the segment.
+                    std.macho.S_THREAD_LOCAL_REGULAR, std.macho.S_THREAD_LOCAL_ZEROFILL, std.macho.S_THREAD_LOCAL_VARIABLES => {},
+                    else => addData(sect.addr +% s, sect.addr +% s + sect.size),
+                };
             }
         },
         .linux => {
@@ -1272,8 +1285,12 @@ fn pin(block: *Header) void {
     survive(block);
 }
 
-fn noteWord(w: usize) void {
-    if (findBlock(w & mem.payload_mask)) |block| pin(block);
+inline fn noteWord(w: usize) void {
+    const addr = w & mem.payload_mask;
+    // Most words of a stack or of a data segment are no address in the heap: answered here,
+    // a segment is scanned at a word a cycle instead of a call a word.
+    if (addr -% heap_lo >= heap_hi -% heap_lo) return;
+    if (findBlock(addr)) |block| pin(block);
 }
 
 fn scanRange(lo: usize, hi: usize) void {
