@@ -225,6 +225,36 @@ test "a numeric loop runs without a helper" {
     try std.testing.expectEqual([3]usize{ 0, 0, 1 }, r.calls);
 }
 
+test "the fast chain leaves for the generic code on anything but the doubles it expects" {
+    // Strings and objects where the chain guards for doubles; remainders that are -0,
+    // NaN or fractional; NaN comparisons, fused with their jump and not; a TDZ read and write
+    // after the chain has stored; a value whose type changes inside a loop.
+    try expectRuns("function f(a) { let s = a; for (let i = 0; i < 5; i += 1) s = s + i; return s; } f('x') + f(1)", "x0123411");
+    try expectRuns("function f(a, b) { return a % b; } [Object.is(f(-4, 2), -0), Object.is(f(4, 2), 0), Object.is(f(-0, 3), -0), Object.is(f(0, 3), 0), f(5, 0), f(5.5, 2), f(-7, 3), f(7, -3), f(2 ** 53, 3), f(Infinity, 2), f(3, Infinity), f(NaN, 2), f('7', 4)].join()", "true,true,true,true,NaN,1.5,-1,1,2,NaN,3,NaN,3");
+    try expectRuns("function f(a, b) { let n = 0; if (a < b) n += 1; if (a >= b) n += 2; if (a == b) n += 4; if (a != b) n += 8; if (a === b) n += 16; if (a !== b) n += 32; if (a > b) n += 64; if (a <= b) n += 128; return n; } [f(1, 2), f(2, 1), f(1, 1), f(NaN, 1), f(NaN, NaN), f(0, -0), f('1', 1), f(null, undefined), f(null, 0)].join()", "169,106,150,40,40,150,166,36,170");
+    try expectRuns("function f(a, b) { const x = a < b; const y = (a >= b) + 1; let i = 0; do { i += 1; } while (i < b); return [x, y, i, a < b || a, a > b && b].join(); } f(1, 3) + ';' + f(3, 1) + ';' + f(NaN, 2)", "true,1,3,true,false;false,2,1,3,1;false,1,2,NaN,false");
+    try expectRuns("function f() { let s = 1; try { s = s + y; } catch (e) { return s + ':' + (e instanceof ReferenceError); } let y = 2; return s; } f()", "1:true");
+    try expectRuns("function f() { let s = 1; try { s = s + 2; y = s; } catch (e) { return s + ':' + (e instanceof ReferenceError); } let y = 2; return s; } f()", "3:true");
+    try expectRuns("function f(x) { let a = x; a++; ++a; a--; let b = a++ + ++a; return a + ',' + b; } f(1) + ';' + f('1') + ';' + f(1.5)", "4,6;4,6;4.5,7");
+    try expectRuns("function f() { let a = 5; let b = a; a = 7; const c = a; a = a + c; return a + b * 2; } f()", "24");
+    try expectRuns("function f(o) { let s = 1; s = s + 2; s = s + o; s = s * 2; return s; } f(3) + ',' + f('a') + ',' + f({ valueOf() { return 4; } })", "12,NaN,14");
+    try expectRuns("function f() { let s = 0; for (let i = 0; i < 6; i += 1) { if (i == 3) s = s + 'x'; s = s + i; } return s; } f()", "3x345");
+    try expectRuns("function f(n) { let sum = 0; for (let i = 0; i < n; i += 1) sum = (sum + i) % 65521; return sum; } f(10000) + ',' + f(0) + ',' + f(-1)", "2477,0,0");
+    try expectRuns("function f(a, b) { let q = a / b; let p = a * b - q; return [q, p, a - b, 1 / (a * 0), a / 0 - a / 0].join(); } f(6, 4) + ';' + f(-1, 2)", "1.5,22.5,2,Infinity,NaN;-0.5,-1.5,-3,-Infinity,NaN");
+    try expectRuns("function f(a) { let s = 0; for (let i = a; i < 4; i += 1) s += i; return s; } f(0) + ',' + f('2') + ',' + f(-0.5)", "6,02,7.5");
+}
+
+test "a remainder loop runs without a helper" {
+    if (!jit.available) return error.SkipZigTest;
+    const r = try jitCost(
+        "function f(n) { let sum = 0; for (let i = 0; i < n; i += 1) sum = (sum + i) % 65521; return sum; } f(10000)",
+        .{ helpers.binary, helpers.truthy },
+    );
+    try std.testing.expectEqual(2, r.compiled);
+    // The first remainder is a zero, which the chain leaves to the generic code's inline case.
+    try std.testing.expectEqual([2]usize{ 0, 0 }, r.calls);
+}
+
 test "a cached property read misses once per site" {
     if (!jit.available) return error.SkipZigTest;
     const r = try jitCost(

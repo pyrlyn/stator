@@ -97,6 +97,21 @@ collects needs no stack maps.
 - a pure push followed by a store to a local nothing reads (the prologue's `this`, `new.target`,
   `home` and `callee` when the body does not use them) is not emitted.
 
+**The fast chain (AArch64).** Inside one straight run of bytecode the lowerer remembers what
+each window slot holds: the register it was loaded into or computed in, whether it is a double,
+whether it is past its TDZ, and the constant when the bytecode names one (`lower.zig`, `Known`).
+Constants, moves between locals and operands, `+ - * / %` and the comparisons on doubles, and
+the fused local forms then guard and load each operand once per run instead of once per
+instruction, and a comparison the next instruction jumps on becomes the branch, with no boolean
+written. Every result is still stored in the window at once, so the window is current at every
+instruction boundary. A guard that fails (an operand that is not a double, a local in its TDZ,
+a remainder that is not an integer's or is a zero of a non-positive dividend) therefore just
+branches to the same instruction in a second, generic copy of the run, which finishes it with
+the fast paths and helpers above and rejoins at the next run. The generic copies are emitted
+after all the fast code and nothing is remembered across an instruction lowered generically,
+because pyrlyn/jit keeps no float register across a call. x86-64 has only the generic code: its
+results must be read back from the window to make their NaN canonical.
+
 Everything else (mixed operands, strings, a cache miss, calls, environments, construction,
 `throw`) calls a helper in `helpers.zig` that runs the VM's own function for the
 operation. A helper answers 1 when it left an exception pending; the code then leaves through its
@@ -110,10 +125,10 @@ interprets.
 **What it is not yet.** A direct call still goes through one helper that checks the callee and
 opens its frame; every object is a call into the allocator, though the allocator itself is now
 a bump through the collector's young region (docs/VALUE.md §4.12); a call of any native method
-but `push` goes through the call helper and the runtime's method dispatch; every operand goes
-through the frame window in memory, which is most of the time of every kernel in §4. Compiled
-code that keeps values in registers and the optimizing tier (plan/T67.1: type feedback, call
-inline caches, deoptimization) are the next steps.
+but `push` goes through the call helper and the runtime's method dispatch; a value lives in a
+register only until the end of its straight run of bytecode, so a loop reloads and guards its
+variables from the frame window on every iteration. Loop-carried registers and the optimizing
+tier (plan/T67.1: type feedback, call inline caches, deoptimization) are the next steps.
 
 ## 4. Tests and benchmark
 

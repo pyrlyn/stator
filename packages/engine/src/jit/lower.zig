@@ -34,6 +34,42 @@ fn imm(v: u64) i64 {
     return @bitCast(v);
 }
 
+/// What binary operator `o` is on two doubles, where loose and strict equality agree.
+fn doubleForm(o: Op) union(enum) { none, arith: ir.TArith, cmp: ir.FCond } {
+    return switch (o) {
+        inline .add, .sub, .mul, .div => |x| .{ .arith = @field(ir.TArith, @tagName(x)) },
+        inline .lt, .gt, .le, .ge => |x| .{ .cmp = @field(ir.FCond, @tagName(x)) },
+        .eq, .seq => .{ .cmp = .eq },
+        .ne, .sne => .{ .cmp = .ne },
+        else => .none,
+    };
+}
+
+/// 2^53: a double of a smaller magnitude that is an integer converts to i64 and back exactly.
+const integer_limit: f64 = 9007199254740992.0;
+
+/// AArch64 only: an x86-64 result must be read back from the window to make its NaN canonical
+/// (`canonicalize`), which is the load the fast chain exists to avoid.
+const fast_chain = builtin.cpu.arch == .aarch64;
+
+/// What the fast chain knows of the value a window slot holds.
+const Known = struct {
+    /// Its bits in an integer register.
+    bits: ?VReg = null,
+    /// Its bits in a float register.
+    f: ?VReg = null,
+    /// It is a double.
+    double: bool = false,
+    /// It is not the TDZ marker.
+    live: bool = false,
+    /// The double, when the bytecode names it.
+    konst: ?f64 = null,
+};
+
+/// A guard of the fast chain: the branch `op` of `block`, to be pointed at the generic code of
+/// instruction `at`.
+const Bail = struct { block: u32, op: usize, at: usize };
+
 const Lowerer = struct {
     f: *ir.Func,
     t: *const bc.Template,
@@ -47,6 +83,11 @@ const Lowerer = struct {
     /// Index in `insns` of the instruction being lowered.
     at: usize = 0,
     blocks: std.AutoHashMapUnmanaged(u32, u32) = .empty,
+    /// By window index, for the block of the bytecode being lowered.
+    known: std.AutoHashMapUnmanaged(u32, Known) = .empty,
+    bails: std.ArrayList(Bail) = .empty,
+    /// The fast chain lowered the next instruction with this one.
+    fused: bool = false,
 
     fn block(l: *Lowerer) !u32 {
         return l.f.addBlock("b");
@@ -94,6 +135,10 @@ const Lowerer = struct {
 
     fn store(l: *Lowerer, index: u32, v: VReg) !void {
         try l.emit(.{ .store = .{ .base = l.w, .disp = disp(index), .src = v } });
+    }
+
+    fn storeF(l: *Lowerer, index: u32, v: VReg) !void {
+        try l.emit(.{ .store = .{ .base = l.w, .disp = disp(index), .src = v, .ty = .f64 } });
     }
 
     fn storeConst(l: *Lowerer, index: u32, v: u64) !void {
@@ -162,15 +207,8 @@ const Lowerer = struct {
 
     fn binaryOp(l: *Lowerer, o: Op, s: u32) !void {
         if (o == .mod) return l.remainder(s);
-        // On two doubles loose and strict equality agree.
-        const fast: union(enum) { none, arith: ir.TArith, cmp: ir.FCond } = switch (o) {
-            inline .add, .sub, .mul, .div => |x| .{ .arith = @field(ir.TArith, @tagName(x)) },
-            inline .lt, .gt, .le, .ge => |x| .{ .cmp = @field(ir.FCond, @tagName(x)) },
-            .eq, .seq => .{ .cmp = .eq },
-            .ne, .sne => .{ .cmp = .ne },
-            else => .none,
-        };
-        if (fast == .none) return l.helper(h.binary, &.{ s, @backingInt(o) });
+        const form = doubleForm(o);
+        if (form == .none) return l.helper(h.binary, &.{ s, @backingInt(o) });
 
         const slow = try l.block();
         const join = try l.block();
@@ -178,17 +216,20 @@ const Lowerer = struct {
         try l.guardDouble(try l.load(s + 1), slow);
         const a = try l.loadF(s);
         const b = try l.loadF(s + 1);
-        switch (fast) {
+        switch (form) {
             .none => unreachable,
             .arith => |ta| try l.typedF64(ta, a, b, s, join),
             .cmp => |cond| {
-                const d = try l.def(.fcmp, .{ .cond = cond, .ty = .f64, .dst = undefined, .a = a, .b = b });
-                // JSRT_TRUE is JSRT_FALSE + 1.
-                try l.store(s, try l.arith(.add, d, try l.konst(imm(c.JSRT_FALSE))));
+                try l.store(s, try l.boolean(try l.fcmp(cond, a, b)));
                 try l.br(join);
             },
         }
         try l.slowPath(slow, join, h.binary, o, s);
+    }
+
+    /// The boxed boolean of a 0 or 1: JSRT_TRUE is JSRT_FALSE + 1.
+    fn boolean(l: *Lowerer, bit: VReg) !VReg {
+        return l.arith(.add, bit, try l.konst(imm(c.JSRT_FALSE)));
     }
 
     /// The integer case of vm.jsMod, expressed with the backend's existing conversions and
@@ -198,15 +239,22 @@ const Lowerer = struct {
         const bits = try l.load(s);
         const magnitude = try l.arith(.@"and", bits, try l.konst(0x7FFF_FFFF_FFFF_FFFF));
         const in_range = try l.block();
-        const limit: f64 = 9007199254740992.0;
-        try l.cbr(.uge, magnitude, try l.konst(@bitCast(limit)), slow, in_range);
+        try l.cbr(.uge, magnitude, try l.konst(@bitCast(integer_limit)), slow, in_range);
         l.cur = in_range;
-        const value = try l.loadF(s);
-        const integer = try l.def(.cvt, .{ .dst = undefined, .src = value, .from = .f64, .to = .i64 });
-        const back = try l.def(.cvt, .{ .dst = undefined, .src = integer, .from = .i64, .to = .f64 });
-        const exact = try l.def(.fcmp, .{ .dst = undefined, .cond = .eq, .ty = .f64, .a = value, .b = back });
+        const integer, const exact = try l.truncated(try l.loadF(s));
         try l.guardEq(exact, 1, slow);
         return integer;
+    }
+
+    /// Double `value` as an integer, and whether it was one: 1 when converting back gives it.
+    fn truncated(l: *Lowerer, value: VReg) !struct { VReg, VReg } {
+        const integer = try l.def(.cvt, .{ .dst = undefined, .src = value, .from = .f64, .to = .i64 });
+        const back = try l.def(.cvt, .{ .dst = undefined, .src = integer, .from = .i64, .to = .f64 });
+        return .{ integer, try l.fcmp(.eq, value, back) };
+    }
+
+    fn fcmp(l: *Lowerer, cond: ir.FCond, a: VReg, b: VReg) !VReg {
+        return l.def(.fcmp, .{ .dst = undefined, .cond = cond, .ty = .f64, .a = a, .b = b });
     }
 
     fn remainder(l: *Lowerer, s: u32) !void {
@@ -224,7 +272,7 @@ const Lowerer = struct {
         try l.cbr(.eq, r, zero, signed_zero, number);
         l.cur = number;
         const value = try l.def(.cvt, .{ .dst = undefined, .src = r, .from = .i64, .to = .f64 });
-        try l.emit(.{ .store = .{ .base = l.w, .disp = disp(s), .src = value, .ty = .f64 } });
+        try l.storeF(s, value);
         try l.br(join);
         l.cur = signed_zero;
         // Integer conversion loses -0; JavaScript's zero remainder keeps the dividend's sign.
@@ -236,7 +284,7 @@ const Lowerer = struct {
     /// `a op b` in f64 into window slot `s`, then on to `join` with its NaN canonical.
     fn typedF64(l: *Lowerer, o: ir.TArith, a: VReg, b: VReg, s: u32, join: u32) !void {
         const d = try l.def(.typed, .{ .op = o, .ty = .f64, .dst = undefined, .a = a, .b = b });
-        try l.emit(.{ .store = .{ .base = l.w, .disp = disp(s), .src = d, .ty = .f64 } });
+        try l.storeF(s, d);
         try l.canonicalize(s, join);
     }
 
@@ -393,7 +441,7 @@ const Lowerer = struct {
         const one = try l.konst(1);
         try l.emit(.{ .store = .{ .base = p, .disp = @offsetOf(c.JSRTArray, "length"), .src = try l.arith(.add, word, one) } });
         const n = try l.def(.cvt, .{ .dst = undefined, .src = try l.arith(.add, len, one), .from = .i64, .to = .f64 });
-        try l.emit(.{ .store = .{ .base = l.w, .disp = disp(s), .src = n, .ty = .f64 } });
+        try l.storeF(s, n);
         try l.br(join);
         l.cur = slow;
         try l.helper(h.call, &.{ s, 1 });
@@ -531,7 +579,7 @@ const Lowerer = struct {
         const v = try l.load(s);
         const other = try l.ifArray(v);
         const len = try l.def(.cvt, .{ .dst = undefined, .src = try l.arrayLength(try l.ptrOf(v)), .from = .i64, .to = .f64 });
-        try l.emit(.{ .store = .{ .base = l.w, .disp = disp(s), .src = len, .ty = .f64 } });
+        try l.storeF(s, len);
         try l.goOn(join, other);
         try l.cachedProp(s, key, ic);
         try l.goOn(join, join);
@@ -679,6 +727,225 @@ const Lowerer = struct {
         try l.br(l.exit);
         l.cur = ok;
         return v;
+    }
+
+    fn knownAt(l: *Lowerer, index: u32) Known {
+        return l.known.get(index) orelse .{};
+    }
+
+    fn know(l: *Lowerer, index: u32, k: Known) !void {
+        try l.known.put(l.f.alloc(), index, k);
+    }
+
+    /// Leaves the fast chain when `a cond b`. The instruction then runs from its start in the
+    /// generic code, so every guard of an instruction comes before its first store.
+    fn bailIf(l: *Lowerer, cond: ir.CondCode, a: VReg, b: VReg) !void {
+        const from = l.cur.?;
+        const next = try l.block();
+        // `generic` points the branch at the instruction's generic code once that exists.
+        try l.cbr(cond, a, b, l.exit, next);
+        try l.bails.append(l.f.alloc(), .{ .block = from, .op = l.f.blocks.items[from].ops.items.len - 1, .at = l.at });
+        l.cur = next;
+    }
+
+    fn bitsOf(l: *Lowerer, index: u32, k: *Known) !VReg {
+        if (k.bits == null) k.bits = try l.load(index);
+        return k.bits.?;
+    }
+
+    fn fnum(l: *Lowerer, x: f64) !VReg {
+        return l.def(.fconst, .{ .dst = undefined, .ty = .f64, .bits = rt.number(x) });
+    }
+
+    /// Window slot `index` as a double in a float register; any other value leaves the chain.
+    fn doubleOf(l: *Lowerer, index: u32) !VReg {
+        var k = l.knownAt(index);
+        if (!k.double) {
+            const m = try l.konst(imm(mask));
+            try l.bailIf(.eq, try l.arith(.@"and", try l.bitsOf(index, &k), m), m);
+            k.double = true;
+            k.live = true;
+        }
+        if (k.f == null) k.f = if (k.konst) |x| try l.fnum(x) else try l.loadF(index);
+        try l.know(index, k);
+        return k.f.?;
+    }
+
+    fn putDouble(l: *Lowerer, index: u32, f: VReg) !void {
+        try l.storeF(index, f);
+        try l.know(index, .{ .f = f, .double = true, .live = true });
+    }
+
+    /// Copies window slot `from` into slot `to`, with what is known of its value.
+    fn copySlot(l: *Lowerer, from: u32, to: u32) !void {
+        var k = l.knownAt(from);
+        if (k.konst) |x| {
+            try l.storeConst(to, rt.number(x));
+        } else if (k.bits == null and k.f != null) {
+            try l.storeF(to, k.f.?);
+        } else try l.store(to, try l.bitsOf(from, &k));
+        try l.know(from, k);
+        try l.know(to, k);
+    }
+
+    /// Leaves the fast chain when local `local` is still in its TDZ: the generic code throws.
+    fn liveLocal(l: *Lowerer, local: u32) !void {
+        const index = vm.header + local;
+        var k = l.knownAt(index);
+        if (k.live) return;
+        try l.bailIf(.eq, try l.bitsOf(index, &k), try l.konst(imm(rt.uninitialized)));
+        k.live = true;
+        try l.know(index, k);
+    }
+
+    /// The integer that double `f` is, as vm.jsMod's integer case wants it: a fraction, a NaN,
+    /// an infinity or a magnitude from 2^53 leaves the chain. `k` is `f` when the bytecode
+    /// names it.
+    fn integerOf(l: *Lowerer, f: VReg, k: ?f64) !VReg {
+        if (k) |x| if (@abs(x) < integer_limit and @trunc(x) == x) return l.konst(@intFromFloat(x));
+        const zero = try l.konst(0);
+        try l.bailIf(.eq, try l.fcmp(.lt, f, try l.fnum(integer_limit)), zero);
+        try l.bailIf(.eq, try l.fcmp(.gt, f, try l.fnum(-integer_limit)), zero);
+        const integer, const exact = try l.truncated(f);
+        try l.bailIf(.eq, exact, zero);
+        return integer;
+    }
+
+    /// `a op b` on two doubles into window slot `s`; `kb` is `b` when the bytecode names it.
+    /// A comparison the next instruction jumps on becomes the jump.
+    fn fastBinary(l: *Lowerer, o: Op, a: VReg, b: VReg, kb: ?f64, s: u32) !void {
+        const zero = try l.konst(0);
+        switch (doubleForm(o)) {
+            .arith => |ta| try l.putDouble(s, try l.def(.typed, .{ .op = ta, .ty = .f64, .dst = undefined, .a = a, .b = b })),
+            .cmp => |cond| {
+                const bit = try l.fcmp(cond, a, b);
+                const j = l.insns[l.at + 1];
+                if ((j.op == .jump_if_false or j.op == .jump_if_true) and !j.leader and l.slot(j.depth - 1) == s) {
+                    const target = try l.blockAt(j.a);
+                    const fall = try l.blockAt(j.next);
+                    const on_true, const on_false = if (j.op == .jump_if_true) .{ target, fall } else .{ fall, target };
+                    try l.cbr(.ne, bit, zero, on_true, on_false);
+                    l.fused = true;
+                    return;
+                }
+                const v = try l.boolean(bit);
+                try l.store(s, v);
+                try l.know(s, .{ .bits = v, .live = true });
+            },
+            .none => {
+                std.debug.assert(o == .mod);
+                const n = try l.integerOf(a, null);
+                const m = try l.integerOf(b, kb);
+                if (kb == null or kb.? == 0) try l.bailIf(.eq, m, zero);
+                const r = try l.arith(.srem, n, m);
+                const some = try l.block();
+                const none = try l.block();
+                try l.cbr(.ne, r, zero, some, none);
+                l.cur = none;
+                // A zero remainder has the dividend's sign, and no integer is -0.
+                try l.bailIf(.le, n, zero);
+                try l.br(some);
+                l.cur = some;
+                try l.putDouble(s, try l.def(.cvt, .{ .dst = undefined, .src = r, .from = .i64, .to = .f64 }));
+            },
+        }
+    }
+
+    /// Lowers `i` on the fast chain (docs/ENGINE.md §3): what this block of the bytecode has
+    /// loaded or computed stays in registers, still stored in the window at once, and a value
+    /// the fast form cannot take leaves for the generic code (`bailIf`). Answers false for an
+    /// instruction with no fast form.
+    fn fast(l: *Lowerer, i: analyze.Insn) !bool {
+        const d = i.depth;
+        switch (i.op) {
+            .undef, .null, .true, .false, .uninit => {
+                try l.insn(i);
+                try l.know(l.slot(d), .{ .live = i.op != .uninit });
+            },
+            .int, .num => {
+                const x: f64 = if (i.op == .int) @floatFromInt(@as(i32, @bitCast(i.a))) else l.t.numbers[i.a];
+                try l.insn(i);
+                try l.know(l.slot(d), .{ .double = true, .live = true, .konst = x });
+            },
+            .pop => {},
+            .swap => {
+                try l.insn(i);
+                const a = l.knownAt(l.slot(d - 2));
+                try l.know(l.slot(d - 2), l.knownAt(l.slot(d - 1)));
+                try l.know(l.slot(d - 1), a);
+            },
+            .dup => try l.copySlot(l.slot(d - 1), l.slot(d)),
+            .callee => try l.copySlot(0, l.slot(d)),
+            .this_raw => try l.copySlot(1, l.slot(d)),
+            .new_target => try l.copySlot(2, l.slot(d)),
+            .load, .load_checked => {
+                if (i.op == .load_checked) try l.liveLocal(i.a);
+                try l.copySlot(vm.header + i.a, l.slot(d));
+            },
+            .store, .store_checked => {
+                if (i.op == .store_checked) try l.liveLocal(i.a);
+                try l.copySlot(l.slot(d - 1), vm.header + i.a);
+            },
+            .inc_local, .dec_local => {
+                const x = try l.doubleOf(vm.header + i.a);
+                const ta: ir.TArith = if (i.op == .inc_local) .add else .sub;
+                const r = try l.def(.typed, .{ .op = ta, .ty = .f64, .dst = undefined, .a = x, .b = try l.fnum(1) });
+                try l.putDouble(l.slot(d), r);
+                try l.putDouble(vm.header + i.a, r);
+            },
+            .add_local_int, .sub_local_int, .lt_local_int, .le_local_int => {
+                const k: f64 = @floatFromInt(@as(i32, @bitCast(i.c)));
+                const a = try l.doubleOf(vm.header + i.a);
+                try l.fastBinary(bc.localOperator(i.op), a, try l.fnum(k), k, l.slot(d));
+            },
+            .add_locals, .sub_locals, .lt_locals, .le_locals => {
+                const a = try l.doubleOf(vm.header + i.a);
+                const b = try l.doubleOf(vm.header + i.c);
+                try l.fastBinary(bc.localOperator(i.op), a, b, null, l.slot(d));
+            },
+            .add_store_local => {
+                const s = l.slot(d - 2);
+                const a = try l.doubleOf(s);
+                const b = try l.doubleOf(s + 1);
+                try l.liveLocal(i.a);
+                try l.fastBinary(.add, a, b, null, s);
+                try l.copySlot(s, vm.header + i.a);
+            },
+            .add, .sub, .mul, .div, .mod, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge => {
+                const s = l.slot(d - 2);
+                const a = try l.doubleOf(s);
+                const b = try l.doubleOf(s + 1);
+                try l.fastBinary(i.op, a, b, l.knownAt(s + 1).konst, s);
+            },
+            else => return false,
+        }
+        return true;
+    }
+
+    /// The generic code the fast chain's guards leave for: from the first guarded instruction
+    /// of a block of the bytecode to the block's end. It comes after all the fast code, so no
+    /// register of the fast chain is live across a helper call made here.
+    fn generic(l: *Lowerer, dead: []const bool) !void {
+        const bails = l.bails.items;
+        var next: usize = 0;
+        while (next < bails.len) {
+            var at = bails[next].at;
+            l.cur = null;
+            while (true) : (at += 1) {
+                if (l.cur == null or (next < bails.len and bails[next].at == at)) {
+                    const b = try l.block();
+                    if (l.cur != null) try l.br(b);
+                    l.cur = b;
+                    while (next < bails.len and bails[next].at == at) : (next += 1) {
+                        l.f.blocks.items[bails[next].block].ops.items[bails[next].op].cbr.then = b;
+                    }
+                }
+                l.at = at;
+                if (!dead[at]) try l.insn(l.insns[at]);
+                if (at + 1 == l.insns.len or l.insns[at + 1].leader) break;
+            }
+            if (l.cur != null) try l.br(try l.blockAt(l.insns[at + 1].pc));
+        }
     }
 
     fn insn(l: *Lowerer, i: analyze.Insn) !void {
@@ -862,9 +1129,19 @@ pub fn lower(f: *ir.Func, t: *const bc.Template, plan: analyze.Plan) !void {
             const b = try l.blockAt(i.pc);
             if (l.cur != null) try l.br(b);
             l.cur = b;
+            l.known.clearRetainingCapacity();
         }
-        if (!skip) try l.insn(i);
+        if (l.fused) {
+            l.fused = false;
+            continue;
+        }
+        if (skip) continue;
+        if (fast_chain and try l.fast(i)) continue;
+        try l.insn(i);
+        // It may have called a helper, across which no register of the chain is kept.
+        l.known.clearRetainingCapacity();
     }
+    try l.generic(dead);
 }
 
 /// Pairs of a push without effects and a store into a local nothing reads, both left out: the
