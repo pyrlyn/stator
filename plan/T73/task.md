@@ -2,7 +2,7 @@
 status: in progress
 priority: P1
 complexity: 5
-readiness: 45%
+readiness: 60%
 agent: Claude Code / claude-fable-5-2
 ---
 
@@ -100,6 +100,24 @@ and cycles are at 4.8x and 4.6x. 12, 13 and 16 are still to do, and the profiles
     shape table or a cache until an instruction without a form runs.
 19. A dynamic object of fewer bytes: 88 for two properties, most of it fields a literal never
     uses (`proto`, `ctor`, `frozen`, a `slots` pointer to the next word), where V8 has 20.
+
+12, 13 and 18 are in (`progress.md`, "Literals on the fast chain, allocated in place"): a
+literal is bumped out of the young run by the compiled code, its members are stores, its shape
+is stored once, a captured variable is read and written in place, and a local read after its
+declaration takes no TDZ check. Cycles went from 4.64x to 1.84x of V8's time and objects from
+4.80x to 3.93x; numeric stays ahead. 16 and 19 are still to do, and the cycle kernel's machine
+code, about 200 instructions an iteration now, adds:
+
+20. Locals no read can find uninitialized. A `let` or `const` whose every use follows its
+    declaration in the same function needs neither the `uninit; store` pair at the scope's
+    entry nor the guard the fused local operations take (`liveLocal`). The bytecode compiler
+    knows which those are when it resolves the names.
+21. Block starts found, not marked. Each literal sets its bit in the young region's index, 16
+    instructions for a fact the block's own header states. The collector can index the open
+    run when it closes it, by walking the headers from the run's start.
+22. Two literals in a row out of one bump: one limit test and one move of the run for both.
+23. The read loop of the objects kernel asks every element for its shape, which is what the
+    feedback tier of T67.1 is for; a collection there takes 130 us against 23 on cycles.
 
 Files: `packages/engine/src/{vm,compile,bytecode}.zig`, `packages/engine/src/jit/`,
 `packages/runtime/src/{jsrt_alloc,jsrt_gc}.zig`, `packages/runtime/include/jsrt_value.h`. Verify:

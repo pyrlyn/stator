@@ -368,3 +368,81 @@ every `define` and every read, though the literal was made two instructions earl
 13 and 18 in `task.md` follow from that.
 
 The Check still fails on objects and cycles, so the card stays open.
+
+## Literals on the fast chain, allocated in place (2026-11-16)
+
+Steps 18, 12 and 13 of `task.md`, then what the machine code of the cycle kernel showed.
+Each row is the median of five interleaved processes per engine, as before; V8 moved by less
+than 3% between the runs.
+
+| Change                                       | Record                                                 | cycles us | objects us | numeric us |
+| -------------------------------------------- | ------------------------------------------------------ | --------: | ---------: | ---------: |
+| before (`31bd814b`)                          | [`remainder-and-roots.json`](remainder-and-roots.json) |    25.099 |     21.103 |     16.710 |
+| literals on the fast chain (`5bfaff0b`)      | [`literals-on-chain.json`](literals-on-chain.json)     |    15.919 |     18.764 |     16.574 |
+| the allocation and captured variables inline | [`inline-allocation.json`](inline-allocation.json)     |    15.623 |     16.205 |     16.727 |
+| one slow path, one shape store, fewer checks | [`shape-and-tdz.json`](shape-and-tdz.json)             |     9.996 |     16.524 |     16.513 |
+
+1. **Literals on the fast chain** (`5bfaff0b`). A literal made in a run of bytecode is followed
+   by the lowerer: `define` is a store into a slot whose offset the shape table gave when the
+   function compiled, a read of a property it has is the value that was stored, and a write of
+   one is a store. Nothing asks the object, the shape table or a cache until an instruction
+   without a form runs. A literal that has lived through a call takes the write barrier.
+2. **The allocation inline.** The young region's open run is two words the runtime exports
+   (`JSRTYoungRun`, `docs/VALUE.md` §4.12). The compiled code bumps it, sets the block's start
+   bit, writes the header and the object's words, and calls the allocator only when the run is
+   full. The run reads as full while another thread may allocate, under `JSRT_GC_STRESS`, and
+   in the sanitized flavor, which has no young region; all three keep the call.
+3. **Captured variables in place.** `load_env` and `store_env` walk the environment chain in
+   compiled code; a variable still uninitialized leaves the chain for the generic instruction,
+   which throws.
+
+After 2 the cycle kernel had moved by 2%. The machine code said why: the allocator's call sat
+in the middle of the run, so every value the lowerer held across it needed one of the ten
+call-preserved registers, and the register allocator, whose intervals have no holes, spilled
+the window base and reloaded it at each of 187 uses. The slow path now comes after the fill in
+block order and shares no value with it: it reloads what it needs from the window. Stack
+references in the compiled `bench` went from 187 to 10, its length from 1284 to 738
+instructions. Three more changes came out of the same listing:
+
+4. A literal's shape is stored once, before the next guard, call or end of the run, instead of
+   once per member.
+5. A literal needs no barrier while it is as dirty as it was born. When the allocator is
+   called, the literals made earlier in the run are marked again, so they stay that way.
+6. The bytecode compiler emits no TDZ check for a read or a write of a local it has already
+   initialized on every path that reaches the instruction (`docs/INTERPRETER.md`, "TDZ
+   checks"). A `switch` clause, a closure and a loop's back edge keep theirs. The interpreter
+   gains the same.
+
+Samples, warmups, source hashes and the compilation proof of the last run are in
+[`shape-and-tdz.json`](shape-and-tdz.json); its metadata names `5bfaff0b` with a dirty tree,
+which is the content of the commits that follow it here.
+
+| Kernel  |  V8 us | V8 IQR        | Stator us | Stator IQR    | Stator / V8 |
+| ------- | -----: | ------------- | --------: | ------------- | ----------: |
+| numeric | 22.075 | 22.040-22.132 |    16.513 | 16.501-16.530 |        0.75 |
+| objects |  4.201 | 4.201-4.232   |    16.524 | 16.510-16.593 |        3.93 |
+| cycles  |  5.445 | 5.433-5.460   |     9.996 | 9.958-10.018  |        1.84 |
+
+Numeric holds: Stator's slowest process (16.756 us) is faster than V8's fastest (22.021 us).
+Stator's collections in the instrumented runs: 3088 on cycles with a mean pause of 23.1 us,
+1123 on objects with 130.2 us. The load average was between 6 and 7 throughout.
+
+Where the cycle kernel stands (`sample` against the compiled function's addresses): generated
+code is 88% of the samples and the collection 3%. An iteration is about 200 instructions and
+43 cycles against V8's 22. What is left in it: two allocations of about 55 instructions each,
+16 of them the start bit; about 20 stores of results to the frame window that no guard reads;
+the `uninit; store` pair of every `let` at the scope's entry and the guard each fused local
+operation takes for it; a number check of four instructions per operand. Steps 20 to 22 in
+`task.md` follow from that. The objects kernel did not move with the last three changes: its
+time is the loop that reads the array back, where every element is asked for its shape, and
+its collections.
+
+Checks on that tree, each step of `pnpm run ci` on its own as before: `check-node`,
+`check-js-sources`, `typecheck`, `oxlint --deny-warnings .`, `dupes` (0 clones), `zig fmt
+--check` and `pnpm run runtime` exit 0; `pnpm run test` 855 passed in 68 files; `test:runtime`
+exits 0; `test:subset` 1010 passed, 31 expected-fail, 0 failed; `test:golden` 547 passed;
+`test:selfhost`, `test:builtins`, `test:node-coverage` and `test:leak` exit 0; `test:asan` 547
+passed; `pnpm run interp:test` exits 0; `pnpm run engine:test` reports `engine: 100 passed, 0
+failed`, the new `literals.ts` among them in both modes and under `JSRT_GC_STRESS`.
+
+The Check still fails on objects and cycles, so the card stays open.
