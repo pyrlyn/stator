@@ -908,8 +908,8 @@ costs its allocation and a young garbage cycle needs no cycle collection.
 **Young objects are born in one region and freed there without a visit.** A block of 512 bytes
 or less comes from the young region: one 64 MiB reservation (address space; pages past what a
 collection allocates and the survivors hold are never touched) cut into 512-byte lines.
-Allocation moves a pointer through a run of free lines, sets the block's bit in the index and
-zeroes it. Nothing moves afterwards. A survivor keeps its address and holds the lines it
+Allocation takes the block from the top of a run of free lines, moving the run's pointer down,
+sets the block's bit in the index and zeroes it. Nothing moves afterwards. A survivor keeps its address and holds the lines it
 overlaps until it is freed; a collection clears the index words of the lines its runs used and
 sets the survivors' bits again, so a dead young object costs no finalizer call, no free and no
 read of its memory. The young list names only the young objects with something to finalize: an
@@ -919,12 +919,18 @@ free line for come from pyrlyn/gc's pools, as does every block in the sanitized 
 each free must be visible to ASan.
 
 The open run is two words a JIT may read and move itself (`JSRTYoungRun` in `jsrt_mem.h`: the
-next block and the run's end, which reads zero once another thread may allocate, when the run
-belongs to the heap lock). `JSRTYoungSite` gives the rest for one kind and size of
-block: the region's base and index, and the block's two prefix words. Code that allocates this
-way writes every byte of the object, since only the allocator's own path zeroes a block, and
+newest block, under which the next one goes, and the lowest address a block may start at,
+which reads as the highest address while no run is open and once another thread may allocate,
+when the run belongs to the heap lock). `JSRTYoungSite` gives the rest for one kind and size of
+block: its two prefix words. Code that allocates this way moves the pointer and writes the
+prefix and every byte of the object, since only the allocator's own path zeroes a block, and
 calls the allocator when the block does not fit the run, which is also where a collection
-starts. The engine's JIT does it for object literals (docs/ENGINE.md §3).
+starts. It does not touch the index. The collector indexes such a block when it is first asked
+about that block or an older one of its run: a prefix says where the next block starts, so it
+walks up from the nearest block below that the index has, and the blocks nothing asks about,
+which is most of the dead, are never read. While another thread may allocate no block waits
+this way, so no reader of the index writes it. The engine's JIT does it for object literals
+(docs/ENGINE.md §3).
 
 Dynamic slot growth uses the Zig `writeOwner` barrier to resolve the owning object once,
 log its old references if needed, and pass that owner to the replacement buffer. A static

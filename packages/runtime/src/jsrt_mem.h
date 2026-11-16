@@ -80,29 +80,25 @@ void jsrt_shape_remove(JSRTShape **shape, jsrt_value *slots, const JSRTShape *hi
 
 /* -------------------------------------- allocation in compiled code (jsrt_gc.zig, VALUE.md §4.12) */
 
-/* The open run of the collector's young region, as code that takes no lock may use it. A block
- * of `total` bytes fits while `bump + total <= limit`; it is then at `bump`, which moves past
- * it. `limit` is zero while another thread may allocate: the run then belongs to the heap lock,
- * and nothing fits. Both are zero or current at every instruction, so a JIT reads them where it
- * allocates. */
+/* The open run of the collector's young region, as code that takes no lock may use it. Blocks
+ * are taken from its top down: a block of `total` bytes fits while `bump - total >= limit`,
+ * computed without overflow; it is then at `bump - total`, which `bump` moves to. With no run
+ * open `bump` is zero and `limit` the highest address, as `limit` is while another thread may
+ * allocate: the run then belongs to the heap lock, and nothing fits. Both are current at every
+ * instruction, so a JIT reads them where it allocates. */
 typedef struct JSRTYoungRun {
   uintptr_t bump;
   uintptr_t limit;
 } JSRTYoungRun;
 
-/* A line of the region, whose blocks one word of the index records. */
-#define JSRT_GC_LINE_SHIFT 9
-
 /* What a JIT needs to allocate one kind and size of block in `run` without a call. After the
- * bump it sets the block's bit in the index (`off` being the block's offset from `base`: bit
- * `(off >> 3) & 63` of `bits[off >> JSRT_GC_LINE_SHIFT]`), stores `word` and `meta` as the
- * block's first two words, and initializes every byte of the object, which starts
- * JSRT_GC_HEADER_BYTES into the block: the run is not zeroed. Such a block is dirty, as every
- * block is until its first collection. */
+ * bump it stores `word` and `meta` as the block's first two words, before anything else may
+ * run, and initializes every byte of the object, which starts JSRT_GC_HEADER_BYTES into the
+ * block: the run is not zeroed. The collector finds the block by those two words: it indexes
+ * the block from them when it is first asked about it or about an older block of the run.
+ * Such a block is dirty, as every block is until its first collection. */
 typedef struct JSRTYoungSite {
   JSRTYoungRun *run;
-  uintptr_t base;
-  uint64_t *bits;
   uint64_t word;
   uint64_t meta;
   uint32_t total;

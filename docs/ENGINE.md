@@ -142,8 +142,10 @@ paths above.
 
 Such a literal is also allocated on the chain, with no call: the block is taken from the open
 run of the collector's young region (docs/VALUE.md §4.12, `JSRTYoungSite`) by moving the run's
-pointer and setting the block's bit in the index, and the object's header and slots are written
-in place. The allocator is called when the run has no room, which is where a collection starts
+pointer down and writing the block's two prefix words, by which the collector finds the block
+if anything asks about it, and the object's header and slots are written in place. A slot is
+written once: with its member, or with zero when no member has filled it by the time the chain
+can be left. The allocator is called when the run has no room, which is where a collection starts
 and what the run reads as while another thread may allocate, and in a build with no region.
 That call is laid out after the code that fills the object and shares no value with it: the
 backend keeps a value that is used on both sides of a call, in the order the code is laid out,
@@ -305,26 +307,28 @@ Later T73 steps (§3: the bound-method cache read in compiled code, a literal's 
 with the object and its shape steps cached, an array's `length` and elements in place, `push`
 in place, the collector's young region, docs/VALUE.md §4.12, the fast chain and loop-carried
 locals, the remainder that does not divide and the collector's cheaper scan of static roots,
-and then object literals followed, allocated and filled on the fast chain) were measured the
-same way: five interleaved processes per engine and kernel, the same machine, Node v26.7.0,
-ReleaseFast. The V8 column and the ratio are from the last run; "young region" is the run
-before the fast chain, and "fast chain" the run before literals were followed on it.
+object literals followed, allocated and filled on the fast chain, and then values kept out of
+the frame window, a literal's slots written once and its block left for the collector to
+index) were measured the same way: five interleaved processes per engine and kernel, the same
+machine, Node v26.7.0, ReleaseFast. The V8 column and the ratio are from the last run; "young
+region" is the run before the fast chain, "fast chain" the run before literals were followed
+on it, and "literals" the run before the last three changes.
 
-| Kernel  |     V8 | JIT (T73 start) | JIT (young region) | JIT (fast chain) |    JIT | JIT / V8 |
-| ------- | -----: | --------------: | -----------------: | ---------------: | -----: | -------: |
-| numeric | 22.075 |         170.309 |            138.221 |           16.710 | 16.513 |     0.75 |
-| objects |  4.201 |         234.009 |             25.628 |           21.103 | 16.524 |     3.93 |
-| cycles  |  5.445 |         156.619 |             29.259 |           25.099 |  9.996 |     1.84 |
+| Kernel  |     V8 | JIT (T73 start) | JIT (young region) | JIT (fast chain) | JIT (literals) |    JIT | JIT / V8 |
+| ------- | -----: | --------------: | -----------------: | ---------------: | -------------: | -----: | -------: |
+| numeric | 22.023 |         170.309 |            138.221 |           16.710 |         16.513 | 13.420 |     0.61 |
+| objects |  4.211 |         234.009 |             25.628 |           21.103 |         16.524 | 15.089 |     3.58 |
+| cycles  |  5.441 |         156.619 |             29.259 |           25.099 |          9.996 |  7.097 |     1.30 |
 
 The process-median interquartile ranges do not overlap between the engines on any kernel. On
 the numeric kernel, a loop that wraps a running sum with a remainder, Stator is faster than V8
-(16.501-16.530 us against 22.040-22.132); that is one loop, not numeric code in general. On
-objects and cycles it is still slower, by 3.9 and 1.8 times. The cycles loop makes two
+(13.405-13.468 us against 22.015-22.028); that is one loop, not numeric code in general. On
+objects and cycles it is still slower, by 3.6 and 1.3 times. The cycles loop makes two
 literals an iteration, and what is left of it is the instructions that write them: a dynamic
-object with two properties is eleven words, every push is still stored in the frame window,
-and each block sets its bit in the collector's index. The objects kernel reads its objects
-back through an array, where the generated code still asks each object for its shape. The
-machine was shared with other work (load average about 7). The progress report has the
+object with two properties is eleven words, a value that waits for the window is stored before
+every guard it passes, and each literal makes its constants again. The objects kernel reads
+its objects back through an array, where the generated code still asks each object for its
+shape. The machine was shared with other work (load average about 5.5). The progress report has the
 profiles, the threshold sweep, the checks and the raw samples.
 
 ### 4.2. Startup and JIT compilation cost (T74)

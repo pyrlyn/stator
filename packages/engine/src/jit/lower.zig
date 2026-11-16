@@ -100,14 +100,28 @@ const Object = struct {
     /// Its shape word holds `shape`. The chain stores the shape a literal ends on, not the ones
     /// it passes through, and only where something else may look (`flush`).
     stored: bool = false,
+    /// By slot, whether the slot holds a value. The run a literal is taken from is not zeroed,
+    /// and a slot a member fills at once is never cleared first: the others are, where
+    /// something else may look (`flush`).
+    filled: std.StaticBitSet(max_fields) = .empty,
     /// By slot, with a register or a constant each.
     fields: [max_fields]Known = undefined,
+
+    /// Its shape word and every slot hold what the runtime may read.
+    fn whole(o: Object) bool {
+        return o.stored and o.filled.count() >= o.capacity;
+    }
 };
 
 /// Where captured variable `slot` is in its environment: the slots are a flexible array member,
 /// which follows the struct.
 fn envSlot(slot: u32) i32 {
     return @intCast(@sizeOf(c.JSRTEnv) + slot * @sizeOf(rt.Value));
+}
+
+/// Where slot `slot` of a dynamic object's own, which follow it, is from its address.
+fn ownSlot(slot: u32) i32 {
+    return @intCast(@sizeOf(c.JSRTDynObject) + slot * @sizeOf(rt.Value));
 }
 
 /// The value an instruction that pushes a constant other than a number pushes.
@@ -1072,9 +1086,14 @@ const Lowerer = struct {
     /// nothing.
     fn save(l: *Lowerer, aside: bool) !void {
         for (l.objects.items) |*o| {
-            if (o.stored) continue;
-            try l.emit(.{ .store = .{ .base = o.p, .disp = @offsetOf(c.JSRTDynObject, "shape"), .src = try l.konst(@intCast(@intFromPtr(o.shape))) } });
-            if (!aside) o.stored = true;
+            if (o.whole()) continue;
+            if (!o.stored) try l.emit(.{ .store = .{ .base = o.p, .disp = @offsetOf(c.JSRTDynObject, "shape"), .src = try l.konst(@intCast(@intFromPtr(o.shape))) } });
+            for (0..o.capacity) |k| {
+                if (!o.filled.isSet(k)) try l.emit(.{ .store = .{ .base = o.p, .disp = ownSlot(@intCast(k)), .src = try l.konst(0) } });
+            }
+            if (aside) continue;
+            o.stored = true;
+            o.filled = .full;
         }
         // The operands from the instruction's depth up were popped: nothing reads them.
         const top = l.slot(l.insns[l.at].depth);
@@ -1091,7 +1110,7 @@ const Lowerer = struct {
     /// A guard or a call finds the window and the literals as the generic code expects them.
     fn assertSaved(l: *Lowerer) void {
         if (!std.debug.runtime_safety or l.aside) return;
-        for (l.objects.items) |o| std.debug.assert(o.stored);
+        for (l.objects.items) |o| std.debug.assert(o.whole());
         const top = l.slot(l.insns[l.at].depth);
         var it = l.known.iterator();
         while (it.next()) |e| std.debug.assert(!e.value_ptr.unsaved or e.key_ptr.* >= top);
@@ -1137,17 +1156,19 @@ const Lowerer = struct {
     fn setField(l: *Lowerer, o: *Object, off: u32, from: u32) !void {
         if (!o.fresh) try l.barrier(o.p);
         var k = l.knownAt(from);
-        try l.storeKnown(&k, from, o.p, @intCast(@sizeOf(c.JSRTDynObject) + off * 8));
+        try l.storeKnown(&k, from, o.p, ownSlot(off));
         try l.know(from, k);
+        o.filled.set(off);
         o.fields[off] = k;
         o.fields[off].unsaved = false;
     }
 
     /// A dynamic object with `n` slots of its own, boxed in window slot `s`: its address and
-    /// the boxed value. The block is bumped from the open run of the collector's young region
-    /// and written here whole (jsrt_mem.h, JSRTYoungSite; jsrt_alloc.zig, dynobjNew). The
-    /// allocator is called when the run has no room, when another thread may allocate, and
-    /// where there is no region.
+    /// the boxed value. The block is taken from the open run of the collector's young region
+    /// by moving the run's pointer down, and its prefix and the object are written here: the
+    /// collector finds the block by its prefix when something asks about it (jsrt_mem.h,
+    /// JSRTYoungSite; jsrt_alloc.zig, dynobjNew). The allocator is called when the run has no
+    /// room, when another thread may allocate, and where there is no region.
     fn newObject(l: *Lowerer, s: u32, n: u32) !struct { VReg, VReg } {
         const p = l.f.newVReg();
         const v = l.f.newVReg();
@@ -1161,29 +1182,23 @@ const Lowerer = struct {
         const join = try l.block();
         if (inl) {
             const run = try l.konst(@intCast(@intFromPtr(site.run)));
-            const at = try l.def(.load, .{ .dst = undefined, .base = run, .disp = @offsetOf(c.JSRTYoungRun, "bump") });
-            const end = try l.arith(.add, at, try l.konst(site.total));
-            try l.cbr(.ugt, end, try l.def(.load, .{ .dst = undefined, .base = run, .disp = @offsetOf(c.JSRTYoungRun, "limit") }), slow, alone);
+            // The run is taken from its top down, and nothing fits a run that is not open.
+            const top = try l.def(.load, .{ .dst = undefined, .base = run, .disp = @offsetOf(c.JSRTYoungRun, "bump") });
+            const at = try l.arith(.sub, top, try l.konst(site.total));
+            try l.cbr(.ult, at, try l.def(.load, .{ .dst = undefined, .base = run, .disp = @offsetOf(c.JSRTYoungRun, "limit") }), slow, alone);
             l.cur = alone;
             const zero = try l.konst(0);
-            try l.emit(.{ .store = .{ .base = run, .disp = @offsetOf(c.JSRTYoungRun, "bump"), .src = end } });
-            const off = try l.arith(.sub, at, try l.konst(imm(site.base)));
-            const line = try l.arith(.shr, off, try l.konst(c.JSRT_GC_LINE_SHIFT));
-            const word = try l.arith(.add, try l.konst(@intCast(@intFromPtr(site.bits))), try l.arith(.shl, line, try l.konst(3)));
-            const granule = try l.arith(.@"and", try l.arith(.shr, off, try l.konst(3)), try l.konst(63));
-            const bits = try l.def(.load, .{ .dst = undefined, .base = word, .disp = 0 });
-            try l.emit(.{ .store = .{ .base = word, .disp = 0, .src = try l.arith(.@"or", bits, try l.arith(.shl, try l.konst(1), granule)) } });
+            try l.emit(.{ .store = .{ .base = run, .disp = @offsetOf(c.JSRTYoungRun, "bump"), .src = at } });
             try l.emit(.{ .store = .{ .base = at, .disp = 0, .src = try l.konst(imm(site.word)) } });
             try l.emit(.{ .store = .{ .base = at, .disp = 8, .src = try l.konst(imm(site.meta)) } });
             try l.emit(.{ .copy = .{ .dst = p, .src = try l.arith(.add, at, try l.konst(c.JSRT_GC_HEADER_BYTES)) } });
-            // Every word of the object but its shape, which `flush` stores: the run is not
-            // zeroed, and each field fills its word.
+            // Every word of the object but its shape and its slots, which `flush` stores
+            // where a member has not: the run is not zeroed, and each field fills its word.
             const own = try l.arith(.add, p, try l.konst(@sizeOf(c.JSRTDynObject)));
             const fields = [_][]const u8{ "cls", "capacity", "slots", "frozen", "proto", "ctor" };
             const words = [fields.len]VReg{ try l.konst(@intCast(@intFromPtr(&c.jsrt_class_dynamic))), try l.konst(n), own, zero, zero, zero };
             comptime std.debug.assert(@sizeOf(c.JSRTDynObject) == (fields.len + 1) * 8);
             inline for (fields, 0..) |field, k| try l.emit(.{ .store = .{ .base = p, .disp = @offsetOf(c.JSRTDynObject, field), .src = words[k] } });
-            for (0..n) |k| try l.emit(.{ .store = .{ .base = own, .disp = @intCast(k * 8), .src = zero } });
             try l.emit(.{ .copy = .{ .dst = v, .src = try l.arith(.@"or", p, try l.konst(imm(boxTag(c.JSRT_TAG_OBJECT)))) } });
             try l.br(join);
         } else try l.br(slow);
