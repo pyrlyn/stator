@@ -51,7 +51,7 @@ const integer_limit: f64 = 9007199254740992.0;
 
 /// AArch64 only: an x86-64 result must be read back from the window to make its NaN canonical
 /// (`canonicalize`), which is the load the fast chain exists to avoid.
-const fast_chain = builtin.cpu.arch == .aarch64;
+pub const fast_chain = builtin.cpu.arch == .aarch64;
 
 /// What the fast chain knows of the value a window slot holds.
 const Known = struct {
@@ -65,7 +65,68 @@ const Known = struct {
     live: bool = false,
     /// The double, when the bytecode names it.
     konst: ?f64 = null,
+    /// Its bits, when the bytecode names a value that is no number (`literalBits`). No register
+    /// keeps them: they are as cheap to make again as to load.
+    word: ?u64 = null,
+    /// It is `Lowerer.objects[obj]`.
+    obj: ?u32 = null,
+    /// The window does not hold it yet: one of the above has the value, and `save` stores it
+    /// before anything but the chain reads the slot. An operand popped before then is never
+    /// stored.
+    unsaved: bool = false,
+
+    /// Whether a register or the bytecode has the value, so that the window need not.
+    fn held(k: Known) bool {
+        return k.bits != null or k.f != null or k.konst != null or k.word != null;
+    }
 };
+
+/// The properties the fast chain follows in one object literal; a longer one has no form.
+const max_fields = 8;
+
+/// An object a literal made in the run of bytecode being lowered. Until an instruction without
+/// a form runs, nothing but the chain has touched it, so its shape and what its slots hold are
+/// known here: a property is defined, written and read without asking the shape table, a cache
+/// or the object.
+const Object = struct {
+    /// Its address.
+    p: VReg,
+    shape: *c.JSRTShape,
+    /// The slots it was allocated with, which follow it (jsrt_dynobj_new_sized).
+    capacity: u32,
+    /// It is as dirty as it was born, so a store into it needs no write barrier: no call was
+    /// made since it was allocated but the allocator's, which marks it again (`newObject`).
+    fresh: bool = true,
+    /// Its shape word holds `shape`. The chain stores the shape a literal ends on, not the ones
+    /// it passes through, and only where something else may look (`flush`).
+    stored: bool = false,
+    /// By slot, with a register or a constant each.
+    fields: [max_fields]Known = undefined,
+};
+
+/// Where captured variable `slot` is in its environment: the slots are a flexible array member,
+/// which follows the struct.
+fn envSlot(slot: u32) i32 {
+    return @intCast(@sizeOf(c.JSRTEnv) + slot * @sizeOf(rt.Value));
+}
+
+/// The value an instruction that pushes a constant other than a number pushes.
+fn literalBits(op: Op) u64 {
+    return switch (op) {
+        .undef => c.JSRT_UNDEFINED,
+        .null => c.JSRT_NULL,
+        .true => c.JSRT_TRUE,
+        .false => c.JSRT_FALSE,
+        .uninit => rt.uninitialized,
+        else => unreachable,
+    };
+}
+
+/// A key the runtime answers before it asks the shape (vm.getProp, vm.setProp).
+fn plainKey(key: [*:0]const u8) bool {
+    const name = std.mem.span(key);
+    return !std.mem.eql(u8, name, "constructor") and !std.mem.eql(u8, name, "__proto__");
+}
 
 /// The shape of an instruction's form on the fast chain (`Lowerer.fast`); `none` has no form.
 const Form = enum { none, literal, number, pop, swap, dup, frame, load, store, step, local_int, locals, add_store, binary, jump, cond_jump };
@@ -228,6 +289,11 @@ const Lowerer = struct {
     blocks: std.AutoHashMapUnmanaged(u32, u32) = .empty,
     /// By window index, for the block of the bytecode being lowered.
     known: std.AutoHashMapUnmanaged(u32, Known) = .empty,
+    /// The literals of that block, which `Known.obj` names.
+    objects: std.ArrayList(Object) = .empty,
+    /// The code being written is a path `save` stored on: its guards and calls find the
+    /// window whole though the chain's bookkeeping says otherwise.
+    aside: bool = false,
     bails: std.ArrayList(Bail) = .empty,
     /// The fast chain lowered the next instruction with this one.
     fused: bool = false,
@@ -317,6 +383,7 @@ const Lowerer = struct {
     }
 
     fn callHelper(l: *Lowerer, comptime f: anytype, args: []const VReg) !VReg {
+        l.assertSaved();
         const addr = if (builtin.is_test) @intFromPtr(h.counted(f)) else @intFromPtr(&f);
         return l.def(.call, .{ .dst = undefined, .addr = addr, .args = try l.f.alloc().dupe(VReg, args) });
     }
@@ -895,6 +962,7 @@ const Lowerer = struct {
     /// Leaves the fast chain when `a cond b`. The instruction then runs from its start in the
     /// generic code, so every guard of an instruction comes before its first store.
     fn bailIf(l: *Lowerer, cond: ir.CondCode, a: VReg, b: VReg) !void {
+        l.assertSaved();
         const from = l.cur.?;
         const next = try l.block();
         // `generic` points the branch at the instruction's generic code once that exists.
@@ -904,8 +972,22 @@ const Lowerer = struct {
     }
 
     fn bitsOf(l: *Lowerer, index: u32, k: *Known) !VReg {
-        if (k.bits == null) k.bits = try l.load(index);
+        if (k.bits) |bits| return bits;
+        if (k.word) |word| return l.konst(imm(word));
+        if (k.konst) |x| return l.konst(imm(rt.number(x)));
+        // Only a float register has it, and its bits reach an integer one through memory.
+        if (k.unsaved) {
+            try l.storeF(index, k.f.?);
+            k.unsaved = false;
+        }
+        k.bits = try l.load(index);
         return k.bits.?;
+    }
+
+    /// Stores what window slot `index` waits for.
+    fn settleSlot(l: *Lowerer, index: u32, k: *Known) !void {
+        try l.storeKnown(k, index, l.w, disp(index));
+        k.unsaved = false;
     }
 
     fn fnum(l: *Lowerer, x: f64) !VReg {
@@ -921,26 +1003,280 @@ const Lowerer = struct {
             k.double = true;
             k.live = true;
         }
-        if (k.f == null) k.f = if (k.konst) |x| try l.fnum(x) else try l.loadF(index);
+        if (k.f == null) {
+            if (k.konst) |x| {
+                k.f = try l.fnum(x);
+            } else {
+                // An integer register has it, and its bits reach a float one through memory.
+                if (k.unsaved) try l.settleSlot(index, &k);
+                k.f = try l.loadF(index);
+            }
+        }
         try l.know(index, k);
         return k.f.?;
     }
 
+    /// Window slot `index` is to hold what `k` describes. The store waits for `save`.
+    fn put(l: *Lowerer, index: u32, k: Known) !void {
+        std.debug.assert(k.held());
+        var waiting = k;
+        waiting.unsaved = true;
+        try l.know(index, waiting);
+    }
+
     fn putDouble(l: *Lowerer, index: u32, f: VReg) !void {
-        try l.storeF(index, f);
-        try l.know(index, .{ .f = f, .double = true, .live = true });
+        try l.put(index, .{ .f = f, .double = true, .live = true });
+    }
+
+    /// What is known of window slot `index`, in a register if nothing else has its value.
+    fn heldAt(l: *Lowerer, index: u32) !Known {
+        var k = l.knownAt(index);
+        if (!k.held()) {
+            k.bits = try l.load(index);
+            try l.know(index, k);
+        }
+        return k;
+    }
+
+    /// Stores at `base + at` the value `k` describes, which window slot `index` holds: the slot
+    /// is read only when nothing else has the value.
+    fn storeKnown(l: *Lowerer, k: *Known, index: u32, base: VReg, at: i32) !void {
+        if (k.konst) |x| {
+            try l.emit(.{ .store = .{ .base = base, .disp = at, .src = try l.konst(imm(rt.number(x))) } });
+        } else if (k.bits == null and k.f != null) {
+            try l.emit(.{ .store = .{ .base = base, .disp = at, .src = k.f.?, .ty = .f64 } });
+        } else try l.emit(.{ .store = .{ .base = base, .disp = at, .src = try l.bitsOf(index, k) } });
     }
 
     /// Copies window slot `from` into slot `to`, with what is known of its value.
     fn copySlot(l: *Lowerer, from: u32, to: u32) !void {
+        try l.put(to, try l.heldAt(from));
+    }
+
+    /// Where another block may arrive, or after an instruction without a form: it may have
+    /// called anything.
+    fn forget(l: *Lowerer) void {
+        l.known.clearRetainingCapacity();
+        l.objects.clearRetainingCapacity();
+    }
+
+    /// Before a guard, a call or the end of the block: whoever runs next reads the window and
+    /// may look at a literal, so each slot is given the value it waits for and each literal
+    /// the shape it has reached.
+    fn flush(l: *Lowerer) !void {
+        try l.save(false);
+    }
+
+    /// `flush`, or with `aside` the same stores on a path that seldom runs and joins the chain
+    /// again: there the chain goes on as if nothing were stored, since its other path stored
+    /// nothing.
+    fn save(l: *Lowerer, aside: bool) !void {
+        for (l.objects.items) |*o| {
+            if (o.stored) continue;
+            try l.emit(.{ .store = .{ .base = o.p, .disp = @offsetOf(c.JSRTDynObject, "shape"), .src = try l.konst(@intCast(@intFromPtr(o.shape))) } });
+            if (!aside) o.stored = true;
+        }
+        // The operands from the instruction's depth up were popped: nothing reads them.
+        const top = l.slot(l.insns[l.at].depth);
+        var it = l.known.iterator();
+        while (it.next()) |e| {
+            const k = e.value_ptr;
+            if (!k.unsaved) continue;
+            if (e.key_ptr.* < top) try l.storeKnown(k, e.key_ptr.*, l.w, disp(e.key_ptr.*));
+            if (!aside) k.unsaved = false;
+        }
+        l.aside = aside;
+    }
+
+    /// A guard or a call finds the window and the literals as the generic code expects them.
+    fn assertSaved(l: *Lowerer) void {
+        if (!std.debug.runtime_safety or l.aside) return;
+        for (l.objects.items) |o| std.debug.assert(o.stored);
+        const top = l.slot(l.insns[l.at].depth);
+        var it = l.known.iterator();
+        while (it.next()) |e| std.debug.assert(!e.value_ptr.unsaved or e.key_ptr.* >= top);
+    }
+
+    fn isDouble(l: *Lowerer, index: u32) bool {
+        return l.knownAt(index).double;
+    }
+
+    /// Whether lowering `i` reaches no guard, no call and no other block on the path that
+    /// goes on, so that `flush` may wait. A form that leaves that path stores first (`save`).
+    fn quiet(l: *Lowerer, i: analyze.Insn) bool {
+        const d = i.depth;
+        return switch (i.op) {
+            .undef, .null, .true, .false, .uninit, .int, .num, .pop, .swap, .dup, .load, .store, .callee, .this_raw, .new_target => true,
+            .new_object, .load_env, .store_env => true,
+            // A literal that is no longer fresh takes the write barrier, which is a call.
+            .define, .set_prop => if (l.objectAt(l.slot(d - 2))) |o| o.fresh else false,
+            .get_prop => l.objectAt(l.slot(d - 1)) != null,
+            .get_prop_local => l.objectAt(vm.header + i.a) != null,
+            // Arithmetic on what is known to be two doubles has nothing to guard. A comparison
+            // may end the block (`fastBinary`).
+            .add, .sub, .mul, .div, .mod => l.isDouble(l.slot(d - 2)) and l.isDouble(l.slot(d - 1)),
+            .add_store_local => l.isDouble(l.slot(d - 2)) and l.isDouble(l.slot(d - 1)) and l.knownAt(vm.header + i.a).live,
+            .inc_local, .dec_local, .add_local_int, .sub_local_int => l.isDouble(vm.header + i.a),
+            .add_locals, .sub_locals => l.isDouble(vm.header + i.a) and l.isDouble(vm.header + i.c),
+            else => false,
+        };
+    }
+
+    /// After a call on the chain. It runs nothing of the program's, but it may have collected,
+    /// and a literal that survives a collection is clean: a store into it needs the barrier.
+    fn called(l: *Lowerer) void {
+        for (l.objects.items) |*o| o.fresh = false;
+    }
+
+    /// The literal window slot `index` holds, when the chain made it.
+    fn objectAt(l: *Lowerer, index: u32) ?*Object {
+        return if (l.knownAt(index).obj) |n| &l.objects.items[n] else null;
+    }
+
+    /// Stores window slot `from` into slot `off` of `o`.
+    fn setField(l: *Lowerer, o: *Object, off: u32, from: u32) !void {
+        if (!o.fresh) try l.barrier(o.p);
         var k = l.knownAt(from);
-        if (k.konst) |x| {
-            try l.storeConst(to, rt.number(x));
-        } else if (k.bits == null and k.f != null) {
-            try l.storeF(to, k.f.?);
-        } else try l.store(to, try l.bitsOf(from, &k));
+        try l.storeKnown(&k, from, o.p, @intCast(@sizeOf(c.JSRTDynObject) + off * 8));
         try l.know(from, k);
-        try l.know(to, k);
+        o.fields[off] = k;
+        o.fields[off].unsaved = false;
+    }
+
+    /// A dynamic object with `n` slots of its own, boxed in window slot `s`: its address and
+    /// the boxed value. The block is bumped from the open run of the collector's young region
+    /// and written here whole (jsrt_mem.h, JSRTYoungSite; jsrt_alloc.zig, dynobjNew). The
+    /// allocator is called when the run has no room, when another thread may allocate, and
+    /// where there is no region.
+    fn newObject(l: *Lowerer, s: u32, n: u32) !struct { VReg, VReg } {
+        const p = l.f.newVReg();
+        const v = l.f.newVReg();
+        var site: c.JSRTYoungSite = undefined;
+        // The call comes last in the code: a value that is used on both sides of a call, as
+        // the code is laid out, needs one of the few registers a call keeps, and the backend
+        // spills the frame window's base first when those run out.
+        const inl = c.jsrt_dynobj_young_site(n, &site);
+        const alone = if (inl) try l.block() else 0;
+        const slow = try l.block();
+        const join = try l.block();
+        if (inl) {
+            const run = try l.konst(@intCast(@intFromPtr(site.run)));
+            const at = try l.def(.load, .{ .dst = undefined, .base = run, .disp = @offsetOf(c.JSRTYoungRun, "bump") });
+            const end = try l.arith(.add, at, try l.konst(site.total));
+            try l.cbr(.ugt, end, try l.def(.load, .{ .dst = undefined, .base = run, .disp = @offsetOf(c.JSRTYoungRun, "limit") }), slow, alone);
+            l.cur = alone;
+            const zero = try l.konst(0);
+            try l.emit(.{ .store = .{ .base = run, .disp = @offsetOf(c.JSRTYoungRun, "bump"), .src = end } });
+            const off = try l.arith(.sub, at, try l.konst(imm(site.base)));
+            const line = try l.arith(.shr, off, try l.konst(c.JSRT_GC_LINE_SHIFT));
+            const word = try l.arith(.add, try l.konst(@intCast(@intFromPtr(site.bits))), try l.arith(.shl, line, try l.konst(3)));
+            const granule = try l.arith(.@"and", try l.arith(.shr, off, try l.konst(3)), try l.konst(63));
+            const bits = try l.def(.load, .{ .dst = undefined, .base = word, .disp = 0 });
+            try l.emit(.{ .store = .{ .base = word, .disp = 0, .src = try l.arith(.@"or", bits, try l.arith(.shl, try l.konst(1), granule)) } });
+            try l.emit(.{ .store = .{ .base = at, .disp = 0, .src = try l.konst(imm(site.word)) } });
+            try l.emit(.{ .store = .{ .base = at, .disp = 8, .src = try l.konst(imm(site.meta)) } });
+            try l.emit(.{ .copy = .{ .dst = p, .src = try l.arith(.add, at, try l.konst(c.JSRT_GC_HEADER_BYTES)) } });
+            // Every word of the object but its shape, which `flush` stores: the run is not
+            // zeroed, and each field fills its word.
+            const own = try l.arith(.add, p, try l.konst(@sizeOf(c.JSRTDynObject)));
+            const fields = [_][]const u8{ "cls", "capacity", "slots", "frozen", "proto", "ctor" };
+            const words = [fields.len]VReg{ try l.konst(@intCast(@intFromPtr(&c.jsrt_class_dynamic))), try l.konst(n), own, zero, zero, zero };
+            comptime std.debug.assert(@sizeOf(c.JSRTDynObject) == (fields.len + 1) * 8);
+            inline for (fields, 0..) |field, k| try l.emit(.{ .store = .{ .base = p, .disp = @offsetOf(c.JSRTDynObject, field), .src = words[k] } });
+            for (0..n) |k| try l.emit(.{ .store = .{ .base = own, .disp = @intCast(k * 8), .src = zero } });
+            try l.emit(.{ .copy = .{ .dst = v, .src = try l.arith(.@"or", p, try l.konst(imm(boxTag(c.JSRT_TAG_OBJECT)))) } });
+            try l.br(join);
+        } else try l.br(slow);
+        l.cur = slow;
+        // The allocator may collect, and the collector reads the window and the literals.
+        try l.save(true);
+        try l.helper(h.newObject, &.{ s, n });
+        // The allocator may have collected, and a literal that survives a collection is clean:
+        // marked here, it is as dirty after either path as it was born.
+        for (l.objects.items) |o| {
+            if (o.fresh) _ = try l.callHelper(c.jsrt_gc_write, &.{o.p});
+        }
+        const made = try l.load(s);
+        try l.emit(.{ .copy = .{ .dst = v, .src = made } });
+        try l.emit(.{ .copy = .{ .dst = p, .src = try l.ptrOf(made) } });
+        try l.br(join);
+        l.cur = join;
+        l.aside = false;
+        return .{ p, v };
+    }
+
+    /// The environment `hops` out from the frame's own (vm.outward).
+    fn envOut(l: *Lowerer, hops: u32) !VReg {
+        const frame = try l.def(.load, .{ .dst = undefined, .base = l.ctx, .disp = @offsetOf(h.Ctx, "frame") });
+        var env = try l.def(.load, .{ .dst = undefined, .base = frame, .disp = @offsetOf(c.JSRTFrame, "env") });
+        for (0..hops) |_| env = try l.def(.load, .{ .dst = undefined, .base = env, .disp = @offsetOf(c.JSRTEnv, "parent") });
+        return env;
+    }
+
+    /// The forms of the instructions that make, fill and read an object literal (`Object`), and
+    /// of the reads and writes of a captured variable, which reach no object.
+    fn literal(l: *Lowerer, i: analyze.Insn) !bool {
+        const d = i.depth;
+        switch (i.op) {
+            .new_object => {
+                if (i.a == 0 or i.a > max_fields) return false;
+                const s = l.slot(d);
+                const p, const v = try l.newObject(s, i.a);
+                try l.put(s, .{ .live = true, .bits = v, .obj = @intCast(l.objects.items.len) });
+                try l.objects.append(l.f.alloc(), .{ .p = p, .shape = &c.jsrt_shape_root, .capacity = i.a });
+            },
+            .define, .set_prop => {
+                const s = l.slot(d - 2);
+                const o = l.objectAt(s) orelse return false;
+                const key = l.t.keys[i.a];
+                if (!plainKey(key)) return false;
+                if (c.jsrt_shape_find(o.shape, key)) |own| {
+                    // A key the literal names twice keeps its slot (vm.defineAt), and so does
+                    // one that is written.
+                    try l.setField(o, own.*.offset, s + 1);
+                } else {
+                    // A write of a key the object lacks asks its prototypes for a setter first.
+                    if (i.op == .set_prop) return false;
+                    // The step the shape table would take when the instruction runs, taken now.
+                    const to: *c.JSRTShape = c.jsrt_shape_transition(o.shape, key);
+                    if (to.offset >= o.capacity) return false;
+                    try l.setField(o, to.offset, s + 1);
+                    o.shape = to;
+                    o.stored = false;
+                }
+                // An assignment's value is what was assigned.
+                if (i.op == .set_prop) try l.copySlot(s + 1, s);
+            },
+            .get_prop, .get_prop_local => {
+                const local = i.op == .get_prop_local;
+                const from = if (local) vm.header + i.a else l.slot(d - 1);
+                const o = l.objectAt(from) orelse return false;
+                const key = l.t.keys[if (local) i.c else i.a];
+                if (!plainKey(key)) return false;
+                // A key the object lacks is its prototype's to answer.
+                const own = c.jsrt_shape_find(o.shape, key) orelse return false;
+                const s = if (local) l.slot(d) else from;
+                try l.put(s, o.fields[own.*.offset]);
+            },
+            // An environment is always dirty to the collector (jsrt_alloc.zig, env_kind), so
+            // a store into one has no barrier to check. A variable still in its TDZ leaves the
+            // chain for the helper, which throws.
+            .store_env, .store_env_checked => {
+                const s = l.slot(d - 1);
+                const env = try l.envOut(i.a);
+                if (i.op == .store_env_checked) try l.bailIf(.eq, try l.def(.load, .{ .dst = undefined, .base = env, .disp = envSlot(i.b) }), try l.konst(imm(rt.uninitialized)));
+                var k = l.knownAt(s);
+                try l.storeKnown(&k, s, env, envSlot(i.b));
+                try l.know(s, k);
+            },
+            .load_env, .load_env_checked => {
+                const v = try l.def(.load, .{ .dst = undefined, .base = try l.envOut(i.a), .disp = envSlot(i.b) });
+                if (i.op == .load_env_checked) try l.bailIf(.eq, v, try l.konst(imm(rt.uninitialized)));
+                try l.put(l.slot(d), .{ .bits = v });
+            },
+            else => return false,
+        }
+        return true;
     }
 
     /// Leaves the fast chain when local `local` is still in its TDZ: the generic code throws.
@@ -1001,11 +1337,12 @@ const Lowerer = struct {
     fn leader(l: *Lowerer, i: analyze.Insn) !void {
         if (l.cur != null) {
             const to = try l.edge(i.pc);
+            try l.flush();
             try l.carry();
             try l.br(to);
         }
         l.cur = try l.blockAt(i.pc);
-        l.known.clearRetainingCapacity();
+        l.forget();
         l.loop = for (l.loops) |*x| {
             if (x.holds(i.pc)) break x;
         } else null;
@@ -1013,8 +1350,21 @@ const Lowerer = struct {
         for (loop.carried) |x| try l.emit(.{ .copy = .{ .dst = x.v, .src = try l.doubleOf(vm.header + x.local) } });
         try l.br(try l.edge(i.pc));
         l.cur = l.carried_blocks.get(i.pc).?;
-        l.known.clearRetainingCapacity();
+        l.forget();
         for (loop.carried) |x| try l.know(vm.header + x.local, .{ .f = x.v, .double = true, .live = true });
+    }
+
+    /// Goes on when `a cond b` and to `otherwise` when not, which a NaN makes it.
+    fn goOnIf(l: *Lowerer, cond: ir.FCond, a: VReg, b: VReg, otherwise: u32) !void {
+        const next = try l.block();
+        try l.cbr(.ne, try l.fcmp(cond, a, b), try l.konst(0), next, otherwise);
+        l.cur = next;
+    }
+
+    /// Ends one arm of a choice of values: `r` is `v`, and on to `join`.
+    fn settle(l: *Lowerer, r: VReg, v: VReg, join: u32) !void {
+        try l.emit(.{ .copy = .{ .dst = r, .src = v } });
+        try l.br(join);
     }
 
     /// `a op b` on two doubles into window slot `s`; `kb` is `b` when the bytecode names it.
@@ -1033,52 +1383,66 @@ const Lowerer = struct {
                     l.fused = true;
                     return;
                 }
-                const v = try l.boolean(bit);
-                try l.store(s, v);
-                try l.know(s, .{ .bits = v, .live = true });
+                try l.put(s, .{ .bits = try l.boolean(bit), .live = true });
             },
             .none => {
                 std.debug.assert(o == .mod);
+                // The wrap of an index or of a running sum seldom has anything to divide: a
+                // dividend from zero up to the divisor is its own remainder, and one below twice
+                // the divisor leaves their difference, which is exact (Sterbenz). A NaN fails
+                // every comparison here and so reaches the division's guards.
+                const r = l.f.newVReg();
+                const join = try l.block();
+                const divide = try l.block();
+                const above = try l.block();
+                try l.goOnIf(.ge, a, try l.fnum(0), divide);
+                try l.goOnIf(.lt, a, b, above);
+                try l.settle(r, a, join);
+                l.cur = above;
+                const less = try l.def(.typed, .{ .op = .sub, .ty = .f64, .dst = undefined, .a = a, .b = b });
+                try l.goOnIf(.lt, less, b, divide);
+                try l.settle(r, less, join);
+                l.cur = divide;
+                try l.save(true);
                 const n = try l.integerOf(a, null);
                 const m = try l.integerOf(b, kb);
                 if (kb == null or kb.? == 0) try l.bailIf(.eq, m, zero);
-                const r = try l.arith(.srem, n, m);
+                const rem = try l.arith(.srem, n, m);
                 const some = try l.block();
                 const none = try l.block();
-                try l.cbr(.ne, r, zero, some, none);
+                try l.cbr(.ne, rem, zero, some, none);
                 l.cur = none;
                 // A zero remainder has the dividend's sign, and no integer is -0.
                 try l.bailIf(.le, n, zero);
                 try l.br(some);
                 l.cur = some;
-                try l.putDouble(s, try l.def(.cvt, .{ .dst = undefined, .src = r, .from = .i64, .to = .f64 }));
+                try l.emit(.{ .cvt = .{ .dst = r, .src = rem, .from = .i64, .to = .f64 } });
+                try l.br(join);
+                l.cur = join;
+                l.aside = false;
+                try l.putDouble(s, r);
             },
         }
     }
 
     /// Lowers `i` on the fast chain (docs/ENGINE.md §3): what this block of the bytecode has
-    /// loaded or computed stays in registers, still stored in the window at once, and a value
-    /// the fast form cannot take leaves for the generic code (`bailIf`). Answers false for an
-    /// instruction with no fast form.
+    /// loaded or computed stays in registers and reaches the window when a guard, a call or
+    /// the block's end is next (`flush`), and a value the fast form cannot take leaves for the
+    /// generic code (`bailIf`). Answers false for an instruction with no fast form.
     fn fast(l: *Lowerer, i: analyze.Insn) !bool {
         const d = i.depth;
         switch (form(i.op)) {
-            .none => return false,
-            .literal => {
-                try l.insn(i);
-                try l.know(l.slot(d), .{ .live = i.op != .uninit });
-            },
+            .none => return l.literal(i),
+            .literal => try l.put(l.slot(d), .{ .live = i.op != .uninit, .word = literalBits(i.op) }),
             .number => {
                 const x: f64 = if (i.op == .int) @floatFromInt(@as(i32, @bitCast(i.a))) else l.t.numbers[i.a];
-                try l.insn(i);
-                try l.know(l.slot(d), .{ .double = true, .live = true, .konst = x });
+                try l.put(l.slot(d), .{ .double = true, .live = true, .konst = x });
             },
             .pop => {},
             .swap => {
-                try l.insn(i);
-                const a = l.knownAt(l.slot(d - 2));
-                try l.know(l.slot(d - 2), l.knownAt(l.slot(d - 1)));
-                try l.know(l.slot(d - 1), a);
+                const a = try l.heldAt(l.slot(d - 2));
+                try l.put(l.slot(d - 2), try l.heldAt(l.slot(d - 1)));
+                try l.put(l.slot(d - 1), a);
             },
             .dup => try l.copySlot(l.slot(d - 1), l.slot(d)),
             // The window opens with the callee, `this` and `new.target`.
@@ -1149,6 +1513,7 @@ const Lowerer = struct {
     /// register of the fast chain is live across a helper call made here.
     fn generic(l: *Lowerer, dead: []const bool) !void {
         l.loop = null;
+        l.forget();
         const bails = l.bails.items;
         var next: usize = 0;
         while (next < bails.len) {
@@ -1174,11 +1539,7 @@ const Lowerer = struct {
     fn insn(l: *Lowerer, i: analyze.Insn) !void {
         const d = i.depth;
         switch (i.op) {
-            .undef => try l.storeConst(l.slot(d), c.JSRT_UNDEFINED),
-            .null => try l.storeConst(l.slot(d), c.JSRT_NULL),
-            .true => try l.storeConst(l.slot(d), c.JSRT_TRUE),
-            .false => try l.storeConst(l.slot(d), c.JSRT_FALSE),
-            .uninit => try l.storeConst(l.slot(d), rt.uninitialized),
+            .undef, .null, .true, .false, .uninit => try l.storeConst(l.slot(d), literalBits(i.op)),
             .callee => try l.store(l.slot(d), try l.load(0)),
             .this_raw => try l.store(l.slot(d), try l.load(1)),
             .new_target => try l.store(l.slot(d), try l.load(2)),
@@ -1357,11 +1718,14 @@ pub fn lower(f: *ir.Func, t: *const bc.Template, plan: analyze.Plan) !void {
             continue;
         }
         if (skip) continue;
+        if (!l.quiet(i)) try l.flush();
         if (fast_chain and try l.fast(i)) continue;
+        // A quiet instruction the chain did not take after all.
+        try l.flush();
         std.debug.assert(l.loop == null);
         try l.insn(i);
         // It may have called a helper, across which no register of the chain is kept.
-        l.known.clearRetainingCapacity();
+        l.forget();
     }
     try l.generic(dead);
     // A carried register must not span a call, or the backend keeps it in memory. A block a

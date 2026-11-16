@@ -78,6 +78,41 @@ void jsrt_shape_remove(JSRTShape **shape, jsrt_value *slots, const JSRTShape *hi
  * fixed-shape enumeration answers it too, so the one spelling lives in C, and the Zig ordering
  * calls through to it rather than carrying a second copy. */
 
+/* -------------------------------------- allocation in compiled code (jsrt_gc.zig, VALUE.md §4.12) */
+
+/* The open run of the collector's young region, as code that takes no lock may use it. A block
+ * of `total` bytes fits while `bump + total <= limit`; it is then at `bump`, which moves past
+ * it. `limit` is zero while another thread may allocate: the run then belongs to the heap lock,
+ * and nothing fits. Both are zero or current at every instruction, so a JIT reads them where it
+ * allocates. */
+typedef struct JSRTYoungRun {
+  uintptr_t bump;
+  uintptr_t limit;
+} JSRTYoungRun;
+
+/* A line of the region, whose blocks one word of the index records. */
+#define JSRT_GC_LINE_SHIFT 9
+
+/* What a JIT needs to allocate one kind and size of block in `run` without a call. After the
+ * bump it sets the block's bit in the index (`off` being the block's offset from `base`: bit
+ * `(off >> 3) & 63` of `bits[off >> JSRT_GC_LINE_SHIFT]`), stores `word` and `meta` as the
+ * block's first two words, and initializes every byte of the object, which starts
+ * JSRT_GC_HEADER_BYTES into the block: the run is not zeroed. Such a block is dirty, as every
+ * block is until its first collection. */
+typedef struct JSRTYoungSite {
+  JSRTYoungRun *run;
+  uintptr_t base;
+  uint64_t *bits;
+  uint64_t word;
+  uint64_t meta;
+  uint32_t total;
+} JSRTYoungSite;
+
+/* The site of a dynamic object with `capacity` slots of its own (jsrt_dynobj_new_sized). False
+ * when no such object is born in the region: there is none (the sanitized flavor), or the
+ * object is too large for it. */
+bool jsrt_dynobj_young_site(uint32_t capacity, JSRTYoungSite *site);
+
 /* ------------------------------------------------------ allocation helpers (jsrt_alloc.zig) */
 
 /* Grows `a`'s element buffer so `index` is below its capacity; new elements read `undefined`. */

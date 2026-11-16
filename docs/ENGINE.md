@@ -103,14 +103,57 @@ whether it is past its TDZ, and the constant when the bytecode names one (`lower
 Constants, moves between locals and operands, `+ - * / %` and the comparisons on doubles, and
 the fused local forms then guard and load each operand once per run instead of once per
 instruction, and a comparison the next instruction jumps on becomes the branch, with no boolean
-written. Every result is still stored in the window at once, so the window is current at every
-instruction boundary. A guard that fails (an operand that is not a double, a local in its TDZ,
-a remainder that is not an integer's or is a zero of a non-positive dividend) therefore just
+written. A result stays in its register and is stored in the window only when something
+other than the chain may read it there: before an instruction that can leave the chain (one
+with a guard), before a call, and at the end of the run (`lower.zig`, `flush`). An operand
+that was popped before then is never stored, and a local written twice between two guards is
+stored once. The two paths of the chain that call but seldom run, the allocator's when the
+run has no room and the remainder's division, make the same stores at their head and leave
+the chain's own code without them. The window is therefore current wherever a guard is. A
+guard that fails (an operand that is not a double, a local in its TDZ,
+a remainder that is not an integer's or is a zero of a non-positive dividend) just
 branches to the same instruction in a second, generic copy of the run, which finishes it with
 the fast paths and helpers above and rejoins at the next run. The generic copies are emitted
 after all the fast code and nothing is remembered across an instruction lowered generically,
 because pyrlyn/jit keeps no float register across a call. x86-64 has only the generic code: its
 results must be read back from the window to make their NaN canonical.
+
+A remainder on the chain divides only when it has to. A dividend from zero up to the divisor is
+its own remainder, and one below twice the divisor leaves their difference, which is exact for
+doubles; those two cases are two comparisons and at most a subtraction, with no conversion to
+an integer. Anything else (a negative dividend, a larger one, a NaN) takes the guarded integer
+division. The wrap of an index or of a running sum, `i = (i + 1) % n`, is the common case.
+
+An object a literal makes inside a run is followed too (`lower.zig`, `Object`), until an
+instruction without a form runs: nothing else has seen it yet, so its shape and the value in
+each of its slots are known when the function is compiled. A named member takes its shape step
+then (`jsrt_shape_transition`) and is a slot store, with nothing compared; a member named
+twice, and a write of a property the object has, store into the same slot again; a read of a
+property it has is the register or constant that was stored, with nothing loaded from the
+object. The shape is stored once, the one the literal has reached, before the next guard, call
+or end of the run (`flush`): until then nothing else can look at the object. A store into the
+literal checks no write barrier while it is as dirty as it was born: a block is dirty from its
+allocation until a collection, only a call collects, and the one call the chain makes between
+two literals, the allocator's, marks the earlier ones again before it returns. Reads and
+writes of captured variables keep all of this, because they run none of the program's code. A
+literal of more than eight named members, the keys `constructor` and `__proto__`, a property
+the object lacks, and everything after a call, a getter, a spread or a computed key take the
+paths above.
+
+Such a literal is also allocated on the chain, with no call: the block is taken from the open
+run of the collector's young region (docs/VALUE.md §4.12, `JSRTYoungSite`) by moving the run's
+pointer and setting the block's bit in the index, and the object's header and slots are written
+in place. The allocator is called when the run has no room, which is where a collection starts
+and what the run reads as while another thread may allocate, and in a build with no region.
+That call is laid out after the code that fills the object and shares no value with it: the
+backend keeps a value that is used on both sides of a call, in the order the code is laid out,
+in one of the ten registers a call preserves, and when those run out it is the frame window's
+base that goes to the stack, which every access to the window then pays for. A captured
+variable is read and written in its environment directly, the frame's own or one a fixed
+number of parents out, and one the compiler could not rule the TDZ out for leaves the chain
+when it is uninitialized; an environment is always dirty to the collector, so the store checks
+no barrier. A constant the bytecode pushes that is no number (`null`, `undefined`, a boolean,
+the TDZ marker) is made again where it is stored, not read back from the window.
 
 **Loops with carried locals (AArch64).** A loop whose every instruction has a form on the fast
 chain makes no call on that chain, so its numeric locals can stay in float registers from one
@@ -120,9 +163,9 @@ block of such a loop is then lowered with two entries. The window entry, where c
 the loop and the generic copies arrive, guards that each carried local is a double, loads it
 into its register and goes on in the register entry; the register entry, which the loop's own
 jumps use, starts with those registers known. Before a block of the loop ends, each carried
-local's current value is copied into its register. The window is still written at once, so a
-failed guard leaves for the generic copy as anywhere else, and comes back through a window
-entry. A function with such a loop is laid out in the order its blocks were written, which
+local's current value is copied into its register. The window is written before every guard
+and at the block's end, as on any chain, so a failed guard leaves for the generic copy as
+anywhere else, and comes back through a window entry. A function with such a loop is laid out in the order its blocks were written, which
 keeps a loop's blocks together: a block a forward jump names is created early, and a carried
 register whose life spanned that block's calls would be kept in memory by the backend.
 
@@ -137,12 +180,13 @@ but is unverified until a Linux x86-64 run. A Windows or other host has no backe
 interprets.
 
 **What it is not yet.** A direct call still goes through one helper that checks the callee and
-opens its frame; every object is a call into the allocator, though the allocator itself is now
-a bump through the collector's young region (docs/VALUE.md §4.12); a call of any native method
+opens its frame; every object but a literal on the fast chain is a call into the allocator,
+and a dynamic object with two properties is an 88-byte block; a call of any native method
 but `push` goes through the call helper and the runtime's method dispatch; a number is always
-a double, so an integer loop converts to an integer and back around every remainder, and every
-result is written to the frame window whether or not anything reads it there. Integers in
-registers, window stores made only where a guard leaves, and the optimizing tier (plan/T67.1:
+a double, so a remainder that does divide converts to an integer and back, and a value
+that waits for the window is stored before every guard it passes, whether or not that guard
+ever fails. Integers in registers, window stores made only on the path a failed guard takes,
+and the optimizing tier (plan/T67.1:
 type feedback, call inline caches, deoptimization) are the next steps.
 
 ## 4. Tests and benchmark
@@ -259,22 +303,29 @@ machine's load, raw samples, rejected experiments and correctness checks; its V8
 
 Later T73 steps (§3: the bound-method cache read in compiled code, a literal's slots allocated
 with the object and its shape steps cached, an array's `length` and elements in place, `push`
-in place, the collector's young region, docs/VALUE.md §4.12, and then the fast chain and
-loop-carried locals) were measured the same way: five interleaved processes per engine and
-kernel, the same machine, Node v26.7.0, ReleaseFast. The V8 column and the ratio are from the
-last run; "young region" is the run before the fast chain.
+in place, the collector's young region, docs/VALUE.md §4.12, the fast chain and loop-carried
+locals, the remainder that does not divide and the collector's cheaper scan of static roots,
+and then object literals followed, allocated and filled on the fast chain) were measured the
+same way: five interleaved processes per engine and kernel, the same machine, Node v26.7.0,
+ReleaseFast. The V8 column and the ratio are from the last run; "young region" is the run
+before the fast chain, and "fast chain" the run before literals were followed on it.
 
-| Kernel  |     V8 | JIT (T73 start) | JIT (young region) |    JIT | JIT / V8 |
-| ------- | -----: | --------------: | -----------------: | -----: | -------: |
-| numeric | 22.459 |         170.309 |            138.221 | 89.619 |     3.99 |
-| objects |  4.676 |         234.009 |             25.628 | 22.356 |     4.78 |
-| cycles  |  5.590 |         156.619 |             29.259 | 26.386 |     4.72 |
+| Kernel  |     V8 | JIT (T73 start) | JIT (young region) | JIT (fast chain) |    JIT | JIT / V8 |
+| ------- | -----: | --------------: | -----------------: | ---------------: | -----: | -------: |
+| numeric | 22.075 |         170.309 |            138.221 |           16.710 | 16.513 |     0.75 |
+| objects |  4.201 |         234.009 |             25.628 |           21.103 | 16.524 |     3.93 |
+| cycles  |  5.445 |         156.619 |             29.259 |           25.099 |  9.996 |     1.84 |
 
-The process-median interquartile ranges do not overlap between the engines: Stator is slower
-than V8 on all three kernels. The last run shared the machine with other work (load average
-12.7 before it), and two of the five numeric processes measured 102 and 103 us. Generated code
-is most of every kernel (all of numeric, three quarters of objects, over half of cycles); the
-progress report has the profiles, the machine code of the numeric loop and the raw samples.
+The process-median interquartile ranges do not overlap between the engines on any kernel. On
+the numeric kernel, a loop that wraps a running sum with a remainder, Stator is faster than V8
+(16.501-16.530 us against 22.040-22.132); that is one loop, not numeric code in general. On
+objects and cycles it is still slower, by 3.9 and 1.8 times. The cycles loop makes two
+literals an iteration, and what is left of it is the instructions that write them: a dynamic
+object with two properties is eleven words, every push is still stored in the frame window,
+and each block sets its bit in the collector's index. The objects kernel reads its objects
+back through an array, where the generated code still asks each object for its shape. The
+machine was shared with other work (load average about 7). The progress report has the
+profiles, the threshold sweep, the checks and the raw samples.
 
 ### 4.2. Startup and JIT compilation cost (T74)
 

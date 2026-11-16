@@ -8,6 +8,7 @@ const builtins = @import("builtins.zig");
 const vm = @import("vm.zig");
 const jit = @import("jit/jit.zig");
 const helpers = @import("jit/helpers.zig");
+const lower = @import("jit/lower.zig");
 const Value = rt.Value;
 const c = rt.c;
 
@@ -240,6 +241,10 @@ test "the fast chain leaves for the generic code on anything but the doubles it 
     try expectRuns("function f(o) { let s = 1; s = s + 2; s = s + o; s = s * 2; return s; } f(3) + ',' + f('a') + ',' + f({ valueOf() { return 4; } })", "12,NaN,14");
     try expectRuns("function f() { let s = 0; for (let i = 0; i < 6; i += 1) { if (i == 3) s = s + 'x'; s = s + i; } return s; } f()", "3x345");
     try expectRuns("function f(n) { let sum = 0; for (let i = 0; i < n; i += 1) sum = (sum + i) % 65521; return sum; } f(10000) + ',' + f(0) + ',' + f(-1)", "2477,0,0");
+    // Remainders that take the dividend, one subtraction or the division; a divisor that is
+    // negative, zero, infinite or NaN.
+    try expectRuns("function f(a, b) { return a % b; } [f(3, 5), f(7, 5), f(5, 5), f(12, 5), f(2.5, 4), f(5.75, 4), f(0.5, 0.3), f(9.5, 0.3), Object.is(f(-0, 5), -0), Object.is(f(0, 5), 0), f(3, -5), f(7, -5), f(0, -3), f(3, Infinity), f(Infinity, Infinity), f(7, NaN), f(NaN, NaN), f(1e308, 6e307), f(1e-323, 5e-324), f(2 ** 53, 2 ** 52), f(-3, 5), f(4, 0), f(0, 0)].join()", "3,2,0,2,2.5,1.75,0.2,0.20000000000000034,true,true,3,2,0,3,NaN,NaN,NaN,4.0000000000000004e+307,0,0,-3,NaN,NaN");
+    try expectRuns("function f(n) { let i = 0; let c = 0; let s = 0; let d = 0; for (let k = 0; k < n; k += 1) { i = (i + 1) % 7; c += i; s = (s + k * 1000) % 97; d = (d - k) % 5; } return [c, i, s, d].join(); } f(100) + ';' + f(0) + ';' + f(3)", "297,2,90,0;0,0,0,0;6,3,90,-3");
     try expectRuns("function f(a, b) { let q = a / b; let p = a * b - q; return [q, p, a - b, 1 / (a * 0), a / 0 - a / 0].join(); } f(6, 4) + ';' + f(-1, 2)", "1.5,22.5,2,Infinity,NaN;-0.5,-1.5,-3,-Infinity,NaN");
     try expectRuns("function f(a) { let s = 0; for (let i = a; i < 4; i += 1) s += i; return s; } f(0) + ',' + f('2') + ',' + f(-0.5)", "6,02,7.5");
 }
@@ -269,7 +274,7 @@ test "a remainder loop runs without a helper" {
         .{ helpers.binary, helpers.truthy },
     );
     try std.testing.expectEqual(2, r.compiled);
-    // The first remainder is a zero, which the chain leaves to the generic code's inline case.
+    // No dividend here reaches twice the divisor, so nothing is divided either.
     try std.testing.expectEqual([2]usize{ 0, 0 }, r.calls);
 }
 
@@ -288,15 +293,82 @@ test "an object literal takes its cached shape steps in place" {
     if (!jit.available) return error.SkipZigTest;
     const r = try jitCost(
         "function f() { let s = 0; for (let i = 0; i < 1000; i++) { const o = {x: i, y: 2}; s += o.x + o.y; } return s; } f()",
-        .{ helpers.define, helpers.newObject },
+        .{ helpers.define, helpers.getProp, helpers.newObject },
     );
-    // The first literal finds both steps through the helper; the other 999 store inline into
-    // the slots the object was allocated with. Each literal still allocates through its helper.
-    try std.testing.expectEqualSlices(usize, &.{ 2, 1000 }, &r.calls);
+    // On the fast chain both shape steps are taken when f is compiled, and what the literal
+    // stored is read back without asking the object. Elsewhere the first literal finds its steps
+    // and fills its read caches through the helpers, and the other 999 store and read inline.
+    const first: usize = if (lower.fast_chain) 0 else 2;
+    try std.testing.expectEqualSlices(usize, &.{ first, first }, r.calls[0..2]);
+    // The chain also takes each object from the collector's open run itself, and calls the
+    // allocator only where a run ends; the others call it for every literal.
+    if (lower.fast_chain) try std.testing.expect(r.calls[2] < 100) else try std.testing.expectEqual(1000, r.calls[2]);
     try expectRuns("function f(k) { const o = {a: 1, b: 2, a: 3, [k]: 4, c: 5}; return JSON.stringify(o); } f('z') + f('b')", "{\"a\":3,\"b\":2,\"z\":4,\"c\":5}{\"a\":3,\"b\":4,\"c\":5}");
     try expectRuns("function f(p) { const o = {a: 1, __proto__: p, ...p, b: 2, m() { return this.a + this.b + this.q; }}; o.late = 1; o.later = 2; return o.m() + Object.keys(o).join(); } f({q: 4}) + f({q: 5, a: 7})", "7a,q,b,m,late,later14a,q,b,m,late,later");
     try expectRuns("function f(n) { const o = {a: n}; if (n & 1) o.b = n; else o.c = n; o.d = 1; o.e = 2; o.f = 3; return Object.keys(o).join('') + o.a; } f(1) + f(2) + f(3)", "abdef1acdef2abdef3");
     try expectRuns("class P { x = 1; y = 2; } class Q extends P { z = this.x + this.y; } function f() { const q = new Q(); return q.x + q.y + q.z; } f() + f()", "12");
+}
+
+test "a local read after its declaration takes no TDZ check, and any other read does" {
+    // A read before the declaration, in a later clause of a `switch`, in the next iteration,
+    // in its own initializer and by assignment; a constant and a class; a captured variable,
+    // which a closure or a hoisted function may reach first; `this` before `super()`; a
+    // `continue` past the declaration; a clause entered past it; reads that need no check.
+    try expectRuns("function f() { try { x; } catch (e) { return e.name; } let x = 1; return x; } f()", "ReferenceError");
+    try expectRuns("function f(n) { switch (n) { case 0: let y = 1; return y; case 1: try { return y; } catch (e) { return e.name; } } } f(0) + ',' + f(1)", "1,ReferenceError");
+    try expectRuns("function f() { const out = []; for (let i = 0; i < 2; i += 1) { try { out.push(v); } catch (e) { out.push(e.name); } let v = i; out.push(v); } return out.join(); } f()", "ReferenceError,0,ReferenceError,1");
+    try expectRuns("function f() { try { let x = x + 1; return x; } catch (e) { return e.name; } } f()", "ReferenceError");
+    try expectRuns("function f() { try { z = 1; } catch (e) { return e.name; } let z; return z; } function g() { let z; z = 2; z += 1; return z; } f() + ',' + g()", "ReferenceError,3");
+    try expectRuns("function f() { const c = 1; try { c = 2; } catch (e) { return e.name + c; } } function g() { try { c = 2; } catch (e) { return e.name; } const c = 1; } f() + ',' + g()", "TypeError1,ReferenceError");
+    try expectRuns("function f() { try { new C(); } catch (e) { return e.name; } class C {} return typeof C; } function g() { class C {} return typeof new C(); } f() + ',' + g()", "ReferenceError,object");
+    try expectRuns("function f() { const g = () => x; try { g(); } catch (e) { return e.name; } let x = 1; } function h() { try { return g(); } catch (e) { return e.name; } let x = 1; function g() { return x; } } f() + ',' + h()", "ReferenceError,ReferenceError");
+    try expectRuns("let r = ''; class A {} class B extends A { constructor() { try { this.x = 1; } catch (e) { r = e.name; } super(); this.x = 2; } } r + new B().x + r", "2ReferenceError");
+    try expectRuns("function f() { let n = 0; outer: for (let i = 0; i < 3; i += 1) { if (i === 1) continue outer; let k = i; n += k; } return n; } f()", "2");
+    try expectRuns("function f() { const out = []; for (let i = 0; i < 3; i += 1) { switch (i) { case 1: try { out.push(q); } catch (e) { out.push('R'); } break; case 0: case 2: let q = i; out.push(q); } } return out.join(); } f()", "0,R,2");
+    try expectRuns("function f(a) { let s = 0; for (const x of a) { const y = x * 2; s += y; } { let t = s; t += 1; s = t; } return s; } f([1, 2, 3])", "13");
+}
+
+test "a literal the fast chain follows answers what the object would" {
+    // Members read back through locals, operands and a cycle; a key named twice, an own key
+    // written, a key added and a key it lacks; two names for one object; an object a call, a
+    // getter or Object.freeze has reached; members that are calls, literals and remainders;
+    // `constructor` and `__proto__`; more members than the chain follows, none and a spread;
+    // literals in a loop, in a list and in a cycle; a literal that outlives collections and is
+    // then written with younger objects; captured variables read and written between members.
+    try expectRuns("function f(i, seed) { const a = { value: i, next: null }; const b = { value: seed, next: a }; a.next = b; return a.next.value + b.next.value + ',' + (a.next === b) + ',' + (b.next.next === b) + ',' + a.next.next.value; } f(1, 2) + ';' + f('x', 0.5) + ';' + f(-0, NaN)", "3,true,true,1;0.5x,true,true,x;NaN,true,true,0");
+    try expectRuns("function f(k) { const o = { a: 1, b: k, a: k + 1 }; const r = [o.a, o.b]; o.b = o.a * 2; r.push(o.b, o.c); o.c = 7; r.push(o.c, 'c' in o); return r.join() + JSON.stringify(o); } f(1) + f('s')", "2,1,4,,7,true{\"a\":2,\"b\":4,\"c\":7}s1,s,NaN,,7,true{\"a\":\"s1\",\"b\":null,\"c\":7}");
+    try expectRuns("function f(n) { const a = { x: n, y: 0 }; const b = a; b.x = n + 1; const v = (a.y = b.x * 2); return [a.x, b.y, v, { p: n, q: a }.q.x, { p: n }.p].join(); } f(1) + ';' + f(2.5)", "2,4,4,2,1;3.5,7,7,3.5,2.5");
+    try expectRuns("function g(o) { o.x = o.x + 10; o.z = 1; delete o.y; return o; } function f(n) { const o = { x: n, y: 2 }; const before = o.x + o.y; g(o); return before + ',' + o.x + ',' + o.y + ',' + o.z + ',' + Object.keys(o).join(''); } f(1) + ';' + f(5)", "3,11,undefined,1,xz;7,15,undefined,1,xz");
+    try expectRuns("function f(n) { let c = 0; const o = { x: n, get y() { c += 1; return this.x * 2; }, z: 3 }; const p = { a: o.x, b: 4 }; return [o.x, o.y, o.y, o.z, c, p.a, p.b].join(); } f(1) + ';' + f(2)", "1,2,2,3,2,1,4;2,4,4,3,2,2,4");
+    try expectRuns("function f(n) { 'use strict'; const o = { x: n, y: 1 }; o.y = n + 1; Object.freeze(o); let threw = false; try { o.x = 9; } catch (e) { threw = e instanceof TypeError; } return o.x + ',' + o.y + ',' + threw; } f(1)", "1,2,true");
+    try expectRuns("function h(x) { return { v: x }; } function f(n, s) { const o = { a: h(n).v, b: { c: n + 1, d: s + n }, e: n % 3 }; return [o.a, o.b.c, o.b.d, o.e, o.b === o.b].join(); } f(4, 1) + ';' + f(4, 'q') + ';' + f(-3, 1)", "4,5,5,1,true;4,5,q4,1,true;-3,-2,-2,0,true");
+    try expectRuns("function f(p) { const a = { constructor: 1, x: 2 }; const b = { x: 3, y: 4 }; const __proto__ = p; const d = { __proto__, x: 5 }; const e = { __proto__: p, x: 6 }; return [a.constructor, b.constructor === Object, d.__proto__ === p, Object.getPrototypeOf(d) === Object.prototype, e.q, e.x, Object.keys(d).join('')].join(); } f({ q: 9 })", "1,true,true,true,9,6,__proto__x");
+    try expectRuns("function f(n) { const o = { a: n, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10 }; const e = {}; e.k = o.j; const s = { ...o, a: 0, z: e.k }; return o.a + o.j + e.k + s.a + s.z + Object.keys(s).length; } f(1)", "42");
+    try expectRuns("let root = null; function f(n) { let sum = 0; let head = null; for (let i = 0; i < n; i += 1) { const a = { value: i, next: null }; const b = { value: n, next: a }; a.next = b; root = a; head = { value: i, next: head }; sum += a.next.value + b.next.value + head.value; } let len = 0; for (let p = head; p !== null; p = p.next) len += 1; return sum + ',' + len + ',' + root.next.next.value; } f(2000) + ';' + f(3)", "7998000,2000,1999;15,3,2");
+    try expectRuns("function fill(n) { const junk = []; for (let i = 0; i < n; i += 1) junk.push({ i, s: 'k' + i }); return junk.length; } function f(n) { const keep = { first: null, second: null, count: 0 }; const a = { v: 1, w: null }; keep.count = fill(n); const b = { v: 2, w: a }; keep.first = b; a.w = keep; keep.count += fill(n); const c = { v: 3, w: keep.first }; keep.second = c; keep.count += fill(n); return [keep.first.v, keep.second.v, keep.second.w.w.v, a.w.count, keep.first.w.w === keep].join(); } f(3000)", "2,3,1,9000,true");
+    try expectRuns("function f(n) { let seen = 0; const bump = () => { seen += 1; return seen; }; const o = { a: n, b: seen }; seen = o.a + 1; const p = { a: seen, b: o }; bump(); return [o.a, o.b, p.a, p.b.a, seen].join(); } f(4)", "4,0,5,4,6");
+    // Captured variables a closure also writes, one and two environments out; literals of
+    // every size the chain allocates itself, enough of them to fill runs and outlive collections.
+    try expectRuns("function f(n) { let total = 0; let last = null; const add = (o) => { total += o.v; }; for (let i = 0; i < n; i += 1) { const o = { v: i, w: total }; last = o; add(o); total = total + 1; } return total + ',' + last.v + ',' + last.w; } f(100)", "5050,99,4950");
+    try expectRuns("function outer(n) { let a = 1; function mid() { let b = 2; function inner(k) { a = a + k; b = b + a; const o = { p: a, q: b }; return o.p + o.q; } let s = 0; for (let i = 0; i < n; i += 1) s += inner(i); return s + ',' + b; } return mid() + ',' + a; } outer(50)", "292975,20877,1226");
+    try expectRuns("function f(n) { const keep = []; for (let i = 0; i < n; i += 1) { const a = { a: i }; const b = { a: i, b: a }; const c = { a: i, b: b, c: 3, d: 4, e: 5, f: 6, g: 7, h: a }; if (i % 97 === 0) keep.push(c); } let s = 0; for (const c of keep) s += c.a + c.b.b.a + c.h.a + c.g; return s + ',' + keep.length; } f(200000)", "618357715,2062");
+    // A member that leaves the fast chain between two the chain stored, and a literal whose
+    // members are a call that collects and literals that outlive it.
+    try expectRuns("function f(n, s) { const o = { a: n, b: s + n, c: n * 2 }; o.d = s; return JSON.stringify(o) + Object.keys(o).join(''); } f(1, 2) + f(1, 'x') + f('y', 2)", "{\"a\":1,\"b\":3,\"c\":2,\"d\":2}abcd{\"a\":1,\"b\":\"x1\",\"c\":2,\"d\":\"x\"}abcd{\"a\":\"y\",\"b\":\"2y\",\"c\":null,\"d\":2}abcd");
+    try expectRuns("function fill(n) { const junk = []; for (let i = 0; i < n; i += 1) junk.push({ i, s: 'k' + i }); return junk.length; } function f(n) { const first = { x: n, y: null }; const o = { a: first, b: fill(n), c: { z: first } }; first.y = o; let live = 0; for (let i = 0; i < 300000; i += 1) { const t = { p: i, q: o, r: null }; t.r = t; if (t.q.c.z.y === o) live += 1; } return [o.b, o.a.x, o.c.z.y.b, live].join(); } f(3000)", "3000,3000,3000,300000");
+}
+
+test "a value that waits for the frame window is there when the chain is left" {
+    // Locals and operands computed before a guard that fails; a comparison's result and a
+    // popped operand; a loop with carried locals left in the middle of an iteration; doubles
+    // that wait across the allocator's slow path, and across the remainder's division; the
+    // constants that are no number.
+    try expectRuns("function f(a, b) { let x = a + 1; let y = x * 2; let z = y - a; x = z; return z + b + ',' + x + ',' + y; } f(1, 2) + ';' + f(1, 's') + ';' + f('q', 2) + ';' + f(1, 2)", "5,3,4;3s,3,4;NaN,NaN,NaN;5,3,4");
+    try expectRuns("function f(a, b) { const c = a < b; const d = (a, b, a * b); let e = d; e = e + 1; e = e + c; return c + ',' + d + ',' + e; } f(1, 2) + ';' + f(2, 1) + ';' + f(2, 'x') + ';' + f(NaN, 1)", "true,2,4;false,2,3;false,NaN,NaN;false,NaN,NaN");
+    try expectRuns("function f(n, k) { let s = 0; let t = 1; for (let i = 0; i < n; i += 1) { s += i; t = s * 2; if (i === 5) s = s + k; } return s + ',' + t; } f(10, 1) + ';' + f(10, 'x') + ';' + f(10, 1)", "46,92;15x6789,NaN;46,92");
+    try expectRuns("function f(n) { let s = 0; let keep = null; for (let i = 0; i < n; i += 1) { const x = i * 2; const y = x + 1; const o = { a: x, b: y }; s += o.a + y; if (i % 1000 === 0) keep = o; } return s + ',' + keep.b + ',' + keep.a; } f(300000)", "179999700000,598001,598000");
+    try expectRuns("function f(n, d) { let s = 0; for (let i = 0; i < n; i += 1) { const x = i * 3; const y = x + 1; s += (y * 1000) % d + x % 5 + (0 - y) % d; } return s; } f(1000, 7) + ';' + f(10, 0.5) + ';' + f(10, 0)", "2003;20;NaN");
+    try expectRuns("function f(n) { let u; let a = 1; for (let i = 0; i < n; i += 1) { let v; const w = null; const o = { p: v, q: w, r: true }; a = a + 1; u = o; } return [u.p, u.q, u.r, a].join(); } f(50)", ",,true,51");
 }
 
 test "an array's length and its elements are read and written in place" {
@@ -355,7 +427,9 @@ test "exact integer remainder stays in native code and other operands use the VM
         .{helpers.binary},
     );
     try std.testing.expectEqual(2, slow.compiled);
-    try std.testing.expectEqual(11, slow.calls[0]);
+    // Three of the eleven need no division and so no helper: 1.5 % 1 is one subtraction, and
+    // 1 % Infinity and 3 % 2^53 are their dividends.
+    try std.testing.expectEqual(8, slow.calls[0]);
 }
 
 test "a global name is looked up once per function" {

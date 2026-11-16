@@ -185,11 +185,15 @@ export fn jsrt_args_rest(argc: u32, argv: [*c]const Value, from: u32) Value {
     return jsrt_array_new(argc - from, argv + from);
 }
 
+/// A dynamic object with `capacity` slots of its own.
+fn dynobjBytes(capacity: u32) usize {
+    return @sizeOf(c.JSRTDynObject) + @as(usize, capacity) * @sizeOf(Value);
+}
+
 /// `capacity` slots follow the header in the same block, already zeroed by the allocator.
 fn dynobjNew(cls: *const c.JSRTClass, capacity: u32) Value {
-    const bytes = @sizeOf(c.JSRTDynObject) + @as(usize, capacity) * @sizeOf(Value);
     // Its finalizer frees the slots only when they are a buffer, which then names the object.
-    const o: *c.JSRTDynObject = @ptrCast(@alignCast(gc.allocLazy(bytes, &dynobj_kind)));
+    const o: *c.JSRTDynObject = @ptrCast(@alignCast(gc.allocLazy(dynobjBytes(capacity), &dynobj_kind)));
     o.* = .{
         .cls = cls,
         .shape = &shapes.jsrt_shape_root,
@@ -208,6 +212,11 @@ export fn jsrt_dynobj_new() Value {
 
 export fn jsrt_dynobj_new_sized(capacity: u32) Value {
     return dynobjNew(&c.jsrt_class_dynamic, capacity);
+}
+
+export fn jsrt_dynobj_young_site(capacity: u32, site: *c.JSRTYoungSite) bool {
+    // Not on the young list, as `dynobjNew` leaves it: its slots are its own.
+    return gc.youngSite(dynobjBytes(capacity), &dynobj_kind, site);
 }
 
 export fn jsrt_null_proto_new() Value {

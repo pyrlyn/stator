@@ -19,3 +19,11 @@ as a `stator ffi-gen` subcommand stays in-tree and is not scheduled.
 - Print aliases, index parameter names and method members as tsc does, so message text matches and not just the code.
 - Find out why one checker per file prints `Type '{}'` where a normal run prints `Type 'PermissionRequestHandler'` in a TS2344 on VS Code: the file, line and code match, the text depends on the run.
 - Close the tsc gaps found while writing T56's fixture: `take(pick("a", over(false)))` misses TS2345 on the outer call, and a statement call with a failing overload narrows by the last overload where tsc does not.
+
+## Engine (`packages/engine`)
+
+Found while writing T73's cases, each against the pinned Node (2026-11-16):
+
+- A plain object does not answer `Object.prototype`'s methods on a property read: `typeof ({ a: 1 }).toString` is `undefined`.
+- A write to a frozen object in sloppy code throws a TypeError; it is ignored there and throws only in strict code.
+- A method taken off an array stays bound to that array: `const push = a.push; push.call(b, 5)` grows `a`.

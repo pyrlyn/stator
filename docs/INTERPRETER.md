@@ -130,6 +130,12 @@ and `src/vm.zig` runs it:
   local arithmetic/comparisons and named property reads can use combined instructions. These
   resolve binding slots, not types: mixed values still use the same JS coercion helpers, TDZ
   checks and exception handlers. The baseline JIT accepts the same instructions.
+- **TDZ checks.** A read or a write of a `let`, `const` or class binding checks that it is
+  initialized, except a local the function has already initialized where the access is
+  compiled: a statement runs after the ones before it in its scope, each time the scope is
+  entered, and a local is no other function's. A captured variable keeps the check, since a
+  function declared later may be called earlier, and so do the bindings of a `switch`, whose
+  clauses are entered past the declarations of the clauses before them.
 - **Call values.** In functions without nested functions, immutable `this`, `new.target`, home
   and callee values read the activation header directly. Derived constructors retain a mutable
   `this` binding, and captured call values remain in environments. Calls within the interpreter
