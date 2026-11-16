@@ -138,9 +138,8 @@ property it has is the register or constant that was stored, with nothing loaded
 object. The shape is stored once, the one the literal has reached, before the next call
 or end of the run (`flush`), or by a guard that fails: until then nothing else can look at the
 object. A store into the
-literal checks no write barrier while it is as dirty as it was born: a block is dirty from its
-allocation until a collection, only a call collects, and the one call the chain makes between
-two literals, the allocator's, marks the earlier ones again before it returns. Reads and
+literal checks no write barrier: a block is dirty from its allocation until a collection, only
+a call collects, and the chain calls nothing while it follows a literal. Reads and
 writes of captured variables keep all of this, because they run none of the program's code. A
 literal of more than eight named members, the keys `constructor` and `__proto__`, a property
 the object lacks, and everything after a call, a getter, a spread or a computed key take the
@@ -151,12 +150,17 @@ run of the collector's young region (docs/VALUE.md §4.12, `JSRTYoungSite`) by m
 pointer down and writing the block's two prefix words, by which the collector finds the block
 if anything asks about it, and the object's header and slots are written in place. A slot is
 written once: with its member, or with zero when no member has filled it by the time the chain
-can be left. The allocator is called when the run has no room, which is where a collection starts
-and what the run reads as while another thread may allocate, and in a build with no region.
-That call is laid out after the code that fills the object and shares no value with it: the
-backend keeps a value that is used on both sides of a call, in the order the code is laid out,
-in one of the ten registers a call preserves, and when those run out it is the frame window's
-base that goes to the stack, which every access to the window then pays for. A captured
+can be left. A run with no room, which is where a collection starts and what the run reads as
+while another thread may allocate, is a guard that fails: the generic copy of the instruction
+calls the allocator, and the chain itself calls nothing for a literal, so no register of the
+chain lives across a call for one. In a build with no region the literal has no form on the
+chain. The literals of a stretch of the chain with no guard in it are taken from the run
+together (`place`): the first one's test and move of the run's pointer take the bytes of all
+of them, 256 at most, which fits any run that has room at all, since none is shorter than a
+line of the region. A guard between two literals ends the stretch, because the code it leaves
+for may ask the collector about the run, and every block of the run must have its prefix by
+then. The two header words that are always empty, `frozen` and the prototype, are cleared by
+one 16-byte store. A captured
 variable is read and written in its environment directly, the frame's own or one a fixed
 number of parents out, and one the compiler could not rule the TDZ out for leaves the chain
 when it is uninitialized; an environment is always dirty to the collector, so the store checks
@@ -188,9 +192,27 @@ jumps use, starts with those registers known. Before a block of the loop ends, e
 local's current value is copied into its register. The window is written at the block's end
 and on the path of a guard that fails, as on any chain, so a failed guard leaves for the
 generic copy as anywhere else, and comes back through a window entry. The reads above have
-forms, so a loop over an array's elements and their properties is such a loop. A function with such a loop is laid out in the order its blocks were written, which
+forms, so a loop over an array's elements and their properties is such a loop, and so is one
+that makes literals: whether the chain takes a literal's instructions depends on what it knows
+where it meets them, so `carriedLoops` asks by lowering the loop once into a function it
+throws away (`takenWhole`).
+
+Inside such a loop the window is written less than on any other chain. A jump to another block
+of the loop stores no carried local: the next block reads the registers, a jump out of the
+loop goes through a block of its own that stores them (`edge`), and a failing guard stores
+what it owes as elsewhere, up to sixteen stores. A constant that takes the backend more than
+one instruction (a tag, a shape, a class, a block's prefix word, the run's address) is made
+once, where the loop is entered through a window entry, and kept in a register while the
+register copy of the loop runs, eight integer and eight float constants at most (`pooled`).
+A double that was read from a local and is still in its slot is loaded into a float register
+from that slot, wherever its copies have been moved since (`atHome`).
+
+A function with such a loop is laid out in the order its blocks were written, which
 keeps a loop's blocks together: a block a forward jump names is created early, and a carried
-register whose life spanned that block's calls would be kept in memory by the backend.
+register whose life spanned that block's calls would be kept in memory by the backend. The
+blocks of the loop that seldom run, its window entries and the dividing arm of a remainder,
+are laid out after its other blocks (`seldom`): the backend drops a jump to the next block, so
+an iteration that runs none of them takes one branch, where it took one more around each.
 
 Everything else (mixed operands, strings, a cache miss, calls, environments, construction,
 `throw`) calls a helper in `helpers.zig` that runs the VM's own function for the

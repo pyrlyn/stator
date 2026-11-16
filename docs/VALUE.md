@@ -925,7 +925,9 @@ when the run belongs to the heap lock). `JSRTYoungSite` gives the rest for one k
 block: its two prefix words. Code that allocates this way moves the pointer and writes the
 prefix and every byte of the object, since only the allocator's own path zeroes a block, and
 calls the allocator when the block does not fit the run, which is also where a collection
-starts. It does not touch the index. The collector indexes such a block when it is first asked
+starts. One move of the pointer may take several blocks, but each of them has its prefix
+before anything can ask the collector about the run, which means before the next call: the
+walk below reads the prefix of every block it passes. It does not touch the index. The collector indexes such a block when it is first asked
 about that block or an older one of its run: a prefix says where the next block starts, so it
 walks up from the nearest block below that the index has, and the blocks nothing asks about,
 which is most of the dead, are never read. While another thread may allocate no block waits
