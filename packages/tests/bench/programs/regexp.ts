@@ -1,6 +1,6 @@
 // The vendored libregexp on the paths programs hit: test, exec with captures, global replace and
 // split. The input is rebuilt each round so no compile-time fold can precompute a match.
-const word = /([a-z]+)(\d+)/;
+const word = /^([a-z]+)(\d+)/;
 const digits = /\d+/g;
 let checksum: number = 0;
 for (let round = 0; round < 12_000; round += 1) {
