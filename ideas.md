@@ -27,3 +27,8 @@ Found while writing T73's cases, each against the pinned Node (2026-11-16):
 - A plain object does not answer `Object.prototype`'s methods on a property read: `typeof ({ a: 1 }).toString` is `undefined`.
 - A write to a frozen object in sloppy code throws a TypeError; it is ignored there and throws only in strict code.
 - A method taken off an array stays bound to that array: `const push = a.push; push.call(b, 5)` grows `a`.
+- There is no `Float64Array` (`typeof Float64Array` is `undefined`), nor any other typed array.
+- `length` asked of an array by a computed key answers `undefined`: `xs['length']`, and `xs[k]` with `k = 'length'`.
+- A hole in an array does not consult `Array.prototype`: with `Array.prototype[1] = 'proto'`, `[0, , 2][1]` is `undefined`.
+- `typeof ({ a: 1 }).__proto__` is `undefined`, and `typeof Object.create(null).constructor` is `function`.
+- The JIT leaves a whole function to the interpreter for one opcode it has no form for. A template literal (`to_string`), a computed string key (`to_key`) and an array literal with elements (`array_push`) are the common ones: of the engine corpus's functions, `STATOR_JIT_TRACE=1` shows about one in four rejected for them. A generic form that calls the VM's own function, as every other operation has, would compile the rest of such a function.
