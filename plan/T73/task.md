@@ -2,7 +2,7 @@
 status: in progress
 priority: P1
 complexity: 5
-readiness: 75%
+readiness: 85%
 agent: Claude Code / claude-fable-5-2
 ---
 
@@ -150,6 +150,19 @@ to 1.22x. 19, 22, 25 and 26 are still to do, and the listings add:
     for each element, and a literal that was pushed is forgotten.
 30. A dirty object that is dead is not counted first: the array a root held while it was
     filled has all it holds promoted at the next collection and freed in the same one.
+
+22 and 26 are in, with the part of 25 that loads a double from the slot it was read from
+(`progress.md`, "Loops that make literals"): a loop that makes literals carries its numeric
+locals, which are stored only on the way out of it; the constants of such a loop are made once
+and kept in registers; its rare blocks are laid out after it; and literals in a row take one
+test and one move of the run. Cycles went from 1.22x to 0.93x of V8's time, which passes the
+Check for that kernel as numeric does (0.61x); objects went from 2.43x to 2.34x and is what is
+left. 19, 20, the rest of 25 and 27 to 30 are still to do, and the listings add:
+
+31. Locals that are dead at a loop's edge are still stored there: the two literals of the
+    cycle loop are block-scoped, and each jump back writes both. Liveness would drop the
+    stores, and the slots must then hold nothing stale for the collector to read.
+32. A block's two prefix words in one 16-byte store, from a constant that is kept.
 
 Files: `packages/engine/src/{vm,compile,bytecode}.zig`, `packages/engine/src/jit/`,
 `packages/runtime/src/{jsrt_alloc,jsrt_gc}.zig`, `packages/runtime/include/jsrt_value.h`. Verify:

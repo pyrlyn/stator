@@ -138,9 +138,8 @@ property it has is the register or constant that was stored, with nothing loaded
 object. The shape is stored once, the one the literal has reached, before the next call
 or end of the run (`flush`), or by a guard that fails: until then nothing else can look at the
 object. A store into the
-literal checks no write barrier while it is as dirty as it was born: a block is dirty from its
-allocation until a collection, only a call collects, and the one call the chain makes between
-two literals, the allocator's, marks the earlier ones again before it returns. Reads and
+literal checks no write barrier: a block is dirty from its allocation until a collection, only
+a call collects, and the chain calls nothing while it follows a literal. Reads and
 writes of captured variables keep all of this, because they run none of the program's code. A
 literal of more than eight named members, the keys `constructor` and `__proto__`, a property
 the object lacks, and everything after a call, a getter, a spread or a computed key take the
@@ -151,12 +150,17 @@ run of the collector's young region (docs/VALUE.md §4.12, `JSRTYoungSite`) by m
 pointer down and writing the block's two prefix words, by which the collector finds the block
 if anything asks about it, and the object's header and slots are written in place. A slot is
 written once: with its member, or with zero when no member has filled it by the time the chain
-can be left. The allocator is called when the run has no room, which is where a collection starts
-and what the run reads as while another thread may allocate, and in a build with no region.
-That call is laid out after the code that fills the object and shares no value with it: the
-backend keeps a value that is used on both sides of a call, in the order the code is laid out,
-in one of the ten registers a call preserves, and when those run out it is the frame window's
-base that goes to the stack, which every access to the window then pays for. A captured
+can be left. A run with no room, which is where a collection starts and what the run reads as
+while another thread may allocate, is a guard that fails: the generic copy of the instruction
+calls the allocator, and the chain itself calls nothing for a literal, so no register of the
+chain lives across a call for one. In a build with no region the literal has no form on the
+chain. The literals of a stretch of the chain with no guard in it are taken from the run
+together (`place`): the first one's test and move of the run's pointer take the bytes of all
+of them, 256 at most, which fits any run that has room at all, since none is shorter than a
+line of the region. A guard between two literals ends the stretch, because the code it leaves
+for may ask the collector about the run, and every block of the run must have its prefix by
+then. The two header words that are always empty, `frozen` and the prototype, are cleared by
+one 16-byte store. A captured
 variable is read and written in its environment directly, the frame's own or one a fixed
 number of parents out, and one the compiler could not rule the TDZ out for leaves the chain
 when it is uninitialized; an environment is always dirty to the collector, so the store checks
@@ -188,9 +192,27 @@ jumps use, starts with those registers known. Before a block of the loop ends, e
 local's current value is copied into its register. The window is written at the block's end
 and on the path of a guard that fails, as on any chain, so a failed guard leaves for the
 generic copy as anywhere else, and comes back through a window entry. The reads above have
-forms, so a loop over an array's elements and their properties is such a loop. A function with such a loop is laid out in the order its blocks were written, which
+forms, so a loop over an array's elements and their properties is such a loop, and so is one
+that makes literals: whether the chain takes a literal's instructions depends on what it knows
+where it meets them, so `carriedLoops` asks by lowering the loop once into a function it
+throws away (`takenWhole`).
+
+Inside such a loop the window is written less than on any other chain. A jump to another block
+of the loop stores no carried local: the next block reads the registers, a jump out of the
+loop goes through a block of its own that stores them (`edge`), and a failing guard stores
+what it owes as elsewhere, up to sixteen stores. A constant that takes the backend more than
+one instruction (a tag, a shape, a class, a block's prefix word, the run's address) is made
+once, where the loop is entered through a window entry, and kept in a register while the
+register copy of the loop runs, eight integer and eight float constants at most (`pooled`).
+A double that was read from a local and is still in its slot is loaded into a float register
+from that slot, wherever its copies have been moved since (`atHome`).
+
+A function with such a loop is laid out in the order its blocks were written, which
 keeps a loop's blocks together: a block a forward jump names is created early, and a carried
-register whose life spanned that block's calls would be kept in memory by the backend.
+register whose life spanned that block's calls would be kept in memory by the backend. The
+blocks of the loop that seldom run, its window entries and the dividing arm of a remainder,
+are laid out after its other blocks (`seldom`): the backend drops a jump to the next block, so
+an iteration that runs none of them takes one branch, where it took one more around each.
 
 Everything else (mixed operands, strings, a cache miss, calls, environments, construction,
 `throw`) calls a helper in `helpers.zig` that runs the VM's own function for the
@@ -330,32 +352,35 @@ in place, the collector's young region, docs/VALUE.md §4.12, the fast chain and
 locals, the remainder that does not divide and the collector's cheaper scan of static roots,
 object literals followed, allocated and filled on the fast chain, and then values kept out of
 the frame window, a literal's slots written once and its block left for the collector to
-index, and last the reads on the chain, a guard's stores made where it fails and the
-collector's cycle candidates, docs/VALUE.md §4.12) were measured the same way: five interleaved processes per engine and kernel, the same
-machine, Node v26.7.0, ReleaseFast. The V8 column and the ratio are from the last run; "young
-region" is the run before the fast chain, "fast chain" the run before literals were followed
-on it, "literals" the run before values were kept out of the window, and "lazy stores" the
+index, then the reads on the chain, a guard's stores made where it fails and the
+collector's cycle candidates, docs/VALUE.md §4.12, and last the loops that make literals:
+carried locals in them, their constants kept in registers, a loop's rare blocks laid out after
+it and literals in a row taken from the run together) were measured the same way: five
+interleaved processes per engine and kernel, the same machine, Node v26.7.0, ReleaseFast. The
+V8 column and the ratio are from the last run; "young region" is the run before the fast
+chain, "fast chain" the run before literals were followed on it, "literals" the run before
+values were kept out of the window, "lazy stores" the run before the reads, and "reads" the
 run before the last changes.
 
-| Kernel  |     V8 | JIT (T73 start) | JIT (young region) | JIT (fast chain) | JIT (literals) | JIT (lazy stores) |    JIT | JIT / V8 |
-| ------- | -----: | --------------: | -----------------: | ---------------: | -------------: | ----------------: | -----: | -------: |
-| numeric | 22.078 |         170.309 |            138.221 |           16.710 |         16.513 |            13.420 | 13.473 |     0.61 |
-| objects |  4.185 |         234.009 |             25.628 |           21.103 |         16.524 |            15.089 | 10.167 |     2.43 |
-| cycles  |  5.437 |         156.619 |             29.259 |           25.099 |          9.996 |             7.097 |  6.648 |     1.22 |
+| Kernel  |     V8 | JIT (T73 start) | JIT (young region) | JIT (fast chain) | JIT (literals) | JIT (lazy stores) | JIT (reads) |    JIT | JIT / V8 |
+| ------- | -----: | --------------: | -----------------: | ---------------: | -------------: | ----------------: | ----------: | -----: | -------: |
+| numeric | 21.906 |         170.309 |            138.221 |           16.710 |         16.513 |            13.420 |      13.473 | 13.359 |     0.61 |
+| objects |  4.140 |         234.009 |             25.628 |           21.103 |         16.524 |            15.089 |      10.167 |  9.704 |     2.34 |
+| cycles  |  5.451 |         156.619 |             29.259 |           25.099 |          9.996 |             7.097 |       6.648 |  5.084 |     0.93 |
 
 The process-median interquartile ranges do not overlap between the engines on any kernel. On
-the numeric kernel, a loop that wraps a running sum with a remainder, Stator is faster than V8
-(13.455-13.474 us against 22.069-22.081); that is one loop, not numeric code in general. On
-objects and cycles it is still slower, by 2.4 and 1.2 times. The cycles loop makes two
-literals an iteration, and what is left of it is the instructions that write them: a dynamic
-object with two properties is eleven words, each literal makes its constants again, and a
-value a read loaded is guarded again where its copy is used. The objects kernel fills an array
-by `push` and reads it back: the read loop asks each element for the array, its length, the
-element's shape and the cache again, and converts its index to an integer each time, and the
-filling loop still calls for each `push`. A collection there takes 98 us against 14 on cycles:
-the array a root holds while it is filled is counted, with all it holds, and freed one
-collection later. The machine was shared with other work (load average about 4). The progress report has the
-profiles, the threshold sweep, the checks and the raw samples.
+two of the three Stator is faster than V8: on the numeric kernel, a loop that wraps a running
+sum with a remainder (13.316-13.366 us against 21.891-21.978), and on the cycles kernel, a
+loop that makes two objects that point at each other and publishes one (5.083-5.101 us against
+5.445-5.451; Stator's slowest process, 5.286, is faster than V8's fastest, 5.420). Those are
+two loops, not numeric or allocating code in general. On objects it is still slower, by 2.3
+times. That kernel fills an array by `push` and reads it back: the read loop asks each element
+for the array, its length, the element's shape and the cache again, and converts its index to
+an integer each time, and the filling loop still calls for each `push`. A collection there
+takes 97 us against 14 on cycles: the array a root holds while it is filled is counted, with
+all it holds, and freed one collection later. The machine was shared with other work (load
+average between 4.2 and 5.1). The progress report has the profiles, the threshold sweep, the
+checks and the raw samples.
 
 ### 4.2. Startup and JIT compilation cost (T74)
 

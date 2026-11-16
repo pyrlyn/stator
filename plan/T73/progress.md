@@ -597,3 +597,89 @@ reports `engine: 108 passed, 0 failed`, `reads.ts` among them in both modes and 
 collector's stress and verify runs.
 
 The Check still fails on objects and cycles, so the card stays open.
+
+## Loops that make literals (2026-11-16)
+
+Steps 22 and 26 of `task.md` and the part of 25 that loads a double from the slot it was read
+from, with two changes the listings asked for on the way. A row of five processes in the first
+table is the median of five interleaved processes per engine; the others are one process.
+
+| Change                                                            | Processes | cycles us | objects us | numeric us |
+| ----------------------------------------------------------------- | --------: | --------: | ---------: | ---------: |
+| before ([`reads-and-candidates.json`](reads-and-candidates.json)) |         5 |     6.648 |     10.167 |     13.473 |
+| step 1                                                            |         1 |     6.164 |     10.202 |     13.472 |
+| steps 1 and 2                                                     |         1 |     5.616 |      9.862 |     15.847 |
+| steps 1 to 3                                                      |         1 |     5.574 |      9.798 |     13.454 |
+| steps 1 to 6                                                      |         1 |     5.086 |      9.768 |     13.530 |
+| steps 1 to 6 ([`literals-in-loops.json`](literals-in-loops.json)) |         5 |     5.084 |      9.704 |     13.359 |
+
+1. **Carried locals in loops with literals.** A literal's instructions have forms on the chain
+   only while the chain follows the object, which no table of opcodes can say, so
+   `carriedLoops` lowers a loop that holds them into a function it throws away and takes the
+   loop when every instruction had a form (`takenWhole`). The compiled allocation no longer
+   calls: a run with no room is a guard that fails, and the generic copy of `new_object` calls
+   the allocator. With no call on the chain, the bookkeeping that told a literal born before
+   the allocator's call from one born after it is gone, and so is the write barrier the chain
+   tested for a store into the former.
+2. **Constants kept, and carried locals stored on the way out.** A constant that takes more
+   than one instruction to make is made once, in the loop's window entries, and kept in a
+   register while the register copy of the loop runs, eight of each kind at most (`pooled`).
+   A jump inside the loop stores no carried local; a jump out of it goes through a block that
+   does (`edge`), and a guard may owe sixteen stores, from eight. Numeric lost 2.4 us to this:
+   with the stores gone, its loop was three taken branches an iteration.
+3. **A loop's rare blocks after it.** The window entries and the dividing arm of a remainder
+   were written in the middle of the loop, and each iteration jumped over them. They are laid
+   out after the loop's other blocks (`seldom`), which leaves the numeric loop one taken
+   branch. Laying the blocks of failing guards out there as well changed nothing measurable
+   and is not in.
+4. **One move of the run for literals in a row** (step 22). The first literal of a stretch
+   with no guard in it tests the run and moves its pointer for all of them, 256 bytes at most;
+   each later one adds its size to the constants of that test (`place`). The cycle loop loads
+   and stores the run's pointer once an iteration, where the second literal's load waited for
+   the first one's store.
+5. **A 16-byte store.** `frozen` and the prototype, which are next to each other and always
+   empty in a literal, take one vector store of zero.
+6. **The slot a value came from** (part of step 25). A double read from a local was moved to a
+   float register through the operand slot it was copied to, which first had to be written.
+   The value remembers the local's slot, and is loaded from there while the slot still holds
+   it (`atHome`).
+
+The cycle loop makes about 25 stores an iteration, from 29.
+
+| Kernel  |  V8 us | V8 IQR        | Stator us | Stator IQR    | Stator / V8 |
+| ------- | -----: | ------------- | --------: | ------------- | ----------: |
+| numeric | 21.906 | 21.891-21.978 |    13.359 | 13.316-13.366 |        0.61 |
+| objects |  4.140 | 4.133-4.141   |     9.704 | 9.677-9.724   |        2.34 |
+| cycles  |  5.451 | 5.445-5.451   |     5.084 | 5.083-5.101   |        0.93 |
+
+Numeric and cycles hold: Stator's slowest process (14.018 and 5.286 us) is faster than V8's
+fastest (21.870 and 5.420 us). On objects V8's slowest process (4.142 us) is faster than
+Stator's fastest (9.638). The collector ran 5961 times in the instrumented cycles run, 14.3 us
+a collection on average, and 1808 times on objects, 97.1 us. The load average was between 4.2
+and 5.1. The record's metadata names `21872f78` with a dirty tree, which is the content of the
+commits that follow it here.
+
+`literals.ts` has new cases for each step: a loop of literals left by `break` and by its
+condition with numbers in registers, a guard between two literals of a stretch, five literals
+in a row, a number that reaches a float register from a local's slot and one whose slot has
+been written since, and literals taken from memory that other objects left dirty. Mutants were
+run against the corpus, and each changes its output or crashes it: a stretch that ignores the
+guards and blocks between its literals, a way out of a loop that stores no carried local, a
+stretch whose test is not grown by its later literals, no store of zero to `frozen` and the
+prototype, and a value loaded from its slot after the slot was written. The last two were
+caught only once the cases were known to be compiled: `STATOR_JIT_TRACE=1` showed that a
+function with a template literal or a computed string key is left to the interpreter whole,
+and the first versions of two cases had one (`ideas.md`).
+
+Checks on that tree, each step of `pnpm run ci` on its own as before: `check-node`,
+`check-js-sources`, `typecheck`, `oxlint --deny-warnings .`, `dupes` (0 clones), `zig fmt
+--check` and `pnpm run runtime` exit 0; `oxfmt --check` passes on the two changed files it
+covers; `pnpm run test` 855 passed in 68 files; `test:runtime` exits 0; `test:subset` 1010
+passed, 31 expected-fail, 0 failed; `test:golden` 547 passed; `test:selfhost`, `test:builtins`,
+`test:node-coverage` and `test:leak` exit 0 (10M objects peak at 10416 KB, 10M FFI strings at
+10496 KB, 2M computed-key reads at 10496 KB, 2M garbage cycles at 15344 KB, all four on a
+plateau); `test:asan` 547 passed; `pnpm run interp:test` exits 0; `pnpm run engine:test`
+reports `engine: 108 passed, 0 failed`, in both modes and under the collector's stress and
+verify runs.
+
+The Check passes on numeric and cycles and still fails on objects, so the card stays open.
