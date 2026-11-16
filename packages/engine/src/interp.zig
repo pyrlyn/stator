@@ -244,6 +244,24 @@ test "the fast chain leaves for the generic code on anything but the doubles it 
     try expectRuns("function f(a) { let s = 0; for (let i = a; i < 4; i += 1) s += i; return s; } f(0) + ',' + f('2') + ',' + f(-0.5)", "6,02,7.5");
 }
 
+test "a loop that carries its locals in registers answers what the window would" {
+    // Two carried locals exchanged; nested loops; break and continue; a boolean local as the
+    // condition; operands that cross a block; -0 and NaN; a local that arrives or turns into
+    // something other than a double; a loop counting down and one that halves.
+    try expectRuns("function f(n) { let a = 0; let b = 1; for (let i = 0; i < n; i += 1) { const t = a + b; a = b; b = t; } return a; } f(50) + ',' + f(0) + ',' + f(1)", "12586269025,0,1");
+    try expectRuns("function f(n) { let a = 1; let b = 2; let i = 0; while (i < n) { let t = a; a = b; b = t; i += 1; } return a + ',' + b; } f(3) + ';' + f(4)", "2,1;1,2");
+    try expectRuns("function f(n) { let s = 0; for (let i = 0; i < n; i += 1) { for (let j = 0; j < i; j += 1) { s = s + i * j; } } return s; } f(20)", "16815");
+    try expectRuns("function f(n) { let s = 0; let i = 0; while (true) { i += 1; if (i > n) break; if (i % 3 == 0) continue; s = s + i; } return s + ',' + i; } f(10)", "37,11");
+    try expectRuns("function f() { let n = 0; let go = true; while (go) { n += 1; go = n < 10; } return n; } f()", "10");
+    try expectRuns("function f(n) { let s = 0; for (let i = 0; i < n; i += 1) s = s + (i % 2 == 0 ? 1 : 0.5); return s; } f(7)", "5.5");
+    try expectRuns("function f(n) { let x = 1; for (let i = 0; i < n; i += 1) x = x * -0; return Object.is(x, -0) + ',' + Object.is(x * -1, 0); } f(1) + ';' + f(2)", "true,true;false,false");
+    try expectRuns("function f(a, n) { let s = a; let k = 0; for (let i = 0; i < n; i += 1) { s = s + i; k = k + 2; } return s + ',' + k; } f(0.5, 4) + ';' + f('s', 4) + ';' + f(null, 4) + ';' + f(undefined, 2)", "6.5,8;s0123,8;6,8;NaN,4");
+    try expectRuns("function f(n) { let s = 0; let o = 1; for (let i = 0; i < n; i += 1) { if (i == 2) o = 'q'; s = s + o; } return s; } f(5)", "2qqq");
+    try expectRuns("function f(n) { let x = 0; let y = 0 / 0; let c = 0; do { x += 1; if (x < y) c += 1; if (x >= y) c += 10; if (x != y) c += 100; } while (x < n); return c + ',' + x; } f(3)", "300,3");
+    try expectRuns("function f(n) { let i = n; let s = 0; while (i > 0) { s = s + i; i = i - 1; } return s + ',' + i; } f(4) + ';' + f(2.5) + ';' + f(-1)", "10,0;4.5,-0.5;0,-1");
+    try expectRuns("function f(n) { let lo = 0; let hi = n; while (lo < hi) { const mid = (lo + hi - (lo + hi) % 2) / 2; if (mid * mid < n) lo = mid + 1; else hi = mid; } return lo; } f(1000) + ',' + f(2)", "32,2");
+}
+
 test "a remainder loop runs without a helper" {
     if (!jit.available) return error.SkipZigTest;
     const r = try jitCost(

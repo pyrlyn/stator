@@ -112,6 +112,20 @@ after all the fast code and nothing is remembered across an instruction lowered 
 because pyrlyn/jit keeps no float register across a call. x86-64 has only the generic code: its
 results must be read back from the window to make their NaN canonical.
 
+**Loops with carried locals (AArch64).** A loop whose every instruction has a form on the fast
+chain makes no call on that chain, so its numeric locals can stay in float registers from one
+iteration to the next. `carriedLoops` picks those loops, outermost first, and for each the
+locals it computes with and stores nothing but doubles into (`carriedIn`), eight at most. Every
+block of such a loop is then lowered with two entries. The window entry, where code outside
+the loop and the generic copies arrive, guards that each carried local is a double, loads it
+into its register and goes on in the register entry; the register entry, which the loop's own
+jumps use, starts with those registers known. Before a block of the loop ends, each carried
+local's current value is copied into its register. The window is still written at once, so a
+failed guard leaves for the generic copy as anywhere else, and comes back through a window
+entry. A function with such a loop is laid out in the order its blocks were written, which
+keeps a loop's blocks together: a block a forward jump names is created early, and a carried
+register whose life spanned that block's calls would be kept in memory by the backend.
+
 Everything else (mixed operands, strings, a cache miss, calls, environments, construction,
 `throw`) calls a helper in `helpers.zig` that runs the VM's own function for the
 operation. A helper answers 1 when it left an exception pending; the code then leaves through its
@@ -125,10 +139,11 @@ interprets.
 **What it is not yet.** A direct call still goes through one helper that checks the callee and
 opens its frame; every object is a call into the allocator, though the allocator itself is now
 a bump through the collector's young region (docs/VALUE.md §4.12); a call of any native method
-but `push` goes through the call helper and the runtime's method dispatch; a value lives in a
-register only until the end of its straight run of bytecode, so a loop reloads and guards its
-variables from the frame window on every iteration. Loop-carried registers and the optimizing
-tier (plan/T67.1: type feedback, call inline caches, deoptimization) are the next steps.
+but `push` goes through the call helper and the runtime's method dispatch; a number is always
+a double, so an integer loop converts to an integer and back around every remainder, and every
+result is written to the frame window whether or not anything reads it there. Integers in
+registers, window stores made only where a guard leaves, and the optimizing tier (plan/T67.1:
+type feedback, call inline caches, deoptimization) are the next steps.
 
 ## 4. Tests and benchmark
 

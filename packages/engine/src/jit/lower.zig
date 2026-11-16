@@ -15,6 +15,7 @@ const c = rt.c;
 const bc = @import("../bytecode.zig");
 const vm = @import("../vm.zig");
 const builtins = @import("../builtins.zig");
+const layout = @import("layout.zig");
 const analyze = @import("analyze.zig");
 const h = @import("helpers.zig");
 const Op = bc.Op;
@@ -66,6 +67,148 @@ const Known = struct {
     konst: ?f64 = null,
 };
 
+/// The shape of an instruction's form on the fast chain (`Lowerer.fast`); `none` has no form.
+const Form = enum { none, literal, number, pop, swap, dup, frame, load, store, step, local_int, locals, add_store, binary, jump, cond_jump };
+
+fn form(o: Op) Form {
+    return switch (o) {
+        .undef, .null, .true, .false, .uninit => .literal,
+        .int, .num => .number,
+        .pop => .pop,
+        .swap => .swap,
+        .dup => .dup,
+        .callee, .this_raw, .new_target => .frame,
+        .load, .load_checked => .load,
+        .store, .store_checked => .store,
+        .inc_local, .dec_local => .step,
+        .add_local_int, .sub_local_int, .lt_local_int, .le_local_int => .local_int,
+        .add_locals, .sub_locals, .lt_locals, .le_locals => .locals,
+        .add_store_local => .add_store,
+        .add, .sub, .mul, .div, .mod, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge => .binary,
+        .jump => .jump,
+        .jump_if_false, .jump_if_true => .cond_jump,
+        else => .none,
+    };
+}
+
+/// The float registers are few, and a loop with more numeric locals than this is rare.
+const max_carried = 8;
+
+/// A local of a `Loop` and the float register it is carried in.
+const Carried = struct { local: u32, v: VReg };
+
+/// A loop whose every instruction has a form on the fast chain, so its body makes no call. It
+/// is lowered once more with the locals it computes with in registers from one iteration to
+/// the next (docs/ENGINE.md §3).
+const Loop = struct {
+    /// The pcs of its first and last instructions.
+    from: u32,
+    to: u32,
+    carried: []const Carried,
+
+    fn holds(loop: *const Loop, pc: u32) bool {
+        return loop.from <= pc and pc <= loop.to;
+    }
+
+    fn carries(loop: *const Loop, v: VReg) bool {
+        for (loop.carried) |x| if (x.v == v) return true;
+        return false;
+    }
+};
+
+/// The locals `region` computes with and stores nothing but doubles into, each with a register.
+fn carriedIn(f: *ir.Func, t: *const bc.Template, region: []const analyze.Insn) ![]Carried {
+    const alloc = f.alloc();
+    var deep: u32 = 0;
+    for (region) |i| deep = @max(deep, i.depth);
+    // By operand: the local it was loaded from, and whether the chain knows it is a double.
+    const from = try alloc.alloc(?u32, deep + 2);
+    const double = try alloc.alloc(bool, deep + 2);
+    const used = try alloc.alloc(bool, t.nlocals);
+    @memset(used, false);
+    for (region) |i| {
+        const d = i.depth;
+        if (i.leader) @memset(from, null);
+        switch (form(i.op)) {
+            .load => from[d] = i.a,
+            .dup => from[d] = from[d - 1],
+            .swap => std.mem.swap(?u32, &from[d - 2], &from[d - 1]),
+            .step, .local_int => used[i.a] = true,
+            .locals => {
+                used[i.a] = true;
+                used[i.c] = true;
+            },
+            .add_store, .binary => {
+                // Equality is as often asked of objects, which a register cannot carry.
+                if (doubleForm(i.op) != .cmp or (i.op != .eq and i.op != .ne and i.op != .seq and i.op != .sne)) {
+                    for (from[d - 2 .. d]) |local| if (local) |x| {
+                        used[x] = true;
+                    };
+                }
+                from[d - 2] = null;
+            },
+            .literal, .number, .frame => from[d] = null,
+            .none, .pop, .store, .jump, .cond_jump => {},
+        }
+    }
+    // A store of anything else takes the local out, and with it what is loaded from it.
+    var changed = true;
+    while (changed) {
+        changed = false;
+        for (region) |i| {
+            const d = i.depth;
+            if (i.leader) @memset(double, false);
+            switch (form(i.op)) {
+                .number, .step => double[d] = true,
+                .literal, .frame => double[d] = false,
+                .load => double[d] = used[i.a],
+                .dup => double[d] = double[d - 1],
+                .swap => std.mem.swap(bool, &double[d - 2], &double[d - 1]),
+                .local_int, .locals => double[d] = doubleForm(bc.localOperator(i.op)) != .cmp,
+                .add_store => double[d - 2] = true,
+                .binary => double[d - 2] = doubleForm(i.op) != .cmp,
+                .store => if (!double[d - 1] and used[i.a]) {
+                    used[i.a] = false;
+                    changed = true;
+                },
+                .none, .pop, .jump, .cond_jump => {},
+            }
+        }
+    }
+    var out: std.ArrayList(Carried) = .empty;
+    for (used, 0..) |yes, local| if (yes and out.items.len < max_carried) {
+        try out.append(alloc, .{ .local = @intCast(local), .v = f.newVReg() });
+    };
+    return out.items;
+}
+
+/// The loops of `insns` to lower with carried locals, none inside another.
+fn carriedLoops(f: *ir.Func, t: *const bc.Template, insns: []const analyze.Insn) ![]Loop {
+    var out: std.ArrayList(Loop) = .empty;
+    // The first instruction of the loop taken last: an outer loop ends after its inner ones,
+    // so walking backwards meets it first and its inner loops fall inside it.
+    var lowest = insns.len;
+    var k = insns.len;
+    while (k > 0) {
+        k -= 1;
+        const j = insns[k];
+        if (k >= lowest or (form(j.op) != .jump and form(j.op) != .cond_jump) or j.a > j.pc) continue;
+        var head = k;
+        while (head > 0 and insns[head].pc != j.a) head -= 1;
+        if (insns[head].pc != j.a) continue;
+        const region = insns[head .. k + 1];
+        const whole = for (region) |i| {
+            if (form(i.op) == .none) break false;
+        } else true;
+        if (!whole) continue;
+        const carried = try carriedIn(f, t, region);
+        if (carried.len == 0) continue;
+        try out.append(f.alloc(), .{ .from = j.a, .to = j.pc, .carried = carried });
+        lowest = head;
+    }
+    return out.items;
+}
+
 /// A guard of the fast chain: the branch `op` of `block`, to be pointed at the generic code of
 /// instruction `at`.
 const Bail = struct { block: u32, op: usize, at: usize };
@@ -88,19 +231,33 @@ const Lowerer = struct {
     bails: std.ArrayList(Bail) = .empty,
     /// The fast chain lowered the next instruction with this one.
     fused: bool = false,
+    loops: []const Loop = &.{},
+    /// The loop whose register copy is being lowered.
+    loop: ?*const Loop = null,
+    /// By pc, the register entries of the blocks of `loops`; `blocks` holds their window entries.
+    carried_blocks: std.AutoHashMapUnmanaged(u32, u32) = .empty,
+    /// The blocks in the order they were first written to.
+    order: std.ArrayList(u32) = .empty,
 
     fn block(l: *Lowerer) !u32 {
         return l.f.addBlock("b");
     }
 
     fn blockAt(l: *Lowerer, pc: u32) !u32 {
-        const gop = try l.blocks.getOrPut(l.f.alloc(), pc);
+        return l.blockIn(&l.blocks, pc);
+    }
+
+    /// The block `map` keeps for `pc`, made on its first mention.
+    fn blockIn(l: *Lowerer, map: *std.AutoHashMapUnmanaged(u32, u32), pc: u32) !u32 {
+        const gop = try map.getOrPut(l.f.alloc(), pc);
         if (!gop.found_existing) gop.value_ptr.* = try l.block();
         return gop.value_ptr.*;
     }
 
     fn emit(l: *Lowerer, o: ir.Op) !void {
-        try l.f.emit(l.cur.?, o);
+        const b = l.cur.?;
+        if (l.f.blocks.items[b].ops.items.len == 0) try l.order.append(l.f.alloc(), b);
+        try l.f.emit(b, o);
     }
 
     /// Emits a `tag` instruction into a fresh destination register and answers the register;
@@ -207,8 +364,8 @@ const Lowerer = struct {
 
     fn binaryOp(l: *Lowerer, o: Op, s: u32) !void {
         if (o == .mod) return l.remainder(s);
-        const form = doubleForm(o);
-        if (form == .none) return l.helper(h.binary, &.{ s, @backingInt(o) });
+        const doubled = doubleForm(o);
+        if (doubled == .none) return l.helper(h.binary, &.{ s, @backingInt(o) });
 
         const slow = try l.block();
         const join = try l.block();
@@ -216,7 +373,7 @@ const Lowerer = struct {
         try l.guardDouble(try l.load(s + 1), slow);
         const a = try l.loadF(s);
         const b = try l.loadF(s + 1);
-        switch (form) {
+        switch (doubled) {
             .none => unreachable,
             .arith => |ta| try l.typedF64(ta, a, b, s, join),
             .cmp => |cond| {
@@ -676,9 +833,7 @@ const Lowerer = struct {
 
     fn condJump(l: *Lowerer, i: analyze.Insn) !void {
         const v = try l.load(l.slot(i.depth - 1));
-        const target = try l.blockAt(i.a);
-        const fall = try l.blockAt(i.next);
-        const on_true, const on_false = if (i.op == .jump_if_true) .{ target, fall } else .{ fall, target };
+        const on_true, const on_false = try l.branches(i);
         const not_true = try l.block();
         try l.cbr(.eq, v, try l.konst(imm(c.JSRT_TRUE)), on_true, not_true);
         l.cur = not_true;
@@ -811,6 +966,57 @@ const Lowerer = struct {
         return integer;
     }
 
+    /// The block a jump to `pc` goes to: from the register copy of a loop to a block of the
+    /// same loop, that block's register entry.
+    fn edge(l: *Lowerer, pc: u32) !u32 {
+        const loop = l.loop orelse return l.blockAt(pc);
+        return l.blockIn(if (loop.holds(pc)) &l.carried_blocks else &l.blocks, pc);
+    }
+
+    /// Where conditional jump `j` goes on true and on false.
+    fn branches(l: *Lowerer, j: analyze.Insn) !struct { u32, u32 } {
+        const target = try l.edge(j.a);
+        const fall = try l.edge(j.next);
+        return if (j.op == .jump_if_true) .{ target, fall } else .{ fall, target };
+    }
+
+    /// Before the register copy of a loop leaves a block: each carried local's value goes
+    /// into its register, which the next block reads it from.
+    fn carry(l: *Lowerer) !void {
+        const loop = l.loop orelse return;
+        var from: [max_carried]VReg = undefined;
+        for (loop.carried, 0..) |x, k| {
+            const f = try l.doubleOf(vm.header + x.local);
+            // The register of another local is written below: read it first.
+            from[k] = if (f != x.v and loop.carries(f)) try l.def(.copy, .{ .dst = undefined, .src = f }) else f;
+        }
+        for (loop.carried, from[0..loop.carried.len]) |x, f| {
+            if (f != x.v) try l.emit(.{ .copy = .{ .dst = x.v, .src = f } });
+        }
+    }
+
+    /// Starts the block of the bytecode at `i`. In a loop with carried locals that block is
+    /// its window entry, where the generic code and jumps from outside arrive: it guards and
+    /// loads the carried locals and goes on in the register entry.
+    fn leader(l: *Lowerer, i: analyze.Insn) !void {
+        if (l.cur != null) {
+            const to = try l.edge(i.pc);
+            try l.carry();
+            try l.br(to);
+        }
+        l.cur = try l.blockAt(i.pc);
+        l.known.clearRetainingCapacity();
+        l.loop = for (l.loops) |*x| {
+            if (x.holds(i.pc)) break x;
+        } else null;
+        const loop = l.loop orelse return;
+        for (loop.carried) |x| try l.emit(.{ .copy = .{ .dst = x.v, .src = try l.doubleOf(vm.header + x.local) } });
+        try l.br(try l.edge(i.pc));
+        l.cur = l.carried_blocks.get(i.pc).?;
+        l.known.clearRetainingCapacity();
+        for (loop.carried) |x| try l.know(vm.header + x.local, .{ .f = x.v, .double = true, .live = true });
+    }
+
     /// `a op b` on two doubles into window slot `s`; `kb` is `b` when the bytecode names it.
     /// A comparison the next instruction jumps on becomes the jump.
     fn fastBinary(l: *Lowerer, o: Op, a: VReg, b: VReg, kb: ?f64, s: u32) !void {
@@ -820,10 +1026,9 @@ const Lowerer = struct {
             .cmp => |cond| {
                 const bit = try l.fcmp(cond, a, b);
                 const j = l.insns[l.at + 1];
-                if ((j.op == .jump_if_false or j.op == .jump_if_true) and !j.leader and l.slot(j.depth - 1) == s) {
-                    const target = try l.blockAt(j.a);
-                    const fall = try l.blockAt(j.next);
-                    const on_true, const on_false = if (j.op == .jump_if_true) .{ target, fall } else .{ fall, target };
+                if (form(j.op) == .cond_jump and !j.leader and l.slot(j.depth - 1) == s) {
+                    const on_true, const on_false = try l.branches(j);
+                    try l.carry();
                     try l.cbr(.ne, bit, zero, on_true, on_false);
                     l.fused = true;
                     return;
@@ -857,12 +1062,13 @@ const Lowerer = struct {
     /// instruction with no fast form.
     fn fast(l: *Lowerer, i: analyze.Insn) !bool {
         const d = i.depth;
-        switch (i.op) {
-            .undef, .null, .true, .false, .uninit => {
+        switch (form(i.op)) {
+            .none => return false,
+            .literal => {
                 try l.insn(i);
                 try l.know(l.slot(d), .{ .live = i.op != .uninit });
             },
-            .int, .num => {
+            .number => {
                 const x: f64 = if (i.op == .int) @floatFromInt(@as(i32, @bitCast(i.a))) else l.t.numbers[i.a];
                 try l.insn(i);
                 try l.know(l.slot(d), .{ .double = true, .live = true, .konst = x });
@@ -875,49 +1081,65 @@ const Lowerer = struct {
                 try l.know(l.slot(d - 1), a);
             },
             .dup => try l.copySlot(l.slot(d - 1), l.slot(d)),
-            .callee => try l.copySlot(0, l.slot(d)),
-            .this_raw => try l.copySlot(1, l.slot(d)),
-            .new_target => try l.copySlot(2, l.slot(d)),
-            .load, .load_checked => {
+            // The window opens with the callee, `this` and `new.target`.
+            .frame => try l.copySlot(switch (i.op) {
+                .callee => 0,
+                .this_raw => 1,
+                else => 2,
+            }, l.slot(d)),
+            .load => {
                 if (i.op == .load_checked) try l.liveLocal(i.a);
                 try l.copySlot(vm.header + i.a, l.slot(d));
             },
-            .store, .store_checked => {
+            .store => {
                 if (i.op == .store_checked) try l.liveLocal(i.a);
                 try l.copySlot(l.slot(d - 1), vm.header + i.a);
             },
-            .inc_local, .dec_local => {
+            .step => {
                 const x = try l.doubleOf(vm.header + i.a);
                 const ta: ir.TArith = if (i.op == .inc_local) .add else .sub;
                 const r = try l.def(.typed, .{ .op = ta, .ty = .f64, .dst = undefined, .a = x, .b = try l.fnum(1) });
                 try l.putDouble(l.slot(d), r);
                 try l.putDouble(vm.header + i.a, r);
             },
-            .add_local_int, .sub_local_int, .lt_local_int, .le_local_int => {
+            .local_int => {
                 const k: f64 = @floatFromInt(@as(i32, @bitCast(i.c)));
                 const a = try l.doubleOf(vm.header + i.a);
                 try l.fastBinary(bc.localOperator(i.op), a, try l.fnum(k), k, l.slot(d));
             },
-            .add_locals, .sub_locals, .lt_locals, .le_locals => {
+            .locals => {
                 const a = try l.doubleOf(vm.header + i.a);
                 const b = try l.doubleOf(vm.header + i.c);
                 try l.fastBinary(bc.localOperator(i.op), a, b, null, l.slot(d));
             },
-            .add_store_local => {
+            .add_store, .binary => {
                 const s = l.slot(d - 2);
                 const a = try l.doubleOf(s);
                 const b = try l.doubleOf(s + 1);
-                try l.liveLocal(i.a);
-                try l.fastBinary(.add, a, b, null, s);
-                try l.copySlot(s, vm.header + i.a);
+                // `add_store_local` is an addition whose sum also goes into a local.
+                const stores = i.op == .add_store_local;
+                if (stores) try l.liveLocal(i.a);
+                try l.fastBinary(if (stores) .add else i.op, a, b, l.knownAt(s + 1).konst, s);
+                if (stores) try l.copySlot(s, vm.header + i.a);
             },
-            .add, .sub, .mul, .div, .mod, .eq, .ne, .seq, .sne, .lt, .gt, .le, .ge => {
-                const s = l.slot(d - 2);
-                const a = try l.doubleOf(s);
-                const b = try l.doubleOf(s + 1);
-                try l.fastBinary(i.op, a, b, l.knownAt(s + 1).konst, s);
+            // Outside a loop with carried locals a jump has nothing to carry: the generic one.
+            .jump => {
+                if (l.loop == null) return false;
+                const to = try l.edge(i.a);
+                try l.carry();
+                try l.br(to);
             },
-            else => return false,
+            .cond_jump => {
+                if (l.loop == null) return false;
+                const s = l.slot(d - 1);
+                var k = l.knownAt(s);
+                const v = try l.bitsOf(s, &k);
+                // Anything but a boolean is the generic code's to judge: it may call.
+                try l.bailIf(.ugt, try l.arith(.sub, v, try l.konst(imm(c.JSRT_FALSE))), try l.konst(1));
+                const on_true, const on_false = try l.branches(i);
+                try l.carry();
+                try l.cbr(.eq, v, try l.konst(imm(c.JSRT_TRUE)), on_true, on_false);
+            },
         }
         return true;
     }
@@ -926,6 +1148,7 @@ const Lowerer = struct {
     /// of a block of the bytecode to the block's end. It comes after all the fast code, so no
     /// register of the fast chain is live across a helper call made here.
     fn generic(l: *Lowerer, dead: []const bool) !void {
+        l.loop = null;
         const bails = l.bails.items;
         var next: usize = 0;
         while (next < bails.len) {
@@ -1114,34 +1337,37 @@ pub fn lower(f: *ir.Func, t: *const bc.Template, plan: analyze.Plan) !void {
     const exit = try f.addBlock("exit");
     var l: Lowerer = .{ .f = f, .t = t, .ctx = ctx, .w = f.newVReg(), .argv = f.newVReg(), .argc = f.newVReg(), .exit = exit, .insns = plan.insns };
 
-    l.cur = exit;
-    try l.emit(.{ .ret = try l.konst(imm(c.JSRT_UNDEFINED)) });
-
+    // The entry is written first, so `order` opens with it.
     l.cur = entry;
     try l.emit(.{ .load = .{ .dst = l.w, .base = ctx, .disp = @offsetOf(h.Ctx, "w") } });
     try l.emit(.{ .load = .{ .dst = l.argv, .base = ctx, .disp = @offsetOf(h.Ctx, "argv") } });
     try l.emit(.{ .load = .{ .dst = l.argc, .base = ctx, .disp = @offsetOf(h.Ctx, "argc") } });
 
+    l.cur = exit;
+    try l.emit(.{ .ret = try l.konst(imm(c.JSRT_UNDEFINED)) });
+    l.cur = entry;
+
+    if (fast_chain) l.loops = try carriedLoops(f, t, plan.insns);
     const dead = try deadStores(f.alloc(), t, plan.insns);
     for (plan.insns, dead, 0..) |i, skip, at| {
         l.at = at;
-        if (i.leader) {
-            const b = try l.blockAt(i.pc);
-            if (l.cur != null) try l.br(b);
-            l.cur = b;
-            l.known.clearRetainingCapacity();
-        }
+        if (i.leader) try l.leader(i);
         if (l.fused) {
             l.fused = false;
             continue;
         }
         if (skip) continue;
         if (fast_chain and try l.fast(i)) continue;
+        std.debug.assert(l.loop == null);
         try l.insn(i);
         // It may have called a helper, across which no register of the chain is kept.
         l.known.clearRetainingCapacity();
     }
     try l.generic(dead);
+    // A carried register must not span a call, or the backend keeps it in memory. A block a
+    // forward jump names was created before the loop's later blocks, so with carried locals
+    // the function is laid out in the order its blocks were written: a loop's stay together.
+    if (l.loops.len != 0) try layout.inOrder(f, l.order.items);
 }
 
 /// Pairs of a push without effects and a store into a local nothing reads, both left out: the
