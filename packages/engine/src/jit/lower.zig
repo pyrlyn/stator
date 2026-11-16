@@ -51,7 +51,7 @@ const integer_limit: f64 = 9007199254740992.0;
 
 /// AArch64 only: an x86-64 result must be read back from the window to make its NaN canonical
 /// (`canonicalize`), which is the load the fast chain exists to avoid.
-const fast_chain = builtin.cpu.arch == .aarch64;
+pub const fast_chain = builtin.cpu.arch == .aarch64;
 
 /// What the fast chain knows of the value a window slot holds.
 const Known = struct {
@@ -65,7 +65,35 @@ const Known = struct {
     live: bool = false,
     /// The double, when the bytecode names it.
     konst: ?f64 = null,
+    /// It is `Lowerer.objects[obj]`.
+    obj: ?u32 = null,
 };
+
+/// The properties the fast chain follows in one object literal; a longer one has no form.
+const max_fields = 8;
+
+/// An object a literal made in the run of bytecode being lowered. Until an instruction without
+/// a form runs, nothing but the chain has touched it, so its shape and what its slots hold are
+/// known here: a property is defined, written and read without asking the shape table, a cache
+/// or the object.
+const Object = struct {
+    /// Its address.
+    p: VReg,
+    shape: *c.JSRTShape,
+    /// The slots it was allocated with, which follow it (jsrt_dynobj_new_sized).
+    capacity: u32,
+    /// No call was made since it was allocated, so no collection ran: it is as dirty as it was
+    /// born, and a store into it needs no write barrier.
+    fresh: bool = true,
+    /// By slot, with a register or a constant each.
+    fields: [max_fields]Known = undefined,
+};
+
+/// A key the runtime answers before it asks the shape (vm.getProp, vm.setProp).
+fn plainKey(key: [*:0]const u8) bool {
+    const name = std.mem.span(key);
+    return !std.mem.eql(u8, name, "constructor") and !std.mem.eql(u8, name, "__proto__");
+}
 
 /// The shape of an instruction's form on the fast chain (`Lowerer.fast`); `none` has no form.
 const Form = enum { none, literal, number, pop, swap, dup, frame, load, store, step, local_int, locals, add_store, binary, jump, cond_jump };
@@ -228,6 +256,8 @@ const Lowerer = struct {
     blocks: std.AutoHashMapUnmanaged(u32, u32) = .empty,
     /// By window index, for the block of the bytecode being lowered.
     known: std.AutoHashMapUnmanaged(u32, Known) = .empty,
+    /// The literals of that block, which `Known.obj` names.
+    objects: std.ArrayList(Object) = .empty,
     bails: std.ArrayList(Bail) = .empty,
     /// The fast chain lowered the next instruction with this one.
     fused: bool = false,
@@ -931,16 +961,109 @@ const Lowerer = struct {
         try l.know(index, .{ .f = f, .double = true, .live = true });
     }
 
+    /// Stores at `base + at` the value `k` describes, which window slot `index` holds: the slot
+    /// is read only when nothing else has the value.
+    fn storeKnown(l: *Lowerer, k: *Known, index: u32, base: VReg, at: i32) !void {
+        if (k.konst) |x| {
+            try l.emit(.{ .store = .{ .base = base, .disp = at, .src = try l.konst(imm(rt.number(x))) } });
+        } else if (k.bits == null and k.f != null) {
+            try l.emit(.{ .store = .{ .base = base, .disp = at, .src = k.f.?, .ty = .f64 } });
+        } else try l.emit(.{ .store = .{ .base = base, .disp = at, .src = try l.bitsOf(index, k) } });
+    }
+
     /// Copies window slot `from` into slot `to`, with what is known of its value.
     fn copySlot(l: *Lowerer, from: u32, to: u32) !void {
         var k = l.knownAt(from);
-        if (k.konst) |x| {
-            try l.storeConst(to, rt.number(x));
-        } else if (k.bits == null and k.f != null) {
-            try l.storeF(to, k.f.?);
-        } else try l.store(to, try l.bitsOf(from, &k));
+        try l.storeKnown(&k, from, l.w, disp(to));
         try l.know(from, k);
         try l.know(to, k);
+    }
+
+    /// Where another block may arrive, or after an instruction without a form: it may have
+    /// called anything.
+    fn forget(l: *Lowerer) void {
+        l.known.clearRetainingCapacity();
+        l.objects.clearRetainingCapacity();
+    }
+
+    /// After a call on the chain. It runs nothing of the program's, but it may have collected,
+    /// and a literal that survives a collection is clean: a store into it needs the barrier.
+    fn called(l: *Lowerer) void {
+        for (l.objects.items) |*o| o.fresh = false;
+    }
+
+    /// The literal window slot `index` holds, when the chain made it.
+    fn objectAt(l: *Lowerer, index: u32) ?*Object {
+        return if (l.knownAt(index).obj) |n| &l.objects.items[n] else null;
+    }
+
+    /// Stores window slot `from` into slot `off` of `o`.
+    fn setField(l: *Lowerer, o: *Object, off: u32, from: u32) !void {
+        if (!o.fresh) try l.barrier(o.p);
+        var k = l.knownAt(from);
+        try l.storeKnown(&k, from, o.p, @intCast(@sizeOf(c.JSRTDynObject) + off * 8));
+        try l.know(from, k);
+        o.fields[off] = k;
+    }
+
+    /// The forms of the instructions that make, fill and read an object literal (`Object`), and
+    /// of the reads and writes of a captured variable, whose helpers reach no object.
+    fn literal(l: *Lowerer, i: analyze.Insn) !bool {
+        const d = i.depth;
+        switch (i.op) {
+            .new_object => {
+                if (i.a == 0 or i.a > max_fields) return false;
+                const s = l.slot(d);
+                try l.helper(h.newObject, &.{ s, i.a });
+                l.called();
+                var k: Known = .{ .live = true, .obj = @intCast(l.objects.items.len) };
+                const p = try l.ptrOf(try l.bitsOf(s, &k));
+                try l.objects.append(l.f.alloc(), .{ .p = p, .shape = &c.jsrt_shape_root, .capacity = i.a });
+                try l.know(s, k);
+            },
+            .define, .set_prop => {
+                const s = l.slot(d - 2);
+                const o = l.objectAt(s) orelse return false;
+                const key = l.t.keys[i.a];
+                if (!plainKey(key)) return false;
+                if (c.jsrt_shape_find(o.shape, key)) |own| {
+                    // A key the literal names twice keeps its slot (vm.defineAt), and so does
+                    // one that is written.
+                    try l.setField(o, own.*.offset, s + 1);
+                } else {
+                    // A write of a key the object lacks asks its prototypes for a setter first.
+                    if (i.op == .set_prop) return false;
+                    // The step the shape table would take when the instruction runs, taken now.
+                    const to: *c.JSRTShape = c.jsrt_shape_transition(o.shape, key);
+                    if (to.offset >= o.capacity) return false;
+                    try l.setField(o, to.offset, s + 1);
+                    try l.emit(.{ .store = .{ .base = o.p, .disp = @offsetOf(c.JSRTDynObject, "shape"), .src = try l.konst(@intCast(@intFromPtr(to))) } });
+                    o.shape = to;
+                }
+                // An assignment's value is what was assigned.
+                if (i.op == .set_prop) try l.copySlot(s + 1, s);
+            },
+            .get_prop, .get_prop_local => {
+                const local = i.op == .get_prop_local;
+                const from = if (local) vm.header + i.a else l.slot(d - 1);
+                const o = l.objectAt(from) orelse return false;
+                const key = l.t.keys[if (local) i.c else i.a];
+                if (!plainKey(key)) return false;
+                // A key the object lacks is its prototype's to answer.
+                const own = c.jsrt_shape_find(o.shape, key) orelse return false;
+                const s = if (local) l.slot(d) else from;
+                var k = o.fields[own.*.offset];
+                try l.storeKnown(&k, s, l.w, disp(s));
+                try l.know(s, k);
+            },
+            .store_env, .store_env_checked, .load_env, .load_env_checked => {
+                try l.insn(i);
+                l.called();
+                if (i.op == .load_env or i.op == .load_env_checked) _ = l.known.remove(l.slot(d));
+            },
+            else => return false,
+        }
+        return true;
     }
 
     /// Leaves the fast chain when local `local` is still in its TDZ: the generic code throws.
@@ -1005,7 +1128,7 @@ const Lowerer = struct {
             try l.br(to);
         }
         l.cur = try l.blockAt(i.pc);
-        l.known.clearRetainingCapacity();
+        l.forget();
         l.loop = for (l.loops) |*x| {
             if (x.holds(i.pc)) break x;
         } else null;
@@ -1013,7 +1136,7 @@ const Lowerer = struct {
         for (loop.carried) |x| try l.emit(.{ .copy = .{ .dst = x.v, .src = try l.doubleOf(vm.header + x.local) } });
         try l.br(try l.edge(i.pc));
         l.cur = l.carried_blocks.get(i.pc).?;
-        l.known.clearRetainingCapacity();
+        l.forget();
         for (loop.carried) |x| try l.know(vm.header + x.local, .{ .f = x.v, .double = true, .live = true });
     }
 
@@ -1095,7 +1218,7 @@ const Lowerer = struct {
     fn fast(l: *Lowerer, i: analyze.Insn) !bool {
         const d = i.depth;
         switch (form(i.op)) {
-            .none => return false,
+            .none => return l.literal(i),
             .literal => {
                 try l.insn(i);
                 try l.know(l.slot(d), .{ .live = i.op != .uninit });
@@ -1393,7 +1516,7 @@ pub fn lower(f: *ir.Func, t: *const bc.Template, plan: analyze.Plan) !void {
         std.debug.assert(l.loop == null);
         try l.insn(i);
         // It may have called a helper, across which no register of the chain is kept.
-        l.known.clearRetainingCapacity();
+        l.forget();
     }
     try l.generic(dead);
     // A carried register must not span a call, or the backend keeps it in memory. A block a

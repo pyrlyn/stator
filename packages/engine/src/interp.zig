@@ -8,6 +8,7 @@ const builtins = @import("builtins.zig");
 const vm = @import("vm.zig");
 const jit = @import("jit/jit.zig");
 const helpers = @import("jit/helpers.zig");
+const lower = @import("jit/lower.zig");
 const Value = rt.Value;
 const c = rt.c;
 
@@ -292,15 +293,39 @@ test "an object literal takes its cached shape steps in place" {
     if (!jit.available) return error.SkipZigTest;
     const r = try jitCost(
         "function f() { let s = 0; for (let i = 0; i < 1000; i++) { const o = {x: i, y: 2}; s += o.x + o.y; } return s; } f()",
-        .{ helpers.define, helpers.newObject },
+        .{ helpers.define, helpers.getProp, helpers.newObject },
     );
-    // The first literal finds both steps through the helper; the other 999 store inline into
-    // the slots the object was allocated with. Each literal still allocates through its helper.
-    try std.testing.expectEqualSlices(usize, &.{ 2, 1000 }, &r.calls);
+    // On the fast chain both shape steps are taken when f is compiled, and what the literal
+    // stored is read back without asking the object. Elsewhere the first literal finds its steps
+    // and fills its read caches through the helpers, and the other 999 store and read inline.
+    // Each literal still allocates through its helper.
+    const first: usize = if (lower.fast_chain) 0 else 2;
+    try std.testing.expectEqualSlices(usize, &.{ first, first, 1000 }, &r.calls);
     try expectRuns("function f(k) { const o = {a: 1, b: 2, a: 3, [k]: 4, c: 5}; return JSON.stringify(o); } f('z') + f('b')", "{\"a\":3,\"b\":2,\"z\":4,\"c\":5}{\"a\":3,\"b\":4,\"c\":5}");
     try expectRuns("function f(p) { const o = {a: 1, __proto__: p, ...p, b: 2, m() { return this.a + this.b + this.q; }}; o.late = 1; o.later = 2; return o.m() + Object.keys(o).join(); } f({q: 4}) + f({q: 5, a: 7})", "7a,q,b,m,late,later14a,q,b,m,late,later");
     try expectRuns("function f(n) { const o = {a: n}; if (n & 1) o.b = n; else o.c = n; o.d = 1; o.e = 2; o.f = 3; return Object.keys(o).join('') + o.a; } f(1) + f(2) + f(3)", "abdef1acdef2abdef3");
     try expectRuns("class P { x = 1; y = 2; } class Q extends P { z = this.x + this.y; } function f() { const q = new Q(); return q.x + q.y + q.z; } f() + f()", "12");
+}
+
+test "a literal the fast chain follows answers what the object would" {
+    // Members read back through locals, operands and a cycle; a key named twice, an own key
+    // written, a key added and a key it lacks; two names for one object; an object a call, a
+    // getter or Object.freeze has reached; members that are calls, literals and remainders;
+    // `constructor` and `__proto__`; more members than the chain follows, none and a spread;
+    // literals in a loop, in a list and in a cycle; a literal that outlives collections and is
+    // then written with younger objects; captured variables read and written between members.
+    try expectRuns("function f(i, seed) { const a = { value: i, next: null }; const b = { value: seed, next: a }; a.next = b; return a.next.value + b.next.value + ',' + (a.next === b) + ',' + (b.next.next === b) + ',' + a.next.next.value; } f(1, 2) + ';' + f('x', 0.5) + ';' + f(-0, NaN)", "3,true,true,1;0.5x,true,true,x;NaN,true,true,0");
+    try expectRuns("function f(k) { const o = { a: 1, b: k, a: k + 1 }; const r = [o.a, o.b]; o.b = o.a * 2; r.push(o.b, o.c); o.c = 7; r.push(o.c, 'c' in o); return r.join() + JSON.stringify(o); } f(1) + f('s')", "2,1,4,,7,true{\"a\":2,\"b\":4,\"c\":7}s1,s,NaN,,7,true{\"a\":\"s1\",\"b\":null,\"c\":7}");
+    try expectRuns("function f(n) { const a = { x: n, y: 0 }; const b = a; b.x = n + 1; const v = (a.y = b.x * 2); return [a.x, b.y, v, { p: n, q: a }.q.x, { p: n }.p].join(); } f(1) + ';' + f(2.5)", "2,4,4,2,1;3.5,7,7,3.5,2.5");
+    try expectRuns("function g(o) { o.x = o.x + 10; o.z = 1; delete o.y; return o; } function f(n) { const o = { x: n, y: 2 }; const before = o.x + o.y; g(o); return before + ',' + o.x + ',' + o.y + ',' + o.z + ',' + Object.keys(o).join(''); } f(1) + ';' + f(5)", "3,11,undefined,1,xz;7,15,undefined,1,xz");
+    try expectRuns("function f(n) { let c = 0; const o = { x: n, get y() { c += 1; return this.x * 2; }, z: 3 }; const p = { a: o.x, b: 4 }; return [o.x, o.y, o.y, o.z, c, p.a, p.b].join(); } f(1) + ';' + f(2)", "1,2,2,3,2,1,4;2,4,4,3,2,2,4");
+    try expectRuns("function f(n) { 'use strict'; const o = { x: n, y: 1 }; o.y = n + 1; Object.freeze(o); let threw = false; try { o.x = 9; } catch (e) { threw = e instanceof TypeError; } return o.x + ',' + o.y + ',' + threw; } f(1)", "1,2,true");
+    try expectRuns("function h(x) { return { v: x }; } function f(n, s) { const o = { a: h(n).v, b: { c: n + 1, d: s + n }, e: n % 3 }; return [o.a, o.b.c, o.b.d, o.e, o.b === o.b].join(); } f(4, 1) + ';' + f(4, 'q') + ';' + f(-3, 1)", "4,5,5,1,true;4,5,q4,1,true;-3,-2,-2,0,true");
+    try expectRuns("function f(p) { const a = { constructor: 1, x: 2 }; const b = { x: 3, y: 4 }; const __proto__ = p; const d = { __proto__, x: 5 }; const e = { __proto__: p, x: 6 }; return [a.constructor, b.constructor === Object, d.__proto__ === p, Object.getPrototypeOf(d) === Object.prototype, e.q, e.x, Object.keys(d).join('')].join(); } f({ q: 9 })", "1,true,true,true,9,6,__proto__x");
+    try expectRuns("function f(n) { const o = { a: n, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10 }; const e = {}; e.k = o.j; const s = { ...o, a: 0, z: e.k }; return o.a + o.j + e.k + s.a + s.z + Object.keys(s).length; } f(1)", "42");
+    try expectRuns("let root = null; function f(n) { let sum = 0; let head = null; for (let i = 0; i < n; i += 1) { const a = { value: i, next: null }; const b = { value: n, next: a }; a.next = b; root = a; head = { value: i, next: head }; sum += a.next.value + b.next.value + head.value; } let len = 0; for (let p = head; p !== null; p = p.next) len += 1; return sum + ',' + len + ',' + root.next.next.value; } f(2000) + ';' + f(3)", "7998000,2000,1999;15,3,2");
+    try expectRuns("function fill(n) { const junk = []; for (let i = 0; i < n; i += 1) junk.push({ i, s: 'k' + i }); return junk.length; } function f(n) { const keep = { first: null, second: null, count: 0 }; const a = { v: 1, w: null }; keep.count = fill(n); const b = { v: 2, w: a }; keep.first = b; a.w = keep; keep.count += fill(n); const c = { v: 3, w: keep.first }; keep.second = c; keep.count += fill(n); return [keep.first.v, keep.second.v, keep.second.w.w.v, a.w.count, keep.first.w.w === keep].join(); } f(3000)", "2,3,1,9000,true");
+    try expectRuns("function f(n) { let seen = 0; const bump = () => { seen += 1; return seen; }; const o = { a: n, b: seen }; seen = o.a + 1; const p = { a: seen, b: o }; bump(); return [o.a, o.b, p.a, p.b.a, seen].join(); } f(4)", "4,0,5,4,6");
 }
 
 test "an array's length and its elements are read and written in place" {

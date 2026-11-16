@@ -118,6 +118,19 @@ doubles; those two cases are two comparisons and at most a subtraction, with no 
 an integer. Anything else (a negative dividend, a larger one, a NaN) takes the guarded integer
 division. The wrap of an index or of a running sum, `i = (i + 1) % n`, is the common case.
 
+An object a literal makes inside a run is followed too (`lower.zig`, `Object`), until an
+instruction without a form runs: nothing else has seen it yet, so its shape and the value in
+each of its slots are known when the function is compiled. A named member takes its shape step
+then (`jsrt_shape_transition`) and is a slot store and a store of the next shape, with nothing
+compared; a member named twice, and a write of a property the object has, store into the same
+slot again; a read of a property it has is the register or constant that was stored, with
+nothing loaded from the object. Such a store checks the write barrier only once a later call
+was made on the chain, since a block is dirty from its allocation until a collection, and only
+a call collects. Reads and writes of captured variables keep all of this, because their helpers
+run none of the program's code. A literal of more than eight named members, the keys
+`constructor` and `__proto__`, a property the object lacks, and everything after a call, a
+getter, a spread or a computed key take the paths above.
+
 **Loops with carried locals (AArch64).** A loop whose every instruction has a form on the fast
 chain makes no call on that chain, so its numeric locals can stay in float registers from one
 iteration to the next. `carriedLoops` picks those loops, outermost first, and for each the
