@@ -104,14 +104,19 @@ Constants, moves between locals and operands, `+ - * / %` and the comparisons on
 the fused local forms then guard and load each operand once per run instead of once per
 instruction, and a comparison the next instruction jumps on becomes the branch, with no boolean
 written. A result stays in its register and is stored in the window only when something
-other than the chain may read it there: before an instruction that can leave the chain (one
-with a guard), before a call, and at the end of the run (`lower.zig`, `flush`). An operand
-that was popped before then is never stored, and a local written twice between two guards is
-stored once. The two paths of the chain that call but seldom run, the allocator's when the
-run has no room and the remainder's division, make the same stores at their head and leave
-the chain's own code without them. The window is therefore current wherever a guard is. A
+other than the chain may read it there: before a call, before a jump and at the end of the run
+(`lower.zig`, `flush`). An operand that was popped before then is never stored, and a local
+written twice is stored once. A guard stores nothing on the path that passes it. What the
+window lacks where the guard stands (`owed`: the values still in registers, and the shape word
+and unfilled slots of a literal that is not whole yet) is stored in a block of its own that only
+the failing guard runs, laid out after the run's blocks (`payOwed`), so the window is current
+when the generic code is reached and the chain's own code pays nothing for a guard that never
+fails. A guard that owes more than eight stores has them made before it instead. The two paths
+of the chain that call but seldom run, the allocator's when the run has no room and the
+remainder's division, make their stores at their head in the same way. A
 guard that fails (an operand that is not a double, a local in its TDZ,
-a remainder that is not an integer's or is a zero of a non-positive dividend) just
+a remainder that is not an integer's or is a zero of a non-positive dividend, a read below
+that its cache or its array does not answer) then
 branches to the same instruction in a second, generic copy of the run, which finishes it with
 the fast paths and helpers above and rejoins at the next run. The generic copies are emitted
 after all the fast code and nothing is remembered across an instruction lowered generically,
@@ -130,8 +135,9 @@ each of its slots are known when the function is compiled. A named member takes 
 then (`jsrt_shape_transition`) and is a slot store, with nothing compared; a member named
 twice, and a write of a property the object has, store into the same slot again; a read of a
 property it has is the register or constant that was stored, with nothing loaded from the
-object. The shape is stored once, the one the literal has reached, before the next guard, call
-or end of the run (`flush`): until then nothing else can look at the object. A store into the
+object. The shape is stored once, the one the literal has reached, before the next call
+or end of the run (`flush`), or by a guard that fails: until then nothing else can look at the
+object. A store into the
 literal checks no write barrier while it is as dirty as it was born: a block is dirty from its
 allocation until a collection, only a call collects, and the one call the chain makes between
 two literals, the allocator's, marks the earlier ones again before it returns. Reads and
@@ -157,6 +163,20 @@ when it is uninitialized; an environment is always dirty to the collector, so th
 no barrier. A constant the bytecode pushes that is no number (`null`, `undefined`, a boolean,
 the TDZ marker) is made again where it is stored, not read back from the window.
 
+Three reads have forms on the chain as well, and none of them writes the heap or calls on the
+path that succeeds (`chained`). A property named by a plain key is read as `cachedProp` reads
+it, through the site's inline cache: the value must be a dynamic object of the shape the cache
+holds, and the slot must hold a value and no accessor pair. `array[index]` is read as `getElem`
+reads it: the value must be an array, the index a double that is an integer below the length,
+and the element no hole. `i < array.length` and `i <= array.length`, as the comparison fused
+with its jump (`lt_local_prop`), read the length as the field of the array it is; any other
+read of `length` calls its helper, as a string or an object answers it as often. Each of those
+conditions is a guard, and the generic code a failed one leaves for runs the helper, which
+fills the cache, calls the getter, walks the prototype chain or answers for a string as before.
+What a read loads has no known type, so the arithmetic that takes it guards that it is a
+double. A function is compiled before its caches are filled, so the first time through such a
+read leaves by its guard, and the helper fills the cache the chain reads afterwards.
+
 **Loops with carried locals (AArch64).** A loop whose every instruction has a form on the fast
 chain makes no call on that chain, so its numeric locals can stay in float registers from one
 iteration to the next. `carriedLoops` picks those loops, outermost first, and for each the
@@ -165,9 +185,10 @@ block of such a loop is then lowered with two entries. The window entry, where c
 the loop and the generic copies arrive, guards that each carried local is a double, loads it
 into its register and goes on in the register entry; the register entry, which the loop's own
 jumps use, starts with those registers known. Before a block of the loop ends, each carried
-local's current value is copied into its register. The window is written before every guard
-and at the block's end, as on any chain, so a failed guard leaves for the generic copy as
-anywhere else, and comes back through a window entry. A function with such a loop is laid out in the order its blocks were written, which
+local's current value is copied into its register. The window is written at the block's end
+and on the path of a guard that fails, as on any chain, so a failed guard leaves for the
+generic copy as anywhere else, and comes back through a window entry. The reads above have
+forms, so a loop over an array's elements and their properties is such a loop. A function with such a loop is laid out in the order its blocks were written, which
 keeps a loop's blocks together: a block a forward jump names is created early, and a carried
 register whose life spanned that block's calls would be kept in memory by the backend.
 
@@ -185,10 +206,10 @@ interprets.
 opens its frame; every object but a literal on the fast chain is a call into the allocator,
 and a dynamic object with two properties is an 88-byte block; a call of any native method
 but `push` goes through the call helper and the runtime's method dispatch; a number is always
-a double, so a remainder that does divide converts to an integer and back, and a value
-that waits for the window is stored before every guard it passes, whether or not that guard
-ever fails. Integers in registers, window stores made only on the path a failed guard takes,
-and the optimizing tier (plan/T67.1:
+a double, so a remainder that does divide converts to an integer and back, and so does every
+index; an array's address, length and elements are read again at each element, and a value a
+read loaded is guarded again where a copy of it is used. Integers in registers, what a loop
+does not change kept across its iterations, and the optimizing tier (plan/T67.1:
 type feedback, call inline caches, deoptimization) are the next steps.
 
 ## 4. Tests and benchmark

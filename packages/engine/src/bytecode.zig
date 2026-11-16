@@ -398,8 +398,8 @@ pub fn localOperator(op: Op) Op {
     return switch (op) {
         .add_local_int, .add_locals => .add,
         .sub_local_int, .sub_locals => .sub,
-        .lt_local_int, .lt_locals => .lt,
-        .le_local_int, .le_locals => .le,
+        .lt_local_int, .lt_locals, .lt_local_prop => .lt,
+        .le_local_int, .le_locals, .le_local_prop => .le,
         else => unreachable,
     };
 }
