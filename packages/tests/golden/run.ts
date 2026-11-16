@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { InProcessRecorder } from '../impact/recorder.ts';
+import { benchPrograms, benchGoldenName } from '../support/bench-programs.ts';
 import { goldenEntry, goldenNames } from '../support/corpus.ts';
 import { impactRecorder } from '../support/impact-hook.ts';
 import {
@@ -122,6 +123,16 @@ function fixtures(mode: 'ts' | 'js'): Fixture[] {
       name,
       path: goldenEntry(dir, name, mode),
     }));
+}
+
+/** The benchmark programs (plan/T75), keyed `ts/bench/<name>` and `js/bench/<name>`: the weekly
+ * `bench:record` refuses a wrong answer too, but only this run catches one the day it lands. */
+function benchFixtures(): Fixture[] {
+  return benchPrograms().map((program) => ({
+    mode: program.mode,
+    name: benchGoldenName(program),
+    path: program.path,
+  }));
 }
 
 /* `--filter <substring>` (or `--filter=<substring>`) narrows the run to fixtures whose
@@ -269,7 +280,7 @@ async function main(): Promise<void> {
   });
   const filter = args.filter;
   const only = args.only === undefined ? undefined : readOnlyList(args.only);
-  const filtered = [...fixtures('ts'), ...fixtures('js')].filter(
+  const filtered = [...fixtures('ts'), ...fixtures('js'), ...benchFixtures()].filter(
     (fixture) =>
       (filter === undefined || fixtureKey(fixture).includes(filter)) &&
       (only === undefined || only.has(fixtureKey(fixture))),

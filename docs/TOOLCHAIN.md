@@ -92,7 +92,7 @@ pnpm run test:selfhost           # Stator explains (and builds) its own packages
 pnpm run test262                 # Test262 slice against the pin in tests/test262/pin.json
 pnpm run test:node-suite         # Node's own test/parallel slice (tests/node-suite/pin.json) through vitest
 pnpm run differential            # fuzzer vs Node (failures land in packages/tests/differential/failures/)
-pnpm run bench:record            # refresh packages/tests/bench/baseline.json (this machine only)
+pnpm run bench:record            # time every bench program in both modes; fails a geomean or per-program regression; refresh packages/tests/bench/baseline.json (this machine only)
 just -f packages/runtime/justfile -d packages/runtime runtime          # packages/runtime/build/libjsrt.a          (clang -O2, -Werror; thin LTO where the linker allows)
 just -f packages/runtime/justfile -d packages/runtime runtime-asan     # packages/runtime/build-asan/libjsrt.a     (-fsanitize=address,undefined -O1 -g)
 just -f packages/runtime/justfile -d packages/runtime runtime-intl     # packages/runtime/build-intl/libjsrt.a     (ICU feature build)

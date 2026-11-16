@@ -741,6 +741,17 @@ normalized to bytes with the raw value beside it; results appended per host; and
   committed by whoever runs `bench:record`, which is where the machine-local rule already puts the
   authority. Reopening this is a plan edit.
 
+**The program list and the per-program gate (plan/T75, plan-notes 414).** One list,
+`packages/tests/support/bench-programs.ts`, feeds `bench:record`, `engine:bench`, `bench:memory`,
+`bench:profile` and the golden runner: the `ts`-mode programs in `tests/bench/programs/` and the
+`js`-mode programs in `tests/engine/bench/`, each built in its own mode. Every bench program is
+also a golden fixture (`ts/bench/<name>`, `js/bench/<name>`), so a wrong answer fails
+`pnpm run ci` the day it lands, not at the weekly recording. Besides the geomean gate, now taken
+over the programs both recordings share, `bench:record` fails any single program that grew past
+**75%** and by at least **10 ms** (`tests/bench/gate.ts`); both numbers sit about twice above
+the widest same-commit spread measured on darwin-arm64. A reference engine that cannot run a
+program gets no time and a listed reason; a Stator failure aborts the recording.
+
 **[D2] Open residue — step 7's noise floor.** The regression gate compares the geomean against the newest
 previous result for the same host and fails above `thresholdPercent: 20`. The step requires that
 threshold to sit above a **measured** spread; what has been measured is one repeat on one host
@@ -889,6 +900,8 @@ Full subset and golden runs may use bounded automatic process sharding. Every fi
 still report exactly once, in the original order, with unchanged comparisons and failure exit
 status. Explicit shard selectors override automatic selection; filtered runs and test-impact
 recording retain their in-process behavior. `STATOR_TEST_JOBS=1` disables automatic sharding.
+
+### ~~T75. Bench regression coverage: more programs, a per-program gate, both modes~~ → [`plan/T75`](plan/T75/done.md)
 
 **Standing decision — Bun is not a test runner (2026-09-14, plan-notes 241).** Measured on this host (Bun 1.3.14 vs pinned Node 26.x): subset −5%, spawn-heavy unit −37%, in-process parity — while adopting it silently redefines the oracle (`process.execPath`), breaks the lcov pipeline (Node-only flags), and weakens the `erasableSyntaxOnly` runtime guard (Bun transpiles what Node type-stripping refuses). Reopen only with new measured evidence per §15.4. Task 6.5 is the prerequisite that keeps the question askable.
 
@@ -1203,6 +1216,8 @@ untouched. This reopens the settled C11-runtime decision (§15.4) on the creator
 ### ~~T9.1. Runtime memory core in Zig~~ → [`plan/T9.1`](plan/T9.1/done.md)
 
 ### ~~T66. Replace Boehm with pyrlyn/gc~~ → [`plan/T66`](plan/T66/done.md)
+
+### T76. Concurrent async chains drive a collector count below zero → [`plan/T76`](plan/T76/task.md)
 
 ### Language & library boundaries
 

@@ -7,36 +7,36 @@ libraries the executable still needs. The latest recording is in [`RESULTS.md`](
 raw per-run numbers are in `results/*.json`.
 
 It complements `../record.ts` (runtime geomean vs interpreters, max RSS): this harness
-compares against *compilers to binaries*, uses the median instead of the max, and adds
+compares against _compilers to binaries_, uses the median instead of the max, and adds
 memory-specific programs.
 
 ## Programs
 
-| Program | What it stresses |
-|---|---|
-| `programs/hello.ts` | baseline resident size of the runtime itself |
-| `programs/objects-churn.ts` | 10M short-lived `{a,b}` objects: allocation rate, GC keeps RSS flat |
-| `programs/objects-retained.ts` | 1M live `{id,name}` objects: per-object live-heap footprint |
-| `../programs/fib.ts`, `nbody.ts`, `json-roundtrip.ts`, `string-churn.ts` | the shared bench set (`ffi-sqrt` is stator-only, `startup.ts` is empty) |
+| Program                        | What it stresses                                                                                                                               |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `programs/hello.ts`            | baseline resident size of the runtime itself                                                                                                   |
+| `programs/objects-churn.ts`    | 10M short-lived `{a,b}` objects: allocation rate, GC keeps RSS flat                                                                            |
+| `programs/objects-retained.ts` | 1M live `{id,name}` objects: per-object live-heap footprint                                                                                    |
+| `../programs/*.ts`             | the shared `ts`-mode bench set from `../../support/bench-programs.ts` (`ffi-sqrt` is stator-only, `startup.ts` is empty, so neither runs here) |
 
 Each program's stdout is byte-compared (ANSI colour stripped) with `node <program>.js`; a
 tool that prints the wrong answer is reported as a failure, not measured.
 
 ## Tools compared
 
-| Tool | Category | Why it is in the set |
-|---|---|---|
-| stator | TS/JS → C → native | this repo |
-| [Perry](https://github.com/PerryTS/perry) | TS → LLVM native, own runtime + GC | closest typed-TS AOT competitor (plan.md §0.1) |
-| [scriptc](https://scriptc.dev) (Vercel Labs) | TS → LLVM native | type-directed AOT, same lane (plan.md §0.1) |
-| [Porffor](https://porffor.dev) | JS → Wasm → C → native | direct-to-native AOT |
-| QuickJS `qjsc` | JS → bytecode embedded in C → native | JS-to-C classic, tiny interpreter |
-| Static Hermes `shermes` | JS → native via C/LLVM | Meta's typed-JS AOT (plan.md §0.1) |
-| `bun build --compile` | bundle + embedded JavaScriptCore | most-used "JS to single binary" |
-| `deno compile` | bundle + embedded V8 | same, V8 |
-| Node SEA (`node --build-sea`) | Node binary + injected blob | official Node single executable |
-| [`@yao-pkg/pkg`](https://github.com/yao-pkg/pkg) | Node base binary + snapshot FS | maintained fork of Vercel's `pkg` |
-| nexe | Node base binary + payload | listed for completeness; see limitations |
+| Tool                                             | Category                             | Why it is in the set                           |
+| ------------------------------------------------ | ------------------------------------ | ---------------------------------------------- |
+| stator                                           | TS/JS → C → native                   | this repo                                      |
+| [Perry](https://github.com/PerryTS/perry)        | TS → LLVM native, own runtime + GC   | closest typed-TS AOT competitor (plan.md §0.1) |
+| [scriptc](https://scriptc.dev) (Vercel Labs)     | TS → LLVM native                     | type-directed AOT, same lane (plan.md §0.1)    |
+| [Porffor](https://porffor.dev)                   | JS → Wasm → C → native               | direct-to-native AOT                           |
+| QuickJS `qjsc`                                   | JS → bytecode embedded in C → native | JS-to-C classic, tiny interpreter              |
+| Static Hermes `shermes`                          | JS → native via C/LLVM               | Meta's typed-JS AOT (plan.md §0.1)             |
+| `bun build --compile`                            | bundle + embedded JavaScriptCore     | most-used "JS to single binary"                |
+| `deno compile`                                   | bundle + embedded V8                 | same, V8                                       |
+| Node SEA (`node --build-sea`)                    | Node binary + injected blob          | official Node single executable                |
+| [`@yao-pkg/pkg`](https://github.com/yao-pkg/pkg) | Node base binary + snapshot FS       | maintained fork of Vercel's `pkg`              |
+| nexe                                             | Node base binary + payload           | listed for completeness; see limitations       |
 
 Tools that need plain JS get the TypeScript source with types stripped by
 `node:module.stripTypeScriptTypes`; the TS-native tools get the `.ts` file.
@@ -61,13 +61,13 @@ git clone --depth 1 -b static_h https://github.com/facebook/hermes && \
 
 Environment knobs:
 
-| Variable | Effect |
-|---|---|
+| Variable          | Effect                                                                          |
+| ----------------- | ------------------------------------------------------------------------------- |
 | `BENCH_TOOLS_BIN` | `:`-separated dirs prepended to `PATH` (e.g. `~/bench-tools/node_modules/.bin`) |
-| `BENCH_TOOLS` | comma list to enable only some tools (e.g. `stator,scriptc,perry`); default all |
-| `BENCH_PROGRAMS` | comma list of program names; default all |
-| `BENCH_RUNS` | runs per program (default 5) after one discarded warm-up run |
-| `SHERMES_VERSION` | label for the Static Hermes build (it reports no release version) |
+| `BENCH_TOOLS`     | comma list to enable only some tools (e.g. `stator,scriptc,perry`); default all |
+| `BENCH_PROGRAMS`  | comma list of program names; default all                                        |
+| `BENCH_RUNS`      | runs per program (default 5) after one discarded warm-up run                    |
+| `SHERMES_VERSION` | label for the Static Hermes build (it reports no release version)               |
 
 **Enable / disable.** It is opt-in: nothing in CI or `pnpm test` runs it. A tool not on
 `PATH` is recorded as `not installed` and skipped; disable one explicitly by leaving it out of

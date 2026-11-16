@@ -10,17 +10,19 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { stripTypeScriptTypes } from 'node:module';
 import { arch, cpus, hostname, platform, release, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { benchKey, benchPrograms, type BenchProgram } from '../support/bench-programs.ts';
 import { nodePath } from '../support/node-path.ts';
 import { onPath } from '../support/on-path.ts';
 import { type TimedRun, timedRun } from '../support/timed-run.ts';
+import { geomean, REGRESSION_POLICY, regressionGate } from './gate.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
 const CLI = join(REPO, 'compiler', 'src', 'cli', 'main.ts');
-const PROGRAMS = join(HERE, 'programs');
 const RESULTS = join(HERE, 'results');
 const RUNS = 5;
 
@@ -38,6 +40,9 @@ interface EngineResult {
   readonly engine: string;
   readonly version: string;
   readonly measurements: readonly ProgramMeasurement[];
+  /** Programs a reference engine could not run, with the first line of why. Never Stator's: a
+   * Stator failure aborts the recording. */
+  readonly failures?: readonly { readonly program: string; readonly reason: string }[];
 }
 
 function hostId(): string {
@@ -53,14 +58,22 @@ function clangVersion(): string {
   return execFileSync(cc, ['--version'], { encoding: 'utf8' }).split('\n')[0] ?? 'unknown';
 }
 
-function measureStator(program: string, expected: string): ProgramMeasurement {
-  const source = join(PROGRAMS, program);
+function measureStator(bench: BenchProgram, expected: string): ProgramMeasurement {
+  const program = benchKey(bench);
+  const source = bench.path;
   const work = mkdtempSync(join(tmpdir(), `stator-bench-${process.pid}-`));
   const output = join(work, 'app');
   let compileBest = Number.POSITIVE_INFINITY;
   for (let i = 0; i < RUNS; i += 1) {
     const started = process.hrtime.bigint();
-    const result = run(process.execPath, [CLI, 'build', source, '-o', output]);
+    const result = run(process.execPath, [
+      CLI,
+      'build',
+      source,
+      '-o',
+      output,
+      `--mode=${bench.mode}`,
+    ]);
     compileBest = Math.min(compileBest, Number(process.hrtime.bigint() - started) / 1e6);
     if (result.status !== 0)
       throw new Error(`stator build failed for ${program}: ${result.stderr.trim()}`);
@@ -105,25 +118,39 @@ function measureEngine(
   name: string,
   path: string,
   version: string,
-  programs: readonly string[],
+  programs: readonly BenchProgram[],
   expected: ReadonlyMap<string, string>,
+  stripped: ReadonlyMap<string, string>,
 ): EngineResult {
   const measurements: ProgramMeasurement[] = [];
-  for (const program of programs) {
-    const source = join(PROGRAMS, program);
+  const failures: { program: string; reason: string }[] = [];
+  for (const bench of programs) {
+    const program = benchKey(bench);
+    const source = stripped.get(program) ?? bench.path;
     const want = expected.get(program) ?? '';
     let best = Number.POSITIVE_INFINITY;
     let peak = 0;
     let raw = 0;
-    for (let i = 0; i < RUNS; i += 1) {
+    let failed = false;
+    for (let i = 0; i < RUNS && !failed; i += 1) {
       const started = process.hrtime.bigint();
       const result = run(path, [source]);
       best = Math.min(best, Number(process.hrtime.bigint() - started) / 1e6);
       peak = Math.max(peak, result.maxRssBytes);
       raw = Math.max(raw, result.maxRssRaw);
-      if (result.status !== 0 || result.stdout !== want)
-        throw new Error(`${name} result mismatch for ${program}`);
+      if (result.status !== 0 || result.stdout !== want) {
+        // A reference engine's gap is its own, not a reason to lose the whole recording; it
+        // gets no time, so no number in the file is a wrong answer computed quickly.
+        failures.push({
+          program,
+          reason:
+            result.stderr.trim().split('\n')[0] ??
+            `exit ${String(result.status)}, stdout differs from Node`,
+        });
+        failed = true;
+      }
     }
+    if (failed) continue;
     measurements.push({
       program,
       startupMsBest: best,
@@ -134,7 +161,21 @@ function measureEngine(
       output: want,
     });
   }
-  return { engine: name, version, measurements };
+  return { engine: name, version, measurements, failures };
+}
+
+/** Each `ts`-mode program with its types erased, as a `.js` file in `dir`: the reference engines
+ * are JavaScript engines, and only some of them strip TypeScript themselves. Erasure is all
+ * these programs need (`erasableSyntaxOnly`), so the stripped file is the same program. */
+function strippedCopies(benches: readonly BenchProgram[], dir: string): Map<string, string> {
+  const copies = new Map<string, string>();
+  for (const bench of benches) {
+    if (bench.mode !== 'ts') continue;
+    const js = join(dir, `${bench.name.replace(/\.ts$/, '')}.js`);
+    writeFileSync(js, stripTypeScriptTypes(readFileSync(bench.path, 'utf8')));
+    copies.set(benchKey(bench), js);
+  }
+  return copies;
 }
 
 function sameHostPrevious(): { readonly path: string; readonly stator: EngineResult } | undefined {
@@ -195,43 +236,45 @@ export function test262Cell(rate: Test262Rate | undefined): string {
     : `${((rate.passed * 100) / rate.total).toFixed(2)}% (${String(rate.passed)} / ${String(rate.total)})`;
 }
 
-function geomean(measurements: readonly ProgramMeasurement[]): number {
-  const values = measurements
-    .map((measurement) => measurement.runtimeMsBest)
-    .filter((value) => value > 0);
-  return values.length === 0
-    ? 0
-    : Math.exp(values.reduce((sum, value) => sum + Math.log(value), 0) / values.length);
+function geomeanCell(engine: EngineResult, total: number): string {
+  if (engine.measurements.length === 0) return '—';
+  const mean = geomean(engine.measurements).toFixed(2);
+  return engine.measurements.length === total
+    ? mean
+    : `${mean} (${String(engine.measurements.length)} of ${String(total)} programs)`;
 }
 
 function main(): void {
-  // ffi-sqrt follow-up: sibling declarations (ffi-sqrt.d.ts) are not runnable
-  // programs — exclude *.d.ts so only runnable *.ts entries are collected.
-  const programs = readdirSync(PROGRAMS)
-    .filter((file) => file.endsWith('.ts') && !file.endsWith('.d.ts'))
-    .sort();
+  const benches = benchPrograms();
+  const programs = benches.map(benchKey);
   const expected = new Map<string, string>();
-  for (const program of programs) {
+  for (const bench of benches) {
     // The benchmark oracle: ground truth output comes from `nodePath()`, while the stator
     // build in `measureStator` stays on the compiler host (`process.execPath`).
-    const result = run(nodePath(), [join(PROGRAMS, program)]);
+    const result = run(nodePath(), [bench.path]);
     if (result.status !== 0)
-      throw new Error(`Node benchmark oracle failed for ${program}: ${result.stderr.trim()}`);
-    expected.set(program, result.stdout);
+      throw new Error(`Node benchmark oracle failed for ${bench.name}: ${result.stderr.trim()}`);
+    expected.set(benchKey(bench), result.stdout);
   }
   const stator: EngineResult = {
     engine: 'stator',
     version: 'working tree',
-    measurements: programs.map((program) => measureStator(program, expected.get(program) ?? '')),
+    measurements: benches.map((bench) => measureStator(bench, expected.get(benchKey(bench)) ?? '')),
   };
   const engines: EngineResult[] = [stator];
-  for (const name of ['node', 'bun', 'qjs', 'perry', 'scriptc', 'hermes']) {
-    const found = probe(name);
-    engines.push(
-      found === undefined
-        ? { engine: name, version: 'absent', measurements: [] }
-        : measureEngine(name, found.path, found.version, programs, expected),
-    );
+  const strippedDir = mkdtempSync(join(tmpdir(), `stator-bench-js-${process.pid}-`));
+  try {
+    const stripped = strippedCopies(benches, strippedDir);
+    for (const name of ['node', 'bun', 'qjs', 'perry', 'scriptc', 'hermes']) {
+      const found = probe(name);
+      engines.push(
+        found === undefined
+          ? { engine: name, version: 'absent', measurements: [] }
+          : measureEngine(name, found.path, found.version, benches, expected, stripped),
+      );
+    }
+  } finally {
+    rmSync(strippedDir, { recursive: true, force: true });
   }
   const stamp = new Date().toISOString();
   const test262 = interpreterTest262();
@@ -249,17 +292,20 @@ function main(): void {
     programs,
     engines,
     interpreterTest262: test262 ?? null,
-    regression: { thresholdPercent: 20, statorGeomeanMs: geomean(stator.measurements) },
+    regression: {
+      thresholdPercent: REGRESSION_POLICY.geomeanPercent,
+      programThresholdPercent: REGRESSION_POLICY.programPercent,
+      programFloorMs: REGRESSION_POLICY.programFloorMs,
+      statorGeomeanMs: geomean(stator.measurements),
+    },
   };
   const previous = sameHostPrevious();
   if (previous !== undefined) {
-    const old = geomean(previous.stator.measurements);
-    const current = geomean(stator.measurements);
-    const regression = old === 0 ? 0 : ((current - old) / old) * 100;
-    if (regression > result.regression.thresholdPercent)
-      throw new Error(
-        `benchmark regression ${regression.toFixed(1)}% exceeds ${String(result.regression.thresholdPercent)}%`,
-      );
+    const gate = regressionGate(previous.stator.measurements, stator.measurements);
+    for (const program of gate.added)
+      process.stdout.write(`bench: ${program} is new (no previous result on this host)\n`);
+    if (gate.failures.length > 0)
+      throw new Error(`against ${previous.path}:\n  ${gate.failures.join('\n  ')}`);
   }
   mkdirSync(RESULTS, { recursive: true });
   // Full timestamp, not `stamp.slice(0, 10)`: two recordings on the same day wrote the same file,
@@ -284,8 +330,14 @@ function main(): void {
   // Only Stator's own interpreter has a Test262 column: no other engine's run is measured here.
   for (const engine of engines)
     lines.push(
-      `| ${engine.engine} | ${engine.version} | ${engine.measurements.length === 0 ? '—' : geomean(engine.measurements).toFixed(2)} | ${engine.engine === 'stator' ? test262Cell(test262) : '—'} |`,
+      `| ${engine.engine} | ${engine.version} | ${geomeanCell(engine, programs.length)} | ${engine.engine === 'stator' ? test262Cell(test262) : '—'} |`,
     );
+  // A geomean over fewer programs is not comparable with the full one, so the cell says how many
+  // and the reasons follow the table.
+  const gaps = engines.flatMap((engine) =>
+    (engine.failures ?? []).map((f) => `- ${engine.engine} on ${f.program}: ${f.reason}`),
+  );
+  if (gaps.length > 0) lines.push('', 'Not run by a reference engine:', '', ...gaps);
   writeFileSync(join(HERE, 'README.md'), `${lines.join('\n')}\n`, 'utf8');
   process.stdout.write(`bench: recorded ${String(programs.length)} programs to ${path}\n`);
 }
