@@ -103,9 +103,15 @@ whether it is past its TDZ, and the constant when the bytecode names one (`lower
 Constants, moves between locals and operands, `+ - * / %` and the comparisons on doubles, and
 the fused local forms then guard and load each operand once per run instead of once per
 instruction, and a comparison the next instruction jumps on becomes the branch, with no boolean
-written. Every result is still stored in the window at once, so the window is current at every
-instruction boundary. A guard that fails (an operand that is not a double, a local in its TDZ,
-a remainder that is not an integer's or is a zero of a non-positive dividend) therefore just
+written. A result stays in its register and is stored in the window only when something
+other than the chain may read it there: before an instruction that can leave the chain (one
+with a guard), before a call, and at the end of the run (`lower.zig`, `flush`). An operand
+that was popped before then is never stored, and a local written twice between two guards is
+stored once. The two paths of the chain that call but seldom run, the allocator's when the
+run has no room and the remainder's division, make the same stores at their head and leave
+the chain's own code without them. The window is therefore current wherever a guard is. A
+guard that fails (an operand that is not a double, a local in its TDZ,
+a remainder that is not an integer's or is a zero of a non-positive dividend) just
 branches to the same instruction in a second, generic copy of the run, which finishes it with
 the fast paths and helpers above and rejoins at the next run. The generic copies are emitted
 after all the fast code and nothing is remembered across an instruction lowered generically,
@@ -157,9 +163,9 @@ block of such a loop is then lowered with two entries. The window entry, where c
 the loop and the generic copies arrive, guards that each carried local is a double, loads it
 into its register and goes on in the register entry; the register entry, which the loop's own
 jumps use, starts with those registers known. Before a block of the loop ends, each carried
-local's current value is copied into its register. The window is still written at once, so a
-failed guard leaves for the generic copy as anywhere else, and comes back through a window
-entry. A function with such a loop is laid out in the order its blocks were written, which
+local's current value is copied into its register. The window is written before every guard
+and at the block's end, as on any chain, so a failed guard leaves for the generic copy as
+anywhere else, and comes back through a window entry. A function with such a loop is laid out in the order its blocks were written, which
 keeps a loop's blocks together: a block a forward jump names is created early, and a carried
 register whose life spanned that block's calls would be kept in memory by the backend.
 
@@ -177,9 +183,10 @@ interprets.
 opens its frame; every object but a literal on the fast chain is a call into the allocator,
 and a dynamic object with two properties is an 88-byte block; a call of any native method
 but `push` goes through the call helper and the runtime's method dispatch; a number is always
-a double, so a remainder that does divide converts to an integer and back, and every
-result is written to the frame window whether or not anything reads it there. Integers in
-registers, window stores made only where a guard leaves, and the optimizing tier (plan/T67.1:
+a double, so a remainder that does divide converts to an integer and back, and a value
+that waits for the window is stored before every guard it passes, whether or not that guard
+ever fails. Integers in registers, window stores made only on the path a failed guard takes,
+and the optimizing tier (plan/T67.1:
 type feedback, call inline caches, deoptimization) are the next steps.
 
 ## 4. Tests and benchmark

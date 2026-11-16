@@ -358,6 +358,19 @@ test "a literal the fast chain follows answers what the object would" {
     try expectRuns("function fill(n) { const junk = []; for (let i = 0; i < n; i += 1) junk.push({ i, s: 'k' + i }); return junk.length; } function f(n) { const first = { x: n, y: null }; const o = { a: first, b: fill(n), c: { z: first } }; first.y = o; let live = 0; for (let i = 0; i < 300000; i += 1) { const t = { p: i, q: o, r: null }; t.r = t; if (t.q.c.z.y === o) live += 1; } return [o.b, o.a.x, o.c.z.y.b, live].join(); } f(3000)", "3000,3000,3000,300000");
 }
 
+test "a value that waits for the frame window is there when the chain is left" {
+    // Locals and operands computed before a guard that fails; a comparison's result and a
+    // popped operand; a loop with carried locals left in the middle of an iteration; doubles
+    // that wait across the allocator's slow path, and across the remainder's division; the
+    // constants that are no number.
+    try expectRuns("function f(a, b) { let x = a + 1; let y = x * 2; let z = y - a; x = z; return z + b + ',' + x + ',' + y; } f(1, 2) + ';' + f(1, 's') + ';' + f('q', 2) + ';' + f(1, 2)", "5,3,4;3s,3,4;NaN,NaN,NaN;5,3,4");
+    try expectRuns("function f(a, b) { const c = a < b; const d = (a, b, a * b); let e = d; e = e + 1; e = e + c; return c + ',' + d + ',' + e; } f(1, 2) + ';' + f(2, 1) + ';' + f(2, 'x') + ';' + f(NaN, 1)", "true,2,4;false,2,3;false,NaN,NaN;false,NaN,NaN");
+    try expectRuns("function f(n, k) { let s = 0; let t = 1; for (let i = 0; i < n; i += 1) { s += i; t = s * 2; if (i === 5) s = s + k; } return s + ',' + t; } f(10, 1) + ';' + f(10, 'x') + ';' + f(10, 1)", "46,92;15x6789,NaN;46,92");
+    try expectRuns("function f(n) { let s = 0; let keep = null; for (let i = 0; i < n; i += 1) { const x = i * 2; const y = x + 1; const o = { a: x, b: y }; s += o.a + y; if (i % 1000 === 0) keep = o; } return s + ',' + keep.b + ',' + keep.a; } f(300000)", "179999700000,598001,598000");
+    try expectRuns("function f(n, d) { let s = 0; for (let i = 0; i < n; i += 1) { const x = i * 3; const y = x + 1; s += (y * 1000) % d + x % 5 + (0 - y) % d; } return s; } f(1000, 7) + ';' + f(10, 0.5) + ';' + f(10, 0)", "2003;20;NaN");
+    try expectRuns("function f(n) { let u; let a = 1; for (let i = 0; i < n; i += 1) { let v; const w = null; const o = { p: v, q: w, r: true }; a = a + 1; u = o; } return [u.p, u.q, u.r, a].join(); } f(50)", ",,true,51");
+}
+
 test "an array's length and its elements are read and written in place" {
     if (!jit.available) return error.SkipZigTest;
     const r = try jitCost(
