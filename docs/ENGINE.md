@@ -352,32 +352,35 @@ in place, the collector's young region, docs/VALUE.md §4.12, the fast chain and
 locals, the remainder that does not divide and the collector's cheaper scan of static roots,
 object literals followed, allocated and filled on the fast chain, and then values kept out of
 the frame window, a literal's slots written once and its block left for the collector to
-index, and last the reads on the chain, a guard's stores made where it fails and the
-collector's cycle candidates, docs/VALUE.md §4.12) were measured the same way: five interleaved processes per engine and kernel, the same
-machine, Node v26.7.0, ReleaseFast. The V8 column and the ratio are from the last run; "young
-region" is the run before the fast chain, "fast chain" the run before literals were followed
-on it, "literals" the run before values were kept out of the window, and "lazy stores" the
+index, then the reads on the chain, a guard's stores made where it fails and the
+collector's cycle candidates, docs/VALUE.md §4.12, and last the loops that make literals:
+carried locals in them, their constants kept in registers, a loop's rare blocks laid out after
+it and literals in a row taken from the run together) were measured the same way: five
+interleaved processes per engine and kernel, the same machine, Node v26.7.0, ReleaseFast. The
+V8 column and the ratio are from the last run; "young region" is the run before the fast
+chain, "fast chain" the run before literals were followed on it, "literals" the run before
+values were kept out of the window, "lazy stores" the run before the reads, and "reads" the
 run before the last changes.
 
-| Kernel  |     V8 | JIT (T73 start) | JIT (young region) | JIT (fast chain) | JIT (literals) | JIT (lazy stores) |    JIT | JIT / V8 |
-| ------- | -----: | --------------: | -----------------: | ---------------: | -------------: | ----------------: | -----: | -------: |
-| numeric | 22.078 |         170.309 |            138.221 |           16.710 |         16.513 |            13.420 | 13.473 |     0.61 |
-| objects |  4.185 |         234.009 |             25.628 |           21.103 |         16.524 |            15.089 | 10.167 |     2.43 |
-| cycles  |  5.437 |         156.619 |             29.259 |           25.099 |          9.996 |             7.097 |  6.648 |     1.22 |
+| Kernel  |     V8 | JIT (T73 start) | JIT (young region) | JIT (fast chain) | JIT (literals) | JIT (lazy stores) | JIT (reads) |    JIT | JIT / V8 |
+| ------- | -----: | --------------: | -----------------: | ---------------: | -------------: | ----------------: | ----------: | -----: | -------: |
+| numeric | 21.906 |         170.309 |            138.221 |           16.710 |         16.513 |            13.420 |      13.473 | 13.359 |     0.61 |
+| objects |  4.140 |         234.009 |             25.628 |           21.103 |         16.524 |            15.089 |      10.167 |  9.704 |     2.34 |
+| cycles  |  5.451 |         156.619 |             29.259 |           25.099 |          9.996 |             7.097 |       6.648 |  5.084 |     0.93 |
 
 The process-median interquartile ranges do not overlap between the engines on any kernel. On
-the numeric kernel, a loop that wraps a running sum with a remainder, Stator is faster than V8
-(13.455-13.474 us against 22.069-22.081); that is one loop, not numeric code in general. On
-objects and cycles it is still slower, by 2.4 and 1.2 times. The cycles loop makes two
-literals an iteration, and what is left of it is the instructions that write them: a dynamic
-object with two properties is eleven words, each literal makes its constants again, and a
-value a read loaded is guarded again where its copy is used. The objects kernel fills an array
-by `push` and reads it back: the read loop asks each element for the array, its length, the
-element's shape and the cache again, and converts its index to an integer each time, and the
-filling loop still calls for each `push`. A collection there takes 98 us against 14 on cycles:
-the array a root holds while it is filled is counted, with all it holds, and freed one
-collection later. The machine was shared with other work (load average about 4). The progress report has the
-profiles, the threshold sweep, the checks and the raw samples.
+two of the three Stator is faster than V8: on the numeric kernel, a loop that wraps a running
+sum with a remainder (13.316-13.366 us against 21.891-21.978), and on the cycles kernel, a
+loop that makes two objects that point at each other and publishes one (5.083-5.101 us against
+5.445-5.451; Stator's slowest process, 5.286, is faster than V8's fastest, 5.420). Those are
+two loops, not numeric or allocating code in general. On objects it is still slower, by 2.3
+times. That kernel fills an array by `push` and reads it back: the read loop asks each element
+for the array, its length, the element's shape and the cache again, and converts its index to
+an integer each time, and the filling loop still calls for each `push`. A collection there
+takes 97 us against 14 on cycles: the array a root holds while it is filled is counted, with
+all it holds, and freed one collection later. The machine was shared with other work (load
+average between 4.2 and 5.1). The progress report has the profiles, the threshold sweep, the
+checks and the raw samples.
 
 ### 4.2. Startup and JIT compilation cost (T74)
 
