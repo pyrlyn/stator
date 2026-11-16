@@ -104,14 +104,19 @@ Constants, moves between locals and operands, `+ - * / %` and the comparisons on
 the fused local forms then guard and load each operand once per run instead of once per
 instruction, and a comparison the next instruction jumps on becomes the branch, with no boolean
 written. A result stays in its register and is stored in the window only when something
-other than the chain may read it there: before an instruction that can leave the chain (one
-with a guard), before a call, and at the end of the run (`lower.zig`, `flush`). An operand
-that was popped before then is never stored, and a local written twice between two guards is
-stored once. The two paths of the chain that call but seldom run, the allocator's when the
-run has no room and the remainder's division, make the same stores at their head and leave
-the chain's own code without them. The window is therefore current wherever a guard is. A
+other than the chain may read it there: before a call, before a jump and at the end of the run
+(`lower.zig`, `flush`). An operand that was popped before then is never stored, and a local
+written twice is stored once. A guard stores nothing on the path that passes it. What the
+window lacks where the guard stands (`owed`: the values still in registers, and the shape word
+and unfilled slots of a literal that is not whole yet) is stored in a block of its own that only
+the failing guard runs, laid out after the run's blocks (`payOwed`), so the window is current
+when the generic code is reached and the chain's own code pays nothing for a guard that never
+fails. A guard that owes more than eight stores has them made before it instead. The two paths
+of the chain that call but seldom run, the allocator's when the run has no room and the
+remainder's division, make their stores at their head in the same way. A
 guard that fails (an operand that is not a double, a local in its TDZ,
-a remainder that is not an integer's or is a zero of a non-positive dividend) just
+a remainder that is not an integer's or is a zero of a non-positive dividend, a read below
+that its cache or its array does not answer) then
 branches to the same instruction in a second, generic copy of the run, which finishes it with
 the fast paths and helpers above and rejoins at the next run. The generic copies are emitted
 after all the fast code and nothing is remembered across an instruction lowered generically,
@@ -130,8 +135,9 @@ each of its slots are known when the function is compiled. A named member takes 
 then (`jsrt_shape_transition`) and is a slot store, with nothing compared; a member named
 twice, and a write of a property the object has, store into the same slot again; a read of a
 property it has is the register or constant that was stored, with nothing loaded from the
-object. The shape is stored once, the one the literal has reached, before the next guard, call
-or end of the run (`flush`): until then nothing else can look at the object. A store into the
+object. The shape is stored once, the one the literal has reached, before the next call
+or end of the run (`flush`), or by a guard that fails: until then nothing else can look at the
+object. A store into the
 literal checks no write barrier while it is as dirty as it was born: a block is dirty from its
 allocation until a collection, only a call collects, and the one call the chain makes between
 two literals, the allocator's, marks the earlier ones again before it returns. Reads and
@@ -142,8 +148,10 @@ paths above.
 
 Such a literal is also allocated on the chain, with no call: the block is taken from the open
 run of the collector's young region (docs/VALUE.md §4.12, `JSRTYoungSite`) by moving the run's
-pointer and setting the block's bit in the index, and the object's header and slots are written
-in place. The allocator is called when the run has no room, which is where a collection starts
+pointer down and writing the block's two prefix words, by which the collector finds the block
+if anything asks about it, and the object's header and slots are written in place. A slot is
+written once: with its member, or with zero when no member has filled it by the time the chain
+can be left. The allocator is called when the run has no room, which is where a collection starts
 and what the run reads as while another thread may allocate, and in a build with no region.
 That call is laid out after the code that fills the object and shares no value with it: the
 backend keeps a value that is used on both sides of a call, in the order the code is laid out,
@@ -155,6 +163,20 @@ when it is uninitialized; an environment is always dirty to the collector, so th
 no barrier. A constant the bytecode pushes that is no number (`null`, `undefined`, a boolean,
 the TDZ marker) is made again where it is stored, not read back from the window.
 
+Three reads have forms on the chain as well, and none of them writes the heap or calls on the
+path that succeeds (`chained`). A property named by a plain key is read as `cachedProp` reads
+it, through the site's inline cache: the value must be a dynamic object of the shape the cache
+holds, and the slot must hold a value and no accessor pair. `array[index]` is read as `getElem`
+reads it: the value must be an array, the index a double that is an integer below the length,
+and the element no hole. `i < array.length` and `i <= array.length`, as the comparison fused
+with its jump (`lt_local_prop`), read the length as the field of the array it is; any other
+read of `length` calls its helper, as a string or an object answers it as often. Each of those
+conditions is a guard, and the generic code a failed one leaves for runs the helper, which
+fills the cache, calls the getter, walks the prototype chain or answers for a string as before.
+What a read loads has no known type, so the arithmetic that takes it guards that it is a
+double. A function is compiled before its caches are filled, so the first time through such a
+read leaves by its guard, and the helper fills the cache the chain reads afterwards.
+
 **Loops with carried locals (AArch64).** A loop whose every instruction has a form on the fast
 chain makes no call on that chain, so its numeric locals can stay in float registers from one
 iteration to the next. `carriedLoops` picks those loops, outermost first, and for each the
@@ -163,9 +185,10 @@ block of such a loop is then lowered with two entries. The window entry, where c
 the loop and the generic copies arrive, guards that each carried local is a double, loads it
 into its register and goes on in the register entry; the register entry, which the loop's own
 jumps use, starts with those registers known. Before a block of the loop ends, each carried
-local's current value is copied into its register. The window is written before every guard
-and at the block's end, as on any chain, so a failed guard leaves for the generic copy as
-anywhere else, and comes back through a window entry. A function with such a loop is laid out in the order its blocks were written, which
+local's current value is copied into its register. The window is written at the block's end
+and on the path of a guard that fails, as on any chain, so a failed guard leaves for the
+generic copy as anywhere else, and comes back through a window entry. The reads above have
+forms, so a loop over an array's elements and their properties is such a loop. A function with such a loop is laid out in the order its blocks were written, which
 keeps a loop's blocks together: a block a forward jump names is created early, and a carried
 register whose life spanned that block's calls would be kept in memory by the backend.
 
@@ -183,10 +206,10 @@ interprets.
 opens its frame; every object but a literal on the fast chain is a call into the allocator,
 and a dynamic object with two properties is an 88-byte block; a call of any native method
 but `push` goes through the call helper and the runtime's method dispatch; a number is always
-a double, so a remainder that does divide converts to an integer and back, and a value
-that waits for the window is stored before every guard it passes, whether or not that guard
-ever fails. Integers in registers, window stores made only on the path a failed guard takes,
-and the optimizing tier (plan/T67.1:
+a double, so a remainder that does divide converts to an integer and back, and so does every
+index; an array's address, length and elements are read again at each element, and a value a
+read loaded is guarded again where a copy of it is used. Integers in registers, what a loop
+does not change kept across its iterations, and the optimizing tier (plan/T67.1:
 type feedback, call inline caches, deoptimization) are the next steps.
 
 ## 4. Tests and benchmark
@@ -305,26 +328,33 @@ Later T73 steps (§3: the bound-method cache read in compiled code, a literal's 
 with the object and its shape steps cached, an array's `length` and elements in place, `push`
 in place, the collector's young region, docs/VALUE.md §4.12, the fast chain and loop-carried
 locals, the remainder that does not divide and the collector's cheaper scan of static roots,
-and then object literals followed, allocated and filled on the fast chain) were measured the
-same way: five interleaved processes per engine and kernel, the same machine, Node v26.7.0,
-ReleaseFast. The V8 column and the ratio are from the last run; "young region" is the run
-before the fast chain, and "fast chain" the run before literals were followed on it.
+object literals followed, allocated and filled on the fast chain, and then values kept out of
+the frame window, a literal's slots written once and its block left for the collector to
+index, and last the reads on the chain, a guard's stores made where it fails and the
+collector's cycle candidates, docs/VALUE.md §4.12) were measured the same way: five interleaved processes per engine and kernel, the same
+machine, Node v26.7.0, ReleaseFast. The V8 column and the ratio are from the last run; "young
+region" is the run before the fast chain, "fast chain" the run before literals were followed
+on it, "literals" the run before values were kept out of the window, and "lazy stores" the
+run before the last changes.
 
-| Kernel  |     V8 | JIT (T73 start) | JIT (young region) | JIT (fast chain) |    JIT | JIT / V8 |
-| ------- | -----: | --------------: | -----------------: | ---------------: | -----: | -------: |
-| numeric | 22.075 |         170.309 |            138.221 |           16.710 | 16.513 |     0.75 |
-| objects |  4.201 |         234.009 |             25.628 |           21.103 | 16.524 |     3.93 |
-| cycles  |  5.445 |         156.619 |             29.259 |           25.099 |  9.996 |     1.84 |
+| Kernel  |     V8 | JIT (T73 start) | JIT (young region) | JIT (fast chain) | JIT (literals) | JIT (lazy stores) |    JIT | JIT / V8 |
+| ------- | -----: | --------------: | -----------------: | ---------------: | -------------: | ----------------: | -----: | -------: |
+| numeric | 22.078 |         170.309 |            138.221 |           16.710 |         16.513 |            13.420 | 13.473 |     0.61 |
+| objects |  4.185 |         234.009 |             25.628 |           21.103 |         16.524 |            15.089 | 10.167 |     2.43 |
+| cycles  |  5.437 |         156.619 |             29.259 |           25.099 |          9.996 |             7.097 |  6.648 |     1.22 |
 
 The process-median interquartile ranges do not overlap between the engines on any kernel. On
 the numeric kernel, a loop that wraps a running sum with a remainder, Stator is faster than V8
-(16.501-16.530 us against 22.040-22.132); that is one loop, not numeric code in general. On
-objects and cycles it is still slower, by 3.9 and 1.8 times. The cycles loop makes two
+(13.455-13.474 us against 22.069-22.081); that is one loop, not numeric code in general. On
+objects and cycles it is still slower, by 2.4 and 1.2 times. The cycles loop makes two
 literals an iteration, and what is left of it is the instructions that write them: a dynamic
-object with two properties is eleven words, every push is still stored in the frame window,
-and each block sets its bit in the collector's index. The objects kernel reads its objects
-back through an array, where the generated code still asks each object for its shape. The
-machine was shared with other work (load average about 7). The progress report has the
+object with two properties is eleven words, each literal makes its constants again, and a
+value a read loaded is guarded again where its copy is used. The objects kernel fills an array
+by `push` and reads it back: the read loop asks each element for the array, its length, the
+element's shape and the cache again, and converts its index to an integer each time, and the
+filling loop still calls for each `push`. A collection there takes 98 us against 14 on cycles:
+the array a root holds while it is filled is counted, with all it holds, and freed one
+collection later. The machine was shared with other work (load average about 4). The progress report has the
 profiles, the threshold sweep, the checks and the raw samples.
 
 ### 4.2. Startup and JIT compilation cost (T74)

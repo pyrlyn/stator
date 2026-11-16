@@ -39,8 +39,10 @@ const max_stack: usize = 1024 * 1024 * 1024;
 /// handler reads it, so it is a plain global, not thread-local.
 var stack_low: usize = 0;
 
-/// The handler cannot run on the stack that just overflowed.
-var alt_stack: [128 * 1024]u8 align(16) = undefined;
+/// The handler cannot run on the stack that just overflowed, so it gets one of this size. It is
+/// allocated, not static: the collector reads every writable word of the image for roots at
+/// each collection (jsrt_gc.zig, imageInit), and no value is ever on this stack.
+const alt_stack_bytes: usize = 128 * 1024;
 
 var installed = false;
 var previous_segv: std.c.Sigaction = undefined;
@@ -110,8 +112,10 @@ fn installFaultHandler() void {
     var current: std.c.stack_t = undefined;
     if (sigaltstack(null, &current) != 0) return;
     if (current.flags & std.c.SS.DISABLE != 0) {
-        const ours: std.c.stack_t = .{ .sp = &alt_stack, .size = alt_stack.len, .flags = 0 };
-        if (sigaltstack(&ours, null) != 0) return;
+        // Without it the handler could not run, and the fault stays the plain signal it was.
+        const stack = std.c.malloc(alt_stack_bytes) orelse return;
+        const ours: std.c.stack_t = .{ .sp = @ptrCast(stack), .size = alt_stack_bytes, .flags = 0 };
+        if (sigaltstack(&ours, null) != 0) return std.c.free(stack);
     }
     var action = std.mem.zeroes(std.c.Sigaction);
     action.handler = .{ .sigaction = onFault };

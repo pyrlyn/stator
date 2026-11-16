@@ -88,8 +88,6 @@ comptime {
     // What jsrt.h tells a code generator that tests the dirty bit inline.
     std.debug.assert(prefix == c.JSRT_GC_HEADER_BYTES);
     std.debug.assert(dirty_bit == @as(u64, 1) << c.JSRT_GC_DIRTY_BIT);
-    std.debug.assert(prefix == c.JSRT_GC_HEADER_BYTES);
-    std.debug.assert(line_shift == c.JSRT_GC_LINE_SHIFT);
 }
 
 const Header = extern struct {
@@ -296,7 +294,13 @@ threadlocal var cached_chunk: ?*Chunk = null;
 fn isBlockStart(addr: usize) bool {
     if (addr < heap_lo or addr >= heap_hi or addr & 7 != 0) return false;
     const off = addr -% nursery_base;
-    if (off < nursery_size) return nursery_bits[off >> line_shift] & startBit(off) != 0;
+    if (off < nursery_size) {
+        const word = &nursery_bits[off >> line_shift];
+        // A bit is never set where no block starts, so only a clear one may be waiting.
+        if (word.* & startBit(off) != 0) return true;
+        indexAt(addr);
+        return word.* & startBit(off) != 0;
+    }
     const key = addr >> chunk_shift;
     const chunk = if (key == cached_key) cached_chunk else blk: {
         const found = index.find(key);
@@ -338,6 +342,7 @@ fn startBelow(addr: usize, chunks: usize) ?usize {
 /// The block `addr` points into, prefix included, or null.
 fn findBlock(addr: usize) ?*Header {
     if (addr < heap_lo or addr >= heap_hi) return null;
+    indexAt(addr);
     // Blocks do not overlap, so the nearest start below is the only candidate; a small block is
     // at most a chunk long, so its start is at most one chunk back.
     if (startBelow(addr, 1)) |start| {
@@ -376,12 +381,26 @@ var nursery_base: usize = 0;
 var nursery_bits: [*]u64 = undefined;
 /// How many surviving objects overlap each line. A line is free while its count is 0.
 var nursery_counts: [*]u8 = undefined;
-/// The open run: `run.bump` is the next block, up to `run_end`. All zero while none is open.
-/// Compiled code allocates in it too (`youngSite`), so nothing else may be kept of a block
-/// that was bumped: what a collection needs to know of it is in its prefix and the index.
-var run_start: usize = 0;
-var run_end: usize = 0;
-var run: c.JSRTYoungRun = .{ .bump = 0, .limit = 0 };
+/// The open run. Its blocks are taken from `run_top` down: `run.bump` is the newest, and the
+/// next one ends there and starts no lower than `run_low`. While none is open `run.bump` is 0
+/// and `run_low` the highest address, so nothing fits. Compiled code allocates in the run too
+/// (`youngSite`), so nothing else may be kept of a block that was bumped: what a collection
+/// needs to know of it is in its prefix.
+var run_top: usize = 0;
+var run_low: usize = no_room;
+var run: c.JSRTYoungRun = .{ .bump = 0, .limit = no_room };
+const no_room = std.math.maxInt(usize);
+/// Above here the open run is indexed. Compiled code writes a block's prefix and not its bit,
+/// so a block from `run.bump` up to here may wait: it is indexed when the index is first asked
+/// about it or about one above it (`indexUpTo`). A block's prefix says where the next one
+/// starts, and the run is taken downwards, so that walk goes from newer blocks to older. The
+/// allocator indexes its own block at once, and a walk may start there. No young block is
+/// freed alone before `sweepNursery` (`rawFree` meets one only once it is counted), so a walk
+/// passes no block that is gone.
+var run_indexed: usize = 0;
+/// The same parts of the runs that were closed since the last collection. Most of what they
+/// hold is dead by then, and a collection asks the index about the living only.
+var waiting: List(Range) = .{};
 /// Where the search for the next run goes on. A line freed behind it waits for the collection.
 var scan_line: usize = 0;
 /// The parts of this collection's runs that hold blocks.
@@ -403,6 +422,70 @@ inline fn chunkAt(key: usize) ?*Chunk {
     const i = key -% (nursery_base >> chunk_shift);
     if (i < nursery_size >> chunk_shift) return @ptrCast(nursery_bits + i * (chunk_bytes >> line_shift));
     return index.find(key);
+}
+
+/// Indexes the blocks from `lo`, where one starts, until one starts at or past `end`, and
+/// answers where that is.
+fn indexBlocks(lo: usize, end: usize) usize {
+    var at = lo;
+    // Neighbours are mostly one literal's blocks, of one size. Stepping by the size last seen
+    // rather than by the one just read lets the processor read the prefixes ahead together;
+    // stepping by the one read makes each wait for the one before it.
+    var step: usize = 0;
+    while (at < end) {
+        const off = at - nursery_base;
+        nursery_bits[off >> line_shift] |= startBit(off);
+        const bytes = blockBytes(@ptrFromInt(at));
+        if (bytes != step) {
+            @branchHint(.unlikely);
+            step = unknown(bytes);
+        }
+        at += step;
+    }
+    return at;
+}
+
+/// `x`, which the optimizer cannot tell: it would otherwise see that `indexBlocks` steps by
+/// the size it read and say so.
+fn unknown(x: usize) usize {
+    var held = x;
+    const p: *volatile usize = &held;
+    return p.*;
+}
+
+/// Indexes the blocks up to the one `addr` is in, where blocks wait from `lo` up. The walk
+/// starts at the nearest block below `addr` the index has -- one the allocator made, or one an
+/// earlier walk reached -- so the dead blocks under an old living one are passed only as far
+/// down as that.
+fn indexUpTo(lo: usize, addr: usize) void {
+    const known = startBelow(addr, (addr >> chunk_shift) - (lo >> chunk_shift)) orelse lo;
+    _ = indexBlocks(@max(known, lo), addr + 1);
+}
+
+/// `indexUpTo` in the closed run `addr` is in. The next question is likeliest about the same
+/// run, so that one is kept first.
+noinline fn indexWaiting(addr: usize) void {
+    for (waiting.slice()) |*r| {
+        if (addr -% r.lo >= r.hi - r.lo) continue;
+        std.mem.swap(Range, r, &waiting.items[0]);
+        return indexUpTo(waiting.items[0].lo, addr);
+    }
+}
+
+/// Every block that waits, for a reader of the whole index.
+fn indexAll() void {
+    _ = indexBlocks(run.bump, run_indexed);
+    run_indexed = run.bump;
+    for (waiting.slice()) |r| _ = indexBlocks(r.lo, r.hi);
+    waiting.len = 0;
+}
+
+/// Before the index answers for `addr`. While another thread may allocate, compiled code
+/// bumps nothing, so no block waits and no reader writes the index.
+inline fn indexAt(addr: usize) void {
+    if (concurrent.load(.monotonic)) return;
+    if (addr -% run.bump < run_indexed -% run.bump) return indexUpTo(run.bump, addr);
+    if (waiting.len != 0) indexWaiting(addr);
 }
 
 /// Fails open: without the region every block comes from the pools.
@@ -429,19 +512,22 @@ fn nurseryInit() void {
 /// Ends the open run. What it holds counts toward the next collection only now: the run was
 /// sized to end where that collection is due.
 fn closeRun() void {
-    if (run.bump != run_start) {
-        allocated_since += run.bump - run_start;
-        runs.push(.{ .lo = run_start, .hi = run.bump });
+    if (run.bump != run_top) {
+        if (run.bump != run_indexed) waiting.push(.{ .lo = run.bump, .hi = run_indexed });
+        allocated_since += run_top - run.bump;
+        runs.push(.{ .lo = run.bump, .hi = run_top });
     }
-    run_start = 0;
+    run_top = 0;
+    run_indexed = 0;
     run.bump = 0;
-    endRunAt(0);
+    endRunAt(no_room);
 }
 
-/// Compiled code takes no lock, so it sees no room at all while another thread may allocate.
-fn endRunAt(end: usize) void {
-    run_end = end;
-    run.limit = if (concurrent.load(.monotonic)) 0 else end;
+/// No block of the open run starts below `low`. Compiled code takes no lock, so it sees no
+/// room at all while another thread may allocate.
+fn endRunAt(low: usize) void {
+    run_low = low;
+    run.limit = if (concurrent.load(.monotonic)) no_room else low;
 }
 
 /// Opens a run at the next free lines, no longer than what is left before a collection is due.
@@ -457,15 +543,19 @@ fn openRun() bool {
     var j = i + 1;
     while (j < most and nursery_counts[j] == 0) j += 1;
     scan_line = j;
-    run_start = nursery_base + (i << line_shift);
-    run.bump = run_start;
-    endRunAt(nursery_base + (j << line_shift));
+    run_top = nursery_base + (j << line_shift);
+    run_indexed = run_top;
+    run.bump = run_top;
+    endRunAt(nursery_base + (i << line_shift));
     return true;
 }
 
 /// The block at `at` in the open run: indexed, and zeroed past the prefix its caller writes.
 inline fn bumped(at: usize, total: usize) *Header {
-    run.bump = at + total;
+    // Under blocks that wait, this one is in their part of the run: a walk for one of them may
+    // start here, and one that starts lower passes it.
+    if (run_indexed == run.bump) run_indexed = at;
+    run.bump = at;
     const off = at - nursery_base;
     nursery_bits[off >> line_shift] |= startBit(off);
     const bytes: [*]u8 = @ptrFromInt(at);
@@ -480,8 +570,9 @@ inline fn bumped(at: usize, total: usize) *Header {
 /// A block in the region, or null when it is not born there: too large, no free line, or a
 /// collection is running (its sweep assumes the runs are closed).
 inline fn bumpAlloc(total: usize) ?*Header {
-    const at = run.bump;
-    if (at + total > run_end) return bumpSlow(total);
+    // With no run open this wraps to an address below `no_room`.
+    const at = run.bump -% total;
+    if (at < run_low) return bumpSlow(total);
     return bumped(at, total);
 }
 
@@ -490,7 +581,8 @@ noinline fn bumpSlow(total: usize) ?*Header {
     closeRun();
     maybeCollect();
     if (!openRun()) return null;
-    const block = bumped(run.bump, total);
+    // A run is a line at least, which is the largest block born here.
+    const block = bumped(run.bump - total, total);
     if (gc_stress) endRunAt(run.bump);
     return block;
 }
@@ -503,8 +595,6 @@ pub fn youngSite(bytes: usize, kind_: *const Kind, site: *c.JSRTYoungSite) bool 
     if (nursery_size == 0 or total > nursery_max) return false;
     site.* = .{
         .run = &run,
-        .base = nursery_base,
-        .bits = nursery_bits,
         .word = sizeWord(total) | young_bit | dirty_bit,
         .meta = @intFromPtr(kind_),
         .total = @intCast(total),
@@ -531,6 +621,7 @@ fn sweepNursery() void {
         @memset(nursery_bits[lo..hi], 0);
     }
     runs.len = 0;
+    waiting.len = 0;
     for (young_kept.slice()) |block| {
         const off = @intFromPtr(block) - nursery_base;
         nursery_bits[off >> line_shift] |= startBit(off);
@@ -778,8 +869,11 @@ pub fn isConcurrent() bool {
 }
 
 pub fn enableThreads() void {
-    // Before another thread exists, so compiled code never bumps a run the lock owns.
-    run.limit = 0;
+    if (concurrent.load(.acquire)) return;
+    // Before another thread exists, so compiled code never bumps a run the lock owns, and
+    // what it has bumped is indexed while no other thread reads the index.
+    indexAll();
+    run.limit = no_room;
     concurrent.store(true, .release);
 }
 
@@ -1353,29 +1447,37 @@ fn reconcile() void {
     var old_log = log;
     dirty = spare_dirty;
     log = spare_log;
-    for (entries.slice()) |e| {
-        const block = e.block;
-        traceBlocks(block, incChild);
-        for (old_log.items[e.start .. e.start + e.len]) |child| decChild(child);
-        keepDirtyOrClean(block);
-    }
+    for (entries.slice()) |e| recount(e.block, old_log.items[e.start .. e.start + e.len]);
     // Survivors were born dirty with nothing counted: all their references are new.
-    while (survivors.pop()) |block| {
-        traceBlocks(block, incChild);
-        keepDirtyOrClean(block);
-    }
+    while (survivors.pop()) |block| recount(block, &.{});
     entries.len = 0;
     old_log.len = 0;
     spare_dirty = entries;
     spare_log = old_log;
 }
 
-fn keepDirtyOrClean(block: *Header) void {
+/// Counts what `block` holds now in place of `was`, what it was last counted as holding. A
+/// reference that stayed where it was is neither counted nor let go: letting it go, even after
+/// counting it again, would make its object a cycle candidate (`decChild`) at every collection
+/// its holder stays dirty through, and trial deletion would walk all it reaches. Most of what a
+/// kept entry holds stays: the globals, an array still being filled. Only the ends are matched,
+/// which finds a slot that changed and elements that were added.
+fn recount(block: *Header, was: []const *Header) void {
+    const start = log.len;
+    traceBlocks(block, logChild);
+    // Neither loop below adds to the log, so this stays where it is.
+    const now = log.items[start..log.len];
+    const most = @min(now.len, was.len);
+    var head: usize = 0;
+    while (head < most and now[head] == was[head]) head += 1;
+    var tail: usize = 0;
+    while (tail < most - head and now[now.len - 1 - tail] == was[was.len - 1 - tail]) tail += 1;
+    for (now[head .. now.len - tail]) |child| incChild(child);
+    for (was[head .. was.len - tail]) |child| decChild(child);
     if (block.word & root_bit != 0 or kindOf(block).always_dirty != 0) {
-        const start = log.len;
-        traceBlocks(block, logChild);
-        dirty.push(.{ .block = block, .start = start, .len = log.len - start });
+        dirty.push(.{ .block = block, .start = start, .len = now.len });
     } else {
+        log.len = start;
         block.word &= ~dirty_bit;
     }
 }
@@ -1479,6 +1581,10 @@ fn collectLocked() void {
     reconcile();
     freeYoung();
     if (verify) verifyCounts();
+    // What a root names is alive, and so is all it reaches: trial deletion from it would walk
+    // all of that only to put it back. Black, it is dropped from the candidates unwalked, and
+    // it is a candidate again when it is unpinned below.
+    for (pinned.slice()) |block| block.word &= ~kx.COLOR_MASK;
     host.rt_rel_draining = 0;
     collector.rt_gc_collect();
     host.rt_rel_draining = 1;
@@ -1524,6 +1630,7 @@ fn eachStart(base: usize, words: []const u64, comptime f: fn (*Header) void) voi
 }
 
 fn eachBlock(comptime f: fn (*Header) void) void {
+    indexAll();
     for (0..index.cap) |i| {
         const chunk = index.chunks[i] orelse continue;
         eachStart(index.keys[i] << chunk_shift, &chunk.bits, f);

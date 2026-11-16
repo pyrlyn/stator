@@ -908,8 +908,8 @@ costs its allocation and a young garbage cycle needs no cycle collection.
 **Young objects are born in one region and freed there without a visit.** A block of 512 bytes
 or less comes from the young region: one 64 MiB reservation (address space; pages past what a
 collection allocates and the survivors hold are never touched) cut into 512-byte lines.
-Allocation moves a pointer through a run of free lines, sets the block's bit in the index and
-zeroes it. Nothing moves afterwards. A survivor keeps its address and holds the lines it
+Allocation takes the block from the top of a run of free lines, moving the run's pointer down,
+sets the block's bit in the index and zeroes it. Nothing moves afterwards. A survivor keeps its address and holds the lines it
 overlaps until it is freed; a collection clears the index words of the lines its runs used and
 sets the survivors' bits again, so a dead young object costs no finalizer call, no free and no
 read of its memory. The young list names only the young objects with something to finalize: an
@@ -919,12 +919,18 @@ free line for come from pyrlyn/gc's pools, as does every block in the sanitized 
 each free must be visible to ASan.
 
 The open run is two words a JIT may read and move itself (`JSRTYoungRun` in `jsrt_mem.h`: the
-next block and the run's end, which reads zero once another thread may allocate, when the run
-belongs to the heap lock). `JSRTYoungSite` gives the rest for one kind and size of
-block: the region's base and index, and the block's two prefix words. Code that allocates this
-way writes every byte of the object, since only the allocator's own path zeroes a block, and
+newest block, under which the next one goes, and the lowest address a block may start at,
+which reads as the highest address while no run is open and once another thread may allocate,
+when the run belongs to the heap lock). `JSRTYoungSite` gives the rest for one kind and size of
+block: its two prefix words. Code that allocates this way moves the pointer and writes the
+prefix and every byte of the object, since only the allocator's own path zeroes a block, and
 calls the allocator when the block does not fit the run, which is also where a collection
-starts. The engine's JIT does it for object literals (docs/ENGINE.md §3).
+starts. It does not touch the index. The collector indexes such a block when it is first asked
+about that block or an older one of its run: a prefix says where the next block starts, so it
+walks up from the nearest block below that the index has, and the blocks nothing asks about,
+which is most of the dead, are never read. While another thread may allocate no block waits
+this way, so no reader of the index writes it. The engine's JIT does it for object literals
+(docs/ENGINE.md §3).
 
 Dynamic slot growth uses the Zig `writeOwner` barrier to resolve the owning object once,
 log its old references if needed, and pass that owner to the replacement buffer. A static
@@ -939,6 +945,17 @@ variables are copied from: nothing is ever stored in those, and thread-local buf
 most of the segment. A word outside the heap's address range is dismissed before any lookup. A rooted object is pinned for the collection; an object whose count is 0 and
 that no root names is freed, releasing what it held. Older cycles go to pyrlyn/gc's trial deletion
 (Bacon-Rajan), run with the roots pinned.
+
+**Cycle candidates.** A candidate is an object whose count fell and stayed above 0, or one a
+root may have let go of unseen: a pinned object when it is unpinned, a ZCT entry found counted.
+Two rules keep the live heap out of trial deletion, which walks all a candidate reaches. A
+dirty object's references are counted against its log only where they differ (`recount`): the
+ends of the two lists that match are skipped, which covers a slot that changed and elements
+that were added, so a reference that stayed is not released and counted again and its object
+is no candidate. Without that every object the globals, an environment or a root-held array
+holds was one at each collection. And a candidate a root names now is alive with all it
+reaches, so it is dropped from the candidates unwalked (made black before the collector runs)
+and becomes one again at its unpinning.
 
 **Why masking is safe.** Only two word shapes reach it: a boxed value, whose payload is its low 48
 bits, and a raw pointer, whose top 16 bits are zero — `jsrt_init` asserts that against a real
@@ -1662,7 +1679,8 @@ binary used to die of SIGSEGV with nothing printed (QA audit F6). Two layers now
   async-signal-safe), then aborts. Any other fault is not ours: the handler reinstalls the action
   it replaced (the default, ASan's reporter, a host program's handler) and returns, so the
   faulting instruction re-runs into it. An alternate stack someone already installed (ASan does)
-  is kept.
+  is kept. Ours is allocated, not static: the collector reads every writable word of the image
+  for roots (§4.12), and 128 KiB that never hold a value would be read at each collection.
 
 ## 4.26 The class object — a closure-shaped value whose `klass` names the descriptor (plan.md §8 step 12(d)/(e), T27)
 
