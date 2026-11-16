@@ -121,15 +121,33 @@ division. The wrap of an index or of a running sum, `i = (i + 1) % n`, is the co
 An object a literal makes inside a run is followed too (`lower.zig`, `Object`), until an
 instruction without a form runs: nothing else has seen it yet, so its shape and the value in
 each of its slots are known when the function is compiled. A named member takes its shape step
-then (`jsrt_shape_transition`) and is a slot store and a store of the next shape, with nothing
-compared; a member named twice, and a write of a property the object has, store into the same
-slot again; a read of a property it has is the register or constant that was stored, with
-nothing loaded from the object. Such a store checks the write barrier only once a later call
-was made on the chain, since a block is dirty from its allocation until a collection, and only
-a call collects. Reads and writes of captured variables keep all of this, because their helpers
-run none of the program's code. A literal of more than eight named members, the keys
-`constructor` and `__proto__`, a property the object lacks, and everything after a call, a
-getter, a spread or a computed key take the paths above.
+then (`jsrt_shape_transition`) and is a slot store, with nothing compared; a member named
+twice, and a write of a property the object has, store into the same slot again; a read of a
+property it has is the register or constant that was stored, with nothing loaded from the
+object. The shape is stored once, the one the literal has reached, before the next guard, call
+or end of the run (`flush`): until then nothing else can look at the object. A store into the
+literal checks no write barrier while it is as dirty as it was born: a block is dirty from its
+allocation until a collection, only a call collects, and the one call the chain makes between
+two literals, the allocator's, marks the earlier ones again before it returns. Reads and
+writes of captured variables keep all of this, because they run none of the program's code. A
+literal of more than eight named members, the keys `constructor` and `__proto__`, a property
+the object lacks, and everything after a call, a getter, a spread or a computed key take the
+paths above.
+
+Such a literal is also allocated on the chain, with no call: the block is taken from the open
+run of the collector's young region (docs/VALUE.md §4.12, `JSRTYoungSite`) by moving the run's
+pointer and setting the block's bit in the index, and the object's header and slots are written
+in place. The allocator is called when the run has no room, which is where a collection starts
+and what the run reads as while another thread may allocate, and in a build with no region.
+That call is laid out after the code that fills the object and shares no value with it: the
+backend keeps a value that is used on both sides of a call, in the order the code is laid out,
+in one of the ten registers a call preserves, and when those run out it is the frame window's
+base that goes to the stack, which every access to the window then pays for. A captured
+variable is read and written in its environment directly, the frame's own or one a fixed
+number of parents out, and one the compiler could not rule the TDZ out for leaves the chain
+when it is uninitialized; an environment is always dirty to the collector, so the store checks
+no barrier. A constant the bytecode pushes that is no number (`null`, `undefined`, a boolean,
+the TDZ marker) is made again where it is stored, not read back from the window.
 
 **Loops with carried locals (AArch64).** A loop whose every instruction has a form on the fast
 chain makes no call on that chain, so its numeric locals can stay in float registers from one
@@ -156,8 +174,8 @@ but is unverified until a Linux x86-64 run. A Windows or other host has no backe
 interprets.
 
 **What it is not yet.** A direct call still goes through one helper that checks the callee and
-opens its frame; every object is a call into the allocator, though the allocator itself is now
-a bump through the collector's young region (docs/VALUE.md §4.12); a call of any native method
+opens its frame; every object but a literal on the fast chain is a call into the allocator,
+and a dynamic object with two properties is an 88-byte block; a call of any native method
 but `push` goes through the call helper and the runtime's method dispatch; a number is always
 a double, so a remainder that does divide converts to an integer and back, and every
 result is written to the frame window whether or not anything reads it there. Integers in
@@ -279,24 +297,28 @@ machine's load, raw samples, rejected experiments and correctness checks; its V8
 Later T73 steps (§3: the bound-method cache read in compiled code, a literal's slots allocated
 with the object and its shape steps cached, an array's `length` and elements in place, `push`
 in place, the collector's young region, docs/VALUE.md §4.12, the fast chain and loop-carried
-locals, and then the remainder that does not divide and the collector's cheaper scan of static
-roots) were measured the same way: five interleaved processes per engine and kernel, the same
-machine, Node v26.7.0, ReleaseFast. The V8 column and the ratio are from the last run; "young
-region" is the run before the fast chain.
+locals, the remainder that does not divide and the collector's cheaper scan of static roots,
+and then object literals followed, allocated and filled on the fast chain) were measured the
+same way: five interleaved processes per engine and kernel, the same machine, Node v26.7.0,
+ReleaseFast. The V8 column and the ratio are from the last run; "young region" is the run
+before the fast chain, and "fast chain" the run before literals were followed on it.
 
-| Kernel  |     V8 | JIT (T73 start) | JIT (young region) |    JIT | JIT / V8 |
-| ------- | -----: | --------------: | -----------------: | -----: | -------: |
-| numeric | 22.352 |         170.309 |            138.221 | 16.710 |     0.75 |
-| objects |  4.398 |         234.009 |             25.628 | 21.103 |     4.80 |
-| cycles  |  5.407 |         156.619 |             29.259 | 25.099 |     4.64 |
+| Kernel  |     V8 | JIT (T73 start) | JIT (young region) | JIT (fast chain) |    JIT | JIT / V8 |
+| ------- | -----: | --------------: | -----------------: | ---------------: | -----: | -------: |
+| numeric | 22.075 |         170.309 |            138.221 |           16.710 | 16.513 |     0.75 |
+| objects |  4.201 |         234.009 |             25.628 |           21.103 | 16.524 |     3.93 |
+| cycles  |  5.445 |         156.619 |             29.259 |           25.099 |  9.996 |     1.84 |
 
 The process-median interquartile ranges do not overlap between the engines on any kernel. On
 the numeric kernel, a loop that wraps a running sum with a remainder, Stator is faster than V8
-(16.701-16.856 us against 22.325-22.483); that is one loop, not numeric code in general. On
-objects and cycles it is still more than four times slower: every object is a call into the
-allocator, and the generated code asks each object for its shape at every access. The machine
-was shared with other work (load average about 10). The progress report has the profiles, the
-threshold sweep, the checks and the raw samples.
+(16.501-16.530 us against 22.040-22.132); that is one loop, not numeric code in general. On
+objects and cycles it is still slower, by 3.9 and 1.8 times. The cycles loop makes two
+literals an iteration, and what is left of it is the instructions that write them: a dynamic
+object with two properties is eleven words, every push is still stored in the frame window,
+and each block sets its bit in the collector's index. The objects kernel reads its objects
+back through an array, where the generated code still asks each object for its shape. The
+machine was shared with other work (load average about 7). The progress report has the
+profiles, the threshold sweep, the checks and the raw samples.
 
 ### 4.2. Startup and JIT compilation cost (T74)
 

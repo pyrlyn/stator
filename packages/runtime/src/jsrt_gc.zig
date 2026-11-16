@@ -88,6 +88,8 @@ comptime {
     // What jsrt.h tells a code generator that tests the dirty bit inline.
     std.debug.assert(prefix == c.JSRT_GC_HEADER_BYTES);
     std.debug.assert(dirty_bit == @as(u64, 1) << c.JSRT_GC_DIRTY_BIT);
+    std.debug.assert(prefix == c.JSRT_GC_HEADER_BYTES);
+    std.debug.assert(line_shift == c.JSRT_GC_LINE_SHIFT);
 }
 
 const Header = extern struct {
@@ -374,10 +376,12 @@ var nursery_base: usize = 0;
 var nursery_bits: [*]u64 = undefined;
 /// How many surviving objects overlap each line. A line is free while its count is 0.
 var nursery_counts: [*]u8 = undefined;
-/// The open run: `bump` is the next block, up to `bump_limit`. All zero while none is open.
+/// The open run: `run.bump` is the next block, up to `run_end`. All zero while none is open.
+/// Compiled code allocates in it too (`youngSite`), so nothing else may be kept of a block
+/// that was bumped: what a collection needs to know of it is in its prefix and the index.
 var run_start: usize = 0;
-var bump: usize = 0;
-var bump_limit: usize = 0;
+var run_end: usize = 0;
+var run: c.JSRTYoungRun = .{ .bump = 0, .limit = 0 };
 /// Where the search for the next run goes on. A line freed behind it waits for the collection.
 var scan_line: usize = 0;
 /// The parts of this collection's runs that hold blocks.
@@ -425,13 +429,19 @@ fn nurseryInit() void {
 /// Ends the open run. What it holds counts toward the next collection only now: the run was
 /// sized to end where that collection is due.
 fn closeRun() void {
-    if (bump != run_start) {
-        allocated_since += bump - run_start;
-        runs.push(.{ .lo = run_start, .hi = bump });
+    if (run.bump != run_start) {
+        allocated_since += run.bump - run_start;
+        runs.push(.{ .lo = run_start, .hi = run.bump });
     }
     run_start = 0;
-    bump = 0;
-    bump_limit = 0;
+    run.bump = 0;
+    endRunAt(0);
+}
+
+/// Compiled code takes no lock, so it sees no room at all while another thread may allocate.
+fn endRunAt(end: usize) void {
+    run_end = end;
+    run.limit = if (concurrent.load(.monotonic)) 0 else end;
 }
 
 /// Opens a run at the next free lines, no longer than what is left before a collection is due.
@@ -448,14 +458,14 @@ fn openRun() bool {
     while (j < most and nursery_counts[j] == 0) j += 1;
     scan_line = j;
     run_start = nursery_base + (i << line_shift);
-    bump = run_start;
-    bump_limit = nursery_base + (j << line_shift);
+    run.bump = run_start;
+    endRunAt(nursery_base + (j << line_shift));
     return true;
 }
 
 /// The block at `at` in the open run: indexed, and zeroed past the prefix its caller writes.
 inline fn bumped(at: usize, total: usize) *Header {
-    bump = at + total;
+    run.bump = at + total;
     const off = at - nursery_base;
     nursery_bits[off >> line_shift] |= startBit(off);
     const bytes: [*]u8 = @ptrFromInt(at);
@@ -470,8 +480,8 @@ inline fn bumped(at: usize, total: usize) *Header {
 /// A block in the region, or null when it is not born there: too large, no free line, or a
 /// collection is running (its sweep assumes the runs are closed).
 inline fn bumpAlloc(total: usize) ?*Header {
-    const at = bump;
-    if (at + total > bump_limit) return bumpSlow(total);
+    const at = run.bump;
+    if (at + total > run_end) return bumpSlow(total);
     return bumped(at, total);
 }
 
@@ -480,9 +490,26 @@ noinline fn bumpSlow(total: usize) ?*Header {
     closeRun();
     maybeCollect();
     if (!openRun()) return null;
-    const block = bumped(bump, total);
-    if (gc_stress) bump_limit = bump;
+    const block = bumped(run.bump, total);
+    if (gc_stress) endRunAt(run.bump);
     return block;
+}
+
+/// What compiled code allocates a young block of `bytes` of `kind_` with, which is what
+/// `allocYoung` does when the block fits the open run and is not on the young list. False when
+/// no such block is born in the region.
+pub fn youngSite(bytes: usize, kind_: *const Kind, site: *c.JSRTYoungSite) bool {
+    const total = blockTotal(bytes, kind_.name);
+    if (nursery_size == 0 or total > nursery_max) return false;
+    site.* = .{
+        .run = &run,
+        .base = nursery_base,
+        .bits = nursery_bits,
+        .word = sizeWord(total) | young_bit | dirty_bit,
+        .meta = @intFromPtr(kind_),
+        .total = @intCast(total),
+    };
+    return true;
 }
 
 /// Adds or removes one object's hold on the lines it overlaps.
@@ -751,6 +778,8 @@ pub fn isConcurrent() bool {
 }
 
 pub fn enableThreads() void {
+    // Before another thread exists, so compiled code never bumps a run the lock owns.
+    run.limit = 0;
     concurrent.store(true, .release);
 }
 

@@ -298,17 +298,17 @@ test "an object literal takes its cached shape steps in place" {
     // On the fast chain both shape steps are taken when f is compiled, and what the literal
     // stored is read back without asking the object. Elsewhere the first literal finds its steps
     // and fills its read caches through the helpers, and the other 999 store and read inline.
-    // Each literal still allocates through its helper.
     const first: usize = if (lower.fast_chain) 0 else 2;
-    try std.testing.expectEqualSlices(usize, &.{ first, first, 1000 }, &r.calls);
+    try std.testing.expectEqualSlices(usize, &.{ first, first }, r.calls[0..2]);
+    // The chain also takes each object from the collector's open run itself, and calls the
+    // allocator only where a run ends; the others call it for every literal.
+    if (lower.fast_chain) try std.testing.expect(r.calls[2] < 100) else try std.testing.expectEqual(1000, r.calls[2]);
     try expectRuns("function f(k) { const o = {a: 1, b: 2, a: 3, [k]: 4, c: 5}; return JSON.stringify(o); } f('z') + f('b')", "{\"a\":3,\"b\":2,\"z\":4,\"c\":5}{\"a\":3,\"b\":4,\"c\":5}");
     try expectRuns("function f(p) { const o = {a: 1, __proto__: p, ...p, b: 2, m() { return this.a + this.b + this.q; }}; o.late = 1; o.later = 2; return o.m() + Object.keys(o).join(); } f({q: 4}) + f({q: 5, a: 7})", "7a,q,b,m,late,later14a,q,b,m,late,later");
     try expectRuns("function f(n) { const o = {a: n}; if (n & 1) o.b = n; else o.c = n; o.d = 1; o.e = 2; o.f = 3; return Object.keys(o).join('') + o.a; } f(1) + f(2) + f(3)", "abdef1acdef2abdef3");
     try expectRuns("class P { x = 1; y = 2; } class Q extends P { z = this.x + this.y; } function f() { const q = new Q(); return q.x + q.y + q.z; } f() + f()", "12");
 }
 
-test "a literal the fast chain follows answers what the object would" {
-    // Members read back through locals, operands and a cycle; a key named twice, an own key
 test "a local read after its declaration takes no TDZ check, and any other read does" {
     // A read before the declaration, in a later clause of a `switch`, in the next iteration,
     // in its own initializer and by assignment; a constant and a class; a captured variable,
@@ -328,6 +328,8 @@ test "a local read after its declaration takes no TDZ check, and any other read 
     try expectRuns("function f(a) { let s = 0; for (const x of a) { const y = x * 2; s += y; } { let t = s; t += 1; s = t; } return s; } f([1, 2, 3])", "13");
 }
 
+test "a literal the fast chain follows answers what the object would" {
+    // Members read back through locals, operands and a cycle; a key named twice, an own key
     // written, a key added and a key it lacks; two names for one object; an object a call, a
     // getter or Object.freeze has reached; members that are calls, literals and remainders;
     // `constructor` and `__proto__`; more members than the chain follows, none and a spread;
@@ -345,6 +347,15 @@ test "a local read after its declaration takes no TDZ check, and any other read 
     try expectRuns("let root = null; function f(n) { let sum = 0; let head = null; for (let i = 0; i < n; i += 1) { const a = { value: i, next: null }; const b = { value: n, next: a }; a.next = b; root = a; head = { value: i, next: head }; sum += a.next.value + b.next.value + head.value; } let len = 0; for (let p = head; p !== null; p = p.next) len += 1; return sum + ',' + len + ',' + root.next.next.value; } f(2000) + ';' + f(3)", "7998000,2000,1999;15,3,2");
     try expectRuns("function fill(n) { const junk = []; for (let i = 0; i < n; i += 1) junk.push({ i, s: 'k' + i }); return junk.length; } function f(n) { const keep = { first: null, second: null, count: 0 }; const a = { v: 1, w: null }; keep.count = fill(n); const b = { v: 2, w: a }; keep.first = b; a.w = keep; keep.count += fill(n); const c = { v: 3, w: keep.first }; keep.second = c; keep.count += fill(n); return [keep.first.v, keep.second.v, keep.second.w.w.v, a.w.count, keep.first.w.w === keep].join(); } f(3000)", "2,3,1,9000,true");
     try expectRuns("function f(n) { let seen = 0; const bump = () => { seen += 1; return seen; }; const o = { a: n, b: seen }; seen = o.a + 1; const p = { a: seen, b: o }; bump(); return [o.a, o.b, p.a, p.b.a, seen].join(); } f(4)", "4,0,5,4,6");
+    // Captured variables a closure also writes, one and two environments out; literals of
+    // every size the chain allocates itself, enough of them to fill runs and outlive collections.
+    try expectRuns("function f(n) { let total = 0; let last = null; const add = (o) => { total += o.v; }; for (let i = 0; i < n; i += 1) { const o = { v: i, w: total }; last = o; add(o); total = total + 1; } return total + ',' + last.v + ',' + last.w; } f(100)", "5050,99,4950");
+    try expectRuns("function outer(n) { let a = 1; function mid() { let b = 2; function inner(k) { a = a + k; b = b + a; const o = { p: a, q: b }; return o.p + o.q; } let s = 0; for (let i = 0; i < n; i += 1) s += inner(i); return s + ',' + b; } return mid() + ',' + a; } outer(50)", "292975,20877,1226");
+    try expectRuns("function f(n) { const keep = []; for (let i = 0; i < n; i += 1) { const a = { a: i }; const b = { a: i, b: a }; const c = { a: i, b: b, c: 3, d: 4, e: 5, f: 6, g: 7, h: a }; if (i % 97 === 0) keep.push(c); } let s = 0; for (const c of keep) s += c.a + c.b.b.a + c.h.a + c.g; return s + ',' + keep.length; } f(200000)", "618357715,2062");
+    // A member that leaves the fast chain between two the chain stored, and a literal whose
+    // members are a call that collects and literals that outlive it.
+    try expectRuns("function f(n, s) { const o = { a: n, b: s + n, c: n * 2 }; o.d = s; return JSON.stringify(o) + Object.keys(o).join(''); } f(1, 2) + f(1, 'x') + f('y', 2)", "{\"a\":1,\"b\":3,\"c\":2,\"d\":2}abcd{\"a\":1,\"b\":\"x1\",\"c\":2,\"d\":\"x\"}abcd{\"a\":\"y\",\"b\":\"2y\",\"c\":null,\"d\":2}abcd");
+    try expectRuns("function fill(n) { const junk = []; for (let i = 0; i < n; i += 1) junk.push({ i, s: 'k' + i }); return junk.length; } function f(n) { const first = { x: n, y: null }; const o = { a: first, b: fill(n), c: { z: first } }; first.y = o; let live = 0; for (let i = 0; i < 300000; i += 1) { const t = { p: i, q: o, r: null }; t.r = t; if (t.q.c.z.y === o) live += 1; } return [o.b, o.a.x, o.c.z.y.b, live].join(); } f(3000)", "3000,3000,3000,300000");
 }
 
 test "an array's length and its elements are read and written in place" {

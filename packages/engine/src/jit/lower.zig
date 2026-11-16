@@ -65,6 +65,9 @@ const Known = struct {
     live: bool = false,
     /// The double, when the bytecode names it.
     konst: ?f64 = null,
+    /// Its bits, when the bytecode names a value that is no number (`literalBits`). No register
+    /// keeps them: they are as cheap to make again as to load.
+    word: ?u64 = null,
     /// It is `Lowerer.objects[obj]`.
     obj: ?u32 = null,
 };
@@ -82,12 +85,33 @@ const Object = struct {
     shape: *c.JSRTShape,
     /// The slots it was allocated with, which follow it (jsrt_dynobj_new_sized).
     capacity: u32,
-    /// No call was made since it was allocated, so no collection ran: it is as dirty as it was
-    /// born, and a store into it needs no write barrier.
+    /// It is as dirty as it was born, so a store into it needs no write barrier: no call was
+    /// made since it was allocated but the allocator's, which marks it again (`newObject`).
     fresh: bool = true,
+    /// Its shape word holds `shape`. The chain stores the shape a literal ends on, not the ones
+    /// it passes through, and only where something else may look (`flush`).
+    stored: bool = false,
     /// By slot, with a register or a constant each.
     fields: [max_fields]Known = undefined,
 };
+
+/// Where captured variable `slot` is in its environment: the slots are a flexible array member,
+/// which follows the struct.
+fn envSlot(slot: u32) i32 {
+    return @intCast(@sizeOf(c.JSRTEnv) + slot * @sizeOf(rt.Value));
+}
+
+/// The value an instruction that pushes a constant other than a number pushes.
+fn literalBits(op: Op) u64 {
+    return switch (op) {
+        .undef => c.JSRT_UNDEFINED,
+        .null => c.JSRT_NULL,
+        .true => c.JSRT_TRUE,
+        .false => c.JSRT_FALSE,
+        .uninit => rt.uninitialized,
+        else => unreachable,
+    };
+}
 
 /// A key the runtime answers before it asks the shape (vm.getProp, vm.setProp).
 fn plainKey(key: [*:0]const u8) bool {
@@ -934,7 +958,9 @@ const Lowerer = struct {
     }
 
     fn bitsOf(l: *Lowerer, index: u32, k: *Known) !VReg {
-        if (k.bits == null) k.bits = try l.load(index);
+        if (k.bits) |bits| return bits;
+        if (k.word) |word| return l.konst(imm(word));
+        k.bits = try l.load(index);
         return k.bits.?;
     }
 
@@ -986,6 +1012,28 @@ const Lowerer = struct {
         l.objects.clearRetainingCapacity();
     }
 
+    /// Before a guard, a call or the end of the block: whoever runs next may look at a literal,
+    /// so each is given the shape it has reached.
+    fn flush(l: *Lowerer) !void {
+        for (l.objects.items) |*o| {
+            if (o.stored) continue;
+            try l.emit(.{ .store = .{ .base = o.p, .disp = @offsetOf(c.JSRTDynObject, "shape"), .src = try l.konst(@intCast(@intFromPtr(o.shape))) } });
+            o.stored = true;
+        }
+    }
+
+    /// Whether lowering `i` reaches no guard and no call, so that `flush` may wait.
+    fn quiet(l: *Lowerer, i: analyze.Insn) bool {
+        return switch (i.op) {
+            .undef, .null, .true, .false, .uninit, .int, .num, .pop, .swap, .dup, .load, .store => true,
+            // A literal that is no longer fresh takes the write barrier, which is a call.
+            .define, .set_prop => if (l.objectAt(l.slot(i.depth - 2))) |o| o.fresh else false,
+            .get_prop => l.objectAt(l.slot(i.depth - 1)) != null,
+            .get_prop_local => l.objectAt(vm.header + i.a) != null,
+            else => false,
+        };
+    }
+
     /// After a call on the chain. It runs nothing of the program's, but it may have collected,
     /// and a literal that survives a collection is clean: a store into it needs the barrier.
     fn called(l: *Lowerer) void {
@@ -1006,20 +1054,85 @@ const Lowerer = struct {
         o.fields[off] = k;
     }
 
+    /// A dynamic object with `n` slots of its own, boxed in window slot `s`: its address and
+    /// the boxed value. The block is bumped from the open run of the collector's young region
+    /// and written here whole (jsrt_mem.h, JSRTYoungSite; jsrt_alloc.zig, dynobjNew). The
+    /// allocator is called when the run has no room, when another thread may allocate, and
+    /// where there is no region.
+    fn newObject(l: *Lowerer, s: u32, n: u32) !struct { VReg, VReg } {
+        const p = l.f.newVReg();
+        const v = l.f.newVReg();
+        var site: c.JSRTYoungSite = undefined;
+        // The call comes last in the code: a value that is used on both sides of a call, as
+        // the code is laid out, needs one of the few registers a call keeps, and the backend
+        // spills the frame window's base first when those run out.
+        const inl = c.jsrt_dynobj_young_site(n, &site);
+        const alone = if (inl) try l.block() else 0;
+        const slow = try l.block();
+        const join = try l.block();
+        if (inl) {
+            const run = try l.konst(@intCast(@intFromPtr(site.run)));
+            const at = try l.def(.load, .{ .dst = undefined, .base = run, .disp = @offsetOf(c.JSRTYoungRun, "bump") });
+            const end = try l.arith(.add, at, try l.konst(site.total));
+            try l.cbr(.ugt, end, try l.def(.load, .{ .dst = undefined, .base = run, .disp = @offsetOf(c.JSRTYoungRun, "limit") }), slow, alone);
+            l.cur = alone;
+            const zero = try l.konst(0);
+            try l.emit(.{ .store = .{ .base = run, .disp = @offsetOf(c.JSRTYoungRun, "bump"), .src = end } });
+            const off = try l.arith(.sub, at, try l.konst(imm(site.base)));
+            const line = try l.arith(.shr, off, try l.konst(c.JSRT_GC_LINE_SHIFT));
+            const word = try l.arith(.add, try l.konst(@intCast(@intFromPtr(site.bits))), try l.arith(.shl, line, try l.konst(3)));
+            const granule = try l.arith(.@"and", try l.arith(.shr, off, try l.konst(3)), try l.konst(63));
+            const bits = try l.def(.load, .{ .dst = undefined, .base = word, .disp = 0 });
+            try l.emit(.{ .store = .{ .base = word, .disp = 0, .src = try l.arith(.@"or", bits, try l.arith(.shl, try l.konst(1), granule)) } });
+            try l.emit(.{ .store = .{ .base = at, .disp = 0, .src = try l.konst(imm(site.word)) } });
+            try l.emit(.{ .store = .{ .base = at, .disp = 8, .src = try l.konst(imm(site.meta)) } });
+            try l.emit(.{ .copy = .{ .dst = p, .src = try l.arith(.add, at, try l.konst(c.JSRT_GC_HEADER_BYTES)) } });
+            // Every word of the object but its shape, which `flush` stores: the run is not
+            // zeroed, and each field fills its word.
+            const own = try l.arith(.add, p, try l.konst(@sizeOf(c.JSRTDynObject)));
+            const fields = [_][]const u8{ "cls", "capacity", "slots", "frozen", "proto", "ctor" };
+            const words = [fields.len]VReg{ try l.konst(@intCast(@intFromPtr(&c.jsrt_class_dynamic))), try l.konst(n), own, zero, zero, zero };
+            comptime std.debug.assert(@sizeOf(c.JSRTDynObject) == (fields.len + 1) * 8);
+            inline for (fields, 0..) |field, k| try l.emit(.{ .store = .{ .base = p, .disp = @offsetOf(c.JSRTDynObject, field), .src = words[k] } });
+            for (0..n) |k| try l.emit(.{ .store = .{ .base = own, .disp = @intCast(k * 8), .src = zero } });
+            try l.emit(.{ .copy = .{ .dst = v, .src = try l.arith(.@"or", p, try l.konst(imm(boxTag(c.JSRT_TAG_OBJECT)))) } });
+            try l.store(s, v);
+            try l.br(join);
+        } else try l.br(slow);
+        l.cur = slow;
+        try l.helper(h.newObject, &.{ s, n });
+        // The allocator may have collected, and a literal that survives a collection is clean:
+        // marked here, it is as dirty after either path as it was born.
+        for (l.objects.items) |o| {
+            if (o.fresh) _ = try l.callHelper(c.jsrt_gc_write, &.{o.p});
+        }
+        const made = try l.load(s);
+        try l.emit(.{ .copy = .{ .dst = v, .src = made } });
+        try l.emit(.{ .copy = .{ .dst = p, .src = try l.ptrOf(made) } });
+        try l.br(join);
+        l.cur = join;
+        return .{ p, v };
+    }
+
+    /// The environment `hops` out from the frame's own (vm.outward).
+    fn envOut(l: *Lowerer, hops: u32) !VReg {
+        const frame = try l.def(.load, .{ .dst = undefined, .base = l.ctx, .disp = @offsetOf(h.Ctx, "frame") });
+        var env = try l.def(.load, .{ .dst = undefined, .base = frame, .disp = @offsetOf(c.JSRTFrame, "env") });
+        for (0..hops) |_| env = try l.def(.load, .{ .dst = undefined, .base = env, .disp = @offsetOf(c.JSRTEnv, "parent") });
+        return env;
+    }
+
     /// The forms of the instructions that make, fill and read an object literal (`Object`), and
-    /// of the reads and writes of a captured variable, whose helpers reach no object.
+    /// of the reads and writes of a captured variable, which reach no object.
     fn literal(l: *Lowerer, i: analyze.Insn) !bool {
         const d = i.depth;
         switch (i.op) {
             .new_object => {
                 if (i.a == 0 or i.a > max_fields) return false;
                 const s = l.slot(d);
-                try l.helper(h.newObject, &.{ s, i.a });
-                l.called();
-                var k: Known = .{ .live = true, .obj = @intCast(l.objects.items.len) };
-                const p = try l.ptrOf(try l.bitsOf(s, &k));
+                const p, const v = try l.newObject(s, i.a);
+                try l.know(s, .{ .live = true, .bits = v, .obj = @intCast(l.objects.items.len) });
                 try l.objects.append(l.f.alloc(), .{ .p = p, .shape = &c.jsrt_shape_root, .capacity = i.a });
-                try l.know(s, k);
             },
             .define, .set_prop => {
                 const s = l.slot(d - 2);
@@ -1037,8 +1150,8 @@ const Lowerer = struct {
                     const to: *c.JSRTShape = c.jsrt_shape_transition(o.shape, key);
                     if (to.offset >= o.capacity) return false;
                     try l.setField(o, to.offset, s + 1);
-                    try l.emit(.{ .store = .{ .base = o.p, .disp = @offsetOf(c.JSRTDynObject, "shape"), .src = try l.konst(@intCast(@intFromPtr(to))) } });
                     o.shape = to;
+                    o.stored = false;
                 }
                 // An assignment's value is what was assigned.
                 if (i.op == .set_prop) try l.copySlot(s + 1, s);
@@ -1056,10 +1169,22 @@ const Lowerer = struct {
                 try l.storeKnown(&k, s, l.w, disp(s));
                 try l.know(s, k);
             },
-            .store_env, .store_env_checked, .load_env, .load_env_checked => {
-                try l.insn(i);
-                l.called();
-                if (i.op == .load_env or i.op == .load_env_checked) _ = l.known.remove(l.slot(d));
+            // An environment is always dirty to the collector (jsrt_alloc.zig, env_kind), so
+            // a store into one has no barrier to check. A variable still in its TDZ leaves the
+            // chain for the helper, which throws.
+            .store_env, .store_env_checked => {
+                const s = l.slot(d - 1);
+                const env = try l.envOut(i.a);
+                if (i.op == .store_env_checked) try l.bailIf(.eq, try l.def(.load, .{ .dst = undefined, .base = env, .disp = envSlot(i.b) }), try l.konst(imm(rt.uninitialized)));
+                var k = l.knownAt(s);
+                try l.storeKnown(&k, s, env, envSlot(i.b));
+                try l.know(s, k);
+            },
+            .load_env, .load_env_checked => {
+                const v = try l.def(.load, .{ .dst = undefined, .base = try l.envOut(i.a), .disp = envSlot(i.b) });
+                if (i.op == .load_env_checked) try l.bailIf(.eq, v, try l.konst(imm(rt.uninitialized)));
+                try l.store(l.slot(d), v);
+                try l.know(l.slot(d), .{ .bits = v });
             },
             else => return false,
         }
@@ -1124,6 +1249,7 @@ const Lowerer = struct {
     fn leader(l: *Lowerer, i: analyze.Insn) !void {
         if (l.cur != null) {
             const to = try l.edge(i.pc);
+            try l.flush();
             try l.carry();
             try l.br(to);
         }
@@ -1221,7 +1347,7 @@ const Lowerer = struct {
             .none => return l.literal(i),
             .literal => {
                 try l.insn(i);
-                try l.know(l.slot(d), .{ .live = i.op != .uninit });
+                try l.know(l.slot(d), .{ .live = i.op != .uninit, .word = literalBits(i.op) });
             },
             .number => {
                 const x: f64 = if (i.op == .int) @floatFromInt(@as(i32, @bitCast(i.a))) else l.t.numbers[i.a];
@@ -1329,11 +1455,7 @@ const Lowerer = struct {
     fn insn(l: *Lowerer, i: analyze.Insn) !void {
         const d = i.depth;
         switch (i.op) {
-            .undef => try l.storeConst(l.slot(d), c.JSRT_UNDEFINED),
-            .null => try l.storeConst(l.slot(d), c.JSRT_NULL),
-            .true => try l.storeConst(l.slot(d), c.JSRT_TRUE),
-            .false => try l.storeConst(l.slot(d), c.JSRT_FALSE),
-            .uninit => try l.storeConst(l.slot(d), rt.uninitialized),
+            .undef, .null, .true, .false, .uninit => try l.storeConst(l.slot(d), literalBits(i.op)),
             .callee => try l.store(l.slot(d), try l.load(0)),
             .this_raw => try l.store(l.slot(d), try l.load(1)),
             .new_target => try l.store(l.slot(d), try l.load(2)),
@@ -1512,7 +1634,10 @@ pub fn lower(f: *ir.Func, t: *const bc.Template, plan: analyze.Plan) !void {
             continue;
         }
         if (skip) continue;
+        if (!l.quiet(i)) try l.flush();
         if (fast_chain and try l.fast(i)) continue;
+        // A quiet instruction the chain did not take after all.
+        try l.flush();
         std.debug.assert(l.loop == null);
         try l.insn(i);
         // It may have called a helper, across which no register of the chain is kept.

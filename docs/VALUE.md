@@ -918,6 +918,14 @@ buffer first names it as owner. Larger blocks, every buffer and whatever the reg
 free line for come from pyrlyn/gc's pools, as does every block in the sanitized flavor, where
 each free must be visible to ASan.
 
+The open run is two words a JIT may read and move itself (`JSRTYoungRun` in `jsrt_mem.h`: the
+next block and the run's end, which reads zero once another thread may allocate, when the run
+belongs to the heap lock). `JSRTYoungSite` gives the rest for one kind and size of
+block: the region's base and index, and the block's two prefix words. Code that allocates this
+way writes every byte of the object, since only the allocator's own path zeroes a block, and
+calls the allocator when the block does not fit the run, which is also where a collection
+starts. The engine's JIT does it for object literals (docs/ENGINE.md §3).
+
 Dynamic slot growth uses the Zig `writeOwner` barrier to resolve the owning object once,
 log its old references if needed, and pass that owner to the replacement buffer. A static
 slot field remains its own owner marker, so roots into its buffer still pin its contents.
