@@ -265,22 +265,25 @@ machine's load, raw samples, rejected experiments and correctness checks; its V8
 
 Later T73 steps (§3: the bound-method cache read in compiled code, a literal's slots allocated
 with the object and its shape steps cached, an array's `length` and elements in place, `push`
-in place, the collector's young region, docs/VALUE.md §4.12, and then the fast chain and
-loop-carried locals) were measured the same way: five interleaved processes per engine and
-kernel, the same machine, Node v26.7.0, ReleaseFast. The V8 column and the ratio are from the
-last run; "young region" is the run before the fast chain.
+in place, the collector's young region, docs/VALUE.md §4.12, the fast chain and loop-carried
+locals, and then the remainder that does not divide and the collector's cheaper scan of static
+roots) were measured the same way: five interleaved processes per engine and kernel, the same
+machine, Node v26.7.0, ReleaseFast. The V8 column and the ratio are from the last run; "young
+region" is the run before the fast chain.
 
 | Kernel  |     V8 | JIT (T73 start) | JIT (young region) |    JIT | JIT / V8 |
 | ------- | -----: | --------------: | -----------------: | -----: | -------: |
-| numeric | 22.459 |         170.309 |            138.221 | 89.619 |     3.99 |
-| objects |  4.676 |         234.009 |             25.628 | 22.356 |     4.78 |
-| cycles  |  5.590 |         156.619 |             29.259 | 26.386 |     4.72 |
+| numeric | 22.352 |         170.309 |            138.221 | 16.710 |     0.75 |
+| objects |  4.398 |         234.009 |             25.628 | 21.103 |     4.80 |
+| cycles  |  5.407 |         156.619 |             29.259 | 25.099 |     4.64 |
 
-The process-median interquartile ranges do not overlap between the engines: Stator is slower
-than V8 on all three kernels. The last run shared the machine with other work (load average
-12.7 before it), and two of the five numeric processes measured 102 and 103 us. Generated code
-is most of every kernel (all of numeric, three quarters of objects, over half of cycles); the
-progress report has the profiles, the machine code of the numeric loop and the raw samples.
+The process-median interquartile ranges do not overlap between the engines on any kernel. On
+the numeric kernel, a loop that wraps a running sum with a remainder, Stator is faster than V8
+(16.701-16.856 us against 22.325-22.483); that is one loop, not numeric code in general. On
+objects and cycles it is still more than four times slower: every object is a call into the
+allocator, and the generated code asks each object for its shape at every access. The machine
+was shared with other work (load average about 10). The progress report has the profiles, the
+threshold sweep, the checks and the raw samples.
 
 ### 4.2. Startup and JIT compilation cost (T74)
 

@@ -300,3 +300,71 @@ literal's allocation and the environment accesses in place) are what the object 
 kernels wait for.
 
 The Check still fails on every kernel, so the card stays open.
+
+## A remainder without a division, and the collector's static roots (2026-11-16)
+
+Two changes, each from a profile:
+
+1. `1cd51a49`: on the fast chain `a % b` no longer divides when it does not have to. A dividend
+   that is not negative and below the divisor is the result; one that is below twice the
+   divisor is the result after one subtraction, which is exact. Anything else, a NaN included,
+   takes the guarded integer division as before. The wrap of a running sum or of an index is
+   one of the first two cases almost every time, so the numeric kernel's loop lost the
+   conversion to an integer, the `sdiv` and the conversion back from its dependency chain.
+   This replaces step 17 (a remainder by a constant as a multiplication and a shift) and takes
+   what step 15 (integers in registers) was for out of this kernel.
+2. `31bd814b`: a collection read every writable segment of the image as roots, one call a
+   word. A `sample` profile of the cycle kernel put three quarters of a collection there: the
+   host's `__DATA` is 440 KB, of which 262 KB are the templates thread-local buffers are copied
+   from and 134 KB zero-filled storage. Mach-O sections are now added one by one without the
+   thread-local templates, which nothing is ever stored in, and a word outside the heap's
+   address range is dismissed before the block lookup. The mean pause on the cycle kernel went
+   from about 80 to 24 microseconds.
+
+The threshold between collections was swept before and after the second change, one process
+each, microseconds per checked call:
+
+| Between collections | cycles, before | objects, before | cycles, after | objects, after |
+| ------------------- | -------------: | --------------: | ------------: | -------------: |
+| 1 MiB               |         35.388 |          34.806 |               |                |
+| 2 MiB               |         29.172 |          26.835 |        26.427 |         25.516 |
+| 8 MiB (kept)        |           27.8 |            22.2 |        25.166 |         20.683 |
+| 32 MiB              |         25.115 |          19.875 |        24.991 |         21.152 |
+
+A smaller young region does not pay: the pause has a fixed part (the stacks, the index of the
+region) that a collection every 2 MiB repeats four times as often, and the object kernel's pause
+is the tracing of the arrays it retains. 8 MiB stays.
+
+Five interleaved processes per engine and kernel at `31bd814b` on a clean tree, Apple M3 Max,
+Node v26.7.0 (V8 14.6.202.34-node.28), Zig 0.17.1 ReleaseFast, load averages 9.62/10.56/10.47
+before and 8.15/9.82/10.19 after. Samples, warmups, source hashes and the compilation proof are in
+[`remainder-and-roots.json`](remainder-and-roots.json):
+
+| Kernel  |  V8 us | V8 IQR        | Stator us | Stator IQR    | Stator / V8 |
+| ------- | -----: | ------------- | --------: | ------------- | ----------: |
+| numeric | 22.352 | 22.325-22.483 |    16.710 | 16.701-16.856 |        0.75 |
+| objects |  4.398 | 4.361-4.441   |    21.103 | 20.853-21.106 |        4.80 |
+| cycles  |  5.407 | 5.373-5.417   |    25.099 | 25.091-25.167 |        4.64 |
+
+On the numeric kernel Stator's slowest process (16.859 us) is faster than V8's fastest
+(22.285 us): that third of the Check holds. It is one loop of one shape, a sum wrapped by a
+remainder, and says nothing of numeric code in general. Stator's collections in the
+instrumented runs: 1252 on cycles with a mean pause of 24.2 us, 890 on objects with 131.0 us.
+
+Checks at `31bd814b`, each step of `pnpm run ci` on its own as before: `check-node`,
+`check-js-sources`, `typecheck`, `oxlint --deny-warnings .`, `dupes` (0 clones), `zig fmt
+--check` and `pnpm run runtime` exit 0; `pnpm run test` 855 passed in 68 files;
+`test:runtime` exits 0; `test:subset` 1010 passed, 31 expected-fail, 0 failed; `test:golden`
+547 passed; `test:selfhost`, `test:builtins`, `test:node-coverage` and `test:leak` exit 0;
+`test:asan` 547 passed; `pnpm run interp:test` exits 0; `pnpm run engine:test` reports
+`engine: 92 passed, 0 failed`.
+
+Where the object kernels stand (`sample`, the cycle kernel after both changes): generated code
+59% of the samples, `allocYoung` 23%, `jsrt_dynobj_new_sized` 8%, the `store_env` and
+`new_object` helpers 4% and 3%, the collection 1%. An iteration is about 100 cycles against
+V8's 22. The allocation is three calls deep for what is a bump, an index bit and nine stores;
+the generated code asks the object for its class, its shape, its capacity and its slots at
+every `define` and every read, though the literal was made two instructions earlier. Steps 12,
+13 and 18 in `task.md` follow from that.
+
+The Check still fails on objects and cycles, so the card stays open.

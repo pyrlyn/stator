@@ -2,7 +2,7 @@
 status: in progress
 priority: P1
 complexity: 5
-readiness: 35%
+readiness: 45%
 agent: Claude Code / claude-fable-5-2
 ---
 
@@ -87,6 +87,19 @@ still to do. What the numeric kernel's machine code shows next:
     once so that a failed guard can leave from anywhere; a flush block per guard, placed with
     the loop, would take those stores out of the loop.
 17. A remainder by a constant as a multiplication and a shift.
+
+15 and 17 gave way to something simpler (`progress.md`, "A remainder without a division"): a
+remainder whose dividend is below twice its divisor does not divide, which is what the wrap of
+a sum or an index is. With the collector's static roots read by section, the numeric kernel is
+faster than V8 (16.7 against 22.4 us, ranges apart) and that third of the Check holds; objects
+and cycles are at 4.8x and 4.6x. 12, 13 and 16 are still to do, and the profiles add:
+
+18. Object literals on the fast chain. A literal made in a run of bytecode has a shape the
+    lowerer can work out when it compiles: each `define` is a store and the next shape, a read
+    of a property it has is the value that was stored, with no question to the object, the
+    shape table or a cache until an instruction without a form runs.
+19. A dynamic object of fewer bytes: 88 for two properties, most of it fields a literal never
+    uses (`proto`, `ctor`, `frozen`, a `slots` pointer to the next word), where V8 has 20.
 
 Files: `packages/engine/src/{vm,compile,bytecode}.zig`, `packages/engine/src/jit/`,
 `packages/runtime/src/{jsrt_alloc,jsrt_gc}.zig`, `packages/runtime/include/jsrt_value.h`. Verify:
