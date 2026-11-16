@@ -2,7 +2,7 @@
 status: in progress
 priority: P1
 complexity: 5
-readiness: 60%
+readiness: 70%
 agent: Claude Code / claude-fable-5-2
 ---
 
@@ -118,6 +118,22 @@ code, about 200 instructions an iteration now, adds:
 22. Two literals in a row out of one bump: one limit test and one move of the run for both.
 23. The read loop of the objects kernel asks every element for its shape, which is what the
     feedback tier of T67.1 is for; a collection there takes 130 us against 23 on cycles.
+
+16 and 21 are in (`progress.md`, "Values out of the window, slots written once, blocks indexed
+when asked"): a result is stored in the frame window only before a guard, a call or the run's
+end, a literal's slot is written once, and the compiled allocation leaves the collector's index
+alone: the collector finds a block by its prefix when something asks about it. Cycles went from
+1.84x to 1.30x of V8's time, objects from 3.93x to 3.58x and numeric from 0.75x to 0.61x. 19,
+20, 22 and 23 are still to do, and the cycle kernel's listing adds:
+
+24. A guard's stores on the path that fails. A value that waits for the window is still stored
+    before every guard it passes. A side block per guard, laid out after the run with the
+    other rarely-run blocks, would store it only when the guard fails (what is left of 16).
+25. One guard for a value and its copies. An operand copied from a local is checked as if
+    nothing were known of it, and the local is checked again afterwards: a copy that remembers
+    the slot it came from lets one check serve both, and lets a double be loaded from there.
+26. Constants made once a run. The run's address, a block's prefix words, the class, the shape
+    and the tags are made again for each literal.
 
 Files: `packages/engine/src/{vm,compile,bytecode}.zig`, `packages/engine/src/jit/`,
 `packages/runtime/src/{jsrt_alloc,jsrt_gc}.zig`, `packages/runtime/include/jsrt_value.h`. Verify:

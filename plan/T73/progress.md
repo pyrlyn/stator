@@ -446,3 +446,78 @@ passed; `pnpm run interp:test` exits 0; `pnpm run engine:test` reports `engine: 
 failed`, the new `literals.ts` among them in both modes and under `JSRT_GC_STRESS`.
 
 The Check still fails on objects and cycles, so the card stays open.
+
+## Values out of the window, slots written once, blocks indexed when asked (2026-11-16)
+
+Steps 16 and 21 of `task.md`. Each row of the first table is the median of five interleaved
+processes per engine.
+
+| Change                | Record                                                     | cycles us | objects us | numeric us |
+| --------------------- | ---------------------------------------------------------- | --------: | ---------: | ---------: |
+| before                | [`shape-and-tdz.json`](shape-and-tdz.json)                 |     9.996 |     16.524 |     16.513 |
+| the three steps below | [`lazy-stores-and-index.json`](lazy-stores-and-index.json) |     7.097 |     15.089 |     13.420 |
+
+1. **A value stays out of the frame window until something can read it there** (`46c9960d`).
+   A result stays in its register and is stored before an instruction that can leave the
+   chain, before a call and at the end of the run. The allocator's call and the remainder's
+   division, which rarely run, store what waits at their own head, so the path that skips them
+   stores nothing for them. In debug builds every guard and call asserts that nothing waits.
+   One process per engine after this step alone: cycles 8.212 us, objects 15.489, numeric
+   13.650.
+2. **A literal's slot is written once.** The allocation no longer zeroes the slots: a member
+   fills its slot, and only a slot no member has filled is zeroed, where the chain can first be
+   left. The cycle loop was 173 instructions and 37 stores an iteration after this step.
+3. **Block starts found, not marked** (step 21). The compiled allocation moves the run's
+   pointer and writes the block's two prefix words; it does not read or write the young
+   region's index. The run is taken from its top down, so its pointer is the newest block. The
+   collector indexes a block when it is first asked about it or about an older block of the
+   same run, walking the prefixes up from the nearest block below that the index already has
+   (`indexUpTo`); the allocator's own blocks are indexed as they are made and serve as such
+   starting points. While another thread may allocate the run reads as full, nothing waits,
+   and no reader writes the index.
+
+Three ways of doing 3 were measured and dropped, one process per engine each:
+
+- Indexing a whole run when it closes, walking up from its start: cycles went from 8.2 to
+  11.8 us, twice. The walk reads the prefix of every dead block, each read waiting for the one
+  before it.
+- Indexing from the newest block up to the one asked about: cycles 7.13 us, but objects went
+  from 15.5 to 17.3. `sample` had the walk at 158 of about 1300 samples. An array that lived
+  through a collection is dirty at the next one, its oldest young elements are counted then,
+  and they lie above everything the run made since, all of it dead and all of it walked.
+- The same with the walk stepping by the size it saw last, so that the reads overlap: objects
+  16.8 us. The step is kept, for the walks that remain.
+
+With the walk started at the nearest indexed block the objects kernel measured 15.1 us and
+cycles 7.10.
+
+| Kernel  |  V8 us | V8 IQR        | Stator us | Stator IQR    | Stator / V8 |
+| ------- | -----: | ------------- | --------: | ------------- | ----------: |
+| numeric | 22.023 | 22.015-22.028 |    13.420 | 13.405-13.468 |        0.61 |
+| objects |  4.211 | 4.203-4.212   |    15.089 | 15.060-15.116 |        3.58 |
+| cycles  |  5.441 | 5.440-5.446   |     7.097 | 7.092-7.098   |        1.30 |
+
+Numeric holds: Stator's slowest process (13.509 us) is faster than V8's fastest (22.000 us).
+On cycles and objects V8's slowest process (5.450 and 4.219 us) is faster than Stator's fastest
+(7.081 and 14.994). Stator's collections in the instrumented runs: 4317 on cycles with a mean
+pause of 27.8 us, 1158 on objects with 141.2 us. The load average was between 5.2 and 5.7. The
+record's metadata names `46c9960d` with a dirty tree, which is the content of the commits that
+follow it here.
+
+What the cycle loop still pays for, from the listing after step 2: a value that waits is
+stored before each guard it passes; an operand copied from a local is checked as if nothing
+were known of it, and the local again after it; each literal makes the run's address, its
+prefix words, its class, shape and tags again; and the object is eleven words. Steps 24 to 26
+in `task.md` follow from that, with 19 and 22. The objects kernel is still its read loop and
+its collections (23).
+
+Checks on that tree, each step of `pnpm run ci` on its own as before: `check-node`,
+`check-js-sources`, `typecheck`, `oxlint --deny-warnings .`, `dupes` (0 clones), `zig fmt
+--check` and `pnpm run runtime` exit 0; `pnpm run test` 855 passed in 68 files; `test:runtime`
+exits 0; `test:subset` 1010 passed, 31 expected-fail, 0 failed; `test:golden` 547 passed;
+`test:selfhost`, `test:builtins`, `test:node-coverage` and `test:leak` exit 0 (10M objects peak
+at 10560 KB, 2M garbage cycles at 15440 KB, both on a plateau); `test:asan` 547 passed; `pnpm
+run interp:test` exits 0, with the six cases of "a value that waits for the frame window is
+there when the chain is left"; `pnpm run engine:test` reports `engine: 100 passed, 0 failed`.
+
+The Check still fails on objects and cycles, so the card stays open.
