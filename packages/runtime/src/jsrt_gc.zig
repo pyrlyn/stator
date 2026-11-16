@@ -1447,29 +1447,37 @@ fn reconcile() void {
     var old_log = log;
     dirty = spare_dirty;
     log = spare_log;
-    for (entries.slice()) |e| {
-        const block = e.block;
-        traceBlocks(block, incChild);
-        for (old_log.items[e.start .. e.start + e.len]) |child| decChild(child);
-        keepDirtyOrClean(block);
-    }
+    for (entries.slice()) |e| recount(e.block, old_log.items[e.start .. e.start + e.len]);
     // Survivors were born dirty with nothing counted: all their references are new.
-    while (survivors.pop()) |block| {
-        traceBlocks(block, incChild);
-        keepDirtyOrClean(block);
-    }
+    while (survivors.pop()) |block| recount(block, &.{});
     entries.len = 0;
     old_log.len = 0;
     spare_dirty = entries;
     spare_log = old_log;
 }
 
-fn keepDirtyOrClean(block: *Header) void {
+/// Counts what `block` holds now in place of `was`, what it was last counted as holding. A
+/// reference that stayed where it was is neither counted nor let go: letting it go, even after
+/// counting it again, would make its object a cycle candidate (`decChild`) at every collection
+/// its holder stays dirty through, and trial deletion would walk all it reaches. Most of what a
+/// kept entry holds stays: the globals, an array still being filled. Only the ends are matched,
+/// which finds a slot that changed and elements that were added.
+fn recount(block: *Header, was: []const *Header) void {
+    const start = log.len;
+    traceBlocks(block, logChild);
+    // Neither loop below adds to the log, so this stays where it is.
+    const now = log.items[start..log.len];
+    const most = @min(now.len, was.len);
+    var head: usize = 0;
+    while (head < most and now[head] == was[head]) head += 1;
+    var tail: usize = 0;
+    while (tail < most - head and now[now.len - 1 - tail] == was[was.len - 1 - tail]) tail += 1;
+    for (now[head .. now.len - tail]) |child| incChild(child);
+    for (was[head .. was.len - tail]) |child| decChild(child);
     if (block.word & root_bit != 0 or kindOf(block).always_dirty != 0) {
-        const start = log.len;
-        traceBlocks(block, logChild);
-        dirty.push(.{ .block = block, .start = start, .len = log.len - start });
+        dirty.push(.{ .block = block, .start = start, .len = now.len });
     } else {
+        log.len = start;
         block.word &= ~dirty_bit;
     }
 }
@@ -1573,6 +1581,10 @@ fn collectLocked() void {
     reconcile();
     freeYoung();
     if (verify) verifyCounts();
+    // What a root names is alive, and so is all it reaches: trial deletion from it would walk
+    // all of that only to put it back. Black, it is dropped from the candidates unwalked, and
+    // it is a candidate again when it is unpinned below.
+    for (pinned.slice()) |block| block.word &= ~kx.COLOR_MASK;
     host.rt_rel_draining = 0;
     collector.rt_gc_collect();
     host.rt_rel_draining = 1;

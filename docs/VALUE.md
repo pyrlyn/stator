@@ -946,6 +946,17 @@ most of the segment. A word outside the heap's address range is dismissed before
 that no root names is freed, releasing what it held. Older cycles go to pyrlyn/gc's trial deletion
 (Bacon-Rajan), run with the roots pinned.
 
+**Cycle candidates.** A candidate is an object whose count fell and stayed above 0, or one a
+root may have let go of unseen: a pinned object when it is unpinned, a ZCT entry found counted.
+Two rules keep the live heap out of trial deletion, which walks all a candidate reaches. A
+dirty object's references are counted against its log only where they differ (`recount`): the
+ends of the two lists that match are skipped, which covers a slot that changed and elements
+that were added, so a reference that stayed is not released and counted again and its object
+is no candidate. Without that every object the globals, an environment or a root-held array
+holds was one at each collection. And a candidate a root names now is alive with all it
+reaches, so it is dropped from the candidates unwalked (made black before the collector runs)
+and becomes one again at its unpinning.
+
 **Why masking is safe.** Only two word shapes reach it: a boxed value, whose payload is its low 48
 bits, and a raw pointer, whose top 16 bits are zero — `jsrt_init` asserts that against a real
 allocation and aborts on a platform where it does not hold (5-level paging, AArch64 TBI). A word
