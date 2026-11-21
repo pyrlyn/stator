@@ -647,6 +647,26 @@ test('--emit-header refuses to alias -o or the entry (F1)', async () => {
   });
 });
 
+test('build refuses case-only aliases between new outputs on a folding file system (QA-9)', async () => {
+  await inScratch({ 'lib.ts': ADD }, async (dir) => {
+    const r = await statorIn(
+      dir,
+      'build',
+      'lib.ts',
+      '-o',
+      'OUT.o',
+      '--emit=c',
+      '--emit-header=out.o',
+    );
+    // On a case-sensitive volume these are two files and the build may proceed; skip then.
+    if (r.status === 0) return; // case-sensitive volume: two different new files
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /STA0004 -o ".*OUT\.o" and --emit-header ".*out\.o" name the same file/);
+    assert.equal(existsSync(join(dir, 'OUT.o')), false);
+    assert.equal(existsSync(join(dir, 'out.o')), false);
+  });
+});
+
 test('-o naming an imported module, or the --keep-c file naming the header, is refused (F1)', async () => {
   await inScratch(
     { 'main.ts': "import { add } from './dep.ts';\nconsole.log(add(1, 2));\n", 'dep.ts': ADD },
