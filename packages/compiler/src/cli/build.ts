@@ -38,7 +38,12 @@ import {
   resolveCompileJobs,
   shouldSplitTranslationUnit,
 } from './compile-jobs.ts';
-import { isStaleLdSystemLibFailure, staleLdHint, staleLdRetryArgs } from '../support/toolchain.ts';
+import {
+  isStaleLdSystemLibFailure,
+  staleLdHint,
+  staleLdRetryArgs,
+  staleLdRetryHint,
+} from '../support/toolchain.ts';
 import {
   type BundlerChoice,
   DEFAULT_BUNDLER,
@@ -1087,7 +1092,7 @@ function link(
     }
     process.stderr.write(second.stdout);
     process.stderr.write(second.stderr);
-    throw linkFailure(externFlags, second.status, staleLdHint(retry.sysroot));
+    throw linkFailure(externFlags, second.status, staleLdRetryHint(second.stderr, retry.sysroot));
   }
 
   process.stderr.write(first.stdout);

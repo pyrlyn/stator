@@ -21,6 +21,7 @@ import {
   isStaleLdSystemLibFailure,
   pickFallbackSdk,
   staleLdRetryArgs,
+  staleLdRetryHint,
   tbdPathOf,
   type SdkCandidate,
 } from '../../compiler/src/support/toolchain.ts';
@@ -158,4 +159,15 @@ test('filesystem half resolves against a double root', () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('the retry hint blames the SDK only while the retry still fails on the .tbd files', () => {
+  const tbd = 'ld: malformed file\n/sdk/usr/lib/libSystem.tbd: unknown architecture arm64e.x1\n';
+  assert.match(staleLdRetryHint(tbd, '/sdk') ?? '', /retrying with -isysroot \/sdk failed too/);
+  // The retry got past the SDK and failed on the output: no "failed too", no SDK advice.
+  assert.equal(
+    staleLdRetryHint("ld: can't write output file: app for architecture arm64\n", '/sdk'),
+    undefined,
+  );
+  assert.equal(staleLdRetryHint('ld: library not found for -lsqlite3\n', '/sdk'), undefined);
 });

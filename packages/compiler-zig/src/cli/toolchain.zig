@@ -87,6 +87,12 @@ pub fn staleLdHint(a: Allocator, retried_sysroot: ?[]const u8) []const u8 {
     return std.fmt.allocPrint(a, "the system SDK's .tbd files use a format this linker's ld cannot parse (stale bundled ld vs a newer Xcode; {s}){s}", .{ tried, hint_fix }) catch oom();
 }
 
+/// The hint after the `-isysroot` retry failed too: the stale-linker hint only while the retry still
+/// carries the signature, so a retry that failed on something else does not blame the SDK.
+pub fn staleLdRetryHint(a: Allocator, retry_stderr: []const u8, retried_sysroot: []const u8) ?[]const u8 {
+    return if (isStaleLdSystemLibFailure(retry_stderr)) staleLdHint(a, retried_sysroot) else null;
+}
+
 test "SDKs sort by version, garbage below every version" {
     try std.testing.expect(sdkLess({}, "MacOSX26.sdk", "MacOSX26.5.sdk"));
     try std.testing.expect(!sdkLess({}, "MacOSX26.5.sdk", "MacOSX26.sdk"));
@@ -98,4 +104,13 @@ test "the stale-linker signature is narrow" {
     try std.testing.expect(!isStaleLdSystemLibFailure("undefined symbol _foo"));
     try std.testing.expect(hasNewArchToken("targets: [ arm64e.x1-macos ]"));
     try std.testing.expect(!hasNewArchToken("targets: [ arm64e-macos ]"));
+}
+
+test "the retry hint needs the signature in the retry's own stderr" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const hint = staleLdRetryHint(a, "ld: malformed file libSystem.tbd", "/sdk").?;
+    try std.testing.expect(std.mem.indexOf(u8, hint, "-isysroot /sdk failed too") != null);
+    try std.testing.expect(staleLdRetryHint(a, "ld: can't write output file: app", "/sdk") == null);
 }

@@ -156,6 +156,14 @@ export function staleLdRetryArgs(
     : { args: [...args, '-isysroot', fallback], sysroot: fallback };
 }
 
+/** The hint for a link that failed again after the `-isysroot` retry: the stale-linker hint only
+ * while the retry still carries the signature. A retry that got past the `.tbd` files and failed
+ * on something else (a missing `-lfoo`, an output it cannot write) gets no hint, because "failed
+ * too" would blame the SDK for a failure it no longer causes. */
+export function staleLdRetryHint(retryStderr: string, retriedSysroot: string): string | undefined {
+  return isStaleLdSystemLibFailure(retryStderr) ? staleLdHint(retriedSysroot) : undefined;
+}
+
 /** The actionable hint appended to the link diagnostic when the stale-linker signature
  * matched: what was retried (or why no retry was possible) and the two manual escapes. */
 export function staleLdHint(retriedSysroot: string | undefined): string {
