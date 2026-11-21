@@ -12,7 +12,7 @@ echo
 
 # Fail fast when bare `node` is not the pinned ground truth (plan.md Task 6.2a) — every
 # suite below diffs against `.node-version`, so a run on another major proves nothing.
-node scripts/check-node.mjs
+node scripts/check-node.ts
 
 pnpm install --frozen-lockfile
 pnpm run ci

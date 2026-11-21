@@ -102,6 +102,21 @@ test('build and explain report a missing entry file as a path error', async () =
   }
 });
 
+test('a directory as the entry is STA0007, not a checker diagnostic with no file', async () => {
+  await inScratch({ 'app.ts': 'console.log(1);\n' }, async (dir) => {
+    const [built, explained] = await Promise.all([
+      statorIn(dir, 'build', '.', '-o', 'x'),
+      statorIn(dir, 'explain', '.'),
+    ]);
+    for (const { status, stderr } of [built, explained]) {
+      assert.equal(status, 1, stderr);
+      assert.match(stderr, /^stator: STA0007 entry file "\." is a directory, not a file/);
+      assert.doesNotMatch(stderr, /STA0012/);
+    }
+    assert.equal(existsSync(join(dir, 'x')), false);
+  });
+});
+
 test(
   'a builtin the program never references is not in the binary (Task 3.12)',
   NATIVE_ONLY,
@@ -632,6 +647,26 @@ test('--emit-header refuses to alias -o or the entry (F1)', async () => {
   });
 });
 
+test('build refuses case-only aliases between new outputs on a folding file system (QA-9)', async () => {
+  await inScratch({ 'lib.ts': ADD }, async (dir) => {
+    const r = await statorIn(
+      dir,
+      'build',
+      'lib.ts',
+      '-o',
+      'OUT.o',
+      '--emit=c',
+      '--emit-header=out.o',
+    );
+    // On a case-sensitive volume these are two files and the build may proceed; skip then.
+    if (r.status === 0) return; // case-sensitive volume: two different new files
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /STA0004 -o ".*OUT\.o" and --emit-header ".*out\.o" name the same file/);
+    assert.equal(existsSync(join(dir, 'OUT.o')), false);
+    assert.equal(existsSync(join(dir, 'out.o')), false);
+  });
+});
+
 test('-o naming an imported module, or the --keep-c file naming the header, is refused (F1)', async () => {
   await inScratch(
     { 'main.ts': "import { add } from './dep.ts';\nconsole.log(add(1, 2));\n", 'dep.ts': ADD },
@@ -686,6 +721,19 @@ test('an unwritable output is STA0019, not STA4072 "compiler bug" (F2)', async (
     assert.match(binary.stderr, /ENOENT/);
     assert.match(header.stderr, /cannot write --emit-header /);
     assert.match(isDir.stderr, /EISDIR \(it is a directory\)/);
+  });
+});
+
+test('a read-only output that already exists is STA0019, not STA0009 "compiler bug"', async () => {
+  // Root writes through any mode bit, so there is nothing to refuse there.
+  if (process.getuid?.() === 0) return;
+  await inScratch({ 'app.ts': 'console.log(1);\n', app: 'old\n' }, async (dir) => {
+    chmodSync(join(dir, 'app'), 0o444);
+    const r = await statorIn(dir, 'build', 'app.ts', '-o', 'app');
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /^stator: STA0019 cannot write -o "app": EACCES \(permission denied\)/);
+    assert.doesNotMatch(r.stderr, /STA0009|STA4072|compiler bug/);
+    assert.equal(readFileSync(join(dir, 'app'), 'utf8'), 'old\n');
   });
 });
 

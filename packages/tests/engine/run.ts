@@ -10,16 +10,27 @@ import { spawnSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { endedBy } from '../support/ended-by.ts';
 import { nodePath } from '../support/node-path.ts';
 import { engineBinary } from './binary.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPTS = join(HERE, 'scripts');
 const MODES = ['interp', 'jit'] as const;
-/** The collector's test switches (packages/runtime/src/jsrt_gc.zig). */
+/** One run's wall-clock budget. */
+const TIMEOUT_MS = 60_000;
+
+/** The collector's test switches (packages/runtime/src/jsrt_gc.zig). Stress collects on every
+ * allocation and recounts the heap after each, so a run takes many times its plain length:
+ * literals.ts needs about 59 s there on an M3 Max, which a 60 s budget turned into a failure
+ * that read like a crash ("exit null"). */
 const COLLECTORS = [
-  { label: '', env: {} },
-  { label: ', gc stress', env: { JSRT_GC_STRESS: '1', JSRT_GC_VERIFY: '1' } },
+  { label: '', env: {}, timeoutMs: TIMEOUT_MS },
+  {
+    label: ', gc stress',
+    env: { JSRT_GC_STRESS: '1', JSRT_GC_VERIFY: '1' },
+    timeoutMs: 5 * TIMEOUT_MS,
+  },
 ] as const;
 
 interface Ran {
@@ -28,13 +39,18 @@ interface Ran {
   readonly stderr: string;
 }
 
-function run(command: string, args: readonly string[], env: NodeJS.ProcessEnv = {}): Ran {
+function run(
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = {},
+  timeoutMs: number = TIMEOUT_MS,
+): Ran {
   const r = spawnSync(command, args, {
     encoding: 'utf8',
-    timeout: 60_000,
+    timeout: timeoutMs,
     env: { ...process.env, ...env },
   });
-  return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr + endedBy(r, timeoutMs) };
 }
 
 /** Node's report of an uncaught error carries `Name: message` on a line of its own. */
@@ -60,7 +76,7 @@ for (const file of readdirSync(SCRIPTS)
   const node = run(nodePath(), [path]);
   for (const mode of MODES) {
     for (const collector of COLLECTORS) {
-      const got = run(engine, ['run', `--mode=${mode}`, path], collector.env);
+      const got = run(engine, ['run', `--mode=${mode}`, path], collector.env, collector.timeoutMs);
       const name = `${file} [${mode}${collector.label}]`;
       expect(
         name,

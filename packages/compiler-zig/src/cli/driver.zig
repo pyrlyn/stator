@@ -158,6 +158,10 @@ const Load = struct {
 /// the `--bundler=none` answer from the gate.
 fn loadFrontend(x: *const Context, load: Load) Error!Frontend {
     if (!link.exists(x.io, load.entry)) return x.r.fail("STA0007", "entry file \"{s}\" does not exist", .{load.entry});
+    // A directory exists too, but the checker cannot resolve it and its STA0012 names no file.
+    if (Io.Dir.cwd().statFile(x.io, load.entry, .{})) |st| {
+        if (st.kind == .directory) return x.r.fail("STA0007", "entry file \"{s}\" is a directory, not a file", .{load.entry});
+    } else |_| {}
     const paths = x.paths();
     var request: program.Request = .{
         .entry = fspath.resolve(x.a, &.{ x.cwd, load.entry }) catch oom(),

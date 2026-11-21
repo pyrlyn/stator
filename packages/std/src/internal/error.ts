@@ -11,9 +11,14 @@
 
 import { jsrtStdLastError } from '../native/core.js';
 
+/** The error for `call` failing on `argument` with `code`, in the one grammar above. */
+export function __stdError(call: string, argument: string, code: string): Error {
+  return new Error(`${call}(${argument}): ${code}`);
+}
+
 /** The error for a backing that answered failure, with the code it recorded. */
 export function __stdFailure(call: string, argument: string): Error {
-  return new Error(`${call}(${argument}): ${jsrtStdLastError()}`);
+  return __stdError(call, argument, jsrtStdLastError());
 }
 
 /** A string argument as the message spells it. */

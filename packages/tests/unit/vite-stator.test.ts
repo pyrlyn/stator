@@ -15,7 +15,7 @@ import { compile, vendorEntry } from '../../compiler/src/api.ts';
 import { NATIVE_ONLY } from './helpers.ts';
 
 /* `NATIVE_ONLY` throughout: the last test runs a binary, and the first two compare POSIX paths. */
-const EXAMPLE = fileURLToPath(new URL('../../../examples/vite/', import.meta.url));
+const EXAMPLE = realpathSync(fileURLToPath(new URL('../../../examples/vite/', import.meta.url)));
 
 const roots: string[] = [];
 afterAll(() => {
@@ -23,7 +23,7 @@ afterAll(() => {
 });
 
 function project(files: Record<string, string>): string {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stator-vite-')));
+  const root = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), 'stator-vite-')));
   roots.push(root);
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(dirname(join(root, path)), { recursive: true });

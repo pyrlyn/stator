@@ -19,12 +19,35 @@ pub fn statKey(a: Allocator, io: Io, absolute: []const u8) ?[]const u8 {
     return std.fmt.allocPrint(a, "inode:{d}:{d}:{d}", .{ st.inode, st.size, st.mtime.toNanoseconds() }) catch oom();
 }
 
+var case_probe_seq: u32 = 0;
+
+fn directoryFoldsCase(a: Allocator, io: Io, dir: []const u8) bool {
+    case_probe_seq += 1;
+    const probe_name = std.fmt.allocPrint(a, ".stator-case-{x}-{d}", .{ @intFromPtr(dir.ptr), case_probe_seq }) catch oom();
+    const other_name = a.dupe(u8, probe_name) catch oom();
+    for (other_name) |*c| c.* = if (c.* >= 'a' and c.* <= 'z') c.* - ('a' - 'A') else c.*;
+    if (std.mem.eql(u8, probe_name, other_name)) return false;
+    const probe = fspath.join(a, &.{ dir, probe_name }) catch oom();
+    const other = fspath.join(a, &.{ dir, other_name }) catch oom();
+    Io.Dir.cwd().writeFile(io, .{ .sub_path = probe, .data = "" }) catch return false;
+    defer Io.Dir.cwd().deleteFile(io, probe) catch {};
+    const a_st = Io.Dir.cwd().statFile(io, probe, .{}) catch return false;
+    const b_st = Io.Dir.cwd().statFile(io, other, .{}) catch return false;
+    return a_st.inode == b_st.inode;
+}
+
 fn fileKey(a: Allocator, io: Io, path: []const u8) []const u8 {
     const absolute = absolutePath(a, io, path);
     if (statKey(a, io, absolute)) |key| return key;
     const dir = fspath.dirname(absolute) orelse "/";
     const real = Io.Dir.cwd().realPathFileAlloc(io, dir, a) catch return std.fmt.allocPrint(a, "path:{s}", .{absolute}) catch oom();
-    return std.fmt.allocPrint(a, "path:{s}/{s}", .{ real, fspath.basename(absolute) }) catch oom();
+    const name = fspath.basename(absolute);
+    if (directoryFoldsCase(a, io, real)) {
+        const lower = a.alloc(u8, name.len) catch oom();
+        _ = std.ascii.lowerString(lower, name);
+        return std.fmt.allocPrint(a, "path:{s}/{s}", .{ real, lower }) catch oom();
+    }
+    return std.fmt.allocPrint(a, "path:{s}/{s}", .{ real, name }) catch oom();
 }
 
 pub fn absolutePath(a: Allocator, io: Io, path: []const u8) []const u8 {
@@ -69,10 +92,11 @@ fn writeError(r: *Reporter, target: Named, err: anyerror) Error {
 }
 
 /// Before a tool writes `target`: without this, clang's own failure there would read as a compiler
-/// bug (STA0009).
+/// bug (STA0009). A file already there must be writable too: ld64 opens it in place.
 pub fn requireWritable(a: Allocator, io: Io, r: *Reporter, target: Named) Error!void {
     if (Io.Dir.cwd().statFile(io, target.path, .{})) |st| {
         if (st.kind == .directory) return writeError(r, target, error.IsDir);
+        Io.Dir.cwd().access(io, target.path, .{ .write = true }) catch |e| return writeError(r, target, e);
     } else |e| switch (e) {
         error.FileNotFound => {},
         else => {},
@@ -93,6 +117,26 @@ test "two spellings of one new file are one output" {
     try std.testing.expectError(error.Failed, refuseAliased(a, std.testing.io, &r, &.{
         .{ .role = "-o", .path = "/nonexistent-dir/x" },
         .{ .role = "--emit-header", .path = "/nonexistent-dir/./x" },
+    }, &.{}));
+    try std.testing.expectEqualStrings("STA0004", r.failure.?.code);
+}
+
+test "case-only aliases of a new output are one file on a folding directory" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const rel = std.fmt.allocPrint(a, ".zig-cache/tmp/{s}", .{&tmp.sub_path}) catch oom();
+    const dir = Io.Dir.cwd().realPathFileAlloc(io, rel, a) catch return error.SkipZigTest;
+    if (!directoryFoldsCase(a, io, dir)) return error.SkipZigTest;
+    const upper = fspath.join(a, &.{ dir, "OUT.o" }) catch oom();
+    const lower = fspath.join(a, &.{ dir, "out.o" }) catch oom();
+    var r: Reporter = .{ .a = a };
+    try std.testing.expectError(error.Failed, refuseAliased(a, io, &r, &.{
+        .{ .role = "-o", .path = upper },
+        .{ .role = "--emit-header", .path = lower },
     }, &.{}));
     try std.testing.expectEqualStrings("STA0004", r.failure.?.code);
 }
