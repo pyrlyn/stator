@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Runs TypeScript 7's compiler and conformance suites through `stator-ts check` and compares
+// Runs TypeScript 7's compiler and conformance suites through `stator-transpiler check` and compares
 // reported diagnostics with upstream's `.errors.txt` baselines. Fetch them with sync.sh first.
 //
 //   node tests/ts7/run.mjs [--filter <regex>] [--limit <n>] [--jobs <n>] [--verbose] [--keep] [--update-passing]
@@ -8,7 +8,7 @@
 //
 // A test passes when the set of (file, line, column, code) is the same. Messages are not compared.
 // Diagnostics with no source position and those in a tsconfig are about options; they are counted
-// but do not decide a test, because stator-ts does not validate options.
+// but do not decide a test, because stator-transpiler does not validate options.
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
@@ -31,7 +31,7 @@ const arg = name => {
 };
 const flag = name => process.argv.includes(name);
 
-const binary = process.env.STATOR_TS ?? path.join(project, 'zig-out/bin/stator-ts');
+const binary = process.env.STATOR_TRANSPILER ?? path.join(project, 'zig-out/bin/stator-transpiler');
 const jobs = Number(arg('--jobs') ?? availableParallelism());
 const limit = Number(arg('--limit') ?? Infinity);
 const filter = arg('--filter') ? new RegExp(arg('--filter')) : undefined;
@@ -44,7 +44,7 @@ if (!existsSync(path.join(upstream, 'baselines.txt'))) {
     process.exit(2);
 }
 
-// Options stator-ts or the module resolver may read. Harness-only directives such as
+// Options stator-transpiler or the module resolver may read. Harness-only directives such as
 // `traceResolution` change nothing about diagnostics here, so they are left out.
 const optionNames = new Map([
     'allowArbitraryExtensions', 'allowImportingTsExtensions', 'allowJs', 'allowSyntheticDefaultImports', 'allowUmdGlobalAccess',
@@ -261,7 +261,7 @@ function check(project_, cwd) {
     return new Promise(done => {
         const child = spawn(binary, ['check', '--all-diagnostics', '-p', project_, '-j', '1'], {
             cwd,
-            env: { ...process.env, STATOR_TS_LIB: libDir },
+            env: { ...process.env, STATOR_TRANSPILER_LIB: libDir },
             stdio: ['ignore', 'pipe', 'pipe'],
         });
         let output = '';
@@ -288,7 +288,7 @@ async function runTest(test, base) {
         const { code, signal, output } = await check(setup.project, setup.cwd);
         const ms = Date.now() - started;
         if (signal === 'SIGKILL') return { id: test.id, group: test.group, status: 'timeout', ms };
-        // 0 and 1 are the two normal outcomes; anything else means stator-ts itself failed.
+        // 0 and 1 are the two normal outcomes; anything else means stator-transpiler itself failed.
         if (signal || code > 2) {
             return { id: test.id, group: test.group, status: 'crash', ms, detail: output.split('\n').find(l => /^thread \d+ panic|^panic|Segmentation fault/.test(l)) ?? `exit ${code ?? signal}` };
         }
@@ -346,7 +346,7 @@ function report(results, skipped, seconds) {
 
 async function main() {
     const { tests, skipped } = collectTests();
-    const base = mkdtempSync(path.join(tmpdir(), 'stator-ts-ts7-'));
+    const base = mkdtempSync(path.join(tmpdir(), 'stator-transpiler-ts7-'));
     const results = new Array(tests.length);
     const started = Date.now();
     let next = 0;

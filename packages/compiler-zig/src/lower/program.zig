@@ -1,7 +1,7 @@
 //! The whole program into one HIR module: per file, imports then hoists then specializations then
 //! statements, dependencies before their importers.
 const std = @import("std");
-const stator_ts = @import("stator_ts");
+const stator_transpiler = @import("stator_transpiler");
 const c = @import("ctx.zig");
 const Lower = c.Lower;
 const Node = c.Node;
@@ -215,7 +215,7 @@ fn lowerFiles(l: *Lower, files: []const *File, bindings: *Scope, statements: *St
 
 pub const Input = struct {
     g: *c.Gate,
-    session: stator_ts.Session,
+    session: stator_transpiler.Session,
     /// Dependencies first; the entry is last.
     files: []const *File,
     /// Fully qualified names of the checker-proved inconsistent bindings.

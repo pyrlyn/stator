@@ -3,9 +3,9 @@
 //! cycle of value imports (STA3001).
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const stator_ts = @import("stator_ts");
-const ast = stator_ts.ast;
-const project = stator_ts.project;
+const stator_transpiler = @import("stator_transpiler");
+const ast = stator_transpiler.ast;
+const project = stator_transpiler.project;
 const support = @import("../support/root.zig");
 const Diagnostic = support.diagnostics.Diagnostic;
 const Mode = support.diagnostics.Mode;
@@ -85,7 +85,7 @@ const Edges = struct {
         for (e.sf.file.module_specs, e.sf.resolved) |spec, target| {
             if (!std.mem.eql(u8, spec.data.string_lit, name)) continue;
             const file = target orelse return;
-            // stator-ts parses JSON as a declaration of its value; to the graph it is a module.
+            // stator-transpiler parses JSON as a declaration of its value; to the graph it is a module.
             const declaration = file.file.is_dts and !std.mem.endsWith(u8, file.file.path, ".json");
             if (!declaration) e.list.append(e.a, .{ .target = file, .at = at }) catch oom();
             return;

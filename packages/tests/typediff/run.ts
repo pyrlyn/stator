@@ -1,4 +1,4 @@
-// Compares stator-ts's type of every expression with the `typescript` checker's, over the ts-mode
+// Compares stator-transpiler's type of every expression with the `typescript` checker's, over the ts-mode
 // subset and golden fixtures, and at each of them every other question the Zig compiler asks a
 // `Session`. The compiler lowers from those answers, so a difference here is a wrong native value
 // later. Counts ratchet against baseline.json; --update records them.
@@ -23,7 +23,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '../../..');
 const baselinePath = join(here, 'baseline.json');
 const reportPath = join(repo, '.cache/typediff/report.json');
-const binary = process.env['STATOR_TS'] ?? resolve(repo, '../stator-ts/zig-out/bin/stator-ts');
+const binary =
+  process.env['STATOR_TRANSPILER'] ??
+  resolve(repo, 'packages/transpiler/zig-out/bin/stator-transpiler');
 const libDir = join(repo, 'packages/compiler/node_modules/typescript/lib');
 const globals = join(repo, 'packages/compiler/src/frontend/lib/stator.globals.d.ts');
 const jobs = 8;
@@ -106,7 +108,7 @@ function identifierOf(n: ts.Node): ts.Node {
   return inner === undefined ? n : identifierOf(inner);
 }
 
-/** stator-ts counts UTF-8 bytes and TypeScript UTF-16 units. */
+/** stator-transpiler counts UTF-8 bytes and TypeScript UTF-16 units. */
 function byteOffsets(text: string): Map<number, number> {
   const out = new Map<number, number>();
   let bytes = 0;
@@ -135,7 +137,7 @@ interface Difference {
   at: string;
 }
 
-/** The `Session` answers after the type, in the order `stator-ts api` prints them. */
+/** The `Session` answers after the type, in the order `stator-transpiler api` prints them. */
 const apiColumns = [
   'typeFlags',
   'objectFlags',
@@ -170,7 +172,7 @@ const objectFlagsCompared =
 const symbolFlagsCompared =
   0xfffff | ts.SymbolFlags.Alias | ts.SymbolFlags.Optional | ts.SymbolFlags.Assignment;
 
-/** `__@iterator@12` and `__#12@#x` carry a unique id, and the key is all stator-ts keeps. */
+/** `__@iterator@12` and `__#12@#x` carry a unique id, and the key is all stator-transpiler keeps. */
 const withoutIds = (name: string): string =>
   name.replace(/__#\d+@/g, '').replace(/(__@[A-Za-z]+)@\d+/g, '$1');
 const symbolName = (s: ts.Symbol): string =>
@@ -279,8 +281,8 @@ function compare(
       gaps.push(`unmatched ${kind ?? ''} ${at}`);
       continue;
     }
-    // `let e` has a declaration and its name on one span, and stator-ts means the name. A heritage
-    // entry and its expression share one too, and stator-ts means the expression.
+    // `let e` has a declaration and its name on one span, and stator-transpiler means the name. A heritage
+    // entry and its expression share one too, and stator-transpiler means the expression.
     const inner = ts.isExpressionWithTypeArguments(outer) ? outer.expression : outer;
     const node = kind === 'identifier' ? identifierOf(inner) : inner;
     const theirType = checker.getTypeAtLocation(node);
@@ -340,7 +342,7 @@ async function dumpOf(path: string, work: string, index: number): Promise<string
 
 async function main(): Promise<number> {
   if (!existsSync(binary)) {
-    console.error(`typediff: no stator-ts at ${binary}; set STATOR_TS`);
+    console.error(`typediff: no stator-transpiler at ${binary}; set STATOR_TRANSPILER`);
     return 1;
   }
   const paths = fixtures();

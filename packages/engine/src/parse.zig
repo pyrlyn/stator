@@ -1,12 +1,12 @@
 //! The interpreter's parser front (docs/INTERPRETER.md §1): `eval` source and the pieces of a
-//! `new Function` go through stator-ts's parser into the tree the compiler reads, or stop at the
+//! `new Function` go through stator-transpiler's parser into the tree the compiler reads, or stop at the
 //! first early error, which the caller throws as a `SyntaxError`.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const parser = @import("parser");
 
-/// stator-ts's tree, named through the parser's signature: its `ast.zig` belongs to the parser
+/// stator-transpiler's tree, named through the parser's signature: its `ast.zig` belongs to the parser
 /// module and is not exported from it.
 pub const File = std.meta.Child(@typeInfo(@TypeOf(parser.parse)).@"fn".return_type.?);
 pub const Node = std.meta.Child(@FieldType(File, "root"));

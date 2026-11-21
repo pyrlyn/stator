@@ -8,6 +8,6 @@ agent: Claude Code / claude-opus-5-5
 
 # T50. Data-race audit of parallel checking
 
-The former stator-ts `todo.md` item 5: prove that the shared AST and symbols are read-only during checking.
+The former Stator Transpiler `todo.md` item 5: prove that the shared AST and symbols are read-only during checking.
 
 Done means ThreadSanitizer runs with a positive control.

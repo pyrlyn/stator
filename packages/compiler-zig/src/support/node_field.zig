@@ -1,6 +1,6 @@
 //! The field several AST node kinds share under one meaning (a declaration's initializer, the
 //! object a member access reads), read from a table of kinds so each use is not its own switch.
-const ast = @import("stator_ts").ast;
+const ast = @import("stator_transpiler").ast;
 
 fn Field(comptime T: type) type {
     return if (@typeInfo(T) == .optional) T else ?T;

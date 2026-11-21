@@ -21,7 +21,7 @@ either landed or been promoted to a task card:
 
 Every task lives in `plan/<id>/`; a closed one carries `done.md`.
 
-## stator-ts (`packages/transpiler`)
+## Stator Transpiler (`packages/transpiler`)
 
 Approved, not yet in `plan/`.
 

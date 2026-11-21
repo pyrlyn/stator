@@ -12,7 +12,7 @@ The creator's direction (2026-11-08): the engine compiles JS and TS to Zig sourc
 can be read, changed and built as a Zig project, and Zig's own cross-compilation and safety
 modes apply to it.
 
-The front half is shared: stator-ts erases types, the bytecode compiler makes templates (or the
+The front half is shared: Stator Transpiler erases types, the bytecode compiler makes templates (or the
 compiler's typed HIR, for `ts`-mode input). This card adds a backend that prints a `.zig` file per
 module, calling the runtime through its C ABI (`jsrt_value.h`, `jsrt.h`, as `zig translate-c`
 already exposes them to the engine), and a `build.zig` that links `libjsrt.a`.

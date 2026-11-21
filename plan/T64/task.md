@@ -8,7 +8,7 @@ agent: Claude Code / claude-opus-5-5
 
 # T64. Pass every TypeScript 7 test
 
-The creator asked for stator-ts to pass all of TypeScript 7's compiler and conformance tests run by `tests/ts7/run.mjs`. At the start 8233 of 13737 pass, 5503 fail and one crashes. The task stays open until every test passes; each iteration lands as its own PR that raises `tests/ts7/passing.txt`.
+The creator asked for Stator Transpiler to pass all of TypeScript 7's compiler and conformance tests run by `tests/ts7/run.mjs`. At the start 8233 of 13737 pass, 5503 fail and one crashes. The task stays open until every test passes; each iteration lands as its own PR that raises `tests/ts7/passing.txt`.
 
 Order: the crash first, then extra diagnostics (errors tsc does not report break the rule that a checker error is a real error), then missed diagnostics, taking the causes that fix the most tests.
 

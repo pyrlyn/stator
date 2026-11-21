@@ -178,7 +178,7 @@ fn lowerDestructuringAssignment(l: *Lower, pattern: *Node, rhs_node: *Node, span
 
 pub fn isUnresolvableIdentifier(l: *Lower, node: *Node, b: *Scope) bool {
     if (b.has(node.data.identifier)) return false;
-    // TypeScript's checker has its own symbols for these two; stator-ts answers them by name.
+    // TypeScript's checker has its own symbols for these two; stator-transpiler answers them by name.
     const symbol = l.g.symbolAt(node) orelse return !c.eql(node.data.identifier, "undefined") and !c.eql(node.data.identifier, "globalThis");
     if (symbol.flags & c.F.assignment == 0 or symbol.decls.len == 0) return false;
     for (symbol.decls) |d| if (d.data != .identifier) return false;

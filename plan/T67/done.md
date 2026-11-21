@@ -11,12 +11,12 @@ bytecode, and a CLI, `stator-engine`.
   compile on first call and cache on the template. Handlers, generators and async bodies stay
   interpreted. Design: `docs/ENGINE.md` §3.
 - **CLI**: `stator-engine run [--mode=interp|jit] [--lang=js|ts|wasm] <file>`; TypeScript is erased
-  by stator-ts (`packages/transpiler/src/erase.zig`); `wasm` and the `build` targets name
+  by Stator Transpiler (`packages/transpiler/src/erase.zig`); `wasm` and the `build` targets name
   plan/T67.3, T67.2 and T67.4.
 - **Tests**: every interpreter unit test runs in both modes; JIT analysis tests compile real
   source; `packages/tests/engine/` holds a script corpus checked against the pinned Node in both
   modes plus the CLI contract, and the V8 benchmark.
-- **Found and fixed**: stator-ts misread `a < 1, b >= 1` as type arguments (regression line in its
+- **Found and fixed**: Stator Transpiler misread `a < 1, b >= 1` as type arguments (regression line in its
   parser test); `analyze.zig` leaked on rejected templates; the engine lacked `console` and
   `String.fromCharCode` (plan-notes 412).
 

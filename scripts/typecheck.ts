@@ -1,12 +1,12 @@
-// `pnpm run typecheck` (plan/T65): type-checks the TypeScript projects with stator-ts
+// `pnpm run typecheck` (plan/T65): type-checks the TypeScript projects with stator-transpiler
 // (`packages/transpiler`) instead of `tsc`.
 //
-// It builds stator-ts first, because the gate must check with the checker in this tree: a binary
+// It builds stator-transpiler first, because the gate must check with the checker in this tree: a binary
 // from another commit could pass code this one rejects. `zig build` caches, so an unchanged
-// checker costs a cache lookup. `STATOR_TS` names a prebuilt binary instead, as for `test:typediff`.
+// checker costs a cache lookup. `STATOR_TRANSPILER` names a prebuilt binary instead, as for `test:typediff`.
 //
 // usage: node scripts/typecheck.ts [project-dir...]   (default: the five projects below)
-// stator-ts reads lib.*.d.ts from the installed `typescript` package, so it matches the tsc pin.
+// stator-transpiler reads lib.*.d.ts from the installed `typescript` package, so it matches the tsc pin.
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,7 @@ const projects = [
 ];
 const transpiler = join(root, 'packages', 'transpiler');
 
-function buildStatorTs(): string {
+function buildStatorTranspiler(): string {
   const exe = process.platform === 'win32' ? '.exe' : '';
   // An absolute path, so the binary run is the one this lookup found, not whatever spawn resolves.
   const zig = onPath(`zig${exe}`);
@@ -39,19 +39,19 @@ function buildStatorTs(): string {
       built.error === undefined ? `exit ${String(built.status)}` : built.error.message,
     );
   }
-  return join(transpiler, 'zig-out', 'bin', `stator-ts${exe}`);
+  return join(transpiler, 'zig-out', 'bin', `stator-transpiler${exe}`);
 }
 
 function buildFailed(why: string): never {
-  console.error(`typecheck: building stator-ts failed (${why})`);
+  console.error(`typecheck: building stator-transpiler failed (${why})`);
   console.error(
-    'typecheck: fix: `mise install` provides Zig, or set STATOR_TS to a built stator-ts',
+    'typecheck: fix: `mise install` provides Zig, or set STATOR_TRANSPILER to a built stator-transpiler',
   );
   process.exit(1);
 }
 
-const preset = process.env['STATOR_TS'];
-const binary = preset !== undefined && preset !== '' ? preset : buildStatorTs();
+const preset = process.env['STATOR_TRANSPILER'];
+const binary = preset !== undefined && preset !== '' ? preset : buildStatorTranspiler();
 const wanted = process.argv.slice(2);
 
 let failed = 0;
@@ -64,7 +64,7 @@ for (const project of wanted.length > 0 ? wanted : projects) {
   if (run.error !== undefined || (run.status !== 0 && run.status !== 2)) {
     const why =
       run.error === undefined ? `exit ${String(run.status ?? run.signal)}` : run.error.message;
-    console.error(`typecheck: stator-ts gave no verdict on ${project} (${why})`);
+    console.error(`typecheck: stator-transpiler gave no verdict on ${project} (${why})`);
     failed += 1;
   } else if (run.status === 2) {
     console.error(`typecheck: ${project} has type errors`);

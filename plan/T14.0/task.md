@@ -48,7 +48,7 @@ choices; T14.1–T14.4 are edited to match; `docs/README.md` lists the new doc.
 ## Execution plan
 
 1. Spike: a minimal evaluator (tree walker and bytecode VM over one parser) compiled by Stator and
-   called from a `js`-mode program; parse a 640 KB source with it and with stator-ts's parser.
+   called from a `js`-mode program; parse a 640 KB source with it and with Stator Transpiler's parser.
 2. Measure parser options (a)–(d): build or `explain` each, record size and parse speed.
 3. Put the creator's choices (parser, evaluator language) to the creator.
 4. Write `docs/INTERPRETER.md` §0–§9, plan-notes 396, rewrite §11f and plan/T14.1–T14.4, list the

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Compares stator-ts diagnostics with the real tsc, by (file, line, code). The column only feeds
+# Compares stator-transpiler diagnostics with the real tsc, by (file, line, code). The column only feeds
 # the stricter "exact" count: tsc anchors some errors differently without the error being wrong.
 #
 # usage: tests/differential.sh [-v] [project-dir...]
 #   no directories: every fixture in tests/fixtures
 #   -v:             list each false positive and miss
 #   TSC:            tsc to compare with (default: tests/node_modules/.bin/tsc)
-#   STATOR_TS:      binary to test (default: build zig-out/bin/stator-ts)
+#   STATOR_TRANSPILER:      binary to test (default: build zig-out/bin/stator-transpiler)
 # Exit status: 1 when any project has a false positive, because that breaks the checker's rule
 # that an error must be a real error. Misses only count.
 set -u
@@ -23,15 +23,15 @@ if [ ! -x "$tsc" ]; then
 	echo "error: no tsc at $tsc: run 'npm ci --ignore-scripts' in tests/, or set TSC" >&2
 	exit 1
 fi
-if [ -z "${STATOR_TS:-}" ]; then
+if [ -z "${STATOR_TRANSPILER:-}" ]; then
 	(cd "$here/.." && zig build) || exit 1
-	STATOR_TS=$here/../zig-out/bin/stator-ts
+	STATOR_TRANSPILER=$here/../zig-out/bin/stator-transpiler
 fi
 # Both compilers must read the same lib.*.d.ts, or lib differences show up as checker differences.
-# The default tsc needs no help: stator-ts finds it as it would in a user's project, which keeps
+# The default tsc needs no help: stator-transpiler finds it as it would in a user's project, which keeps
 # that lookup under test.
-if [ -n "${TSC:-}" ] && [ -z "${STATOR_TS_LIB:-}" ]; then
-	STATOR_TS_LIB=$(node -e '
+if [ -n "${TSC:-}" ] && [ -z "${STATOR_TRANSPILER_LIB:-}" ]; then
+	STATOR_TRANSPILER_LIB=$(node -e '
 		const fs = require("fs"), path = require("path");
 		const pkg = path.dirname(path.dirname(fs.realpathSync(process.argv[1])));
 		const js = path.join(pkg, "lib");
@@ -43,7 +43,7 @@ if [ -n "${TSC:-}" ] && [ -z "${STATOR_TS_LIB:-}" ]; then
 			console.log(path.join(path.dirname(load.resolve(native)), "lib"));
 		}
 	' "$tsc") || exit 1
-	export STATOR_TS_LIB
+	export STATOR_TRANSPILER_LIB
 fi
 
 if [ $# -eq 0 ]; then
@@ -61,11 +61,11 @@ printf '%-30s %6s %6s %6s %6s %6s\n' project tsc ours match fp miss
 total_tsc=0 total_ours=0 total_match=0 total_fp=0 total_miss=0 total_exact=0 total_crash=0
 for dir in "$@"; do
 	name=$(basename "$dir")
-	(cd "$dir" && "$STATOR_TS" check >"$work/ours.out" 2>&1)
+	(cd "$dir" && "$STATOR_TRANSPILER" check >"$work/ours.out" 2>&1)
 	# 0 and 2 are the verdicts; anything else means no verdict, not "no errors".
 	status=$?
 	if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
-		echo "$name: stator-ts exited with status $status" >&2
+		echo "$name: stator-transpiler exited with status $status" >&2
 		total_crash=$((total_crash + 1))
 	fi
 	keys <"$work/ours.out" >"$work/ours.col"

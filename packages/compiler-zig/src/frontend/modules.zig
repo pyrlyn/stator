@@ -2,7 +2,7 @@
 //! one early error the frontend owes the program itself.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const ast = @import("stator_ts").ast;
+const ast = @import("stator_transpiler").ast;
 
 fn oom() noreturn {
     @panic("out of memory");

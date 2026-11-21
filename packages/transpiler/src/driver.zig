@@ -148,7 +148,7 @@ fn load(a: Allocator, fs: *project.FsCache, o: Options, roots: []const []const u
 /// Null, with nothing written, when a body left for later turned out to have a syntax error.
 fn report(a: Allocator, io: Io, o: Options, p: *Program, w: *Io.Writer) !?u8 {
     if (p.lib_dir == null and !(o.cfg.options.noLib orelse false)) {
-        try w.writeAll("error: cannot find lib.d.ts; pass --lib-dir, set STATOR_TS_LIB, or install typescript in the project\n");
+        try w.writeAll("error: cannot find lib.d.ts; pass --lib-dir, set STATOR_TRANSPILER_LIB, or install typescript in the project\n");
         return 1;
     }
 

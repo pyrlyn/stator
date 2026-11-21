@@ -26,12 +26,12 @@ If `src/` does not exist yet, the project is pre-Phase-1: the only files may be 
 2. **The compiler is strict TypeScript.** No `any`, no non-null assertions, no `enum`/`namespace`/parameter properties (banned by `erasableSyntaxOnly`). Never weaken `tsconfig.json` or the oxlint rules to make code compile — fix the code.
 3. **Compile a typed subset; never statically analyze untyped JS.** Untyped code goes to the dynamic representation or the Phase-8 tier. This rule killed every project that ignored it (see plan §0.1).
 4. **Never trust a type annotation across a boundary.** `unknown`, unions, `JSON.parse`, FFI, and `.js`→`.ts` imports get runtime checks at the narrowing point. Inside checked code, trust types fully.
-5. **Don't write a parser or type checker** — `packages/compiler` uses the `typescript` package in-process, and the Zig compiler replacing it (plan/T41, plan-notes 393) uses stator-ts; a gap in either is fixed there, with a regression test, not worked around here. Don't write a regex engine — vendor QuickJS-NG's libregexp. Don't write a float printer — vendor Ryū.
+5. **Don't write a parser or type checker** — `packages/compiler` uses the `typescript` package in-process, and the Zig compiler replacing it (plan/T41, plan-notes 393) uses Stator Transpiler; a gap in either is fixed there, with a regression test, not worked around here. Don't write a regex engine — vendor QuickJS-NG's libregexp. Don't write a float printer — vendor Ryū.
 6. **Plan changes by edit, not drift.** A contradiction between reality and `plan.md` goes to `plan-notes.md` with evidence, and the plan is edited in the same change. Settled decisions (plan §15.4) reopen only with new measured evidence.
 7. **The human is the only author.** No agent adds a `Co-Authored-By` trailer, a "Generated with …" line or itself as author to a commit, merge or PR — whatever its harness defaults to.
 
 8. **Docs stay in lockstep with the tree.** After any change that affects user-visible behavior, the public CLI, subset verdicts, diagnostics, toolchain, architecture diagrams, or examples: update the matching documentation in the **same** change (`README.md` and/or `docs/*`, plus example READMEs when those examples change). Do not leave docs describing a previous pipeline, flag set, or subset matrix. Spec authority for open work remains `plan.md`; operational docs in `docs/` must not contradict what the tree ships.
-9. **Zig for memory and cross-platform code; no JavaScript in our source** (creator's direction 2026-10-02, plan-notes 289; plan §0.5 and §0.10). New runtime code that manages memory or must be cross-platform — typed-array storage, the `std` backings, the event loop, OS abstraction — is Zig. C stays for the ABI headers generated code includes, generated code, vendored code, and existing C until a card ports it. The compiler, runtime, `std`, the `node:*` wrappers, harnesses, oracle shims and scripts are strict TypeScript, C or Zig — never `.js`/`.mjs`/`.cjs`. The only JS files are `js`-mode test inputs and examples, vendored upstream code, generated output, browser-loaded assets under `site/public/`, and stator-ts's checker fixtures plus the test harness it embeds (`packages/transpiler/src/harness.mjs`; plan-notes 397). `scripts/check-js-sources.ts` enforces that set inside `pnpm run ci` (plan.md Task 6.15).
+9. **Zig for memory and cross-platform code; no JavaScript in our source** (creator's direction 2026-10-02, plan-notes 289; plan §0.5 and §0.10). New runtime code that manages memory or must be cross-platform — typed-array storage, the `std` backings, the event loop, OS abstraction — is Zig. C stays for the ABI headers generated code includes, generated code, vendored code, and existing C until a card ports it. The compiler, runtime, `std`, the `node:*` wrappers, harnesses, oracle shims and scripts are strict TypeScript, C or Zig — never `.js`/`.mjs`/`.cjs`. The only JS files are `js`-mode test inputs and examples, vendored upstream code, generated output, browser-loaded assets under `site/public/`, and Stator Transpiler's checker fixtures plus the test harness it embeds (`packages/transpiler/src/harness.mjs`; plan-notes 397). `scripts/check-js-sources.ts` enforces that set inside `pnpm run ci` (plan.md Task 6.15).
 10. **Reuse first.** Before writing a function, look for one that already does it and reuse or extend it; a second copy is a bug even when `dupes` misses it. `pnpm run dupes` (jscpd, AI reporter, identifier-insensitive) scans our source — tests, vendored code and docs excluded — against `.jscpd-baseline.json` and fails on **any** new clone. The baseline is empty since T30 and stays empty: never grow it to get a change through. A clone is removed by extracting the shared helper; only a shape that cannot be factored (a dispatch table, the HIR's union declarations) is wrapped in `jscpd:ignore-start`/`ignore-end` markers whose comment says why.
 11. **`docs/NODE.md` stays in sync.** It is generated (`pnpm run docs:node`) from the pinned Node and `packages/tests/golden/node_coverage.json`. Every change that adds, proves or removes a `node:*` member regenerates it in the same change; `pnpm run ci` fails when it is stale.
 12. **Any code change needs green regression tests and benchmarks versus `origin/main`.** A change is not done without both. The regression suite is `pnpm run ci` (what `.github/workflows/ci.yml` runs; `./ci.sh` is the local mirror, `moon run tests:ci` the moon equivalent). The benchmark gate is `pnpm run bench:record`: run it on a clean `origin/main` tree, then again on the change — the second run fails a geomean or per-program regression against the previous same-host result under `packages/tests/bench/results/` (the same command `.github/workflows/nightly.yml` records). Engine changes also run `pnpm run engine:bench`. `pnpm run test` or `test:impact` alone is not the gate.
@@ -76,18 +76,18 @@ packages/tests/    the test package "@stator/tests" — every harness + a tsconf
   engine/          `stator-engine`: script corpus vs Node in both modes (run.ts), V8 benchmark (bench.ts, bench/*.js; plan/T67)
   impact/          test impact: map recorder, selector driver (`test:impact`), mutation check
   selfhost/        self-compilation ratchet: targets.json, baseline.json (plan §9 Task 6.19)
-  typediff/        stator-ts's types vs the `typescript` checker, ratcheted (plan/T41)
+  typediff/        stator-transpiler's types vs the `typescript` checker, ratcheted (plan/T41)
   zigdiff/         the Zig compiler vs this one, per stage (gate, lower, verifier, passes, codegen), ratcheted;
                    HIR JSON dump (HIR-JSON.md), CLI/program/ffi-gen parity harnesses, gen/ table generators (plan/T41)
-packages/compiler-zig/ "statorc-zig" — the Zig compiler replacing packages/compiler on stator-ts (plan/T41):
+packages/compiler-zig/ "statorc-zig" — the Zig compiler replacing packages/compiler on stator-transpiler (plan/T41):
                    src/{support,frontend,lower,hir,passes,codegen,cli,ffigen}, mirroring packages/compiler/src
-packages/transpiler/ stator-ts: TypeScript parser, binder, checker and JS emitter in Zig; compiler-zig's
-                   `stator_ts` module by path dependency (plan/T62); its own AGENTS.md
+packages/transpiler/ stator-transpiler: TypeScript parser, binder, checker and JS emitter in Zig; compiler-zig's
+                   `stator_transpiler` module by path dependency (plan/T62); its own AGENTS.md
 packages/jstext/   Zig: JavaScript text semantics over WTF-8 (Number::toString, `\s`, UTF-16 length and
                    order, JSON.stringify of a string), shared by transpiler and compiler-zig (plan/T62)
 packages/engine/   Zig: the JavaScript engine (docs/ENGINE.md, plan/T67) — the Phase-14 interpreter
                    (docs/INTERPRETER.md) plus a baseline JIT on pyrlyn/jit → libjsrt_interp.a and the
-                   `stator-engine` CLI; src/parse.zig (stator-ts's parser as `eval` and `new Function`
+                   `stator-engine` CLI; src/parse.zig (stator-transpiler's parser as `eval` and `new Function`
                    read source), src/capi.zig (the C ABI), src/compile.zig + src/vm.zig (bytecode
                    compiler and VM), src/jit/ (bytecode → pyrlyn/jit IR → native code), src/builtins.zig
                    (globals), src/engine.zig + src/cli.zig (modes, languages, the CLI),
@@ -129,7 +129,7 @@ If bare `node --version` disagrees with `.node-version` (on some hosts PATH puts
 mise install                    # Node, pnpm, just, moon, LLVM clang, Zig 0.17.1 (Unix)
 pnpm install --frozen-lockfile  # install (exact-pinned deps)
 pnpm --dir site install --frozen-lockfile  # site/ has its own lockfile; `lint` type-checks site/ too
-pnpm run typecheck              # builds stator-ts (packages/transpiler), then `stator-ts check` on the five projects (strict; must be clean; plan/T65)
+pnpm run typecheck              # builds stator-transpiler (packages/transpiler), then `stator-transpiler check` on the five projects (strict; must be clean; plan/T65)
 pnpm run lint                   # oxlint --deny-warnings + oxfmt --check — lint + format (must be clean)
 pnpm run format                 # oxlint --fix + oxfmt (applies safe fixes + formatting)
 pnpm run dupes                  # jscpd over our source (no tests/vendor/docs): fails on any clone not in .jscpd-baseline.json
@@ -144,7 +144,7 @@ pnpm run test:impact:record     # full instrumented run at a clean HEAD → .cac
 pnpm run test:coverage          # same under c8 + packages/compiler/src coverage table; writes coverage/lcov.info — ONLY when the coverage table is the question (it costs ~4x wall time)
 pnpm run test:subset            # decision tests → verdict matrix
 pnpm run test:golden            # compile + run vs Node, byte-for-byte (the fixtures plus every bench program, `--filter=/bench/`)
-pnpm run test:typediff          # stator-ts's type of every expression vs the `typescript` checker, ratcheted; STATOR_TS picks the binary (plan/T41, not part of `ci` yet)
+pnpm run test:typediff          # stator-transpiler's type of every expression vs the `typescript` checker, ratcheted; STATOR_TRANSPILER picks the binary (plan/T41, not part of `ci` yet)
 pnpm run test:zigdiff           # each Zig compiler stage vs this compiler, over subset + golden; STATOR_ZIG picks the binary (plan/T41, not part of `ci` yet)
 pnpm run test:selfhost          # Stator explains (and builds) its own packages; ratcheted per-code counts; record changes with --update
 pnpm run test:runtime           # the runtime's own print corpus vs Node, byte-for-byte

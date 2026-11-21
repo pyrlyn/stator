@@ -1,6 +1,6 @@
 //! JavaScript's reading of text held as WTF-8: UTF-8, plus the three-byte form of a lone surrogate,
 //! which a JavaScript string may hold and UTF-8 cannot spell. `Number::toString`, `\s`, `.length`,
-//! string order and `JSON.stringify` of a string, as ECMA-262 defines them. Shared by stator-ts
+//! string order and `JSON.stringify` of a string, as ECMA-262 defines them. Shared by stator-transpiler
 //! (`packages/transpiler`) and the Zig compiler (`packages/compiler-zig`), whose output is compared
 //! byte for byte with programs that get these from the language they run on.
 

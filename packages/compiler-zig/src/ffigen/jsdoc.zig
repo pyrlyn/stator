@@ -1,5 +1,5 @@
 //! What `ts.getJSDocTags` tells `ffi-gen`: which comment attaches to a declaration and what follows
-//! `@statorExtern` in it. stator-ts parses no JSDoc, so this walks the text the way the pinned
+//! `@statorExtern` in it. stator-transpiler parses no JSDoc, so this walks the text the way the pinned
 //! `typescript` scanner does. Every tag reads as an unknown tag: a word is all `readHandwritten`
 //! keeps, and the margin arithmetic of tag comments moves only whitespace.
 const std = @import("std");
@@ -68,7 +68,7 @@ const Walker = struct {
         return at;
     }
 
-    /// There are no Unicode identifier tables here or in stator-ts, so anything past ASCII is a
+    /// There are no Unicode identifier tables here or in stator-transpiler, so anything past ASCII is a
     /// letter, except what lossy decoding left: that is where bytes that are no text show up.
     fn wordEnd(w: *const Walker, from: usize) usize {
         const s = w.s;

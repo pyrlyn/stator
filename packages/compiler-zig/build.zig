@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const stator_ts = b.dependency("stator_ts", .{ .target = target, .optimize = optimize }).module("stator_ts");
+    const stator_transpiler = b.dependency("stator_transpiler", .{ .target = target, .optimize = optimize }).module("stator_transpiler");
     const jstext = b.dependency("jstext", .{ .target = target, .optimize = optimize }).module("jstext");
 
     const core = b.addModule("stator_core", .{
@@ -15,7 +15,7 @@ pub fn build(b: *std.Build) void {
         // input measured.
         .link_libc = true,
         .imports = &.{
-            .{ .name = "stator_ts", .module = stator_ts },
+            .{ .name = "stator_transpiler", .module = stator_transpiler },
             .{ .name = "jstext", .module = jstext },
         },
     });
@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "stator_core", .module = core },
-                .{ .name = "stator_ts", .module = stator_ts },
+                .{ .name = "stator_transpiler", .module = stator_transpiler },
             },
         }),
     });

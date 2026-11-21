@@ -6,11 +6,11 @@ readiness: 70%
 agent: Claude Code / claude-opus-5-5
 ---
 
-# T41. Rewrite the compiler in Zig on top of stator-ts
+# T41. Rewrite the compiler in Zig on top of Stator Transpiler
 
 Creator's direction, plan-notes 393: the compiler moves to Zig, with
-[stator-ts](https://github.com/pyrlyn/stator-ts) as its parser and type checker. It supersedes the
-Oxc bridge and the `tsgo --api` client of plan-notes 391 and 392. A gap in stator-ts is fixed there,
+[Stator Transpiler](https://github.com/pyrlyn/stator-ts) as its parser and type checker. It supersedes the
+Oxc bridge and the `tsgo --api` client of plan-notes 391 and 392. A gap in Stator Transpiler is fixed there,
 with a fixture checked against real `tsc`, and its `tests/ts7/passing.txt` ratchet must not drop.
 
 `packages/compiler` stays as the oracle, on `typescript` 6.0.3, until parity. Every stage proves
@@ -18,7 +18,7 @@ itself against it:
 
 | Stage | Zig path | Proof |
 | --- | --- | --- |
-| Types | stator-ts `Session` | `pnpm run test:typediff` |
+| Types | Stator Transpiler `Session` | `pnpm run test:typediff` |
 | Gate, diagnostics | `src/frontend/gate*.zig`, `src/support/` | `explain --json` identical |
 | HIR model | `src/hir/` | every dump round-trips through `src/hir/json.zig` |
 | Verifier, passes | `src/hir/verify.zig`, `src/passes/` | post-pass dump identical |

@@ -5,10 +5,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const fspath = std.fs.path;
-const stator_ts = @import("stator_ts");
-const ast = stator_ts.ast;
-const project = stator_ts.project;
-const pool = stator_ts.pool;
+const stator_transpiler = @import("stator_transpiler");
+const ast = stator_transpiler.ast;
+const project = stator_transpiler.project;
+const pool = stator_transpiler.pool;
 const diff = @import("diff.zig");
 const jsdoc = @import("jsdoc.zig");
 const text = @import("text.zig");
@@ -18,7 +18,7 @@ const oom = text.oom;
 
 const scripts = [_][]const u8{ ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".json" };
 
-/// `createSourceFile` reads an unknown extension as TypeScript, and stator-ts goes by the path.
+/// `createSourceFile` reads an unknown extension as TypeScript, and stator-transpiler goes by the path.
 fn virtualPath(a: Allocator, file_name: []const u8) []const u8 {
     const base = fspath.basename(file_name);
     for (scripts) |extension| {

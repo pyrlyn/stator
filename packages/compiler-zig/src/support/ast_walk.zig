@@ -1,7 +1,7 @@
 //! Walks of a subtree that only look for nodes, so each use states what it looks for and not how
 //! to recurse.
 const std = @import("std");
-const ast = @import("stator_ts").ast;
+const ast = @import("stator_transpiler").ast;
 const Node = ast.Node;
 
 pub const Step = enum { descend, skip, match };

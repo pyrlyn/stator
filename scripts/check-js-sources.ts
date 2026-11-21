@@ -12,7 +12,7 @@ const OWN_VENDOR_SCRIPTS = new Set([
   'packages/runtime/vendor/fdlibm/port.cjs',
 ]);
 
-/** stator-ts files that stay JavaScript (plan-notes 397). `harness.mjs` is `@embedFile`d into the
+/** stator-transpiler files that stay JavaScript (plan-notes 397). `harness.mjs` is `@embedFile`d into the
  * binary and written out at run time as the harness Node or Bun runs the tests in. The other two
  * are its own scripts, exempt only until they are ported to TypeScript (the follow-up 397 names). */
 const TRANSPILER_JS = new Set([
@@ -41,7 +41,7 @@ function isExempt(path: string): boolean {
   if (path.startsWith('packages/tests/golden/')) return true;
   if (path.startsWith('packages/tests/subset/')) return true;
   if (path.startsWith('packages/tests/differential/')) return true;
-  // stator-ts checker fixtures: inputs its differential tests feed to tsc and to stator-ts.
+  // stator-transpiler checker fixtures: inputs its differential tests feed to tsc and to stator-transpiler.
   if (path.startsWith('packages/transpiler/tests/fixtures/')) return true;
   if (path === 'packages/tests/leak/keys.js') return true;
   // stator-engine's JavaScript bench programs, run as-is by Node and by the engine.

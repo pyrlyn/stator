@@ -11,7 +11,7 @@ const parser = @import("parser.zig");
 const Session = @import("session.zig").Session;
 
 const usage =
-    \\usage: stator-ts <command> [options]
+    \\usage: stator-transpiler <command> [options]
     \\
     \\commands:
     \\  check               type-check the project
@@ -179,7 +179,7 @@ pub fn main(init: std.process.Init) !u8 {
             for (cli.rest.items, files) |x, *f| f.* = try fspath.resolve(a, &.{ cwd, x });
             cfg.files = files;
         }
-        const s = Session.open(a, io, tp, cfg, .{ .lib_dir = cli.lib_dir, .lib_env = init.environ_map.get("STATOR_TS_LIB") });
+        const s = Session.open(a, io, tp, cfg, .{ .lib_dir = cli.lib_dir, .lib_env = init.environ_map.get("STATOR_TRANSPILER_LIB") });
         try s.dumpTypes(w, std.mem.eql(u8, cli.command, "api"));
         return 0;
     }
@@ -190,7 +190,7 @@ pub fn main(init: std.process.Init) !u8 {
             .emit = std.mem.eql(u8, cli.command, "build"),
             .all_diagnostics = cli.all_diagnostics,
             .lib_dir = cli.lib_dir,
-            .lib_env = init.environ_map.get("STATOR_TS_LIB"),
+            .lib_env = init.environ_map.get("STATOR_TRANSPILER_LIB"),
         }, w);
     }
     try w.print("error: unknown command '{s}'\n\n{s}", .{ cli.command, usage });

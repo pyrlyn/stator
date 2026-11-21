@@ -7,14 +7,14 @@ through pyrlyn/jit. Until T67 this package was `packages/interpreter`.
 
 | Path | Holds |
 | --- | --- |
-| `src/parse.zig` | The parser front. `eval` source and `new Function`'s pieces go through stator-ts's parser (`packages/transpiler/src/parser.zig`), and the result is either the tree or the first early error. |
+| `src/parse.zig` | The parser front. `eval` source and `new Function`'s pieces go through Stator Transpiler's parser (`packages/transpiler/src/parser.zig`), and the result is either the tree or the first early error. |
 | `src/capi.zig` | The C ABI the runtime calls. Errors are left pending through `jsrt_throw_error`. |
 | `src/bytecode.zig` | The bytecode format: opcodes, inline operands, function templates. |
-| `src/compile.zig` | stator-ts's tree to bytecode, with scope analysis. A construct it does not take yet is reported as unsupported, and nothing runs. |
+| `src/compile.zig` | Stator Transpiler's tree to bytecode, with scope analysis. A construct it does not take yet is reported as unsupported, and nothing runs. |
 | `src/vm.zig` | The machine. Values are the runtime's `jsrt_value`, and every operation is a runtime helper. A generator or async function suspends by copying its window into a heap environment and resumes through the runtime's generator and promise machinery. |
 | `src/builtins.zig` | The global object an interpreted script runs against, plus the generator and async-generator prototypes. |
 | `src/interp.zig` | `runScript` and `evalScript`: parse, compile and run a script against the global object. |
-| `src/engine.zig` | `run`: a `.js` or `.ts` source (TypeScript erased by stator-ts's `erase.zig`) in `interp` or `jit` mode (`docs/ENGINE.md`). |
+| `src/engine.zig` | `run`: a `.js` or `.ts` source (TypeScript erased by Stator Transpiler's `erase.zig`) in `interp` or `jit` mode (`docs/ENGINE.md`). |
 | `src/cli.zig` | `stator-engine run [--mode=interp\|jit] [--lang=js\|ts\|wasm] <file>` (`docs/ENGINE.md` §5). |
 | `src/jit/` | The baseline JIT: `analyze.zig` (which templates, stack depths), `lower.zig` (bytecode → pyrlyn/jit IR), `layout.zig` (block order for backend liveness), `helpers.zig` (the VM operations native code calls), `jit.zig` (compile on first call), `timing.zig` (opt-in compilation stage timing). |
 | `src/rt.zig` | The runtime's C ABI, translated from `packages/runtime/src/jsrt_c.h`. |

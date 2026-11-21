@@ -1,5 +1,5 @@
 .{
-    .name = .stator_ts,
+    .name = .stator_transpiler,
     .version = "0.1.0",
     .dependencies = .{
         .jstext = .{ .path = "../jstext" },
@@ -8,7 +8,7 @@
             .hash = "coroutines-0.1.0-heaAMI63AACqHDq26S62doxTYdm31hiA4EzM2dnnRsTu",
         },
     },
-    .fingerprint = 0x85a4012004d99f92,
+    .fingerprint = 0xc41dc3d0cb55b7c7,
     .minimum_zig_version = "0.17.0",
     .paths = .{ "build.zig", "build.zig.zon", "src" },
 }

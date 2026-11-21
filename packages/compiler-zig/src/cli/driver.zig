@@ -6,8 +6,8 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const fspath = std.fs.path;
 const Environ = std.process.Environ;
-const stator_ts = @import("stator_ts");
-const pool = stator_ts.pool;
+const stator_transpiler = @import("stator_transpiler");
+const pool = stator_transpiler.pool;
 
 const args = @import("args.zig");
 const compile_jobs = @import("compile_jobs.zig");
@@ -169,7 +169,7 @@ fn loadFrontend(x: *const Context, load: Load) Error!Frontend {
     if (!load.node) return .{ .loaded = base, .request = request, .paths = paths };
     const entry_file = base.entry_file orelse return .{ .loaded = base, .request = request, .paths = paths };
     var questions = program.questions(x.a, base.session, request);
-    const rewrites = x.a.create(stator_ts.project.Overlay) catch oom();
+    const rewrites = x.a.create(stator_transpiler.project.Overlay) catch oom();
     rewrites.* = location.locationRewrites(x.a, base.session.prog, &questions, entry_file, paths.std_package, paths.node_package);
     if (rewrites.count() == 0) return .{ .loaded = base, .request = request, .paths = paths };
     request.overlay = rewrites;
@@ -189,7 +189,7 @@ fn lowerProgram(x: *const Context, frontend: *const Frontend, order: graph.Modul
     g.* = program.questions(x.a, frontend.loaded.session, frontend.request);
     g.paths = frontend.paths;
     g.runtime = x.envValue("STATOR_RUNTIME");
-    const files = x.a.alloc(*stator_ts.ast.File, order.order.len) catch oom();
+    const files = x.a.alloc(*stator_transpiler.ast.File, order.order.len) catch oom();
     for (order.order, files) |sf, *file| file.* = sf.file;
     return lowering.lowerProgram(x.a, .{ .g = g, .session = frontend.loaded.session, .files = files, .runtime_dynamic = frontend.loaded.runtime_dynamic_names });
 }

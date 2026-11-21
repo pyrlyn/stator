@@ -14,7 +14,7 @@ pub fn build(b: *std.Build) void {
     mod.addImport("coroutines", coroutines);
     mod.addImport("jstext", jstext);
 
-    const lib = b.addModule("stator_ts", .{
+    const lib = b.addModule("stator_transpiler", .{
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
@@ -22,12 +22,12 @@ pub fn build(b: *std.Build) void {
     lib.addImport("coroutines", coroutines);
     lib.addImport("jstext", jstext);
 
-    const exe = b.addExecutable(.{ .name = "stator-ts", .root_module = mod });
+    const exe = b.addExecutable(.{ .name = "stator-transpiler", .root_module = mod });
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);
     run.addPassthruArgs();
-    b.step("run", "Run stator-ts").dependOn(&run.step);
+    b.step("run", "Run stator-transpiler").dependOn(&run.step);
 
     const tests = b.addTest(.{ .root_module = mod });
     b.step("test", "Run unit tests").dependOn(&b.addRunArtifact(tests).step);

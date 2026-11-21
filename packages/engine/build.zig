@@ -4,14 +4,14 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // stator-ts's `lib.zig` exports the checker's modules but not the parser, so the parser is a
+    // stator-transpiler's `lib.zig` exports the checker's modules but not the parser, so the parser is a
     // module of its own, rooted at `erase.zig`: the parser, and the type erasure TypeScript input
     // goes through (docs/ENGINE.md §2). Everything it reaches is imported relative to it; the
     // emitter needs jstext (docs/INTERPRETER.md §1).
-    const stator_ts = b.dependency("stator_ts", .{ .target = target, .optimize = optimize });
+    const stator_transpiler = b.dependency("stator_transpiler", .{ .target = target, .optimize = optimize });
     const jstext = b.dependency("jstext", .{ .target = target, .optimize = optimize }).module("jstext");
     const parser = b.createModule(.{
-        .root_source_file = stator_ts.path("src/erase.zig"),
+        .root_source_file = stator_transpiler.path("src/erase.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{.{ .name = "jstext", .module = jstext }},

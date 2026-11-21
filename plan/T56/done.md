@@ -17,7 +17,7 @@ VS Code, ReleaseFast, `/usr/bin/time -l`. The machine was busy with other sessio
 | T56 `-j 16` | 1.61-2.09 s, median 1.68 s | 17.4-18.5 s | 154.9-156.7 G | 59.3-62.7 G | 2.43-2.56 GB |
 | tsrs `--fast` | 1.33-2.22 s, median 1.71 s | 13.8-15.0 s | 111.0-113.0 G | 46.5-51.0 G | 2.71-2.74 GB |
 
-So stator-ts is 1.19 times behind tsrs in wall on one thread, down from 1.48 at T54, and spends 1.14 times its cycles there and about 1.2 times on sixteen. Peak stays below tsrs `--fast`; it rose from T54 with the memos and with 16 runs per worker instead of 24.
+So Stator Transpiler is 1.19 times behind tsrs in wall on one thread, down from 1.48 at T54, and spends 1.14 times its cycles there and about 1.2 times on sixteen. Peak stays below tsrs `--fast`; it rose from T54 with the memos and with 16 runs per worker instead of 24.
 
 At each job count, final build:
 

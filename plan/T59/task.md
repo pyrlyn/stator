@@ -8,7 +8,7 @@ agent: Claude Code / claude-opus-5-5
 
 # T59. Fix false positives on apps/stator
 
-`stator-ts check` reports errors on `apps/stator` where `tsc` reports none, which breaks the rule that a checker error must be a real error. Done means `check` matches `tsc` on `packages/compiler`, `node`, `std`, `tests`, `vite-stator` and `site`, with a fixture for each cause.
+`stator-transpiler check` reports errors on `apps/stator` where `tsc` reports none, which breaks the rule that a checker error must be a real error. Done means `check` matches `tsc` on `packages/compiler`, `node`, `std`, `tests`, `vite-stator` and `site`, with a fixture for each cause.
 
 Causes:
 

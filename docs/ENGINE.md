@@ -27,8 +27,8 @@ pyrlyn/gc since T66). The engine adds no second heap and no second value model.
 
 | Language | Extensions          | How it runs                                                                                                                                                                                         |
 | -------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `js`     | `.js` `.mjs` `.cjs` | parsed by stator-ts's parser, compiled to bytecode                                                                                                                                                  |
-| `ts`     | `.ts` `.mts` `.cts` | stator-ts erases the types (`packages/transpiler/src/erase.zig`: parse, bind, emit JavaScript), then as `js`. Types are not checked: a script with type errors runs, as under Node's type stripping |
+| `js`     | `.js` `.mjs` `.cjs` | parsed by Stator Transpiler's parser, compiled to bytecode                                                                                                                                                  |
+| `ts`     | `.ts` `.mts` `.cts` | Stator Transpiler erases the types (`packages/transpiler/src/erase.zig`: parse, bind, emit JavaScript), then as `js`. Types are not checked: a script with type errors runs, as under Node's type stripping |
 | `wasm`   | `.wasm`             | named and rejected until plan/T67.3 adds a WebAssembly runtime                                                                                                                                      |
 
 Compiling JavaScript or TypeScript _to_ WebAssembly (plan/T67.2) and to Zig source (plan/T67.4)

@@ -2,10 +2,10 @@
 // and has to behave the same on Node and Bun.
 import { isDeepStrictEqual, inspect } from 'node:util';
 
-const nameFilter = process.env.STATOR_TS_TEST_NAME
-  ? new RegExp(process.env.STATOR_TS_TEST_NAME)
+const nameFilter = process.env.STATOR_TRANSPILER_TEST_NAME
+  ? new RegExp(process.env.STATOR_TRANSPILER_TEST_NAME)
   : null;
-const defaultTimeout = Number(process.env.STATOR_TS_TEST_TIMEOUT || 5000);
+const defaultTimeout = Number(process.env.STATOR_TRANSPILER_TEST_TIMEOUT || 5000);
 
 const newSuite = (name, parent, mode) => ({
   name,
@@ -282,6 +282,6 @@ process.on('beforeExit', async () => {
   if (started) return;
   started = true;
   await runSuite(root);
-  console.log(`\n@@stator-ts ${JSON.stringify(counts)}`);
+  console.log(`\n@@stator-transpiler ${JSON.stringify(counts)}`);
   process.exit(counts.failed > 0 ? 1 : 0);
 });
