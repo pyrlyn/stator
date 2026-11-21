@@ -6,7 +6,7 @@
  * The compiler imports no bundler (plan §0.9): an adapter is a module loaded by name at run time,
  * and everything it answers is `unknown` until checked here (golden rule 4). */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { builtinModules, createRequire } from 'node:module';
 import { isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -222,6 +222,10 @@ export async function loadFrontend(
 ): Promise<Frontend> {
   if (!existsSync(entry)) {
     throw new BuildError('STA0007', `entry file "${entry}" does not exist`);
+  }
+  // A directory exists too, but the checker cannot resolve it and its STA0012 names no file.
+  if (statSync(entry).isDirectory()) {
+    throw new BuildError('STA0007', `entry file "${entry}" is a directory, not a file`);
   }
   return withSpanAsync('frontend/program', {}, () => loadFrontendInner(entry, mode, bundler, node));
 }

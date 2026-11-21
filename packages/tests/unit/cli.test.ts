@@ -102,6 +102,21 @@ test('build and explain report a missing entry file as a path error', async () =
   }
 });
 
+test('a directory as the entry is STA0007, not a checker diagnostic with no file', async () => {
+  await inScratch({ 'app.ts': 'console.log(1);\n' }, async (dir) => {
+    const [built, explained] = await Promise.all([
+      statorIn(dir, 'build', '.', '-o', 'x'),
+      statorIn(dir, 'explain', '.'),
+    ]);
+    for (const { status, stderr } of [built, explained]) {
+      assert.equal(status, 1, stderr);
+      assert.match(stderr, /^stator: STA0007 entry file "\." is a directory, not a file/);
+      assert.doesNotMatch(stderr, /STA0012/);
+    }
+    assert.equal(existsSync(join(dir, 'x')), false);
+  });
+});
+
 test(
   'a builtin the program never references is not in the binary (Task 3.12)',
   NATIVE_ONLY,
