@@ -69,10 +69,11 @@ fn writeError(r: *Reporter, target: Named, err: anyerror) Error {
 }
 
 /// Before a tool writes `target`: without this, clang's own failure there would read as a compiler
-/// bug (STA0009).
+/// bug (STA0009). A file already there must be writable too: ld64 opens it in place.
 pub fn requireWritable(a: Allocator, io: Io, r: *Reporter, target: Named) Error!void {
     if (Io.Dir.cwd().statFile(io, target.path, .{})) |st| {
         if (st.kind == .directory) return writeError(r, target, error.IsDir);
+        Io.Dir.cwd().access(io, target.path, .{ .write = true }) catch |e| return writeError(r, target, e);
     } else |e| switch (e) {
         error.FileNotFound => {},
         else => {},
