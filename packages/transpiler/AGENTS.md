@@ -14,6 +14,7 @@ If an `AGENTS.md` or `CLAUDE.md` exists higher in the tree, follow it too; on co
 
 ## Rules
 
+- A code change is not done without green tests (the Commands above that the change reaches) and the root `AGENTS.md` regression and benchmark gate: `pnpm run ci` plus `pnpm run bench:record` versus `origin/main`.
 - A checker error must be a real error. When the checker cannot model something it degrades to `any` and stays silent; it never guesses.
 - Compatibility claims come from `tests/differential.sh`, not from reading the code.
 - Every fixed bug gets a fixture in `tests/fixtures/` or a unit test, checked against the real `tsc`.
