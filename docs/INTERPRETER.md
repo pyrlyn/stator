@@ -21,7 +21,7 @@ The design rests on a measured spike, run on 2026-11-06 on an Apple M3 Max (arm6
   imported from a `js`-mode program (`main.js`), it printed what Node prints for
   `1 + 2 * 3 - 4 / 8`, `'a' + 1 + 2`, a function body with a `while` loop, and a `SyntaxError`
   caught by the caller.
-- **Parser spike.** The stator-ts parser (`packages/transpiler/src/parser.zig`, plan/T41) driven by
+- **Parser spike.** The Stator Transpiler parser (`packages/transpiler/src/parser.zig`, plan/T41) driven by
   a 25-line Zig program that parses an in-memory source.
 
 The spike's sources are not committed; this section and plan-notes 396 hold its numbers.
@@ -33,19 +33,19 @@ The spike's sources are not committed; this section and plan-notes 396 hold its 
 | The same evaluator under Node 26.7.0 (JIT)                                  | tree 37–45 ms, VM 30–31 ms |
 | Parse 657,780 bytes (20,000 statements), spike parser, Stator-compiled      | 316–318 ms                 |
 | Same, spike parser under Node                                               | 25–31 ms                   |
-| Same, stator-ts parser, Zig `ReleaseFast`                                   | 7–8 ms                     |
-| Same, stator-ts parser, Zig `ReleaseSmall`                                  | 11–12 ms                   |
+| Same, Stator Transpiler parser, Zig `ReleaseFast`                                   | 7–8 ms                     |
+| Same, Stator Transpiler parser, Zig `ReleaseSmall`                                  | 11–12 ms                   |
 | Binary, `js`-mode `console.log` only (stripped)                             | 256,240 B                  |
 | …plus the spike's parser and tree walker (stripped)                         | 308,256 B (+52,016)        |
 | …plus the spike's parser and bytecode VM (stripped)                         | 325,168 B (+68,928)        |
-| stator-ts parser alone over an empty Zig program, `ReleaseSmall` (stripped) | +66,112 B                  |
-| stator-ts parser alone over an empty Zig program, `ReleaseFast` (stripped)  | +132,240 B                 |
+| Stator Transpiler parser alone over an empty Zig program, `ReleaseSmall` (stripped) | +66,112 B                  |
+| Stator Transpiler parser alone over an empty Zig program, `ReleaseFast` (stripped)  | +132,240 B                 |
 
 The spike also found two compiler bugs, which plan-notes 396 lists: `.length` on a dynamically read
 receiver (fixed, pyrlyn/stator#248) and the method-call receiver guess (fixed for direct calls by
 plan-notes 395; the spike worked around it).
 
-## 1. The parser: stator-ts's, in Zig
+## 1. The parser: Stator Transpiler's, in Zig
 
 Options measured (the creator chose (d), 2026-11-06):
 
@@ -61,11 +61,11 @@ Options measured (the creator chose (d), 2026-11-06):
   2023-04-30) is unmaintained; acorn is JavaScript.
 - **(c) A parser written here, in strict TypeScript.** It needs §0.3 edited, and the spike's parser
   is 30–40 times slower than (d) after Stator compiles it.
-- **(d) stator-ts's parser, in Zig.** The project's own parser (plan/T41), so §0.3 holds: no new
-  parser is written, and a gap is fixed in stator-ts with a regression test (AGENTS.md golden
+- **(d) Stator Transpiler's parser, in Zig.** The project's own parser (plan/T41), so §0.3 holds: no new
+  parser is written, and a gap is fixed in Stator Transpiler with a regression test (AGENTS.md golden
   rule 5). 7–12 ms for 640 KB, and 66 KB in `ReleaseSmall`.
 
-The interpreter imports `parser.zig` as a Zig module of its own, because stator-ts's `lib.zig`
+The interpreter imports `parser.zig` as a Zig module of its own, because Stator Transpiler's `lib.zig`
 does not export it (`packages/engine/src/parse.zig`, T14.1). `parse` reads `eval` code with
 the Script goal (ECMA-262 §19.2.1), or a module. `parseFunction` builds CreateDynamicFunction's
 source text (§20.2.1.1.1), `<prefix> anonymous(<params>\n) {\n<body>\n}`, and parses it once. It
@@ -75,16 +75,16 @@ what parsing the two pieces separately catches.
 
 Early errors become a `SyntaxError` thrown at run time through `jsrt_throw_error`
 (`src/interp.zig`). The check is the error's TYPE, which is exactly
-what Test262 negative tests ask. The message is stator-ts's diagnostic text, which is tsc's
+what Test262 negative tests ask. The message is Stator Transpiler's diagnostic text, which is tsc's
 wording. Module syntax under the Script goal is the exception and uses Node's text. Golden
 fixtures print `e.name`, never the message, because message parity with Node is not settled.
 
 **Parse rate** (plan-notes 401). `pnpm run test262:interp-parse` runs Test262's `test/language/`
 through `parse` in every mode a test's flags ask for. At the pin it passes 19,162 of 23,726 tests
 (80.76%), at about 190 MiB/s. The counts are ratcheted per directory in
-`packages/engine/test262-parse.json`. The rest is stator-ts's to close:
+`packages/engine/test262-parse.json`. The rest is Stator Transpiler's to close:
 
-- 3,444 tests parse but must not. These are early errors stator-ts reports in its binder or
+- 3,444 tests parse but must not. These are early errors Stator Transpiler reports in its binder or
   checker, or not at all.
 - 1,120 tests are rejected though valid. These are syntax it does not read.
 
@@ -92,7 +92,7 @@ through `parse` in every mode a test's flags ask for. At the pin it passes 19,16
 
 The evaluator is Zig in the runtime (the creator chose this on 2026-11-06, replacing plan-notes
 300's strict-TypeScript package; AGENTS.md golden rule 9 gives runtime code to Zig). It compiles
-the stator-ts AST to bytecode and runs that.
+the Stator Transpiler AST to bytecode and runs that.
 
 - **Why bytecode.** On the spike the bytecode VM ran `fib(25)` 2.9 times faster than the tree
   walker. Most of the gap is that the compiler resolves every name to a slot once, which a tree
@@ -108,7 +108,7 @@ the stator-ts AST to bytecode and runs that.
   inline cache, `jsrt_call_at`, `jsrt_op_add`, …). An instruction that touches a property owns an
   IC slot in its function's IC table, the same `JSRTIC` compiled code uses.
 
-**As built (T14.2).** `src/compile.zig` turns stator-ts's tree into `src/bytecode.zig`'s format,
+**As built (T14.2).** `src/compile.zig` turns Stator Transpiler's tree into `src/bytecode.zig`'s format,
 and `src/vm.zig` runs it:
 
 - **A stack machine, not registers.** Each call owns a window of one thread-local value stack:
@@ -365,8 +365,8 @@ QuickJS-NG is not retired. Most of the 1,280 tests that still stop at a refused 
 
 | Package                                       | Holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Must not                                     |
 | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `packages/engine` (Zig)                       | the parser front (`src/parse.zig`, T14.1); the entry points the runtime calls (`src/capi.zig`: `eval`, the `Function` constructor, the trampoline); the bytecode format, compiler and VM (`src/bytecode.zig`, `src/compile.zig`, `src/vm.zig`, T14.2); the global object (`src/builtins.zig`); the Test262 parse and execution drivers (`test262/parse.zig`, `test262/exec.zig`) and the execution driver's compiled host (`test262/host.ts`); the baseline JIT and `stator-engine` (`src/jit/`, `src/engine.zig`, `src/cli.zig`; `docs/ENGINE.md`). It is built into `libjsrt_interp.a` and imports stator-ts's `parser.zig`, and the CLI its `erase.zig` | hold its own value model, object model or GC |
-| `packages/transpiler` (stator-ts)             | the parser                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | know the interpreter exists                  |
+| `packages/engine` (Zig)                       | the parser front (`src/parse.zig`, T14.1); the entry points the runtime calls (`src/capi.zig`: `eval`, the `Function` constructor, the trampoline); the bytecode format, compiler and VM (`src/bytecode.zig`, `src/compile.zig`, `src/vm.zig`, T14.2); the global object (`src/builtins.zig`); the Test262 parse and execution drivers (`test262/parse.zig`, `test262/exec.zig`) and the execution driver's compiled host (`test262/host.ts`); the baseline JIT and `stator-engine` (`src/jit/`, `src/engine.zig`, `src/cli.zig`; `docs/ENGINE.md`). It is built into `libjsrt_interp.a` and imports Stator Transpiler's `parser.zig`, and the CLI its `erase.zig` | hold its own value model, object model or GC |
+| `packages/transpiler` (Stator Transpiler)             | the parser                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | know the interpreter exists                  |
 | `packages/compiler` (and plan/T41's Zig port) | the `interpret-global` and `direct-eval` HIR nodes, the eval-visible cells and binding tables of §3, and linking `libjsrt_interp.a` only when generated C includes `jsrt_interp.h` (T14.3)                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | interpret anything at compile time           |
 | `packages/runtime`                            | the C ABI the VM calls                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | grow a second dispatch path                  |
 

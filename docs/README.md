@@ -12,7 +12,7 @@ How stator is specified. [`plan.md`](../plan.md) is the spec and the authority, 
 | [ARCHITECTURE.md](ARCHITECTURE.md) | D2 gallery: pipeline, `stator build`, packages, value boxing |
 | [MODES.md](MODES.md) | `--mode=ts` vs `--mode=js`: file acceptance, diagnostics, mixed-graph boundaries |
 | [ENGINE.md](ENGINE.md) | `packages/engine` and `stator-engine`: the `interp` and `jit` modes, input languages, the baseline JIT on pyrlyn/jit, tests and the V8 benchmark |
-| [INTERPRETER.md](INTERPRETER.md) | Phase 14 design: the `js`-mode interpreter for `eval` and `new Function` — Zig in the runtime, stator-ts's parser, bytecode; measured spike; Test262 pass rate and the QuickJS-NG comparison |
+| [INTERPRETER.md](INTERPRETER.md) | Phase 14 design: the `js`-mode interpreter for `eval` and `new Function` — Zig in the runtime, Stator Transpiler's parser, bytecode; measured spike; Test262 pass rate and the QuickJS-NG comparison |
 | [BUNDLER.md](BUNDLER.md) | Phase 12 design: js-mode dependency bundling contract, adapter API, measured spike |
 | [SUBSET.md](SUBSET.md) | Feature × mode matrix (`static` / `dynamic` / `error` / `not-yet`) |
 | [DIAGNOSTICS.md](DIAGNOSTICS.md) | Sole allocator of `STA` codes — never allocate a code anywhere else |
@@ -22,7 +22,7 @@ How stator is specified. [`plan.md`](../plan.md) is the spec and the authority, 
 | [TOOLCHAIN.md](TOOLCHAIN.md) | Pinned Node/pnpm/LLVM/just, commands, native libraries |
 | [FFI.md](FFI.md) | Calling C from TS: extern surface, ABI table, ownership |
 | [STD.md](STD.md) | The `std/*` systems library (`packages/std`): module path, error codes, v0 modules, layers; threads chapters land here at T10.2 |
-| [zig-core.md](zig-core.md) | The Zig compiler on stator-ts that replaces the TypeScript one (T41): layout, build, parity per stage, what is not ported |
+| [zig-core.md](zig-core.md) | The Zig compiler on Stator Transpiler that replaces the TypeScript one (T41): layout, build, parity per stage, what is not ported |
 | [NODE.md](NODE.md) | Generated: Node API coverage by Stator, % per `node:*` module and member (`pnpm run docs:node`) |
 | [research/node-mode.md](research/node-mode.md) | T11.0 research: `--node` platform, `std`-first layering, cost and go / no-go (not normative) |
 

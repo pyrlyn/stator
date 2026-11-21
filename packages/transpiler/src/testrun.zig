@@ -71,7 +71,7 @@ const Pool = struct {
     outcomes: []Outcome,
 };
 
-const marker = "@@stator-ts ";
+const marker = "@@stator-transpiler ";
 
 /// What the test printed around the harness's line, which is for us and not for the reader.
 fn aroundMarker(stdout: []const u8) [2][]const u8 {
@@ -81,7 +81,7 @@ fn aroundMarker(stdout: []const u8) [2][]const u8 {
 }
 
 test "the harness line is left out of what a failed file printed" {
-    const parts = aroundMarker("one\n@@stator-ts {}\ntwo\n");
+    const parts = aroundMarker("one\n@@stator-transpiler {}\ntwo\n");
     try std.testing.expectEqualStrings("one\n", parts[0]);
     try std.testing.expectEqualStrings("two\n", parts[1]);
 }
@@ -205,7 +205,7 @@ pub fn run(a: Allocator, io: Io, base_env: *const std.process.Environ.Map, o: Op
     for (files) |sf| paths.append(a, sf.file.path) catch oom();
     const base = driver.commonDir(a, paths.items);
     // Inside the project's node_modules, so bare imports resolve the way they do from the sources.
-    const out = fspath.join(a, &.{ o.cfg.root, "node_modules", ".cache", "stator-ts", "test" }) catch oom();
+    const out = fspath.join(a, &.{ o.cfg.root, "node_modules", ".cache", "stator-transpiler", "test" }) catch oom();
     Io.Dir.cwd().deleteTree(io, out) catch {};
     Io.Dir.cwd().createDirPath(io, out) catch {
         try w.print("error: cannot create {s}\n", .{out});
@@ -218,7 +218,7 @@ pub fn run(a: Allocator, io: Io, base_env: *const std.process.Environ.Map, o: Op
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = harness_path, .data = harness });
 
     var env = try base_env.clone(a);
-    if (o.name_filter) |n| try env.put("STATOR_TS_TEST_NAME", n);
+    if (o.name_filter) |n| try env.put("STATOR_TRANSPILER_TEST_NAME", n);
 
     var opts = driver.emitOptions(prog);
     var spec_map = SpecMap{ .prog = prog, .base = base, .out = out, .jsx = opts.jsx };

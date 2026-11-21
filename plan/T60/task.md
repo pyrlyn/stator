@@ -23,7 +23,7 @@ The verified fixes and resource improvements are recorded in `report.md`. The cr
 
 ## Follow-up execution plan
 
-Continue from merged commit `69986bf` as the new baseline. Keep the earlier report intact. Inspect allocation and filesystem profiles on the selected workloads; prioritize duplicated work and ownership bugs. Keep the parallel stator-ts T20 library-API work isolated. Record regressions before fixes, compare identical commands against a retained baseline, and run unit, differential and TS7 checks before reporting the new measurements.
+Continue from merged commit `69986bf` as the new baseline. Keep the earlier report intact. Inspect allocation and filesystem profiles on the selected workloads; prioritize duplicated work and ownership bugs. Keep the parallel Stator Transpiler T20 library-API work isolated. Record regressions before fixes, compare identical commands against a retained baseline, and run unit, differential and TS7 checks before reporting the new measurements.
 
 The follow-up fixes directory-cycle traversal, prunes excluded subtrees, and diagnoses private names in type queries. Its measurements and verification are in `followup-report.md`: the additional excluded-output stress case improves RSS by 41.2% and wall time by 80.1%, while the selected original workloads are essentially unchanged. The original acceptance target remains open.
 

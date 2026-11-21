@@ -8,7 +8,7 @@ agent: Claude Code / claude-opus-5-5
 
 # T55. Close the tsc gaps found in T54's fixtures
 
-Writing T54's fixtures turned up places where stator-ts and tsc 7 disagree. They were left out of the fixtures so T54 stayed about memory. A crash belongs on the same list: `var a;` over a parameter panics in `autoTyped`.
+Writing T54's fixtures turned up places where Stator Transpiler and tsc 7 disagree. They were left out of the fixtures so T54 stayed about memory. A crash belongs on the same list: `var a;` over a parameter panics in `autoTyped`.
 
 Done means each gap below has a fixture that matches tsc 7, and nothing else moved.
 

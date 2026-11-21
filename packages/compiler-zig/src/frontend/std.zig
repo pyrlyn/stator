@@ -4,7 +4,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const fspath = std.fs.path;
-const project = @import("stator_ts").project;
+const project = @import("stator_transpiler").project;
 const support = @import("../support/root.zig");
 
 fn oom() noreturn {

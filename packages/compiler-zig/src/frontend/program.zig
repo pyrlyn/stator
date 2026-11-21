@@ -4,15 +4,15 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const fspath = std.fs.path;
-const stator_ts = @import("stator_ts");
-const ast = stator_ts.ast;
-const binder = stator_ts.binder;
-const decls = stator_ts.decls;
-const pool = stator_ts.pool;
-const project = stator_ts.project;
-const T = stator_ts.types;
-const Session = stator_ts.Session;
-const Sym = stator_ts.Sym;
+const stator_transpiler = @import("stator_transpiler");
+const ast = stator_transpiler.ast;
+const binder = stator_transpiler.binder;
+const decls = stator_transpiler.decls;
+const pool = stator_transpiler.pool;
+const project = stator_transpiler.project;
+const T = stator_transpiler.types;
+const Session = stator_transpiler.Session;
+const Sym = stator_transpiler.Sym;
 const support = @import("../support/root.zig");
 const report = support.diagnostics;
 const crash = @import("../cli/crash.zig");
@@ -27,7 +27,7 @@ const Diagnostic = report.Diagnostic;
 const Mode = report.Mode;
 const Node = ast.Node;
 const File = ast.File;
-const Printed = stator_ts.session.Printed;
+const Printed = stator_transpiler.session.Printed;
 const SourceFile = project.SourceFile;
 
 fn oom() noreturn {
@@ -112,8 +112,8 @@ fn entryRoot(a: Allocator, io: Io, entry: []const u8) Root {
     return .{ .path = null, .refusal = refusal };
 }
 
-/// What `createProgram` passes tsc. Options absent here are the ones stator-ts has no use for:
-/// `sourceMap` and `noEmit` steer emit. `erasableSyntaxOnly` needs a TS1294 check in stator-ts.
+/// What `createProgram` passes tsc. Options absent here are the ones stator-transpiler has no use for:
+/// `sourceMap` and `noEmit` steer emit. `erasableSyntaxOnly` needs a TS1294 check in stator-transpiler.
 fn compilerOptions(mode: Mode) project.Options {
     const is_ts = mode == .ts;
     return .{
@@ -318,7 +318,7 @@ fn methodIsUnannotated(file: *const File, member: *const Node) bool {
     return !hasJsDocType(file, member);
 }
 
-/// stator-ts keeps no JSDoc nodes, so this reads the `/** */` right before the member. A type is
+/// stator-transpiler keeps no JSDoc nodes, so this reads the `/** */` right before the member. A type is
 /// what counts: `@returns {T}` or `@param {T} x`, not a tag with prose after it.
 fn hasJsDocType(file: *const File, member: *const Node) bool {
     const before = std.mem.trimEnd(u8, file.src[0..member.start], " \t\r\n");

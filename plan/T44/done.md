@@ -1,6 +1,6 @@
 # T44. Closing report
 
-`stator-ts test` finds test files, compiles them and runs one process per file on Node or Bun, with describe, test, expect, hooks, filters, exit codes and crash reporting. Path filters now see the path inside the project, and the harness's result line no longer shows up in a failed file's output.
+`stator-transpiler test` finds test files, compiles them and runs one process per file on Node or Bun, with describe, test, expect, hooks, filters, exit codes and crash reporting. Path filters now see the path inside the project, and the harness's result line no longer shows up in a failed file's output.
 
 Commit: none, the project has no git repository of its own.
 

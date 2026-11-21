@@ -1,8 +1,8 @@
-//! The extern boundary: `@statorExtern` declarations, their ABI table and the link pragmas. stator-ts
+//! The extern boundary: `@statorExtern` declarations, their ABI table and the link pragmas. stator-transpiler
 //! parses no JSDoc, so the tags are read from the source text the checker holds.
 
 const std = @import("std");
-const project = @import("stator_ts").project;
+const project = @import("stator_transpiler").project;
 const api = @import("gate_api.zig");
 const types = @import("gate_types.zig");
 const N = @import("../hir/nodes.zig");

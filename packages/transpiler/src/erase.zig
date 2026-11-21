@@ -1,4 +1,4 @@
-//! What a JavaScript engine takes from stator-ts (packages/engine, plan/T67): the parser, and a
+//! What a JavaScript engine takes from stator-transpiler (packages/engine, plan/T67): the parser, and a
 //! TypeScript file with its types erased to JavaScript. One root, so the parser's files belong to
 //! one module of the engine's build.
 

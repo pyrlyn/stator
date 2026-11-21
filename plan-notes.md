@@ -14189,11 +14189,11 @@ package); using Oxc for parsing and TS 7 for typing is closer to its intent. Rul
 **Evidence.** `zig build test --summary all` → 4/4 pass. Corpus over 1158 tracked TS files →
 1153 ok, 5 failed; all 5 are negative subset tests with invalid source (expected).
 
-## 393. T41: the compiler moves to Zig on stator-ts; `typescript` stays at 6.0.3 as the oracle (2026-11-02)
+## 393. T41: the compiler moves to Zig on Stator Transpiler; `typescript` stays at 6.0.3 as the oracle (2026-11-02)
 
-**Direction.** The creator's words: rewrite the compiler in Zig, use stator-ts, add what it lacks
+**Direction.** The creator's words: rewrite the compiler in Zig, use Stator Transpiler, add what it lacks
 there, with regression coverage. This supersedes 391 and 392: no Oxc, no Rust bridge, no `tsgo --api`
-client. `stator-ts` follows `tsc` 7.0.2, so that is the new compiler's language baseline.
+client. `stator-transpiler` follows `tsc` 7.0.2, so that is the new compiler's language baseline.
 
 **Why `packages/compiler` is back on 6.0.3.** Renovate's #229 moved `typescript` to 7.0.2. That package
 has no in-process compiler API: its `"."` export is only `lib/version.cjs`, and the API sits under
@@ -14209,7 +14209,7 @@ translates `src/jsrt_c.h` and `src/jsrt_gc_c.h` with `zig translate-c` in the ju
 as modules. After the bump: `test:subset`, `test:golden`, `test:runtime` and `test:asan` all exited 0,
 with the same subset and golden counts as above.
 
-**stator-ts gaps found.** It was executable-only, so it gained a `stator_ts` module. Checkers lived for
+**Stator Transpiler gaps found.** It was executable-only, so it gained a `stator_transpiler` module. Checkers lived for
 one run, so `Session` holds one open over a loaded program. A degraded type (`Data.err`) was not visible
 from outside, and `Session.degraded` now reports it while keeping `t_unresolved`, a missing name, apart.
 
@@ -14217,7 +14217,7 @@ from outside, and `Session.degraded` now reports it while keeping `t_unresolved`
 over 737 ts-mode fixtures, with 6.0.3's lib files: 37629 expressions, 32828 same (87%), 4800 different,
 55 degraded, 1 unmatched, 0 crashed. Most differences are printer noise; the semantic ones are tracked
 in T41. A 6.0.3 oracle against a 7.0.2-following checker can show real language differences too: each
-one is judged on its own, not assumed to be a stator-ts bug.
+one is judged on its own, not assumed to be a Stator Transpiler bug.
 
 **Cost.** 47.6K lines of TypeScript to port (frontend 14.5K, lower 12.4K, codegen 7K, hir 6K, cli 3.8K,
 ffi-gen 1.8K, passes 1.3K, support 0.7K), using 22 `TypeChecker` methods and 203 `ts.*` names.
@@ -14226,7 +14226,7 @@ ffi-gen 1.8K, passes 1.3K, support 0.7K), using 22 `TypeChecker` methods and 203
 `STATOR_ZIG=... pnpm run test:zigdiff` against the TypeScript compiler over 1507 subset and golden
 fixtures: gate 1469/1506 identical, lower 1127/1148 (10 different, 11 refused, all bundler or package
 paths), verifier 4590/4590, passes 1148/1148, codegen 1147/1147 byte-identical. All 491 golden programs
-built from Zig-emitted C and linked against `libjsrt.a` print what Node prints. stator-ts after its
+built from Zig-emitted C and linked against `libjsrt.a` print what Node prints. Stator Transpiler after its
 fixes: `typediff` 36886/36886 identical with 0 degraded, `tests/differential.sh` 1544/1538/1538 with
 0 false positives, and the TS7 ratchet at 8577 passing with 0 lost (345 gained); each fix has a fixture
 checked against `tsc`. The `selfhost` baseline is re-recorded: `packages/compiler` went from 457 to
@@ -14346,14 +14346,14 @@ second is now only not landed. `docs/MODES.md` §6, `docs/SUBSET.md` and `packag
 are edited to match. Goldens `ts/class_call_arity` (fewer arguments) and `js/class_call_arity` (fewer and
 more) cover methods, constructors and `super`, and `ts/node_process` calls `process.exit()`.
 
-## 396. T14.0: the interpreter is Zig in the runtime, on stator-ts's parser, running bytecode (2026-11-06)
+## 396. T14.0: the interpreter is Zig in the runtime, on Stator Transpiler's parser, running bytecode (2026-11-06)
 
 **Decision (the creator's, 2026-11-06).** The two choices T14.0 put to the creator, with the spike's
 numbers in front of them:
 
-1. **Parser:** stator-ts's (`packages/transpiler/src/parser.zig`, plan/T41), option (d) of
+1. **Parser:** Stator Transpiler's (`packages/transpiler/src/parser.zig`, plan/T41), option (d) of
    `docs/INTERPRETER.md` §1. §0.3 needs no edit: no parser is written, and a gap is fixed in
-   stator-ts.
+   Stator Transpiler.
 2. **Evaluator language:** Zig, in the runtime. This replaces plan-notes 300's "separate package in
    strict TypeScript, compiled by Stator": the compiler itself is moving to Zig (393), and golden
    rule 9 gives memory-managing runtime code to Zig. The interpreter no longer doubles as a
@@ -14373,9 +14373,9 @@ record; plan.md §11f and plan/T14.1–T14.4 are edited to match.
 | `fib(25)`, strict-TS bytecode VM compiled by Stator | 0.41–0.43 s |
 | Same evaluator under Node (JIT) | 30–45 ms |
 | Parse 657,780 B: spike TS parser compiled by Stator / under Node | 316–318 ms / 25–31 ms |
-| Parse 657,780 B: stator-ts, `ReleaseFast` / `ReleaseSmall` | 7–8 ms / 11–12 ms |
+| Parse 657,780 B: Stator Transpiler, `ReleaseFast` / `ReleaseSmall` | 7–8 ms / 11–12 ms |
 | Binary delta: spike parser + tree walker / + bytecode VM (stripped) | +52,016 B / +68,928 B |
-| Binary delta: stator-ts parser alone, `ReleaseSmall` / `ReleaseFast` (stripped) | +66,112 B / +132,240 B |
+| Binary delta: Stator Transpiler parser alone, `ReleaseSmall` / `ReleaseFast` (stripped) | +66,112 B / +132,240 B |
 | (a) `typescript.js` through `statorc explain --mode=js --node` | `STA0013` after 2.8 s |
 | (b) meriyah 7.4.1 (`a1ccee4`) through `statorc explain` (`ts` mode) | 383 diagnostics |
 
@@ -14391,9 +14391,9 @@ record; plan.md §11f and plan/T14.1–T14.4 are edited to match.
    parameters. Direct method, constructor and `super(…)` calls are fixed by 395; a bare call of a
    method value still guesses (`[7].map(o.tag)` on `tag(a, i)` binds `this` to `7`).
 
-## 397. `pnpm run ci` covers the packages Stator owns: stator-ts and the Zig port are scoped out (2026-11-06)
+## 397. `pnpm run ci` covers the packages Stator owns: Stator Transpiler and the Zig port are scoped out (2026-11-06)
 
-**Why.** After #246 imported stator-ts as `packages/transpiler`, `pnpm run ci` on main failed at
+**Why.** After #246 imported Stator Transpiler as `packages/transpiler`, `pnpm run ci` on main failed at
 five stages, none of them caused by compiler code. Separately, `mise.toml` pinned node 26.12.0
 (Renovate #226) while `.node-version` stays 26.7.0, the Node every golden is recorded against.
 The creator chose to keep 26.7.0 (the "keep node at 26.7.0" commit of #233, landed on its own).
@@ -14412,11 +14412,11 @@ The creator chose to keep 26.7.0 (the "keep node at 26.7.0" commit of #233, land
   the point of the port, not drift. Duplication in `compiler-zig` is checked again when T41
   retires `packages/compiler`.
 - **selfhost lists `packages/transpiler` and `packages/jstext` in `notTargets`.** zig builds
-  both (`jstext` is the text code #251 shares between stator-ts and the Zig compiler); Stator
+  both (`jstext` is the text code #251 shares between Stator Transpiler and the Zig compiler); Stator
   never compiles them.
 - **`check-js-sources` exempts `packages/transpiler/tests/fixtures/`**, which holds checker
   inputs, on the same terms as the golden and subset corpora. It also exempts three files by name.
-  `src/harness.mjs` stays JavaScript for good: stator-ts `@embedFile`s it and writes it out at run
+  `src/harness.mjs` stays JavaScript for good: Stator Transpiler `@embedFile`s it and writes it out at run
   time as the harness Node or Bun runs the tests in. `scripts/benchmark.mjs` and
   `tests/ts7/run.mjs` are exempt **only until they are ported to TypeScript**, the follow-up the
   creator asked for. That port removes their two names from the set.
@@ -14561,7 +14561,7 @@ subclass; it waits for a program that needs it. Listed in `docs/SUBSET.md`.
 
 **What landed.** `packages/interpreter/` (Zig 0.17.0). `src/parse.zig` is the parse entry from
 docs/INTERPRETER.md §1. `src/capi.zig` is `jsrt_interp_parse_script`, which throws `SyntaxError`
-through `jsrt_throw_error`. `test262/parse.zig` is the Test262 driver. stator-ts's `lib.zig` does
+through `jsrt_throw_error`. `test262/parse.zig` is the Test262 driver. Stator Transpiler's `lib.zig` does
 not export `parser.zig`, so the package roots a module of its own at that file, and the tree types
 are named through `parser.parse`'s signature. `packages/transpiler` is unchanged.
 
@@ -14578,7 +14578,7 @@ other test must parse.
 | `libjsrt_interp.a`, `ReleaseFast` | 3,152,688 B; 562,888 B after `strip -S` (`__TEXT` 423,458 B) |
 | `libjsrt_interp.a`, `ReleaseSmall` / `ReleaseSafe` | 323,280 B / 3,553,464 B |
 
-**What fails is stator-ts's.** It is coordinated with that package's owners and is not fixed in
+**What fails is Stator Transpiler's.** It is coordinated with that package's owners and is not fixed in
 this change.
 
 1. **3,444 early errors not reported** (2,951 sloppy, 320 strict, 173 module). The largest groups,
@@ -14593,7 +14593,7 @@ this change.
    - `"use strict"` with non-simple parameters.
 
    tsc reports many of these from its binder (`checkStrictModeIdentifier`, redeclarations) or its
-   checker. stator-ts's binder would answer part of them, but the interpreter reaches it only once
+   checker. Stator Transpiler's binder would answer part of them, but the interpreter reaches it only once
    `lib.zig` exports the parser along with the binder it already exports.
 2. **779 identifiers rejected** (`Invalid character.`). The cause is a Unicode escape or a non-ASCII
    character at an identifier's start: in private names (`#\u{6F}`, `#℘`, ZWNJ/ZWJ inside one),
@@ -14614,7 +14614,7 @@ this change.
    - a no-break space (1)
 
 TypeScript-only syntax in JavaScript source (a type annotation, `as`, `enum`) still parses: neither
-stator-ts nor the interpreter rejects it, and Test262 does not test it.
+Stator Transpiler nor the interpreter rejects it, and Test262 does not test it.
 
 ## 402. T11.6: `node:crypto` digests over `std/hash` (2026-11-07)
 
@@ -15031,7 +15031,7 @@ runtime inside the engine, so `.wasm` modules run from JS/TS through the `WebAss
 `stator-engine build --target=zig` (plan/T67.4). The CLI names all three and exits 1 with the
 card until they land.
 
-**Found while testing.** stator-ts read `a < 1, b >= 1` as a call with type arguments, because the
+**Found while testing.** Stator Transpiler read `a < 1, b >= 1` as a call with type arguments, because the
 closing `>` of a speculative type-argument list did not rescan greedily the way tsc's
 `parseTypeArgumentsInExpression` does (`reScanGreaterToken`); the engine reported a syntax error
 on a TypeScript script Node runs. Fixed in `packages/transpiler/src/parser.zig`

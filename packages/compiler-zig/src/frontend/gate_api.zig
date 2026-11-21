@@ -1,18 +1,18 @@
 //! The gate's questions, phrased the way `packages/compiler/src/frontend/gate.ts` asks them, answered
-//! by stator-ts. The TypeScript compiler has one node per token and a `getTypeAtLocation` that means
-//! something at every node; stator-ts folds several kinds into one and only types what it has to, so
+//! by stator-transpiler. The TypeScript compiler has one node per token and a `getTypeAtLocation` that means
+//! something at every node; stator-transpiler folds several kinds into one and only types what it has to, so
 //! the difference is absorbed here and the rules above read like their TypeScript originals.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const stator_ts = @import("stator_ts");
+const stator_transpiler = @import("stator_transpiler");
 
-pub const ast = stator_ts.ast;
-pub const binder = stator_ts.binder;
-pub const decls = stator_ts.decls;
-pub const expr = stator_ts.expr;
-pub const project = stator_ts.project;
-pub const T = stator_ts.types;
+pub const ast = stator_transpiler.ast;
+pub const binder = stator_transpiler.binder;
+pub const decls = stator_transpiler.decls;
+pub const expr = stator_transpiler.expr;
+pub const project = stator_transpiler.project;
+pub const T = stator_transpiler.types;
 pub const F = binder.F;
 pub const Tok = ast.Tok;
 pub const Node = ast.Node;
@@ -92,8 +92,8 @@ pub const Gate = struct {
     }
 
     /// `checker.getTypeAtLocation`. Its declared meaning differs by the kind of node it is handed, and
-    /// asking stator-ts to check a name that is no expression would resolve the wrong thing.
-    /// `getTypeAtLocation` on a binding pattern is the type of what it destructures, and stator-ts
+    /// asking stator-transpiler to check a name that is no expression would resolve the wrong thing.
+    /// `getTypeAtLocation` on a binding pattern is the type of what it destructures, and stator-transpiler
     /// reaches that through an element. An empty pattern reads nothing, so its type never matters.
     fn patternType(c: *T.Checker, elements: []const *Node) *Type {
         if (elements.len == 0) return c.t_err;
@@ -276,7 +276,7 @@ pub const Gate = struct {
     pub const contextualType = quietly(expr.contextualType);
     pub const resolvedSignature = quietly(expr.resolvedSig);
 
-    /// `symbol.valueDeclaration`, which for a module is its source file: stator-ts keeps that link
+    /// `symbol.valueDeclaration`, which for a module is its source file: stator-transpiler keeps that link
     /// on the file, so the path the symbol is named after finds it.
     pub fn declarationOf(g: *const Gate, s: ?*Symbol) ?*Node {
         const sym = (s orelse return null).resolve();
@@ -499,7 +499,7 @@ pub fn isIterationStatement(n: *const Node) bool {
 
 /// `ts.isTypeNode`, which counts `ExpressionWithTypeArguments` as one.
 pub fn isTypeNode(n: *const Node) bool {
-    return stator_ts.syntax.isTypeNode(n) or n.data == .expr_with_type_args;
+    return stator_transpiler.syntax.isTypeNode(n) or n.data == .expr_with_type_args;
 }
 
 /// `ts.isExpression`, by kind.
@@ -559,7 +559,7 @@ pub fn isCallee(n: *const Node) bool {
     return p.data == .call and p.data.call.callee == n;
 }
 
-/// Type flag questions. TypeScript answers them from a bit set; stator-ts from the tag.
+/// Type flag questions. TypeScript answers them from a bit set; stator-transpiler from the tag.
 pub fn isStringLike(t: *const Type) bool {
     return switch (t.data) {
         .string, .str_lit, .tmpl, .strmap => true,
@@ -610,7 +610,7 @@ pub fn isObjectFlag(t: *const Type) bool {
 /// `symbol.flags & (ObjectLiteral | TypeLiteral)`. A literal's type has no symbol here and a mapped
 /// type's symbol has neither flag, though both have them in TypeScript.
 /// A destructured parameter is named by its position: TypeScript gives it a symbol of its own with
-/// the parameter as its declaration, stator-ts one with no declaration.
+/// the parameter as its declaration, stator-transpiler one with no declaration.
 pub fn isPatternParameter(sig: *const Sig, i: usize) bool {
     const decl = sig.decl orelse return false;
     if (decl.data != .func) return false;

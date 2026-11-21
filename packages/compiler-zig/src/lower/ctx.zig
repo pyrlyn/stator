@@ -2,7 +2,7 @@
 //! original keeps these as module-level variables reset at each entry.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const stator_ts = @import("stator_ts");
+const stator_transpiler = @import("stator_transpiler");
 pub const api = @import("../frontend/gate_api.zig");
 pub const gate = @import("../frontend/gate.zig");
 pub const gt = @import("../frontend/gate_types.zig");
@@ -84,7 +84,7 @@ pub const Lower = struct {
     a: Allocator,
     g: *Gate,
     prog: *api.project.Program,
-    checked: stator_ts.Session,
+    checked: stator_transpiler.Session,
     /// The `sourceFile` argument threaded through every function of the original.
     sf: *File,
     diagnostics: std.ArrayList(Diagnostic) = .empty,
@@ -199,7 +199,7 @@ pub const Lower = struct {
         return gt.tsTypeToHType(l.g, l.g.typeAt(n));
     }
 
-    pub fn session(l: *Lower) stator_ts.Session {
+    pub fn session(l: *Lower) stator_transpiler.Session {
         return l.checked;
     }
 

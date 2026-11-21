@@ -61,7 +61,7 @@ golden: 525 fixtures — 525 passed, 0 failed
 asan: golden-asan green — recorded c62d6853d7db…
 ```
 
-The earlier bare `pnpm run ci` resolved Zig 0.16.0 and failed building stator-ts; using
+The earlier bare `pnpm run ci` resolved Zig 0.16.0 and failed building Stator Transpiler; using
 `mise exec` selected the existing pinned Zig 0.17.1. No tool versions or configuration changed.
 The standalone unit run also passed all 840 tests; the TypeScript checker and focused lint
 checks passed. `git diff --check` passed.

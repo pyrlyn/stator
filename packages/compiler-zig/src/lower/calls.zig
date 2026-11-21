@@ -308,7 +308,7 @@ fn isNamespaceReceiver(l: *Lower, receiver: *Node) bool {
     return resolved.flags & c.F.value_module != 0 or hasTopLevelExpando(l, resolved);
 }
 
-/// tsc binds a function as a module too once a top-level statement gives it a member. stator-ts
+/// tsc binds a function as a module too once a top-level statement gives it a member. stator-transpiler
 /// keeps the flag off, where it would turn the function's value into a namespace.
 fn hasTopLevelExpando(l: *Lower, symbol: *c.Symbol) bool {
     const table = symbol.exports orelse return false;

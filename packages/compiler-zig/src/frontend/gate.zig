@@ -66,7 +66,7 @@ fn countClassNames(g: *Gate, prog: *const api.project.Program) void {
     }
 }
 
-/// `prog` is stator-ts's loaded program. Diagnostics land on `g.diagnostics`, in program order.
+/// `prog` is stator-transpiler's loaded program. Diagnostics land on `g.diagnostics`, in program order.
 /// tsc's binder treats `a.b = v` at the top level of a JS file as declaring `a` there when the file
 /// does not (`jsGlobalAugmentations`), so `a` stops reading as a library global everywhere.
 fn collectJsGlobals(g: *Gate, prog: *const api.project.Program) void {
@@ -609,7 +609,7 @@ fn gateIdentifier(g: *Gate, node: *Node) Result {
 }
 
 /// tsc answers `arguments` in a non-arrow function with a symbol that has no declarations, which
-/// reads as a global; stator-ts answers with none, so the scope walk is made here.
+/// reads as a global; stator-transpiler answers with none, so the scope walk is made here.
 fn isArgumentsObject(node: *const Node, symbol: ?*Symbol) bool {
     if (symbol != null or !api.identifierIs(node, "arguments")) return false;
     var cursor = node.parent;

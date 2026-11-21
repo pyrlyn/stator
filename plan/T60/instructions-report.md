@@ -41,16 +41,16 @@ From the repository root, train and then run the generated executable:
 mise exec conda:clang@23.1.4 conda:llvm-tools@23.1.4 -- \
   bash scripts/pgo.sh -p /path/to/stator/packages/compiler \
   --lib-dir tests/node_modules/@typescript/typescript-darwin-arm64/lib -j 16
-zig-out/bin/stator-ts-pgo build -p /path/to/project
+zig-out/bin/stator-transpiler-pgo build -p /path/to/project
 ```
 
 For the measured `build` scenario, direct emitted files to a scratch directory:
 
 ```sh
-node scripts/benchmark.mjs /path/to/baseline zig-out/bin/stator-ts-pgo --rounds 30 -- \
+node scripts/benchmark.mjs /path/to/baseline zig-out/bin/stator-transpiler-pgo --rounds 30 -- \
   build -p /path/to/stator/packages/compiler \
   --lib-dir tests/node_modules/@typescript/typescript-darwin-arm64/lib -j 16 \
   --outDir /path/to/scratch-output
 ```
 
-The measured PGO executable's SHA-256 is `57137b21bd4129e4d0973c99de2a27d2e7100f125e962bc2185834a8b3467be0`. Use `stator-ts-pgo` for these benefits; the ordinary build remains available. Retrain when rebuilding after source changes. The earlier RAM/time target stays open because PGO slightly increases peak RAM.
+The measured PGO executable's SHA-256 is `57137b21bd4129e4d0973c99de2a27d2e7100f125e962bc2185834a8b3467be0`. Use `stator-transpiler-pgo` for these benefits; the ordinary build remains available. Retrain when rebuilding after source changes. The earlier RAM/time target stays open because PGO slightly increases peak RAM.

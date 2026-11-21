@@ -4,7 +4,7 @@
     .fingerprint = 0x5b7938fe09a406f1,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
-        .stator_ts = .{ .path = "../transpiler" },
+        .stator_transpiler = .{ .path = "../transpiler" },
         .jstext = .{ .path = "../jstext" },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src" },

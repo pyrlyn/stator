@@ -9,7 +9,7 @@ agent:
 # T67.2. `stator-engine build --target=wasm`: JavaScript and TypeScript to WebAssembly
 
 The creator's direction (2026-11-08): the engine must be able to compile JS and TS to
-WebAssembly. The engine's front half stays as it is (stator-ts erases types, the bytecode
+WebAssembly. The engine's front half stays as it is (Stator Transpiler erases types, the bytecode
 compiler makes templates); this card adds a backend that turns templates into a Wasm module, next
 to the native one T67 builds on pyrlyn/jit.
 

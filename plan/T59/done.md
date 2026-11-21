@@ -1,4 +1,4 @@
-`stator-ts check` matches tsc on `apps/stator`: 0 errors on `packages/compiler`, `node`, `std`, `tests`, `vite-stator` and `site`. Before it printed 11, 0, 0, 234, 6 and 0 on the base commit, with `type-fest` no longer stopping `check` since T58.
+`stator-transpiler check` matches tsc on `apps/stator`: 0 errors on `packages/compiler`, `node`, `std`, `tests`, `vite-stator` and `site`. Before it printed 11, 0, 0, 234, 6 and 0 on the base commit, with `type-fest` no longer stopping `check` since T58.
 
 Commit d67b14e fixes the nine causes listed in `task.md`, with 16 fixtures. T58's reset of `no_cond_type` in tuples went too: the type operator level covers it.
 

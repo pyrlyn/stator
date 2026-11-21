@@ -1,4 +1,4 @@
-//! Stator compiler core in Zig (docs/zig-core.md). Front end: stator-ts (parser, binder, checker).
+//! Stator compiler core in Zig (docs/zig-core.md). Front end: stator-transpiler (parser, binder, checker).
 
 pub const support = @import("support/root.zig");
 pub const gate = @import("frontend/gate.zig");

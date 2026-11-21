@@ -1,4 +1,4 @@
-//! stator-ts's tree to bytecode (docs/INTERPRETER.md §2). Scope analysis is decided per function:
+//! stator-transpiler's tree to bytecode (docs/INTERPRETER.md §2). Scope analysis is decided per function:
 //! a function that contains another function keeps every binding it declares in environments,
 //! one per scope, because something nested may capture any of them; a function that contains
 //! none keeps them in frame locals. Names resolve at compile time to a local, an environment slot
@@ -2611,7 +2611,7 @@ fn parseForEachChild(n: *Node, found: *bool) void {
     forEachChild(n, found, Visit.f);
 }
 
-/// stator-ts's reflective walker, restated over the tree types this module names.
+/// stator-transpiler's reflective walker, restated over the tree types this module names.
 fn forEachChild(n: *Node, ctx: anytype, comptime visit: anytype) void {
     switch (n.data) {
         inline else => |payload| visitValue(payload, ctx, visit),

@@ -8,9 +8,9 @@ agent: Claude Code / claude-opus-5-5
 
 # T57. Zig 0.17 and the coroutines package
 
-The creator asked for `pyrlyn/coroutines` in the build and in use, and for Zig to go up to 0.17, which the package requires. T54's comparison in `plan/README.md` found nothing to gain from it on speed, so this task is about keeping what stator-ts has while the parallel passes move onto the package.
+The creator asked for `pyrlyn/coroutines` in the build and in use, and for Zig to go up to 0.17, which the package requires. T54's comparison in `plan/README.md` found nothing to gain from it on speed, so this task is about keeping what Stator Transpiler has while the parallel passes move onto the package.
 
-Done means stator-ts builds on Zig 0.17.0, the package comes through `build.zig.zon`, `src/pool` runs its passes through `coroutines.state_machine.runParallel`, and what the package lacks reached it by PR.
+Done means Stator Transpiler builds on Zig 0.17.0, the package comes through `build.zig.zon`, `src/pool` runs its passes through `coroutines.state_machine.runParallel`, and what the package lacks reached it by PR.
 
 Check: `zig build test` passes; VS Code stays at 291 of 291 with none extra at `-j` 1, 2, 4, 8 and 16; `tests/differential.sh` keeps 911 of 914 with none extra; `tests/ts7/run.mjs` loses none of the 8136, `compiler/binderBinaryExpressionStress` included; peak memory and wall time on VS Code, and a small project's wall time, are reported against T54.
 
@@ -18,7 +18,7 @@ Check: `zig build test` passes; VS Code stays at 291 of 291 with none extra at `
 
 1. Pin Zig 0.17.0 for the project in `mise.toml`, `build.zig.zon`, `toolchain.md`, `AGENTS.md`. Fix what the new standard library breaks, with no change in behaviour, and benchmark before going further.
 2. `zig fetch --save git+https://github.com/pyrlyn/coroutines`, then import the `coroutines` module in `build.zig`.
-3. Send the package what stator-ts cannot do without, by PR:
+3. Send the package what Stator Transpiler cannot do without, by PR:
    - a stack size for workers: the fixed 1 MiB crashes on `binderBinaryExpressionStress`;
    - the worker's index: each worker owns an arena and tasks must find it;
    - a caller that only waits: the caller works too, and the main stack is too small for a checker.

@@ -1,6 +1,6 @@
 # T57. Done
 
-stator-ts builds on Zig 0.17.0, pinned in `mise.toml` and `build.zig.zon`. The standard library's changes only reached `b.args`, the `**` array repeat and the reflection in `src/ast.zig`, `src/lexer.zig` and `src/project.zig`.
+Stator Transpiler builds on Zig 0.17.0, pinned in `mise.toml` and `build.zig.zon`. The standard library's changes only reached `b.args`, the `**` array repeat and the reflection in `src/ast.zig`, `src/lexer.zig` and `src/project.zig`.
 
 `coroutines` comes through `build.zig.zon`, and every parallel pass runs through `state_machine.runParallel`. `src/pool/threads.zig` lost its threads, `schedule.Cursor` is gone, and `ThreadPool` only holds the width, capped at the library's 64. A nested call now runs on its own worker's index, not on 0.
 

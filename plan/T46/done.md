@@ -1,6 +1,6 @@
 # T46. Closing report
 
-`tests/differential.sh [-v] [project-dir...]` compares diagnostics with the real `tsc` per fixture and overall by file, line and code, and counts exact columns. A crash counts as a failure, not as zero false positives. `TSC`, `STATOR_TS` and `STATOR_TS_LIB` pick what is compared.
+`tests/differential.sh [-v] [project-dir...]` compares diagnostics with the real `tsc` per fixture and overall by file, line and code, and counts exact columns. A crash counts as a failure, not as zero false positives. `TSC`, `STATOR_TRANSPILER` and `STATOR_TRANSPILER_LIB` pick what is compared.
 
 Commit: none, the project has no git repository of its own.
 

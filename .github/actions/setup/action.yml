@@ -9,7 +9,7 @@ runs:
         node-version-file: .node-version
         cache: pnpm
     # The runtime's memory core is Zig (plan-notes 238, T9.1), and so is
-    # stator-ts, which `pnpm run typecheck` builds on every platform, Windows
+    # stator-transpiler, which `pnpm run typecheck` builds on every platform, Windows
     # included (plan/T65). Version matches the mise pin in mise.toml.
     - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
       with:

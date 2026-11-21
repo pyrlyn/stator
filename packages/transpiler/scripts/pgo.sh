@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Builds zig-out/bin/stator-ts-pgo, optimized with a profile of one check of a real project. Zig has
+# Builds zig-out/bin/stator-transpiler-pgo, optimized with a profile of one check of a real project. Zig has
 # no PGO of its own, so clang optimizes the bitcode Zig writes before its passes run: after them,
 # inlining has been decided without the profile. Clang's LLVM must not be older than Zig's. macOS
 # only, for the link line.
 #
 # usage: mise exec conda:clang@23.1.4 conda:llvm-tools@23.1.4 -- scripts/pgo.sh <check arguments>
-#   <check arguments>:          what to train on, as for `stator-ts check`
+#   <check arguments>:          what to train on, as for `stator-transpiler check`
 #   ZIG, CLANG, LLVM_PROFDATA:  tools to use (default: from PATH)
 set -euo pipefail
 
@@ -26,7 +26,7 @@ coroutines=(zig-pkg/coroutines-*/src/root.zig)
 
 # A fresh cache dir, because Zig writes neither the bitcode nor the link line on a cache hit.
 "$zig" build-exe -Ofast --dep coroutines -Mroot=src/main.zig -Ofast -Mcoroutines="${coroutines[0]}" \
-	--cache-dir "$tmp/cache" --name stator-ts -femit-bin="$tmp/zig-bin" \
+	--cache-dir "$tmp/cache" --name stator-transpiler -femit-bin="$tmp/zig-bin" \
 	--verbose-llvm-bc="$tmp/pre.bc" --verbose-link 2>"$tmp/link.txt"
 # The JSON parser needs f128 helpers, and only Zig's runtime is sure to have them.
 runtime=$(grep -o '[^ ]*libcompiler_rt\.a' "$tmp/link.txt" | head -n 1)
@@ -49,4 +49,4 @@ fi
 "$profdata" merge -o "$tmp/app.profdata" "$tmp"/raw/*.profraw
 "$clang" "${opt[@]}" -fprofile-use="$tmp/app.profdata" -c "$tmp/pre.bc" -o "$tmp/use.o"
 mkdir -p zig-out/bin
-"$clang" -isysroot "$sdk" "$tmp/use.o" "$runtime" -lSystem -dead_strip -o zig-out/bin/stator-ts-pgo
+"$clang" -isysroot "$sdk" "$tmp/use.o" "$runtime" -lSystem -dead_strip -o zig-out/bin/stator-transpiler-pgo

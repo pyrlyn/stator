@@ -1,4 +1,4 @@
-//! stator-ts as a Zig module, for compilers built on its parser and checker.
+//! stator-transpiler as a Zig module, for compilers built on its parser and checker.
 pub const api = @import("api.zig");
 pub const ast = @import("ast.zig");
 pub const binder = @import("binder.zig");

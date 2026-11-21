@@ -35,7 +35,7 @@ At each job count, final build:
 | 8 | 3.38 s | 9.83 GB | 291, none extra |
 | 16 | 2.43 s | 10.51 GB | 291, none extra |
 
-Five interleaved rounds of the final build, RSS: stator-ts 2.32-2.71 s, 9.78 GB; tsc-rs `--fast` 3.00-3.49 s, 7.77 GB; tsc-rs 5.24-5.58 s, 6.93 GB; tsc 7 10.40-11.08 s, 9.84-10.49 GB.
+Five interleaved rounds of the final build, RSS: Stator Transpiler 2.32-2.71 s, 9.78 GB; tsc-rs `--fast` 3.00-3.49 s, 7.77 GB; tsc-rs 5.24-5.58 s, 6.93 GB; tsc 7 10.40-11.08 s, 9.84-10.49 GB.
 
 ## How it was checked
 

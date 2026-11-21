@@ -2,7 +2,7 @@
 //!
 //! Modes: `interp` is the bytecode interpreter (docs/INTERPRETER.md); `jit` compiles each
 //! function on its first call through the baseline JIT (src/jit/) and interprets what it does not
-//! take. Languages: JavaScript; TypeScript, whose types stator-ts erases first; WebAssembly is
+//! take. Languages: JavaScript; TypeScript, whose types stator-transpiler erases first; WebAssembly is
 //! named so the CLI can refuse it plainly until plan/T67.3 runs it.
 
 const std = @import("std");
@@ -12,7 +12,7 @@ const interp = @import("interp.zig");
 const parse = @import("parse.zig");
 const builtins = @import("builtins.zig");
 const jit = @import("jit/jit.zig");
-const stator_ts = @import("parser");
+const stator_transpiler = @import("parser");
 const Value = rt.Value;
 
 pub const Mode = jit.Mode;
@@ -46,7 +46,7 @@ pub fn run(a: std.mem.Allocator, path: []const u8, src: []const u8, lang: Langua
         .wasm => return .{ .not_yet = .wasm },
         .js => src,
         .ts => blk: {
-            const erased = stator_ts.erase(a, path, src);
+            const erased = stator_transpiler.erase(a, path, src);
             break :blk erased.js orelse return .{ .syntax_error = parse.firstDiag(erased.file).? };
         },
     };

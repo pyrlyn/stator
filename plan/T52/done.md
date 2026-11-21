@@ -32,12 +32,12 @@ The plan said temporary lists first. The order turned out otherwise: profiling s
 
 | Compiler | Wall | User + sys | Peak RSS |
 | --- | --- | --- | --- |
-| stator-ts | 2.48-2.57 s | 23-24 s | 15.7 GB |
+| Stator Transpiler | 2.48-2.57 s | 23-24 s | 15.7 GB |
 | tsc-rs 0.8.0 `--fast` | 3.0-3.8 s | 24 s | 7.8 GB |
 | tsc-rs 0.8.0 | 5.3-5.4 s | 19 s | 6.9 GB |
 | tsc 7.0.2 | 10.6-10.8 s | 50-56 s | 9.9-10.5 GB |
 
-Not reached: memory. stator-ts uses about twice tsc-rs's memory, and more CPU than tsc-rs's default mode. `plan/README.md` has the conclusions.
+Not reached: memory. Stator Transpiler uses about twice tsc-rs's memory, and more CPU than tsc-rs's default mode. `plan/README.md` has the conclusions.
 
 ## Checked
 

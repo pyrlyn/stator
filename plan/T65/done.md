@@ -1,13 +1,13 @@
 # T65. Done
 
-`pnpm run typecheck` now runs `node scripts/typecheck.ts`: it builds stator-ts
-(`zig build -Doptimize=ReleaseSafe` in `packages/transpiler`, or takes `STATOR_TS`) and runs
-`stator-ts check -p` on `packages/compiler`, `tests`, `std`, `node` and `vite-stator`. Exit 2 (type
+`pnpm run typecheck` now runs `node scripts/typecheck.ts`: it builds Stator Transpiler
+(`zig build -Doptimize=ReleaseSafe` in `packages/transpiler`, or takes `STATOR_TRANSPILER`) and runs
+`stator-transpiler check -p` on `packages/compiler`, `tests`, `std`, `node` and `vite-stator`. Exit 2 (type
 errors) or any exit that is not a verdict fails the gate. The moon `typecheck` tasks call the same
 script with their own project. `.github/actions/setup` installs Zig on Windows too, because every
 `frontend` leg runs `typecheck`. `tsc` stays only for `pnpm run build`.
 
-Three stator-ts false positives on this repository, each fixed in `packages/transpiler` with a
+Three Stator Transpiler false positives on this repository, each fixed in `packages/transpiler` with a
 fixture that matches tsc 7:
 
 - `exact-optional-infer-undefined`: under `exactOptionalPropertyTypes`, inference paired the
@@ -18,7 +18,7 @@ fixture that matches tsc 7:
 - `unused-exported-destructuring`: `export const { a, b } = …` was reported unused under
   `noUnusedLocals` (TS6198 in `packages/node/src/process.ts`).
 
-Branch: `t65-typecheck-stator-ts` (a1ee0732 + this change).
+Branch: `t65-typecheck-stator-transpiler` (a1ee0732 + this change).
 
 How it was checked:
 

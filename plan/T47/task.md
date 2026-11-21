@@ -6,7 +6,7 @@ readiness: 100%
 agent: Claude Code / claude-opus-5-5
 ---
 
-# T47. Run the TypeScript 7 test suite against stator-ts
+# T47. Run the TypeScript 7 test suite against Stator Transpiler
 
 The creator asked to take TypeScript 7's own tests with a script, run them here, and
 keep the ability to sync. The fixtures in `tests/fixtures` only cover what we already

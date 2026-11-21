@@ -4,7 +4,7 @@
     .fingerprint = 0x177802699d013a67,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
-        .stator_ts = .{ .path = "../transpiler" },
+        .stator_transpiler = .{ .path = "../transpiler" },
         .jstext = .{ .path = "../jstext" },
         .pyrlyn_jit = .{
             .url = "git+https://github.com/pyrlyn/jit#e90d5705e7d242a009976a033ecae4e5e7ec343c",

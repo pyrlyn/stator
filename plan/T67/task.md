@@ -16,19 +16,19 @@ from what Stator already has, with two execution modes:
   claimed.
 
 The engine is shaped so TypeScript and WebAssembly can be added as input languages later. It is
-also a CLI, `stator-engine`, which runs a `.js` file, or a `.ts` file after stator-ts erases its
+also a CLI, `stator-engine`, which runs a `.js` file, or a `.ts` file after Stator Transpiler erases its
 types, and which the benchmark uses to compare the engine with V8 (the pinned Node).
 
 What it reuses, and nothing parallel to it:
 
 - `packages/interpreter` moves to `packages/engine` (the creator's choice): the parser front on
-  stator-ts, the bytecode compiler, the VM and the builtins become the engine's interpreter tier.
+  Stator Transpiler, the bytecode compiler, the VM and the builtins become the engine's interpreter tier.
   `libjsrt_interp.a`, `jsrt_interp.h` and the Test262 drivers keep working from the new path.
 - Values, objects and the collector are the runtime's (`libjsrt.a`): `jsrt_value`, shapes and ICs,
   and pyrlyn/gc, which T66 compiled into the runtime. The engine adds no second heap.
 - The JIT lowers bytecode into https://github.com/pyrlyn/jit's IR and compiles it with its
   register allocator and backends (AArch64, x86-64), pinned in `build.zig.zon` by commit.
-- TypeScript input goes through stator-ts's JS emitter (`packages/transpiler/src/emit.zig`).
+- TypeScript input goes through Stator Transpiler's JS emitter (`packages/transpiler/src/emit.zig`).
 
 Done means:
 
@@ -54,7 +54,7 @@ Done means:
    the frame window the collector already roots; number and boolean fast paths inline, the rest
    through the VM's own helpers), compile on first call in `jit` mode, cache on the template;
    functions with handlers, generators or async bodies stay interpreted.
-5. `src/engine.zig` (mode, language) and `src/cli.zig` (`stator-engine`); `erase.zig` in stator-ts.
+5. `src/engine.zig` (mode, language) and `src/cli.zig` (`stator-engine`); `erase.zig` in Stator Transpiler.
 6. Tests (`zig build test`, run by `pnpm run interp:test`):
    - `src/jit/` unit tests: stack-depth analysis, eligibility (handlers, generators, async and
      unsupported opcodes stay interpreted), and compiled templates for arithmetic, comparisons,
