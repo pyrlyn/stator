@@ -119,7 +119,9 @@ trailing slashes are ignored (`/a/b/` names `b`), the root names itself (`basena
 otherwise the two meet at exactly one `/`.
 
 **`std/fs` semantics.** Paths are absolute or relative to the working directory, resolved by
-the OS; nothing is normalized. Text is UTF-8 both ways: an invalid byte sequence read back
+the OS; nothing is normalized. A path or a flag string that holds a NUL is `EINVAL` (`exists`
+answers `false`), never cut at the NUL: the cut would name another file, so
+`unlink('a.txt\0.tmp')` must not remove `a.txt`. Node refuses the same arguments. Text is UTF-8 both ways: an invalid byte sequence read back
 becomes U+FFFD, and a NUL byte ends the text, because text crosses the C-string boundary
 (docs/FFI.md §3); `readBytes` carries every byte. `stat` follows symbolic links and
 answers a `Stat` with `size`, `isFile`, `isDirectory` and `mtimeMs` (whole milliseconds).
@@ -171,7 +173,8 @@ and 1 when the OS will not say. `totalMemory` is physical memory in bytes. `eol`
 **`std/io` semantics.** Descriptors are integers in `0..2^31-1`; anything else is `EBADF`
 (Node's own range check throws a `RangeError` instead, and `isatty` answers `false`). `write`
 and `writeBytes` write everything, retrying short writes and `EINTR`, and flush C stdio first,
-so `console.log` and a write to the same stream keep program order. `write` takes text as UTF-8
+so `console.log` and a write to the same stream keep program order. A `write(2)` that returns 0
+for a non-empty remainder is `EIO`, not a spin. `write` takes text as UTF-8
 and stops at a NUL (the C-string boundary); `writeBytes` carries any byte. `read` is one
 `read(2)` of at most `max` bytes, and at most 1 MiB, because the buffer is allocated before the
 call; an empty answer is end of file, and `max` outside `0..2^31-1` is `EINVAL`.
@@ -283,7 +286,8 @@ test task depends on it.
 ## 8. v0 limitations
 
 - **C-string boundary.** `std/fs` text and `std/io.write` stop at a NUL byte, and every string
-  argument is passed as UTF-8 (§5). Bytes (`std/io.writeBytes`/`read`, `std/fs.readBytes`/
+  argument is passed as UTF-8 (§5). A `std/fs` path or flag string with a NUL is refused with
+  `EINVAL` rather than cut. Bytes (`std/io.writeBytes`/`read`, `std/fs.readBytes`/
   `read`/`write`) do not: a `Uint8Array` crosses as its own storage (§6), so any byte, NUL
   included, survives.
 - **No `code` property** on thrown errors yet (§3).

@@ -3,7 +3,7 @@
  * user's to fix (STA0019), never a compiler bug (STA4072). `build()` calls these rather than
  * `main.ts`, so the in-process callers (`statorc/api`, the Test262 runner) get the same answer. */
 
-import { accessSync, constants, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { BuildError } from '../support/diagnostics.ts';
 
@@ -31,10 +31,39 @@ const USER_WRITE_FAILURES: Readonly<Record<string, string>> = {
   ENOSPC: 'no space left on the device',
 };
 
+let caseProbeSeq = 0;
+
+/** Whether `dir` folds letter case: two spellings of one not-yet-existing name would be one file. */
+function directoryFoldsCase(dir: string): boolean {
+  // Counter, not Math.random / process.pid / bigint inodes: those are STA1213/STA1214 in the
+  // compiler selfhost and would ratchet the packages/compiler not-yet counts (QA-9).
+  caseProbeSeq += 1;
+  const tag = String(caseProbeSeq);
+  const probe = join(dir, `.stator-case-${tag}`);
+  const other = join(dir, `.STATOR-CASE-${tag}`);
+  if (probe === other) return false;
+  try {
+    writeFileSync(probe, '');
+    const a = statSync(probe);
+    const b = statSync(other, { throwIfNoEntry: false });
+    return b !== undefined && b.dev === a.dev && b.ino === a.ino;
+  } catch {
+    return false;
+  } finally {
+    try {
+      unlinkSync(probe);
+    } catch {
+      /* the directory may not have been writable */
+    }
+  }
+}
+
+const foldsCaseByDir = new Map<string, boolean>();
+
 /** The identity two spellings share when they name one file. An existing file is its inode, so
  * a symlink, a hard link or a case-folding file system cannot hide an alias. A file that does
- * not exist yet is its canonical directory plus its name: nothing can alias it but another
- * output, and two outputs spelled the same way resolve to the same key. */
+ * not exist yet is its canonical directory plus its name; on a directory that folds case the
+ * name is compared case-insensitively (QA-9: `-o OUT.o --emit-header=out.o` on APFS). */
 function fileKey(path: string): string {
   const absolute = resolve(path);
   const stats = statSync(absolute, { bigint: true, throwIfNoEntry: false });
@@ -42,7 +71,14 @@ function fileKey(path: string): string {
     return `inode:${stats.dev}:${stats.ino}`;
   }
   try {
-    return `path:${join(realpathSync.native(dirname(absolute)), basename(absolute))}`;
+    const dir = realpathSync.native(dirname(absolute));
+    const name = basename(absolute);
+    let folds = foldsCaseByDir.get(dir);
+    if (folds === undefined) {
+      folds = directoryFoldsCase(dir);
+      foldsCaseByDir.set(dir, folds);
+    }
+    return `path:${join(dir, folds ? name.toLowerCase() : name)}`;
   } catch {
     return `path:${absolute}`;
   }
@@ -79,13 +115,18 @@ export function refuseAliasedOutputs(
   }
 }
 
-/** STA0019 before a tool (clang) writes `target`: its directory must exist and be writable, and
- * the path must not be a directory. Without this check, clang's own failure there would read as
- * a compiler bug (STA0009). */
+/** STA0019 before a tool (clang) writes `target`: its directory must exist and be writable, the
+ * path must not be a directory, and a file already there must be writable too (ld64 opens it in
+ * place, so a read-only one fails the link). Without this check, clang's own failure there would
+ * read as a compiler bug (STA0009). */
 export function requireWritable(target: NamedPath): void {
   try {
-    if (statSync(target.path, { throwIfNoEntry: false })?.isDirectory() === true) {
+    const existing = statSync(target.path, { throwIfNoEntry: false });
+    if (existing?.isDirectory() === true) {
       throw Object.assign(new Error('is a directory'), { code: 'EISDIR' });
+    }
+    if (existing !== undefined) {
+      accessSync(target.path, constants.W_OK);
     }
     accessSync(dirname(resolve(target.path)), constants.W_OK);
   } catch (error) {

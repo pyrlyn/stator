@@ -52,7 +52,9 @@ such spelling, so an output path cannot start with `-` (write `./-name`).
 
 `build` refuses (`STA0004`) any two of the entry, every source file of the program, `-o`,
 `--emit-header` and the `--keep-c` file (`<out>.c`) that name the same file, before anything is
-written, whether those paths came from flags or from this file. An output the file system will
+written, whether those paths came from flags or from this file. Existing paths compare by inode;
+new paths compare by canonical directory and name, case-insensitively when that directory folds
+case (`-o OUT.o --emit-header=out.o` on APFS). An output the file system will
 not take (a missing directory, no permission, a read-only or full disk, `-o` naming a directory)
 is `STA0019`, never the compiler-bug `STA4072` (docs/DIAGNOSTICS.md).
 

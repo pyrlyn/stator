@@ -482,6 +482,13 @@ function outputCases(): Case[] {
     dirs: ['dir', 'locked'],
     readonly: ['locked'],
   }));
+  // An existing output the user cannot write: STA0019 before the linker, never STA0009.
+  cases.push({
+    group: 'output',
+    args: ['build', 'x.ts', '-o', 'ro'],
+    files: { ...files, ro: 'old\n' },
+    readonly: ['ro'],
+  });
   const env: Readonly<Record<string, string>>[] = [
     { CC: '/nonexistent/cc' },
     { CC: 'false' },

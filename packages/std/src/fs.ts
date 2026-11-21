@@ -26,7 +26,7 @@ import {
   jsrtStdFsWrite,
   jsrtStdFsWriteText,
 } from './native/fs.js';
-import { __stdFailure, __stdQuote } from './internal/error.ts';
+import { __stdError, __stdFailure, __stdQuote } from './internal/error.ts';
 import { __stdReadAnswer, __stdReadView } from './internal/read.ts';
 import { __stdStrings } from './internal/strings.ts';
 
@@ -48,10 +48,21 @@ export class Stat {
   }
 }
 
+/** A string argument as the backing takes it: a C string, which a NUL would end early. A path
+ * cut there names another file (`'a.txt\u0000.png'` would open `a.txt`), so a NUL anywhere in
+ * a path or a flag string is EINVAL, never truncated. Node refuses both too
+ * (ERR_INVALID_ARG_VALUE). */
+function __stdFsArg(name: string, path: string, text: string): CString {
+  if (text.includes('\u0000')) {
+    throw __stdError(`std/fs.${name}`, __stdQuote(path), 'EINVAL');
+  }
+  return text as CString;
+}
+
 /** The file's contents decoded as UTF-8 (an invalid sequence becomes U+FFFD). A NUL byte ends the
  * text: the C-string boundary truncates there (docs/FFI.md §3); `readBytes` carries every byte. */
 export function readText(path: string): string {
-  if (jsrtStdFsReadText(path as CString) !== 0) {
+  if (jsrtStdFsReadText(__stdFsArg('readText', path, path)) !== 0) {
     throw __stdFailure('std/fs.readText', __stdQuote(path));
   }
   return jsrtStdResult();
@@ -59,13 +70,13 @@ export function readText(path: string): string {
 
 /** Creates or truncates the file and writes `text` as UTF-8. */
 export function writeText(path: string, text: string): void {
-  if (jsrtStdFsWriteText(path as CString, text as CString) !== 0) {
+  if (jsrtStdFsWriteText(__stdFsArg('writeText', path, path), text as CString) !== 0) {
     throw __stdFailure('std/fs.writeText', __stdQuote(path));
   }
 }
 
 export function stat(path: string): Stat {
-  if (jsrtStdFsStat(path as CString) !== 0) {
+  if (jsrtStdFsStat(__stdFsArg('stat', path, path)) !== 0) {
     throw __stdFailure('std/fs.stat', __stdQuote(path));
   }
   return new Stat(jsrtStdFsStatSize(), jsrtStdFsStatKind(), jsrtStdFsStatMtimeMs());
@@ -73,21 +84,21 @@ export function stat(path: string): Stat {
 
 /** Creates one directory; its parent must exist, and an existing path is EEXIST. */
 export function mkdir(path: string): void {
-  if (jsrtStdFsMkdir(path as CString) !== 0) {
+  if (jsrtStdFsMkdir(__stdFsArg('mkdir', path, path)) !== 0) {
     throw __stdFailure('std/fs.mkdir', __stdQuote(path));
   }
 }
 
 /** Removes a file (not a directory). */
 export function unlink(path: string): void {
-  if (jsrtStdFsUnlink(path as CString) !== 0) {
+  if (jsrtStdFsUnlink(__stdFsArg('unlink', path, path)) !== 0) {
     throw __stdFailure('std/fs.unlink', __stdQuote(path));
   }
 }
 
 /** Removes an empty directory; a non-empty one is ENOTEMPTY. */
 export function rmdir(path: string): void {
-  if (jsrtStdFsRmdir(path as CString) !== 0) {
+  if (jsrtStdFsRmdir(__stdFsArg('rmdir', path, path)) !== 0) {
     throw __stdFailure('std/fs.rmdir', __stdQuote(path));
   }
 }
@@ -96,7 +107,7 @@ export function rmdir(path: string): void {
 export function readBytes(path: string): Uint8Array {
   // The size is known only once the file is read, so the backing parks the bytes and answers
   // their count; the second call copies them into a view of that size and frees them.
-  const count = jsrtStdFsReadBytes(path as CString);
+  const count = jsrtStdFsReadBytes(__stdFsArg('readBytes', path, path));
   if (count < 0) {
     throw __stdFailure('std/fs.readBytes', __stdQuote(path));
   }
@@ -107,12 +118,13 @@ export function readBytes(path: string): Uint8Array {
 
 /** Whether `path` names anything (symbolic links followed); false, never an error, otherwise. */
 export function exists(path: string): boolean {
-  return jsrtStdFsExists(path as CString) === 1;
+  // Node's `existsSync` answers false for a path holding a NUL; it names no file.
+  return !path.includes('\u0000') && jsrtStdFsExists(path as CString) === 1;
 }
 
 /** The canonical absolute path: symbolic links, `.` and `..` resolved. The path must exist. */
 export function realpath(path: string): string {
-  if (jsrtStdFsRealpath(path as CString) !== 0) {
+  if (jsrtStdFsRealpath(__stdFsArg('realpath', path, path)) !== 0) {
     throw __stdFailure('std/fs.realpath', __stdQuote(path));
   }
   return jsrtStdResult();
@@ -121,14 +133,14 @@ export function realpath(path: string): string {
 /** Sets the access and modification times, in milliseconds since the Unix epoch (Node's
  * `utimesSync` takes seconds). A time outside a `Date`'s range is EINVAL. */
 export function utimes(path: string, atimeMs: number, mtimeMs: number): void {
-  if (jsrtStdFsUtimes(path as CString, atimeMs, mtimeMs) !== 0) {
+  if (jsrtStdFsUtimes(__stdFsArg('utimes', path, path), atimeMs, mtimeMs) !== 0) {
     throw __stdFailure('std/fs.utimes', __stdQuote(path));
   }
 }
 
 /** The directory's entry names, without `.` and `..`, in byte order. */
 export function readdir(path: string): string[] {
-  if (jsrtStdFsReaddir(path as CString) !== 0) {
+  if (jsrtStdFsReaddir(__stdFsArg('readdir', path, path)) !== 0) {
     throw __stdFailure('std/fs.readdir', __stdQuote(path));
   }
   return __stdStrings(jsrtStdFsReaddirCount(), (i: number): string => jsrtStdFsReaddirName(i));
@@ -138,7 +150,7 @@ export function readdir(path: string): string[] {
  * closes it for you. `flags` is one of Node's flag strings (`'r'`, `'r+'`, `'w'`, `'wx'`, `'w+'`,
  * `'a'`, `'a+'`, …; any other is EINVAL); a created file gets mode 0666 before the umask. */
 export function open(path: string, flags: string = 'r'): number {
-  const fd = jsrtStdFsOpen(path as CString, flags as CString);
+  const fd = jsrtStdFsOpen(__stdFsArg('open', path, path), __stdFsArg('open', path, flags));
   if (fd < 0) {
     throw __stdFailure('std/fs.open', __stdQuote(path));
   }

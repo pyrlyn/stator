@@ -330,7 +330,7 @@ pub fn link(h: Host, cc: Compiler, l: LinkLine, archives: Archives) Error!void {
         if (succeeded(second.term)) return requireProduced(h, cc, l.out);
         h.stderr(second.stdout);
         h.stderr(second.stderr);
-        return linkFailure(h, l.extern_flags, second.term, toolchain.staleLdHint(a, sysroot));
+        return linkFailure(h, l.extern_flags, second.term, toolchain.staleLdRetryHint(a, second.stderr, sysroot));
     };
     h.stderr(first.stdout);
     h.stderr(first.stderr);

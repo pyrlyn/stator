@@ -44,7 +44,9 @@ clearImmediate(gone);
 
 setTimeout(() => {
   const elapsed = Date.now() - start;
-  say(`last ${elapsed >= 90 ? "after 90ms" : `early: ${elapsed}`}`);
+  // 6 ms slack: due times in this file are at least 6 ms apart, and under ASan the 90 ms
+  // timer has been observed to fire at 89 ms (QA-16), which is still last and in order.
+  say(`last ${elapsed >= 84 ? "after 90ms" : `early: ${elapsed}`}`);
   console.log(log.length);
 }, 90);
 void Promise.resolve(0).then(() => say("first promise"));

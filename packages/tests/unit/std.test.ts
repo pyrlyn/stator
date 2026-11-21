@@ -19,7 +19,9 @@ import { NATIVE_ONLY } from './helpers.ts';
 const CLI = fileURLToPath(new URL('../../compiler/src/cli/main.ts', import.meta.url));
 
 function withProgram<T>(source: string, body: (entry: string, dir: string) => T): T {
-  const dir = mkdtempSync(join(tmpdir(), 'stator-std-'));
+  // realpathSync: on a case-insensitive volume TMPDIR may be spelled differently from the
+  // on-disk path (QA-15), and execPath() / inode comparisons need the canonical spelling.
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'stator-std-')));
   try {
     const entry = join(dir, 'main.ts');
     writeFileSync(entry, source);
@@ -102,7 +104,7 @@ test('the link line names libjsrt_interp.a only when a module interprets', () =>
 async function compiledStdC(
   source: string,
 ): Promise<{ readonly c: string; readonly std: boolean }> {
-  const dir = mkdtempSync(join(tmpdir(), 'stator-std-'));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'stator-std-')));
   try {
     const entry = join(dir, 'main.ts');
     writeFileSync(entry, source);
