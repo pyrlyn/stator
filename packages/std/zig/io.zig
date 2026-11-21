@@ -49,10 +49,26 @@ pub fn writeAll(fd: c_int, data: []const u8, at: ?i64) f64 {
     while (true) {
         const step = if (offset) |o| transfer(std.c.pwrite, .{ fd, rest.ptr, rest.len, o }) else transfer(std.c.write, .{ fd, rest.ptr, rest.len });
         if (step.err != .SUCCESS) return root.failErrno(step.err);
+        // write(2) returning 0 for a non-empty buffer would spin here forever (QA-13).
+        if (step.count == 0) return if (rest.len == 0) 0 else root.fail("EIO");
         rest = rest[step.count..];
         if (offset) |o| offset = o + @as(i64, @intCast(step.count));
         if (rest.len == 0) return 0;
     }
+}
+
+/// How a successful `write` of `count` bytes moves a remaining buffer of `remaining`. A zero
+/// count with leftover bytes is `EIO` (the loop would otherwise never end). A zero count on an
+/// empty buffer is done — `writeAll` still makes that call so a bad descriptor is `EBADF`.
+pub fn leftoverAfterWrite(remaining: usize, count: usize) error{EIO}!usize {
+    if (count == 0) return if (remaining == 0) 0 else error.EIO;
+    return remaining - count;
+}
+
+test "a zero write of leftover bytes is EIO, not a spin" {
+    try std.testing.expectEqual(@as(usize, 0), leftoverAfterWrite(0, 0));
+    try std.testing.expectEqual(@as(usize, 2), leftoverAfterWrite(5, 3));
+    try std.testing.expectError(error.EIO, leftoverAfterWrite(4, 0));
 }
 
 /// `text` as UTF-8 (the C-string boundary: a NUL ends it, docs/FFI.md §3).

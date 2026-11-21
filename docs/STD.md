@@ -173,7 +173,8 @@ and 1 when the OS will not say. `totalMemory` is physical memory in bytes. `eol`
 **`std/io` semantics.** Descriptors are integers in `0..2^31-1`; anything else is `EBADF`
 (Node's own range check throws a `RangeError` instead, and `isatty` answers `false`). `write`
 and `writeBytes` write everything, retrying short writes and `EINTR`, and flush C stdio first,
-so `console.log` and a write to the same stream keep program order. `write` takes text as UTF-8
+so `console.log` and a write to the same stream keep program order. A `write(2)` that returns 0
+for a non-empty remainder is `EIO`, not a spin. `write` takes text as UTF-8
 and stops at a NUL (the C-string boundary); `writeBytes` carries any byte. `read` is one
 `read(2)` of at most `max` bytes, and at most 1 MiB, because the buffer is allocated before the
 call; an empty answer is end of file, and `max` outside `0..2^31-1` is `EINVAL`.
