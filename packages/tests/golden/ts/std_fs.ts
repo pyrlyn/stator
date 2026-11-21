@@ -110,6 +110,37 @@ utimes(file, 1000, 1700000000123);
 console.log(stat(file).mtimeMs);
 attempt("utimes missing", () => utimes(missing, 0, 0));
 attempt("utimes out of range", () => utimes(file, 0, 1e16));
+// A NUL in a path or a flag string is EINVAL, never a cut: the C string would end there and
+// name another file, so `victim.txt\0.tmp` must not reach `victim.txt`. The message shows the
+// NUL as `\0`, because a NUL in console output proves nothing either way.
+const victim = join(dir, "victim.txt");
+writeText(victim, "keep");
+function attemptNul(label: string, body: () => void): void {
+  try {
+    body();
+    console.log(label + ": no throw");
+  } catch (e) {
+    if (e instanceof Error) {
+      console.log(label + ": " + mask(e.message, dir, "<dir>").replaceAll("\u0000", "\\0"));
+    }
+  }
+}
+const cut = victim + "\u0000.tmp";
+attemptNul("unlink with NUL", () => unlink(cut));
+attemptNul("writeText with NUL", () => writeText(cut, "gone"));
+attemptNul("readText with NUL", () => readText(cut));
+attemptNul("readBytes with NUL", () => readBytes(cut));
+attemptNul("stat with NUL", () => stat(cut));
+attemptNul("open with NUL", () => open(cut));
+attemptNul("open NUL flags", () => open(victim, "r\u0000+"));
+attemptNul("mkdir with NUL", () => mkdir(cut));
+attemptNul("rmdir with NUL", () => rmdir(cut));
+attemptNul("readdir with NUL", () => readdir(dir + "\u0000x"));
+attemptNul("realpath with NUL", () => realpath(cut));
+attemptNul("utimes with NUL", () => utimes(cut, 0, 0));
+console.log(exists(cut), exists(victim), JSON.stringify(readText(victim)));
+unlink(victim);
+
 for (const name of ["b.txt", "C.txt", "a.txt", "é.txt", "data.bin"]) {
   unlink(join(dir, name));
 }

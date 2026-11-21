@@ -34,34 +34,42 @@ export class Stat {
   }
 }
 
+/** std refuses a NUL in a path with EINVAL before the backing runs (Node: ERR_INVALID_ARG_VALUE). */
+function guarded<T>(call: string, path: string, body: () => T): T {
+  if (path.includes('\u0000')) {
+    throw failure(call, quote(path), 'EINVAL');
+  }
+  return rethrow(call, quote(path), body);
+}
+
 export function readText(path: string): string {
-  return rethrow('std/fs.readText', quote(path), () => readFileSync(path, 'utf8'));
+  return guarded('std/fs.readText', path, () => readFileSync(path, 'utf8'));
 }
 
 export function writeText(path: string, text: string): void {
-  rethrow('std/fs.writeText', quote(path), () => writeFileSync(path, text));
+  guarded('std/fs.writeText', path, () => writeFileSync(path, text));
 }
 
 export function stat(path: string): Stat {
-  const st = rethrow('std/fs.stat', quote(path), () => statSync(path));
+  const st = guarded('std/fs.stat', path, () => statSync(path));
   const kind = st.isFile() ? 1 : st.isDirectory() ? 2 : 0;
   return new Stat(st.size, kind, Math.trunc(st.mtimeMs));
 }
 
 export function mkdir(path: string): void {
-  rethrow('std/fs.mkdir', quote(path), () => mkdirSync(path));
+  guarded('std/fs.mkdir', path, () => mkdirSync(path));
 }
 
 export function unlink(path: string): void {
-  rethrow('std/fs.unlink', quote(path), () => unlinkSync(path));
+  guarded('std/fs.unlink', path, () => unlinkSync(path));
 }
 
 export function rmdir(path: string): void {
-  rethrow('std/fs.rmdir', quote(path), () => rmdirSync(path));
+  guarded('std/fs.rmdir', path, () => rmdirSync(path));
 }
 
 export function readBytes(path: string): Uint8Array {
-  return rethrow('std/fs.readBytes', quote(path), () => new Uint8Array(readFileSync(path)));
+  return guarded('std/fs.readBytes', path, () => new Uint8Array(readFileSync(path)));
 }
 
 export function exists(path: string): boolean {
@@ -69,7 +77,7 @@ export function exists(path: string): boolean {
 }
 
 export function realpath(path: string): string {
-  return rethrow('std/fs.realpath', quote(path), () => realpathSync(path));
+  return guarded('std/fs.realpath', path, () => realpathSync(path));
 }
 
 function timeMs(ms: number): boolean {
@@ -80,11 +88,11 @@ export function utimes(path: string, atimeMs: number, mtimeMs: number): void {
   if (!timeMs(atimeMs) || !timeMs(mtimeMs)) {
     throw failure('std/fs.utimes', quote(path), 'EINVAL');
   }
-  rethrow('std/fs.utimes', quote(path), () => utimesSync(path, atimeMs / 1000, mtimeMs / 1000));
+  guarded('std/fs.utimes', path, () => utimesSync(path, atimeMs / 1000, mtimeMs / 1000));
 }
 
 export function readdir(path: string): string[] {
-  return rethrow('std/fs.readdir', quote(path), () => readdirSync(path));
+  return guarded('std/fs.readdir', path, () => readdirSync(path));
 }
 
 const FLAGS = new Set([
@@ -116,7 +124,7 @@ export function open(path: string, flags: string = 'r'): number {
   if (!FLAGS.has(flags)) {
     throw failure('std/fs.open', quote(path), 'EINVAL');
   }
-  return rethrow('std/fs.open', quote(path), () => openSync(path, flags, 0o666));
+  return guarded('std/fs.open', path, () => openSync(path, flags, 0o666));
 }
 
 function descriptor(call: string, fd: number): number {
