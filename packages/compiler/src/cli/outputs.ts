@@ -79,13 +79,18 @@ export function refuseAliasedOutputs(
   }
 }
 
-/** STA0019 before a tool (clang) writes `target`: its directory must exist and be writable, and
- * the path must not be a directory. Without this check, clang's own failure there would read as
- * a compiler bug (STA0009). */
+/** STA0019 before a tool (clang) writes `target`: its directory must exist and be writable, the
+ * path must not be a directory, and a file already there must be writable too (ld64 opens it in
+ * place, so a read-only one fails the link). Without this check, clang's own failure there would
+ * read as a compiler bug (STA0009). */
 export function requireWritable(target: NamedPath): void {
   try {
-    if (statSync(target.path, { throwIfNoEntry: false })?.isDirectory() === true) {
+    const existing = statSync(target.path, { throwIfNoEntry: false });
+    if (existing?.isDirectory() === true) {
       throw Object.assign(new Error('is a directory'), { code: 'EISDIR' });
+    }
+    if (existing !== undefined) {
+      accessSync(target.path, constants.W_OK);
     }
     accessSync(dirname(resolve(target.path)), constants.W_OK);
   } catch (error) {

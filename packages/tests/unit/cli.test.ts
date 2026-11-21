@@ -689,6 +689,19 @@ test('an unwritable output is STA0019, not STA4072 "compiler bug" (F2)', async (
   });
 });
 
+test('a read-only output that already exists is STA0019, not STA0009 "compiler bug"', async () => {
+  // Root writes through any mode bit, so there is nothing to refuse there.
+  if (process.getuid?.() === 0) return;
+  await inScratch({ 'app.ts': 'console.log(1);\n', app: 'old\n' }, async (dir) => {
+    chmodSync(join(dir, 'app'), 0o444);
+    const r = await statorIn(dir, 'build', 'app.ts', '-o', 'app');
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /^stator: STA0019 cannot write -o "app": EACCES \(permission denied\)/);
+    assert.doesNotMatch(r.stderr, /STA0009|STA4072|compiler bug/);
+    assert.equal(readFileSync(join(dir, 'app'), 'utf8'), 'old\n');
+  });
+});
+
 test('an explicit --unit-name must already be a C identifier part (F10)', async () => {
   await inScratch({ 'lib.ts': ADD }, async (dir) => {
     const header = (name: string) =>
