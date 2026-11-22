@@ -179,7 +179,7 @@ jobs:
       # baseline, the check the pre-push hook (hk.pkl) runs. Last, so mise's PATH never shadows the
       # Node above; install_args installs only jactionlint (version as in mise.toml), and
       # shellcheck comes from the runner image.
-      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
         with:
           install_args: github:jdx/jactionlint@2.0.2
       - run: jactionlint --color
