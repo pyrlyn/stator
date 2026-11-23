@@ -86,7 +86,11 @@ function probe(fn: (href: string) => string, href: string): Result {
   try {
     return { ok: true, value: fn(href) };
   } catch (error) {
-    const failure = error as { readonly name?: string; readonly code?: string; readonly message?: string };
+    const failure = error as {
+      readonly name?: string;
+      readonly code?: string;
+      readonly message?: string;
+    };
     return {
       ok: false,
       ...(failure.name !== undefined ? { name: failure.name } : {}),
