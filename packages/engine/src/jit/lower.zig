@@ -1,4 +1,4 @@
-//! Bytecode to pyrlyn/jit IR (docs/ENGINE.md §3). The operand stack stays in the frame window, at
+//! Bytecode to pyrlyn/zjit IR (docs/ENGINE.md §3). The operand stack stays in the frame window, at
 //! the depths `analyze.zig` computed, so every value the collector can see is where the
 //! interpreter would have put it; registers hold only what one instruction is working on.
 //!

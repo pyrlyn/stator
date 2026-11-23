@@ -5,7 +5,7 @@
     .minimum_zig_version = "0.17.1",
     .dependencies = .{
         .kxgc = .{
-            .url = "git+https://github.com/pyrlyn/gc#ef3b4400dba9a0e5e10b8198f245945dffde5fec",
+            .url = "git+https://github.com/pyrlyn/zgc#ef3b4400dba9a0e5e10b8198f245945dffde5fec",
             .hash = "kxgc-0.1.0-qQGyHvSzAgB-EFPxnZ1tVaPQGV9nvC6VI2NWj1Xb94wf",
         },
     },

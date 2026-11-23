@@ -1,4 +1,4 @@
-//! The `host` module pyrlyn/gc's collectors import: the symbols `kxgc.h` says the runtime provides
+//! The `host` module pyrlyn/zgc's collectors import: the symbols `kxgc.h` says the runtime provides
 //! (plan-notes 407). pyrlyn's own `src/host.zig` is a stand-in for its tests; Stator builds the
 //! collector against this file instead, so a collector failure reads as a runtime panic.
 

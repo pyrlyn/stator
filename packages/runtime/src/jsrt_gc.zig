@@ -1,7 +1,7 @@
-//! The collector: pyrlyn/gc driven as coalesced deferred reference counting (docs/VALUE.md §4,
+//! The collector: pyrlyn/zgc driven as coalesced deferred reference counting (docs/VALUE.md §4,
 //! plan-notes 407).
 //!
-//! Every collected block sits behind a hidden 16-byte prefix in the layout pyrlyn/gc's kxgc.h
+//! Every collected block sits behind a hidden 16-byte prefix in the layout pyrlyn/zgc's kxgc.h
 //! defines: a header word (count in bits 0-31, color 32-33, buffered bit 34) and a vtable pointer.
 //! The vtable is the object's `JSRTGcKind`, whose first member is the kxgc vtable. Runtime pointers
 //! -- the payload of a boxed value, a `JSRTEnv *` -- address the object after the prefix, so no
@@ -25,7 +25,7 @@
 //! keeps its address and holds the lines it overlaps; the lines of a run that hold no survivor
 //! are free again once the collection clears their index words, without a visit to the dead
 //! objects in them. Only a young object with something to finalize is on the young list; larger
-//! blocks, buffers and whatever the region has no room for come from pyrlyn/gc's pools.
+//! blocks, buffers and whatever the region has no room for come from pyrlyn/zgc's pools.
 //!
 //! Frame slots, globals, C and Zig locals and static storage are not counted: they are the roots,
 //! read with the world stopped. Each thread's `JSRT_FRAME` chain is read precisely (the globals
@@ -40,7 +40,7 @@
 //! environments, whose slots generated code writes directly) are reconciled at every collection.
 //!
 //! An object whose count is 0 waits in the zero-count table (ZCT); a collection frees the entries
-//! no root names, releasing their references, which may free more. Cycles go to pyrlyn/gc's trial
+//! no root names, releasing their references, which may free more. Cycles go to pyrlyn/zgc's trial
 //! deletion (perceus, Bacon-Rajan), run with the roots pinned. `rt_rel_draining` stays set outside
 //! that window, so marking a candidate never starts trial deletion on its own.
 //!

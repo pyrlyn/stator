@@ -311,7 +311,7 @@ jobs:
       - *setup-just
       - *setup
       - *pinned-clang
-      # The collector is pyrlyn/gc, fetched as a Zig package (plan/T66): no system GC to install.
+      # The collector is pyrlyn/zgc, fetched as a Zig package (plan/T66): no system GC to install.
       # mise's clang carries its own sanitizer runtime but, on Linux, no llvm-symbolizer, so the
       # distro llvm stays for ASan's stack traces (plan-notes 410).
       - &install-llvm

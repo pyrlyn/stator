@@ -3,7 +3,7 @@
 Stator's JavaScript engine in Zig (plan/T67). Its `interp` mode is the Phase-14 interpreter: Zig
 code inside the runtime that runs `eval`, `new Function` and the `js`-mode code the compiler hands
 it, designed in `docs/INTERPRETER.md`. Its `jit` mode compiles the same bytecode to native code
-through pyrlyn/jit. Until T67 this package was `packages/interpreter`.
+through pyrlyn/zjit. Until T67 this package was `packages/interpreter`.
 
 | Path | Holds |
 | --- | --- |
@@ -16,7 +16,7 @@ through pyrlyn/jit. Until T67 this package was `packages/interpreter`.
 | `src/interp.zig` | `runScript` and `evalScript`: parse, compile and run a script against the global object. |
 | `src/engine.zig` | `run`: a `.js` or `.ts` source (TypeScript erased by Stator Transpiler's `erase.zig`) in `interp` or `jit` mode (`docs/ENGINE.md`). |
 | `src/cli.zig` | `stator-engine run [--mode=interp\|jit] [--lang=js\|ts\|wasm] <file>` (`docs/ENGINE.md` §5). |
-| `src/jit/` | The baseline JIT: `analyze.zig` (which templates, stack depths), `lower.zig` (bytecode → pyrlyn/jit IR), `layout.zig` (block order for backend liveness), `helpers.zig` (the VM operations native code calls), `jit.zig` (compile on first call), `timing.zig` (opt-in compilation stage timing). |
+| `src/jit/` | The baseline JIT: `analyze.zig` (which templates, stack depths), `lower.zig` (bytecode → pyrlyn/zjit IR), `layout.zig` (block order for backend liveness), `helpers.zig` (the VM operations native code calls), `jit.zig` (compile on first call), `timing.zig` (opt-in compilation stage timing). |
 | `src/rt.zig` | The runtime's C ABI, translated from `packages/runtime/src/jsrt_c.h`. |
 | `test262/parse.zig` | Runs Test262's `test/language/` through the parse entry and ratchets the result against `test262-parse.json`. |
 | `test262/host.ts` | The Test262 host: strict TS compiled `--mode=js --node`, so a test runs in the interpreter through an indirect `eval`, and `print` and `$262` are compiled code. |

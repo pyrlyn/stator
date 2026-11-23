@@ -97,7 +97,7 @@ entry.ts / entry.js (+ module graph)
         ▼
   C emitter (#line maps) ──► clang -O2 ──► link runtime/build/libjsrt.a ──► native binary
                                                    ▲
-        runtime/ (C11 + Zig memory core): NaN-boxed jsrt_value, pyrlyn/gc deferred RC (plan/T66) → precise generational (§12),
+        runtime/ (C11 + Zig memory core): NaN-boxed jsrt_value, pyrlyn/zgc deferred RC (plan/T66) → precise generational (§12),
         builtins, QuickJS-NG libregexp, Ryū dtoa, optional QuickJS-NG interpreter tier
         for eval/untyped modules (Phase 8, js mode only)
 ```
@@ -123,7 +123,7 @@ The three packages sit under a private pnpm workspace and are orchestrated by mo
 - the exact bit layout, including how `-0.0` survives (it is a valid double, not a boxed int — `Object.is(-0, 0) === false` is a decision test);
 - the **string struct**: `struct JSString { uint32_t length; uint16_t data[]; }` — UTF-16 code units (JS semantics: `.length`, `charCodeAt`, Test262 assume it; do not choose UTF-8 for v0), accessed from generated C only via `jsrt_string_length(v)` / `jsrt_string_char(v, i)` inline accessors;
 - **number→string is spec-exact**: shortest-round-trip formatting (vendor Ryū's C implementation), byte-identical to Node. Never "round to N decimals" to paper over differences;
-- the **GC rooting protocol** (needed by the *first* line of generated C): every generated function opens a `JSRT_FRAME(n)` shadow-stack frame; every local holding a `jsrt_value` or heap pointer is declared through `JSRT_LOCAL(frame, i)`; frames pop on every exit path *including landing pads*. The collector (pyrlyn/gc, plan/T66) reads these frames as precise roots, and the discipline also exists so §12's precise generational GC is a runtime-only change, never a codegen rewrite. (Boa's history: retrofitting precise GC onto undisciplined codegen means rewriting codegen.)
+- the **GC rooting protocol** (needed by the *first* line of generated C): every generated function opens a `JSRT_FRAME(n)` shadow-stack frame; every local holding a `jsrt_value` or heap pointer is declared through `JSRT_LOCAL(frame, i)`; frames pop on every exit path *including landing pads*. The collector (pyrlyn/zgc, plan/T66) reads these frames as precise roots, and the discipline also exists so §12's precise generational GC is a runtime-only change, never a codegen rewrite. (Boa's history: retrofitting precise GC onto undisciplined codegen means rewriting codegen.)
 
 **Statics that are actually typed compile to raw machine values** (unboxed i32/f64/struct fields) — boxing only at boundaries. This is where the 10–20× over interpreters comes from (Static Hermes evidence).
 
@@ -1154,7 +1154,7 @@ two things that must exist before implementation is allowed to start:
    `jsrt_value` object reaching interpreted code becomes a `JSValue` holding an opaque handle, and
    the reverse; a copy would make mutation invisible across the boundary. (b) **Identity must round-
    trip**: an object that crosses out and back must be `===` to itself, which means a two-way handle
-   table, not a per-crossing wrapper. (c) **Two collectors** — ours (pyrlyn/gc deferred RC, plan/T66) and
+   table, not a per-crossing wrapper. (c) **Two collectors** — ours (pyrlyn/zgc deferred RC, plan/T66) and
    QuickJS's refcount-plus-cycle collector — so a live handle must be a root on both sides
    simultaneously. State plainly which cases leak: a cycle spanning the boundary is uncollectable
    in v0, and that ceiling belongs in the doc rather than being discovered later.
@@ -1209,7 +1209,7 @@ phase is **not sequenced after Phase 8** — §11 is gated on a named user and m
 T9.1 proceeds independently. §15.1's top-down rule does not apply here.
 
 The Zig modules export the same C ABI and link into `libjsrt.a`. `jsrt_value.h` stays the
-codegen↔runtime contract, and generated code stays C. The collector is pyrlyn/gc, a Zig package
+codegen↔runtime contract, and generated code stays C. The collector is pyrlyn/zgc, a Zig package
 driven as deferred reference counting (plan/T66, plan-notes 407; Boehm before it). Zig 0.17.1 is pinned in stator's `mise.toml`; a global 0.14.1 (if present) is
 untouched. This reopens the settled C11-runtime decision (§15.4) on the creator's direction.
 
@@ -1234,7 +1234,7 @@ Full survey: plan-notes 239. Short form:
 | `std` + OS threads | First-party `jsrt_std_*` + `std/*` modules; threads↔async bridge | Phase 10 (240) |
 | Host compile parallelism | Same TS compiler; `STATOR_COMPILE_JOBS` / worker or process pool | Phase 10 T10.3 (240) |
 | Vendored | QuickJS-NG libregexp/libunicode, fdlibm | settled |
-| Optional native | ICU (intl build); the collector is pyrlyn/gc, compiled in (plan/T66) | settled |
+| Optional native | ICU (intl build); the collector is pyrlyn/zgc, compiled in (plan/T66) | settled |
 | CLI-only | ink/react, dotenv; OTel opt-in | settled (187) |
 
 **Zig:** T9.1's GC glue, alloc helpers, shape tables and growable buffers, plus — since plan-notes

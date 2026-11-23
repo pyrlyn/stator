@@ -86,10 +86,10 @@ packages/transpiler/ stator-transpiler: TypeScript parser, binder, checker and J
 packages/jstext/   Zig: JavaScript text semantics over WTF-8 (Number::toString, `\s`, UTF-16 length and
                    order, JSON.stringify of a string), shared by transpiler and compiler-zig (plan/T62)
 packages/engine/   Zig: the JavaScript engine (docs/ENGINE.md, plan/T67) — the Phase-14 interpreter
-                   (docs/INTERPRETER.md) plus a baseline JIT on pyrlyn/jit → libjsrt_interp.a and the
+                   (docs/INTERPRETER.md) plus a baseline JIT on pyrlyn/zjit → libjsrt_interp.a and the
                    `stator-engine` CLI; src/parse.zig (stator-transpiler's parser as `eval` and `new Function`
                    read source), src/capi.zig (the C ABI), src/compile.zig + src/vm.zig (bytecode
-                   compiler and VM), src/jit/ (bytecode → pyrlyn/jit IR → native code), src/builtins.zig
+                   compiler and VM), src/jit/ (bytecode → pyrlyn/zjit IR → native code), src/builtins.zig
                    (globals), src/engine.zig + src/cli.zig (modes, languages, the CLI),
                    test262/parse.zig + test262/exec.zig (Test262 language/ parse and execution drivers,
                    ratcheted in test262-parse.json and test262-exec.json), test262/host.ts (the

@@ -60,7 +60,7 @@ means the library has no symbol for that address.
 
 - macOS/Linux only (samply). On macOS the wrapper calls `/usr/bin/clang` unless `CC` is set,
   because a custom `CC` disables the driver's stale-ld/SDK retry for the mise clang.
-- The collector is part of `libjsrt.a` (pyrlyn/gc, plan/T66), so its frames resolve through the
+- The collector is part of `libjsrt.a` (pyrlyn/zgc, plan/T66), so its frames resolve through the
   same sidecar as the rest of the runtime.
 - `libdyld.dylib+0x7e54/0x7e5c` are the thread-local-variable accessor (`tlv_get_addr`), i.e.
   the cost of runtime `threadlocal` state.
