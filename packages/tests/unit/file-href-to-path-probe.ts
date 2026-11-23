@@ -89,9 +89,9 @@ function probe(fn: (href: string) => string, href: string): Result {
     const failure = error as { readonly name?: string; readonly code?: string; readonly message?: string };
     return {
       ok: false,
-      name: failure.name,
-      code: failure.code,
-      message: failure.message,
+      ...(failure.name !== undefined ? { name: failure.name } : {}),
+      ...(failure.code !== undefined ? { code: failure.code } : {}),
+      ...(failure.message !== undefined ? { message: failure.message } : {}),
     };
   }
 }
