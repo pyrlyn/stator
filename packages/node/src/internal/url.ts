@@ -6,8 +6,9 @@ import { bytesToUtf8, utf8ToBytes } from 'std/encoding';
 
 const HEX = '0123456789ABCDEF';
 
-/** Characters `pathToFileURL` percent-encodes besides every non-ASCII one and the controls. */
-const ENCODED = ' "#%<>?[]^`{|}~';
+/** Characters `pathToFileURL` percent-encodes besides every non-ASCII one and the controls. A raw
+ * backslash would read as `/` to a URL parser. */
+const ENCODED = ' "#%<>?[\\]^`{|}~';
 
 function percentByte(byte: number): string {
   return `%${HEX.charAt(byte >> 4)}${HEX.charAt(byte & 15)}`;

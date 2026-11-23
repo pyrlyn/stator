@@ -1,9 +1,17 @@
 import { strict as assert } from 'node:assert';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'vitest';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execa } from 'execa';
 import { BuildError, build } from '../../compiler/src/cli/build.ts';
 import { NATIVE_ONLY } from './helpers.ts';
@@ -1025,3 +1033,19 @@ test('build --help lists --cc (T35)', async () => {
   assert.equal(status, 0);
   assert.match(stdout, /--cc <cc>/);
 });
+
+test(
+  'import.meta.url percent-encodes a backslash, as Node does (--node)',
+  NATIVE_ONLY,
+  async () => {
+    await inScratch({ 'app.ts': 'console.log(import.meta.url);\n' }, async (dir) => {
+      // A WHATWG URL parser reads a raw `\\` in a file: URL as `/`, so `new URL('x', import.meta.url)`
+      // would leave the directory. Node writes it as %5C.
+      const binDir = join(dir, 'b\\in');
+      mkdirSync(binDir);
+      const run = await buildAndRun(join(dir, 'app.ts'), join(binDir, 'app'), '--node');
+      assert.equal(run.status, 0, run.stderr);
+      assert.equal(run.stdout, `${pathToFileURL(join(binDir, 'app.ts')).href}\n`);
+    });
+  },
+);
