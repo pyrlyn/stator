@@ -232,6 +232,53 @@ jobs:
           path: coverage/lcov.info
           if-no-files-found: ignore
 
+  # Zig suites (pyrlyn/stator#339). These never ran in CI: setup already installs the pinned Zig,
+  # but no job called zig-core, interp, engine or zigdiff. needs: nothing, so the job starts with
+  # static/frontend and does not wait on them. interp:test and engine:test link libjsrt.a, so the
+  # runtime archive is built first (zig-core does not need it). engine:test includes a GC-stress
+  # pass with a 5-minute budget per script, so it lives on nightly.yml; the PR job keeps core,
+  # interp and zigdiff.
+  zig:
+    name: zig suites
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - *checkout
+      - *setup-just
+      - *setup
+      - *pinned-clang
+      - *record-toolchain
+      - *pnpm-install
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cache/zig
+            packages/compiler-zig/.zig-cache
+            packages/engine/.zig-cache
+            packages/runtime/.zig-cache
+            packages/std/.zig-cache
+          key: zig-${{ runner.os }}-${{ hashFiles('**/build.zig.zon', 'mise.toml') }}
+          restore-keys: |
+            zig-${{ runner.os }}-
+      - name: tests skipped (SKIP_CI_TESTS)
+        if: vars.SKIP_CI_TESTS == 'true' || env.SKIP_CI_TESTS == 'true'
+        run: echo "::notice title=SKIP_CI_TESTS::tests skipped by SKIP_CI_TESTS"
+      - name: zig version
+        if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: zig version
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: pnpm run zig-core:test
+      - name: Build runtime archive
+        if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: pnpm run runtime
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: pnpm run interp:test
+      - name: Build statorc-zig
+        if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: zig build --build-file packages/compiler-zig/build.zig
+      - if: vars.SKIP_CI_TESTS != 'true' && env.SKIP_CI_TESTS != 'true'
+        run: pnpm run test:zigdiff
+
   # The compiler itself, which is portable TypeScript -- so this is the half of the suite Windows
   # can reach, and the reason Windows is in the matrix at all. `lint` is NOT here: `.gitattributes`
   # checks out the same LF bytes everywhere, so the one run in `static` covers them. No coverage on
@@ -670,6 +717,7 @@ jobs:
       - intl-macos
       - ffi
       - ffi-macos
+      - zig
     if: >-
       always()
       && github.event_name == 'push'
