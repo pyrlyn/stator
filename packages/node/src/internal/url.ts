@@ -3,6 +3,8 @@
 // `node:url` module is T11.6's.
 
 import { bytesToUtf8, utf8ToBytes } from 'std/encoding';
+import { platform } from 'std/os';
+import { NodeError } from './errors.ts';
 
 const HEX = '0123456789ABCDEF';
 
@@ -31,9 +33,46 @@ function hexValue(char: string): number {
   return HEX.indexOf(char.toUpperCase());
 }
 
-/** `url.fileURLToPath(href)` for a `file:` URL with no host: the path, percent-decoded as UTF-8. */
+/** Drop `?query` and `#fragment` the way a URL parser does, at the first `?` or `#`. */
+function withoutQueryOrFragment(href: string): string {
+  let end = href.length;
+  const query = href.indexOf('?');
+  const fragment = href.indexOf('#');
+  if (query !== -1 && query < end) end = query;
+  if (fragment !== -1 && fragment < end) end = fragment;
+  return href.slice(0, end);
+}
+
+/** `url.fileURLToPath(href)` for a `file:` URL: the path, percent-decoded as UTF-8. */
 export function fileHrefToPath(href: string): string {
-  const path = href.slice('file://'.length);
+  const cut = withoutQueryOrFragment(href);
+  const after = cut.startsWith('file://') ? cut.slice('file://'.length) : cut.slice('file:'.length);
+  const slash = after.indexOf('/');
+  const host = slash === -1 ? after : after.slice(0, slash);
+  const path = slash === -1 ? '' : after.slice(slash);
+  if (host !== '' && host.toLowerCase() !== 'localhost') {
+    throw new NodeError(
+      'TypeError',
+      'ERR_INVALID_FILE_URL_HOST',
+      `File URL host must be "localhost" or empty on ${platform()}`,
+    );
+  }
+  let at = 0;
+  while (at < path.length) {
+    if (path.charAt(at) === '%' && path.slice(at, at + 3).toLowerCase() === '%2f') {
+      throw new NodeError(
+        'TypeError',
+        'ERR_INVALID_FILE_URL_PATH',
+        'File URL path must not include encoded / characters',
+      );
+    }
+    at += 1;
+  }
+  const decoded = decodePercentPath(path);
+  return decoded === '' ? '/' : decoded;
+}
+
+function decodePercentPath(path: string): string {
   const bytes: number[] = [];
   let at = 0;
   while (at < path.length) {
