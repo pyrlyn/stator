@@ -161,17 +161,27 @@ function requireFrom(filename: string, id: string): unknown {
 
 /** A `require` for the module at `filename`: a `file:` URL (`import.meta.url`) or an absolute
  * path. The path only names the requirer in a `MODULE_NOT_FOUND` message. */
+function invalidFilename(filename: string): NodeError {
+  return new NodeError(
+    'TypeError',
+    'ERR_INVALID_ARG_VALUE',
+    "The argument 'filename' must be a file URL object, file URL string, or absolute path " +
+      `string. Received '${filename}'`,
+  );
+}
+
 export function createRequire(filename: string): NodeRequire {
   let from = filename;
   if (filename.startsWith('file:')) {
-    from = fileHrefToPath(filename);
+    // Node's createRequire maps a fileURLToPath failure to ERR_INVALID_ARG_VALUE; do the same
+    // so a --node golden that prints `e.code` matches Node byte-for-byte.
+    try {
+      from = fileHrefToPath(filename);
+    } catch {
+      throw invalidFilename(filename);
+    }
   } else if (!filename.startsWith('/')) {
-    throw new NodeError(
-      'TypeError',
-      'ERR_INVALID_ARG_VALUE',
-      "The argument 'filename' must be a file URL object, file URL string, or absolute path " +
-        `string. Received '${filename}'`,
-    );
+    throw invalidFilename(filename);
   }
   return (id: string): unknown => requireFrom(from, id);
 }
