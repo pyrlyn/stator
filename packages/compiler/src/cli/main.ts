@@ -199,6 +199,8 @@ interface ParseState {
 interface FlagSpec {
   readonly commands: readonly CommandName[];
   readonly value?: { readonly what: string; readonly equals: boolean };
+  /** A value flag may appear more than once; today only `--link` is. */
+  readonly repeatable?: boolean;
   readonly apply: (state: ParseState, value: string) => void;
 }
 
@@ -240,6 +242,7 @@ const FLAGS: Readonly<Record<string, FlagSpec>> = {
   '--link': {
     commands: BUILD,
     value: { what: 'a value (clang link flags)', equals: true },
+    repeatable: true,
     apply: (s, v) => {
       s.linkFlags.push(...splitLinkFlags(v));
     },
@@ -395,6 +398,7 @@ function parse(argv: readonly string[]): Command {
     configChoice: { kind: 'discover' },
   };
   const { cli, linkFlags } = state;
+  const seen = new Set<string>();
 
   for (let i = 1; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -424,6 +428,12 @@ function parse(argv: readonly string[]): Command {
       if (flag.inline === undefined) {
         i += 1;
       }
+      // `-o` and `--out` are one flag: either spelling given twice is an error.
+      const key = flag.name === '-o' || flag.name === '--out' ? '--out' : flag.name;
+      if (flag.spec.repeatable !== true && seen.has(key)) {
+        throw new StatorError('STA0004', `flag ${flag.name} given twice`);
+      }
+      seen.add(key);
     }
     flag.spec.apply(state, value);
   }

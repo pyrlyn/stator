@@ -784,6 +784,24 @@ test('a value flag refuses a flag as its value (F11)', async () => {
   });
 });
 
+test('a repeated value flag is an error; --link stays repeatable', async () => {
+  await inScratch({ 'app.ts': 'console.log(1);\n' }, async (dir) => {
+    const [shortTwice, mixed, mode, link] = await Promise.all([
+      statorIn(dir, 'build', 'app.ts', '-o', 'a', '-o', 'b'),
+      statorIn(dir, 'build', 'app.ts', '-o', 'a', '--out', 'b'),
+      statorIn(dir, 'build', 'app.ts', '-o', 'a', '--mode=ts', '--mode=js'),
+      statorIn(dir, 'build', 'app.ts', '-o', 'app.c', '--emit=c', '--link=-lm', '--link=-ldl'),
+    ]);
+    assert.equal(shortTwice.status, 1);
+    assert.match(shortTwice.stderr, /^stator: STA0004 flag -o given twice/);
+    assert.equal(mixed.status, 1);
+    assert.match(mixed.stderr, /^stator: STA0004 flag --out given twice/);
+    assert.equal(mode.status, 1);
+    assert.match(mode.stderr, /^stator: STA0004 flag --mode given twice/);
+    assert.equal(link.status, 0, link.stderr);
+  });
+});
+
 test('each command accepts only its own flags (F11)', async () => {
   const runs = await Promise.all(
     [

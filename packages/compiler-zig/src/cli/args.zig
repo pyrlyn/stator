@@ -145,14 +145,14 @@ const Value = struct { what: []const u8, equals: bool };
 
 const Flag = enum { out, mode, opt, link, emit_header, unit_name, bundler, cc, config, no_config, json, diagnostics_text, emit_c, emit_lib, emit_binary, keep_c, node };
 
-const Spec = struct { name: []const u8, flag: Flag, commands: Commands, value: ?Value = null };
+const Spec = struct { name: []const u8, flag: Flag, commands: Commands, value: ?Value = null, repeatable: bool = false };
 
 const flags = [_]Spec{
     .{ .name = "-o", .flag = .out, .commands = .build, .value = .{ .what = "an output path", .equals = false } },
     .{ .name = "--out", .flag = .out, .commands = .build, .value = .{ .what = "an output path", .equals = false } },
     .{ .name = "--mode", .flag = .mode, .commands = .both, .value = .{ .what = "a value (ts or js)", .equals = true } },
     .{ .name = "--opt", .flag = .opt, .commands = .build, .value = .{ .what = "a value (0, 1, 2, or 3)", .equals = true } },
-    .{ .name = "--link", .flag = .link, .commands = .build, .value = .{ .what = "a value (clang link flags)", .equals = true } },
+    .{ .name = "--link", .flag = .link, .commands = .build, .value = .{ .what = "a value (clang link flags)", .equals = true }, .repeatable = true },
     .{ .name = "--emit-header", .flag = .emit_header, .commands = .build, .value = .{ .what = "a value (output header path)", .equals = true } },
     .{ .name = "--unit-name", .flag = .unit_name, .commands = .build, .value = .{ .what = "a value (C identifier prefix)", .equals = true } },
     .{ .name = "--cc", .flag = .cc, .commands = .build, .value = .{ .what = "a value (C compiler name or path)", .equals = true } },
@@ -237,6 +237,7 @@ pub fn parse(a: Allocator, r: *Reporter, argv: []const []const u8, inputs: Input
     var cli: config.CliOptions = .{};
     var link_flags: std.ArrayList([]const u8) = .empty;
     var choice: config.Choice = .discover;
+    var seen: [@typeInfo(Flag).@"enum".field_names.len]bool = @splat(false);
 
     var i: usize = 1;
     while (i < argv.len) : (i += 1) {
@@ -259,6 +260,11 @@ pub fn parse(a: Allocator, r: *Reporter, argv: []const []const u8, inputs: Input
         if (found.spec.value) |spec| {
             value = try flagValue(r, found.name, spec, found.inline_value, if (i + 1 < argv.len) argv[i + 1] else null);
             if (found.inline_value == null) i += 1;
+            if (!found.spec.repeatable) {
+                const idx = @intFromEnum(found.spec.flag);
+                if (seen[idx]) return r.fail("STA0004", "flag {s} given twice", .{found.name});
+                seen[idx] = true;
+            }
         }
         switch (found.spec.flag) {
             .out => cli.out = value,
@@ -332,6 +338,9 @@ test "usage errors carry the CLI's codes" {
     try expectFailure(&.{ "explain", "a.ts", "--bundler=none" }, "STA0004", "--bundler requires --mode=js");
     try expectFailure(&.{ "explain", "a.ts", "--cc=gcc" }, "STA0005", "flag \"--cc=gcc\" does not apply to explain");
     try expectFailure(&.{ "build", "a.ts", "-o", "b", "--cc=" }, "STA0004", "--cc requires a value (C compiler name or path)");
+    try expectFailure(&.{ "build", "a.ts", "-o", "a", "-o", "b" }, "STA0004", "flag -o given twice");
+    try expectFailure(&.{ "build", "a.ts", "-o", "a", "--out", "b" }, "STA0004", "flag --out given twice");
+    try expectFailure(&.{ "build", "a.ts", "-o", "a", "--mode=ts", "--mode=js" }, "STA0004", "flag --mode given twice");
 }
 
 test "an inline value keeps a leading dash" {
