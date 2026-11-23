@@ -765,6 +765,26 @@ test('an explicit --unit-name must already be a C identifier part (F10)', async 
   });
 });
 
+test('--out=<path> writes the output; --out= is empty; -o= stays a hint to write -o', async () => {
+  await inScratch({ 'app.ts': 'console.log(1);\n' }, async (dir) => {
+    const [ok, empty, shortEq] = await Promise.all([
+      statorIn(dir, 'build', 'app.ts', '--out=app', '--emit=c'),
+      statorIn(dir, 'build', 'app.ts', '--out='),
+      statorIn(dir, 'build', 'app.ts', '-o=app'),
+    ]);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(existsSync(join(dir, 'app')), true);
+    assert.equal(empty.status, 1);
+    assert.match(empty.stderr, /^stator: STA0004 --out requires an output path/);
+    assert.equal(shortEq.status, 1);
+    // `-o` does not take `=`: keep the unknown-flag error (and its "write -o" hint in help),
+    // not an accepted path named "app".
+    assert.match(shortEq.stderr, /^stator: STA0005 unknown flag "-o=app"/);
+    assert.equal(existsSync(join(dir, 'app')) && ok.status === 0, true);
+    assert.equal(existsSync(join(dir, '-o=app')), false);
+  });
+});
+
 test('a value flag refuses a flag as its value (F11)', async () => {
   await inScratch({ 'app.ts': 'console.log(1);\n' }, async (dir) => {
     const [out, link, linkEq] = await Promise.all([

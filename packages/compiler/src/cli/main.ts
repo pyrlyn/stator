@@ -206,9 +206,16 @@ const BOTH: readonly CommandName[] = ['build', 'explain'];
 const BUILD: readonly CommandName[] = ['build'];
 const EXPLAIN: readonly CommandName[] = ['explain'];
 
-const OUT: FlagSpec = {
+const OUT_SHORT: FlagSpec = {
   commands: BUILD,
   value: { what: 'an output path', equals: false },
+  apply: (s, v) => {
+    s.cli.out = v;
+  },
+};
+const OUT_LONG: FlagSpec = {
+  commands: BUILD,
+  value: { what: 'an output path', equals: true },
   apply: (s, v) => {
     s.cli.out = v;
   },
@@ -221,8 +228,8 @@ const JSON_REPORT: FlagSpec = {
 };
 
 const FLAGS: Readonly<Record<string, FlagSpec>> = {
-  '-o': OUT,
-  '--out': OUT,
+  '-o': OUT_SHORT,
+  '--out': OUT_LONG,
   '--mode': {
     commands: BOTH,
     value: { what: 'a value (ts or js)', equals: true },
