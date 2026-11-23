@@ -17,6 +17,14 @@ node scripts/check-node.ts
 pnpm install --frozen-lockfile
 pnpm run ci
 
+# Zig suites (pyrlyn/stator#339): core, interp and zigdiff belong on every run; engine:test is
+# nightly (GC-stress is too long for the PR job). `pnpm run ci` already built the runtime archive
+# interp and zigdiff need.
+pnpm run zig-core:test
+pnpm run interp:test
+zig build --build-file packages/compiler-zig/build.zig
+pnpm run test:zigdiff
+
 # Second job: the sanitized runtime build. Golden tests run against this once Phase 2
 # lands them (plan.md §5 Task 2.7).
 just -f packages/runtime/justfile -d packages/runtime runtime-asan
