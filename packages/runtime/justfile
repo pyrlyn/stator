@@ -70,9 +70,9 @@ _runtime flavor:
     CFLAGS_VENDOR="-std=c11 -Wall ${VENDOR_POSIX} -Iinclude ${VENDOR_INC} -ffunction-sections -fdata-sections"
     DEPFLAGS='-MMD -MP'
 
-    # The collector is pyrlyn/gc (plan-notes 407), compiled into the Zig object below: nothing to
+    # The collector is pyrlyn/zgc (plan-notes 407), compiled into the Zig object below: nothing to
     # probe and no library to link.
-    GC_STATUS='pyrlyn/gc deferred RC (perceus)'
+    GC_STATUS='pyrlyn/zgc deferred RC (perceus)'
     SYS_LIBS='-lm -pthread'
 
     # LTO: the archive's objects are LLVM bitcode, so the final link sees the runtime and the
@@ -232,12 +232,12 @@ _runtime flavor:
     # change only when they did. `fmt --check` is the Zig side's style gate.
     zig fmt --check src/*.zig
     zig translate-c ${ZIG_TARGET} -lc ${ZIG_C} src/jsrt_c.h > "${DIR}/jsrt_c.zig"
-    # pyrlyn/gc is a Zig package pinned by build.zig.zon; `--fetch` resolves it into zig-pkg/ (a
+    # pyrlyn/zgc is a Zig package pinned by build.zig.zon; `--fetch` resolves it into zig-pkg/ (a
     # no-op once it is there). Its collector imports two modules: `kxgc` (its object layout) and
     # `host`, the runtime symbols kxgc.h asks for, which Stator supplies in src/jsrt_gc_host.zig.
     zig build --fetch --cache-dir "${DIR}/zig-cache" >/dev/null
     KXGC="zig-pkg/$(sed -n 's/.*\.hash = "\(kxgc-[^"]*\)".*/\1/p' build.zig.zon)"
-    [[ -f "${KXGC}/src/perceus.zig" ]] || { echo "pyrlyn/gc not fetched into ${KXGC}" >&2; exit 1; }
+    [[ -f "${KXGC}/src/perceus.zig" ]] || { echo "pyrlyn/zgc not fetched into ${KXGC}" >&2; exit 1; }
     # Optimize mode, target and PIC are per module, so each -M repeats them: translated headers
     # carry inline functions that end up in this object.
     ZIG_MODULE="-O ${ZIG_OPT} ${ZIG_TARGET} -fPIC -mcpu=baseline -fno-stack-check"

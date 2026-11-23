@@ -4,7 +4,7 @@ Grounded in the recording in [`RESULTS.md`](RESULTS.md) (Apple M3 Max, median of
 loaded machine and are directional; the RSS and size gaps are stable across recordings.
 Each item names the measurement that motivates it, in priority order.
 
-The recording predates plan/T66, which replaced Boehm with pyrlyn/gc compiled into `libjsrt.a`:
+The recording predates plan/T66, which replaced Boehm with pyrlyn/zgc compiled into `libjsrt.a`:
 the binaries no longer load `libgc`, so items 2 and 5 and the start-up analysis describe the old
 collector until the next recording.
 

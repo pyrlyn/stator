@@ -7,7 +7,7 @@
         .stator_transpiler = .{ .path = "../transpiler" },
         .jstext = .{ .path = "../jstext" },
         .pyrlyn_jit = .{
-            .url = "git+https://github.com/pyrlyn/jit#e90d5705e7d242a009976a033ecae4e5e7ec343c",
+            .url = "git+https://github.com/pyrlyn/zjit#e90d5705e7d242a009976a033ecae4e5e7ec343c",
             .hash = "N-V-__8AANYfGAHP2NQpkMdFu0DZLiXuCiUptwa3anopZPOM",
         },
     },

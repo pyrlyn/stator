@@ -27,7 +27,7 @@ pub fn build(b: *std.Build) void {
     jsrt_h.addIncludePath(b.path("../runtime/include"));
     jsrt_h.addIncludePath(b.path("../runtime/src"));
 
-    // pyrlyn/jit's IR, register allocator and backends: the JIT tier lowers bytecode into its IR
+    // pyrlyn/zjit's IR, register allocator and backends: the JIT tier lowers bytecode into its IR
     // (src/jit/, docs/ENGINE.md §3).
     const pyrlyn_jit = b.dependency("pyrlyn_jit", .{ .target = target, .optimize = optimize }).module("pyrlyn_jit");
 

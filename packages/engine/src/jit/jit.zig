@@ -1,5 +1,5 @@
 //! The engine's baseline JIT (docs/ENGINE.md §3): in `jit` mode a template's first call compiles
-//! it through pyrlyn/jit for the host (AArch64 or x86-64), and every call after runs that code.
+//! it through pyrlyn/zjit for the host (AArch64 or x86-64), and every call after runs that code.
 //! A template the JIT does not take — or a host it has no backend for — runs in the interpreter.
 
 const std = @import("std");
@@ -26,7 +26,7 @@ pub var compiled: usize = 0;
 
 const host = switch (builtin.cpu.arch) {
     .aarch64 => if (pj.build_options.aarch64) pj.aarch64_compiler else void,
-    // pyrlyn/jit's x86-64 compiler targets the SysV ABI; Windows stays interpreted.
+    // pyrlyn/zjit's x86-64 compiler targets the SysV ABI; Windows stays interpreted.
     .x86_64 => if (pj.build_options.x86_64 and builtin.os.tag != .windows) pj.x86_64_compiler else void,
     else => void,
 };

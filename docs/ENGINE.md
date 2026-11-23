@@ -9,7 +9,7 @@ without the ahead-of-time pipeline, in one of two modes over one bytecode:
   call and runs every function it does not take in the interpreter.
 
 Values, objects, shapes, inline caches and the collector are the runtime's (`libjsrt.a`, with
-pyrlyn/gc since T66). The engine adds no second heap and no second value model.
+pyrlyn/zgc since T66). The engine adds no second heap and no second value model.
 
 ## 1. Layout
 
@@ -18,7 +18,7 @@ pyrlyn/gc since T66). The engine adds no second heap and no second value model.
 | `src/engine.zig`      | `run`: a source in one of the engine's languages (§2), run in one mode, with the outcome |
 | `src/cli.zig`         | `stator-engine` (§5)                                                                     |
 | `src/jit/analyze.zig` | Which templates the JIT takes, and the operand-stack depth at every instruction          |
-| `src/jit/lower.zig`   | Bytecode to pyrlyn/jit IR, with the inline fast paths                                    |
+| `src/jit/lower.zig`   | Bytecode to pyrlyn/zjit IR, with the inline fast paths                                    |
 | `src/jit/helpers.zig` | What native code calls for everything else: the VM's own operations                      |
 | `src/jit/jit.zig`     | Compile on first call, cache on the template, enter native code                          |
 | everything else       | the interpreter, as `packages/engine/README.md` lists it                                 |
@@ -120,7 +120,7 @@ that its cache or its array does not answer) then
 branches to the same instruction in a second, generic copy of the run, which finishes it with
 the fast paths and helpers above and rejoins at the next run. The generic copies are emitted
 after all the fast code and nothing is remembered across an instruction lowered generically,
-because pyrlyn/jit keeps no float register across a call. x86-64 has only the generic code: its
+because pyrlyn/zjit keeps no float register across a call. x86-64 has only the generic code: its
 results must be read back from the window to make their NaN canonical.
 
 A remainder on the chain divides only when it has to. A dividend from zero up to the divisor is
@@ -219,7 +219,7 @@ Everything else (mixed operands, strings, a cache miss, calls, environments, con
 operation. A helper answers 1 when it left an exception pending; the code then leaves through its
 exit block, and the interpreter frame that called it unwinds as for any other throw.
 
-**Backends.** pyrlyn/jit (pinned by commit in `build.zig.zon`) allocates registers and emits
+**Backends.** pyrlyn/zjit (pinned by commit in `build.zig.zon`) allocates registers and emits
 AArch64 or x86-64 (System V). Only the AArch64 path has run so far: the x86-64 one compiles
 but is unverified until a Linux x86-64 run. A Windows or other host has no backend; `jit` mode prints that and
 interprets.

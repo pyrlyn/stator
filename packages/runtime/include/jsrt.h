@@ -22,14 +22,14 @@ _Noreturn void jsrt_panic(const char *msg);
 
 /* ------------------------------------------------------------ the collector (jsrt_gc.zig)
  *
- * pyrlyn/gc as coalesced deferred reference counting (docs/VALUE.md §4.12). Every collected
+ * pyrlyn/zgc as coalesced deferred reference counting (docs/VALUE.md §4.12). Every collected
  * object has a kind: how to find the objects it references and what to release when it dies. */
 
 /* Reports one referenced runtime pointer (the payload of a boxed value, a `JSRTEnv *`). Anything
  * that is not a collected object -- NULL, a static object, malloc'd memory -- is ignored. */
 typedef void (*jsrt_gc_visit_fn)(void *child);
 
-/* The vtable pyrlyn/gc's kxgc.h defines, first in every kind so the collector reads it in place.
+/* The vtable pyrlyn/zgc's kxgc.h defines, first in every kind so the collector reads it in place.
  * Every kind fills it from JSRT_GC_KIND; only the cyclic flag differs. */
 typedef struct JSRTGcVTab {
   void (*rel)(void *block);

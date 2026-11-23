@@ -588,7 +588,7 @@ PKG_CONFIG_PATH=out cc main.c $(pkg-config --cflags --libs libconsumer) -o app
   1. *Size*: each library carries its own runtime, about 200 KB of code per extra library
      in a program (`-dead_strip`; the member before the final link is about 400 KB). One
      library costs what an `--emit-header` object plus `libjsrt.a` costs.
-  2. *One collector per copy*: the collector is part of the runtime (pyrlyn/gc compiled into
+  2. *One collector per copy*: the collector is part of the runtime (pyrlyn/zgc compiled into
      `libjsrt.a`, plan/T66), so its symbols are made local with the rest and each library
      collects its own heap from its own roots. Nothing is shared, so no global stays exported
      beside the header's symbols. Before T66 the copies shared one Boehm heap through a weak

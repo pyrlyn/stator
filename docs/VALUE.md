@@ -880,16 +880,16 @@ is the four characters `null` and not an abort.
 **Invalid Date.** `toISOString` throws a `RangeError` through `jsrt_throw` (§21.4.4.36); generated
 C checks `jsrt_pending()` after the op (Phase 5 step 11).
 
-## 4.12 The collector — pyrlyn/gc as deferred reference counting
+## 4.12 The collector — pyrlyn/zgc as deferred reference counting
 
 Everything above assumes the collector can find what is live. `runtime/src/jsrt_gc.zig` drives
-[pyrlyn/gc](https://github.com/pyrlyn/gc) (a Zig package pinned in `runtime/build.zig.zon`) as
+[pyrlyn/zgc](https://github.com/pyrlyn/zgc) (a Zig package pinned in `runtime/build.zig.zon`) as
 coalesced deferred reference counting. Its module comment is the full design; plan-notes 407 says
-why Stator does not count exactly the way pyrlyn/gc's own compiler does.
+why Stator does not count exactly the way pyrlyn/zgc's own compiler does.
 
 **One allocation seam, one layout.** `jsrt_gc_alloc(bytes, kind)` (`runtime/include/jsrt.h`) is
 the runtime's only collected allocation: zeroed, never NULL (out of memory panics). Every block has
-a hidden 16-byte prefix in pyrlyn/gc's layout (count, color and buffered bits, then a vtable
+a hidden 16-byte prefix in pyrlyn/zgc's layout (count, color and buffered bits, then a vtable
 pointer); runtime pointers address the object after it, so no runtime layout changed. The vtable is
 the object's `JSRTGcKind`, built with `JSRT_GC_KIND(name, trace, finalize, cyclic, always_dirty)`:
 `trace` visits exactly the references the object holds, `finalize` frees what it owns outside the
@@ -915,7 +915,7 @@ sets the survivors' bits again, so a dead young object costs no finalizer call, 
 read of its memory. The young list names only the young objects with something to finalize: an
 object of a kind with a finalizer, except a dynamic object, which gets on the list when a
 buffer first names it as owner. Larger blocks, every buffer and whatever the region has no
-free line for come from pyrlyn/gc's pools, as does every block in the sanitized flavor, where
+free line for come from pyrlyn/zgc's pools, as does every block in the sanitized flavor, where
 each free must be visible to ASan.
 
 The open run is two words a JIT may read and move itself (`JSRTYoungRun` in `jsrt_mem.h`: the
@@ -945,7 +945,7 @@ stack, saved registers and the image's writable segments conservatively, each wo
 (plan-notes 163). On Mach-O a segment is read section by section, without the templates a thread's
 variables are copied from: nothing is ever stored in those, and thread-local buffers can make them
 most of the segment. A word outside the heap's address range is dismissed before any lookup. A rooted object is pinned for the collection; an object whose count is 0 and
-that no root names is freed, releasing what it held. Older cycles go to pyrlyn/gc's trial deletion
+that no root names is freed, releasing what it held. Older cycles go to pyrlyn/zgc's trial deletion
 (Bacon-Rajan), run with the roots pinned.
 
 **Cycle candidates.** A candidate is an object whose count fell and stayed above 0, or one a
@@ -969,7 +969,7 @@ not own for one collection. It costs memory, never correctness.
 after each collection resumes the world. The monotonic duration includes stopping threads,
 root scanning, count reconciliation, young-object reclamation, cycle collection and resuming
 threads; it excludes writing the record and acquiring the heap lock before collection. It is
-disabled by default and is separate from pyrlyn/gc's narrower cycle-collector timing.
+disabled by default and is separate from pyrlyn/zgc's narrower cycle-collector timing.
 Trace I/O perturbs execution, so collect throughput in a separate run with tracing disabled.
 
 **The checks.** `JSRT_GC_VERIFY=1` recounts every heap reference after each collection and names
@@ -1826,7 +1826,7 @@ reads as scheduling, not omission:
 | `JSRT_FRAME` / `JSRT_LOCAL` | yes, from the first emitted function | — |
 | `jsrt_typeof` / `jsrt_check_*` | yes, from Task 3.5 (§4.7, §4.8) | `jsrt_check_*` for shapes: needs Task 4.1 |
 | Landing-pad frame discipline | yes, from Task 3.10 (§4.9): pads take the pending exception, unwind pads pop | — |
-| pyrlyn/gc deferred reference counting, §4.12 | yes (plan/T66; Boehm before it) | precise generational, §12 |
+| pyrlyn/zgc deferred reference counting, §4.12 | yes (plan/T66; Boehm before it) | precise generational, §12 |
 
 ### Thread roots (T10.2)
 
