@@ -149,7 +149,7 @@ const Spec = struct { name: []const u8, flag: Flag, commands: Commands, value: ?
 
 const flags = [_]Spec{
     .{ .name = "-o", .flag = .out, .commands = .build, .value = .{ .what = "an output path", .equals = false } },
-    .{ .name = "--out", .flag = .out, .commands = .build, .value = .{ .what = "an output path", .equals = false } },
+    .{ .name = "--out", .flag = .out, .commands = .build, .value = .{ .what = "an output path", .equals = true } },
     .{ .name = "--mode", .flag = .mode, .commands = .both, .value = .{ .what = "a value (ts or js)", .equals = true } },
     .{ .name = "--opt", .flag = .opt, .commands = .build, .value = .{ .what = "a value (0, 1, 2, or 3)", .equals = true } },
     .{ .name = "--link", .flag = .link, .commands = .build, .value = .{ .what = "a value (clang link flags)", .equals = true } },
@@ -324,6 +324,8 @@ test "usage errors carry the CLI's codes" {
     try expectFailure(&.{ "explain", "-o", "x" }, "STA0005", "flag \"-o\" does not apply to explain");
     try expectFailure(&.{ "build", "a.ts", "--mode=x" }, "STA0002", "unknown mode \"x\" (expected \"ts\" or \"js\")");
     try expectFailure(&.{ "build", "a.ts", "-o" }, "STA0004", "-o requires an output path");
+    try expectFailure(&.{ "build", "a.ts", "--out=" }, "STA0004", "--out requires an output path");
+    try expectFailure(&.{ "build", "a.ts", "-o=app" }, "STA0005", "unknown flag \"-o=app\"");
     try expectFailure(&.{ "build", "a.ts", "-o", "--emit=c" }, "STA0004", "-o requires an output path, not the flag \"--emit=c\"");
     try expectFailure(&.{ "build", "--opt", "-x" }, "STA0004", "--opt requires a value (0, 1, 2, or 3), not the flag \"-x\" (write --opt=-x if that is the value)");
     try expectFailure(&.{ "build", "a.ts", "--link=" }, "STA0004", "--link requires a value (clang link flags)");
@@ -332,6 +334,14 @@ test "usage errors carry the CLI's codes" {
     try expectFailure(&.{ "explain", "a.ts", "--bundler=none" }, "STA0004", "--bundler requires --mode=js");
     try expectFailure(&.{ "explain", "a.ts", "--cc=gcc" }, "STA0005", "flag \"--cc=gcc\" does not apply to explain");
     try expectFailure(&.{ "build", "a.ts", "-o", "b", "--cc=" }, "STA0004", "--cc requires a value (C compiler name or path)");
+}
+
+test "--out=path sets the output path" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var r: Reporter = .{ .a = arena.allocator() };
+    const c = try parse(arena.allocator(), &r, &.{ "build", "a.ts", "--out=b" }, .{ .cwd = "/nonexistent", .env_opt = null, .io = std.testing.io });
+    try std.testing.expectEqualStrings("b", c.build.out);
 }
 
 test "an inline value keeps a leading dash" {
